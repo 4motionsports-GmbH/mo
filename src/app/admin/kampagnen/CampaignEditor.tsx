@@ -44,7 +44,7 @@ interface FormState {
   audienceMode: "dynamisch" | "fest";
   reentryDays: string;
   discountPercent: string;
-  discountScope: "all" | "recommendations" | "set";
+  discountScope: "all" | "recommendations";
   discountValidUntil: string;
   designKey: string;
   heroMode: "none" | "default" | "ai_ab" | "ai_all";
@@ -141,7 +141,8 @@ function initialState(c: CampaignCardProps | null, presetAudience: Record<string
     audienceMode: c?.audienceMode ?? "fest",
     reentryDays: c?.reentryDays != null ? String(c.reentryDays) : "",
     discountPercent: String(c?.discountPercent ?? 0),
-    discountScope: c?.discountScope ?? "all",
+    // "set" is retired (a set mail carries no code, offer-mode.mjs).
+    discountScope: c?.discountScope === "recommendations" ? "recommendations" : "all",
     discountValidUntil: toLocalInput(c?.discountValidUntil ?? null),
     designKey: c?.designKey ?? "",
     heroMode: c?.heroMode ?? "default",
@@ -656,7 +657,10 @@ export function CampaignEditor({
                 <span className="text-xs text-muted-foreground">%</span>
               </div>
             </Field>
-            <Field label="Gilt für">
+            <Field
+              label="Gilt für"
+              info="Worauf der Rabattcode gilt: die gesamte Bestellung oder nur die empfohlenen Produkte der Mail. Mails, an die ein Set angehängt wird, tragen keinen Code — der Set-Preis ist dort das Angebot."
+            >
               <SegmentedControl
                 label="Rabatt gilt für"
                 value={form.discountScope}
@@ -664,7 +668,6 @@ export function CampaignEditor({
                 options={[
                   { value: "all", label: "Alles" },
                   { value: "recommendations", label: "Empfehlungen" },
-                  { value: "set", label: "Set" },
                 ]}
               />
             </Field>

@@ -11,6 +11,9 @@
 // Refusals carry { error: { code, message }, offenders, offenderNames } — the
 // German message already names the offending items.
 //
+// A set makes the attached draft a set mail (offer-mode.mjs): on success the
+// campaign draft's / legacy draft's discount is cleared (discountCleared).
+//
 // Create a personalized bundle offer (S10). customerId is optional (null = an
 // ad-hoc offer); campaignContactId attaches the offer to a campaign contact
 // instead (docs/CAMPAIGNS.md §4). All the validation, snapshotting, Shopify
@@ -26,6 +29,8 @@ import {
 } from "@/lib/bundle-offers";
 import { reportError } from "@/lib/observability";
 import { BUNDLE_QUANTITY_MAX } from "@/lib/bundle-offer-core.mjs";
+import { updateCampaignDraftDiscount } from "@/lib/campaign-store";
+import { clearDraftDiscount } from "@/lib/marketing-store";
 
 export const maxDuration = 60;
 
@@ -136,7 +141,19 @@ export async function POST(req: Request) {
   try {
     const result = await createBundleOffer(customerId, components, options);
     if (result.ok) {
-      return adminJson({ ok: true, offer: result.offer, redirectUrl: result.redirectUrl });
+      // The set turns the draft into a set mail, which carries no discount
+      // code (offer-mode.mjs): clear the draft's depth so the regenerate
+      // writes for the set. Fail-soft — the send gates refuse a set mail that
+      // still has a code anyway.
+      let discountCleared = false;
+      if (options.campaignContactId != null) {
+        discountCleared = Boolean(
+          await updateCampaignDraftDiscount(options.campaignContactId, 0, null, "all")
+        );
+      } else if (options.marketingSendId != null) {
+        discountCleared = await clearDraftDiscount(options.marketingSendId);
+      }
+      return adminJson({ ok: true, offer: result.offer, redirectUrl: result.redirectUrl, discountCleared });
     }
     const status = STATUS_BY_REASON[result.reason] ?? 400;
     // Error envelope ({ error: { code, message } }) plus structured detail so the

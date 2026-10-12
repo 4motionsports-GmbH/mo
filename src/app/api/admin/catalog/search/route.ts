@@ -20,6 +20,7 @@ import {
 } from "@/lib/product-ref.mjs";
 import type { Product, ProductVariant } from "@/lib/types";
 import { reportError } from "@/lib/observability";
+import { stockQuantity } from "@/lib/stock-level.mjs";
 
 export const maxDuration = 15;
 
@@ -54,6 +55,9 @@ export async function POST(req: Request) {
       unitPrice: effectivePrice(p),
       currency: p.currency ?? "EUR",
       inStock: p.inStock !== false,
+      // Units in stock across variants, or null when unknown / not tracked
+      // (stock-level.mjs) — the picker shows "· n auf Lager".
+      stock: stockQuantity(p.inventoryQuantity, p.tracksInventory),
       // Storefront URL — the Wissen tab's "Produkt verlinken" helper builds
       // its markdown link from this. Null for products without a URL.
       url: p.shopifyUrl ?? null,
@@ -69,6 +73,7 @@ export async function POST(req: Request) {
         unitPrice: effectiveVariantPrice(v),
         currency: p.currency ?? "EUR",
         available: isVariantAvailable(p, v),
+        stock: stockQuantity(v.inventoryQuantity, p.tracksInventory),
         ...(v.sku ? { sku: v.sku } : {}),
       })),
     }));

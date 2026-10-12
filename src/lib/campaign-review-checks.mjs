@@ -11,6 +11,7 @@
 // React side (admin-datetime / admin-format). A check that needs a date carries
 // the raw ISO value in `meta`; the UI formats it.
 
+import { offerConflict } from "./offer-mode.mjs";
 import { detectDiscountTextMismatch } from "./discount-validation.mjs";
 import { hasStrayPlaceholder } from "./discount-swap.mjs";
 import { campaignSegmentByKey } from "./campaign-segments.mjs";
@@ -63,7 +64,7 @@ function parseTime(value) {
 /**
  * @typedef {"blocked" | "hint" | "info"} ReviewLevel
  * @typedef {"skip" | "regenerate" | "narrow_basis" | "swap_products" | "rebuild_bundle" |
- *   "generate_hero" | "shorten_subject" | null} ReviewFix
+ *   "remove_discount" | "generate_hero" | "shorten_subject" | null} ReviewFix
  * @typedef {{
  *   key: string,
  *   level: ReviewLevel,
@@ -212,15 +213,26 @@ export function reviewChecks(item, ctx = {}) {
       });
     }
   }
-  // A scoped code (0058) needs something to be scoped to — the send route
-  // refuses otherwise (never mints a wider code than promised).
+  // A mail is a set offer OR single items (offer-mode.mjs): a set mail
+  // carries no code — the send paths refuse the combination.
+  if (offerConflict({ discountPercent: discount, hasActiveBundle: Boolean(item.bundle) })) {
+    blocked.push({
+      key: "offer_conflict",
+      level: "blocked",
+      title: "Set-Mail mit Rabattcode",
+      detail: "Eine Mail bietet entweder ein Set oder Einzelprodukte mit Code — der Versand würde abgelehnt. Rabatt entfernen (der Text wird neu generiert) oder das Set abhängen.",
+      fix: "remove_discount",
+    });
+  }
+  // "Gilt für: Set" (0058) is history: a code on a set no longer exists, and
+  // the send route refuses a draft that still carries it.
   if (discount > 0 && item.discountScope === "set" && !item.bundle) {
     blocked.push({
       key: "discount_scope_no_set",
       level: "blocked",
-      title: "Rabatt nur für das Set — aber kein Set angehängt",
-      detail: "Der Code soll nur für das Set gelten; ohne aktives Set-Angebot würde der Versand abgelehnt. Set anlegen oder „Gilt für“ ändern.",
-      fix: "rebuild_bundle",
+      title: "„Gilt für: Set“ gibt es nicht mehr",
+      detail: "Einen Rabattcode gibt es nur für Einzelprodukte — „Gilt für“ auf die gesamte Bestellung oder die Empfehlungen ändern, sonst würde der Versand abgelehnt.",
+      fix: null,
     });
   }
   if (
@@ -248,7 +260,10 @@ export function reviewChecks(item, ctx = {}) {
   }
 
   // ── hints: worth a look ─────────────────────────────────────────────────
-  if (item.lowConfidence === true) {
+  // A set mail shows only the set (offer-mode.mjs) — the recommendation hints
+  // are about the product grid of an item mail.
+  const setMail = Boolean(item.bundle);
+  if (item.lowConfidence === true && !setMail) {
     hints.push({
       key: "low_confidence",
       level: "hint",
@@ -258,8 +273,8 @@ export function reviewChecks(item, ctx = {}) {
       fix: "narrow_basis",
     });
   }
-  const recs = Array.isArray(item.recommendations) ? item.recommendations : [];
-  const unavailable = recs.filter((r) => r && (r.available === false || r.url == null));
+  const recs = !setMail && Array.isArray(item.recommendations) ? item.recommendations : [];
+  const unavailable = recs.filter((r) => r && (r.available !== true || r.url == null));
   if (unavailable.length > 0) {
     hints.push({
       key: "product_unavailable",

@@ -205,6 +205,10 @@ function LegacyMarketingMail({ customer }: { customer: CustomerDetail }) {
       ? ((send?.textMode ?? "detailed") as EmailTextModeValue)
       : (DEFAULT_EMAIL_TEXT_MODE as EmailTextModeValue)
   );
+  // An active, unsent set is attached to the next/open mail — a set mail
+  // carries no discount code (offer-mode.mjs), so the depth is fixed at 0.
+  const setAttached = customer.bundles.some((b) => b.status === "active" && !b.emailSentAt);
+  const effectiveDiscount = setAttached ? 0 : discountPercent;
   const [busy, setBusy] = React.useState<null | "draft" | "save" | "send" | "delete">(null);
 
   // Depth, instructions or text mode changed vs. the open draft ⇒ the visible
@@ -212,7 +216,7 @@ function LegacyMarketingMail({ customer }: { customer: CustomerDetail }) {
   const needsRegenerate =
     hasDraft &&
     send != null &&
-    (discountPercent !== send.discountPercent ||
+    (effectiveDiscount !== send.discountPercent ||
       instructions.trim() !== (send.adminInstructions ?? "") ||
       textMode !== (send.textMode ?? "detailed"));
 
@@ -227,7 +231,7 @@ function LegacyMarketingMail({ customer }: { customer: CustomerDetail }) {
         {
           body: {
             customerId: customer.id,
-            discountPercent,
+            discountPercent: effectiveDiscount,
             adminInstructions: instructions.trim() || null,
             textMode,
             // Overwrite an existing open draft; after a SENT mail this creates a
@@ -391,7 +395,8 @@ function LegacyMarketingMail({ customer }: { customer: CustomerDetail }) {
           </Field>
           <Field
             label="Rabatt (%)"
-            info={`0 = kein Rabatt, kein Code. ${DISCOUNT_PERCENT_MIN}–${DISCOUNT_PERCENT_MAX} % erzeugt beim Versand einen einmaligen, 7 Tage gültigen Code.`}
+            info={`0 = kein Rabatt, kein Code. ${DISCOUNT_PERCENT_MIN}–${DISCOUNT_PERCENT_MAX} % erzeugt beim Versand einen einmaligen, 7 Tage gültigen Code. Mit angehängtem Set gibt es keinen Code — die Mail zeigt dann nur das Set, der Set-Preis ist das Angebot.`}
+            hint={setAttached ? "Entfällt — ein Set ist angehängt" : undefined}
           >
             <Input
               id={id("discount")}
@@ -400,8 +405,8 @@ function LegacyMarketingMail({ customer }: { customer: CustomerDetail }) {
               min={DISCOUNT_PERCENT_MIN}
               max={DISCOUNT_PERCENT_MAX}
               step={1}
-              value={discountPercent}
-              disabled={disabled}
+              value={effectiveDiscount}
+              disabled={disabled || setAttached}
               onChange={(e) => setDiscountPercent(clampDiscountPercent(e.target.valueAsNumber))}
               className="w-24"
             />

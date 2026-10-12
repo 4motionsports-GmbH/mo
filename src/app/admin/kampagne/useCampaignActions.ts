@@ -24,9 +24,16 @@
 import * as React from "react";
 import { useRouter } from "next/navigation";
 import { EMAIL_TEXT_MODE_LABELS, DEFAULT_EMAIL_TEXT_MODE } from "@/lib/email-text-mode.mjs";
-import { DEFAULT_DISCOUNT_SCOPE, parseDiscountScope, type DiscountScope } from "@/lib/discount-scope.mjs";
+import {
+  DEFAULT_DISCOUNT_SCOPE,
+  parseDiscountScope,
+  parseEditableDiscountScope,
+  type DiscountScope,
+} from "@/lib/discount-scope.mjs";
 import { emailProseToText } from "@/lib/email-prose.mjs";
 import { bundleItemLabel, bundleItemList } from "@/lib/bundle-offer-core.mjs";
+import { OFFER_CONFLICT_MESSAGE } from "@/lib/offer-mode.mjs";
+import { parseProductRef } from "@/lib/product-ref.mjs";
 import { abGroupOf, reviewChecks, reviewVerdict } from "@/lib/campaign-review-checks.mjs";
 import {
   deskProgress,
@@ -38,7 +45,7 @@ import {
   upsertOutbox,
 } from "@/lib/campaign-desk-core.mjs";
 import { toast } from "../ui";
-import { adminFetch, errorMessage } from "../lib/admin-fetch";
+import { AdminApiError, adminFetch, errorMessage } from "../lib/admin-fetch";
 import type { EmailTextModeValue } from "../EmailTextModeToggle";
 import { forgetPreviews } from "./useRenderedPreview";
 import {
@@ -67,6 +74,7 @@ export type ReviewFix =
   | "narrow_basis"
   | "swap_products"
   | "rebuild_bundle"
+  | "remove_discount"
   | "generate_hero"
   | "shorten_subject"
   | null;
@@ -140,7 +148,8 @@ function loadPrepareSettings(campaignId: number, defaults: PrepareSettings): Pre
     return {
       count: [25, 50, 100].includes(Number(parsed.count)) ? Number(parsed.count) : PREPARE_TOTAL,
       depth: Number.isInteger(parsed.depth) ? Number(parsed.depth) : defaults.depth,
-      scope: parseDiscountScope(parsed.scope ?? defaults.scope),
+      // A stored "set" (retired, offer-mode.mjs) falls back to the default.
+      scope: parseEditableDiscountScope(parsed.scope ?? defaults.scope) ?? DEFAULT_DISCOUNT_SCOPE,
       textMode: (["detailed", "compact", "minimal"] as const).includes(
         parsed.textMode as EmailTextModeValue
       )
@@ -242,6 +251,29 @@ interface BundleOfferResponse {
 
 const fail = (title: string, err: unknown) =>
   toast({ variant: "error", title, description: errorMessage(err) });
+
+/** Offender refs/ids → the names the operator sees on the card. */
+function offenderList(offenders: string[], recs: CampaignRecommendation[]): string {
+  const nameOf = (o: string) =>
+    recs.find((r) => r.id === o)?.name ??
+    recs.find((r) => parseProductRef(r.id).productId === parseProductRef(o).productId)?.name ??
+    o;
+  return offenders.map(nameOf).join(", ");
+}
+
+/** A refusal that lists offenders (bundles/create, campaign/recommendations)
+ * gets its ids replaced by the card's product names — the server only knows
+ * names for items still in the catalog. Other errors pass through. */
+function withOffenderNames(err: unknown, recs: CampaignRecommendation[]): unknown {
+  if (!(err instanceof AdminApiError)) return err;
+  const details = err.details as { offenders?: unknown; offenderNames?: Record<string, string> } | null;
+  const offenders = Array.isArray(details?.offenders) ? details.offenders.map(String) : [];
+  if (offenders.length === 0) return err;
+  const known = details?.offenderNames ?? {};
+  const names = offenders.map((o) => known[o] ?? offenderList([o], recs));
+  const reason = err.message.split(":")[0].replace(/\.$/, "");
+  return new AdminApiError(`${reason}: ${names.join(", ")}.`, err.status, err.code, err.details);
+}
 
 const REGENERATE_BATCH_MS = 1500;
 const OUTBOX_FADE_MS = 8000;
@@ -1016,6 +1048,11 @@ export function useCampaignActions({
     async (contactId: number, depth: number) => {
       const item = itemsRef.current.find((it) => it.contactId === contactId);
       if (!item || depth === item.discountPercent) return;
+      // A set mail carries no code (offer-mode.mjs); removing one stays allowed.
+      if (item.bundle && depth > 0) {
+        toast({ variant: "warning", title: "Kein Rabattcode bei einem Set", description: OFFER_CONFLICT_MESSAGE });
+        return;
+      }
       const busyKind = busyById[contactId];
       if (busyKind && busyKind !== "regen") return;
       setBusy(contactId, "discount");
@@ -1037,12 +1074,12 @@ export function useCampaignActions({
     [busyById, setBusy, patchItem, scheduleRegenerate]
   );
 
-  /** What the code applies to (Alles / Empfehlungen / Set): persists on the
-   * draft, then regenerates — the prose states the scope, so it must follow. */
+  /** What the code applies to (Alles / Empfehlungen): persists on the draft,
+   * then regenerates — the prose states the scope, so it must follow. */
   const setDiscountScope = React.useCallback(
     async (contactId: number, scope: DiscountScope) => {
       const item = itemsRef.current.find((it) => it.contactId === contactId);
-      if (!item || scope === item.discountScope) return;
+      if (!item || scope === item.discountScope || item.bundle) return;
       const busyKind = busyById[contactId];
       if (busyKind && busyKind !== "regen") return;
       setBusy(contactId, "discount");
@@ -1102,35 +1139,36 @@ export function useCampaignActions({
     [busyById, patchItem, scheduleRegenerate]
   );
 
-  /** Persist a curated recommendation list; the server also rebuilds an
-   * attached bundle to match. Immediate persist per change — no save button. */
+  /** Persist a curated recommendation list (item mails only — while a set is
+   * attached the set is the offer and its contents are fixed). Immediate
+   * persist per change — no save button. */
   const updateRecommendations = React.useCallback(
     async (contactId: number, productIds: string[]) => {
       const item = itemsRef.current.find((it) => it.contactId === contactId);
-      if (!item) return;
+      if (!item || item.bundle) return;
       const busyKind = busyById[contactId];
       if (busyKind && busyKind !== "regen") return;
       setBusy(contactId, "recs");
       try {
         const json = await adminFetch<{
           recommendations?: CampaignRecommendation[];
-          bundle?: CampaignBundle | null;
-          bundleError?: string | null;
+          dropped?: string[];
         }>("/api/admin/campaign/recommendations", { body: { contactId, productIds } });
         patchItem(contactId, {
           recommendations: json.recommendations ?? item.recommendations,
-          // The server rebuilt (or failed to rebuild) an attached bundle; when
-          // none was attached, `bundle` is null and stays null.
-          bundle: item.bundle ? (json.bundle ?? null) : (json.bundle ?? item.bundle),
           lowConfidence: false,
         });
-        if (json.bundleError) {
-          toast({ variant: "warning", title: "Set-Angebot", description: json.bundleError });
+        if (json.dropped?.length) {
+          toast({
+            variant: "warning",
+            title: "Nicht mehr verfügbare Empfehlungen entfernt",
+            description: offenderList(json.dropped, item.recommendations),
+          });
         }
         scheduleRegenerate(contactId);
       } catch (err) {
         setBusy(contactId, null);
-        fail("Empfehlungen nicht gespeichert", err);
+        fail("Empfehlungen nicht gespeichert", withOffenderNames(err, item.recommendations));
       }
     },
     [busyById, setBusy, patchItem, scheduleRegenerate]
@@ -1156,8 +1194,11 @@ export function useCampaignActions({
     [busyById, runRegenerateGuarded]
   );
 
+  /** Build a set from chosen recommendations (ref + count each). The set
+   * turns the card into a set mail: the server clears its discount code
+   * (offer-mode.mjs) and the text is regenerated for the set. */
   const createBundle = React.useCallback(
-    async (contactId: number, productIds: string[], priceOverride: string) => {
+    async (contactId: number, choices: Array<{ ref: string; quantity: number }>, priceOverride: string) => {
       const item = itemsRef.current.find((it) => it.contactId === contactId);
       if (!item) return false;
       const busyKind = busyById[contactId];
@@ -1167,7 +1208,12 @@ export function useCampaignActions({
         const json = await adminFetch<{ offer?: BundleOfferResponse }>("/api/admin/bundles/create", {
           body: {
             campaignContactId: contactId,
-            components: productIds.map((productId) => ({ productId })),
+            // Recommendations are refs ("handle~variantId" pins a variant) —
+            // split them so the set uses exactly the recommended variant.
+            components: choices.map(({ ref, quantity }) => {
+              const { productId, variantId } = parseProductRef(ref);
+              return { productId, ...(variantId ? { variantId } : {}), quantity };
+            }),
             ...(priceOverride.trim() ? { bundlePriceOverride: priceOverride.trim() } : {}),
           },
         });
@@ -1182,16 +1228,18 @@ export function useCampaignActions({
               currency: json.offer.currency,
               expiresAt: json.offer.expiresAt,
             },
+            discountPercent: 0,
+            discountScope: "all",
           });
-          toast({ variant: "success", title: "Set-Angebot erstellt", description: "Text wird angepasst…" });
-          scheduleRegenerate(contactId);
+          toast({ variant: "success", title: "Set-Angebot erstellt", description: "Die Mail zeigt jetzt nur das Set — Text wird angepasst…" });
+          scheduleRegenerate(contactId, { depth: 0, scope: "all" });
           return true;
         }
         setBusy(contactId, null);
         return false;
       } catch (err) {
         setBusy(contactId, null);
-        fail("Set-Erstellung fehlgeschlagen", err);
+        fail("Set nicht erstellt", withOffenderNames(err, item.recommendations));
         return false;
       }
     },
@@ -1208,7 +1256,7 @@ export function useCampaignActions({
       try {
         await adminFetch("/api/admin/bundles/archive", { body: { id: item.bundle.id } });
         patchItem(contactId, { bundle: null });
-        toast({ variant: "success", title: "Set-Angebot entfernt", description: "Text wird angepasst…" });
+        toast({ variant: "success", title: "Set-Angebot entfernt", description: "Die Mail zeigt wieder die Einzelprodukte — Text wird angepasst…" });
         scheduleRegenerate(contactId);
       } catch (err) {
         setBusy(contactId, null);

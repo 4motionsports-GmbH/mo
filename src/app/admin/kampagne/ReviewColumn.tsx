@@ -2,8 +2,10 @@
 
 // The review column („Prüfung“) of the desk: blocks separated by hairlines —
 // Prüfpunkte (the precomputed verdict with one fix action per check),
-// Empfehlungen (thumbnails, prices, remove, „+ Produkt“), Angebot (Rabatt
-// depth + Set line), Text (Sprache, Modus — the two settings that
+// Empfehlungen (thumbnails, prices, stock, remove, „+ Produkt“ — or, in a set
+// mail, „Im Set“ with the set's contents), Angebot (what the mail offers:
+// single products with an optional Rabatt, or one set — never both,
+// offer-mode.mjs), Text (Sprache, Modus — the two settings that
 // regenerate), Hero (only when the campaign design has a hero), Kundenprofil
 // (persona + excerpt of the central profile), Kaufhistorie (collapsed, with
 // the recommendation basis) and Kontakt (facts + Verlauf + Abmelden + Löschen).
@@ -14,6 +16,8 @@ import Link from "next/link";
 import { AlertTriangle, CircleCheck, ExternalLink, History, Info, MailX, Plus, Trash2, X } from "lucide-react";
 import { ADMIN_DATE, ADMIN_DATE_TIME_SHORT, formatAdmin } from "@/lib/admin-datetime.mjs";
 import { eur, eurFromCents, money, num, plural } from "@/lib/admin-format.mjs";
+import { stockLabel } from "@/lib/stock-level.mjs";
+import { offerKind } from "@/lib/offer-mode.mjs";
 import { campaignSegmentByKey } from "@/lib/campaign-segments.mjs";
 import { DISCOUNT_PERCENT_MAX, clampDiscountPercent } from "@/lib/discount-validation.mjs";
 import { DISCOUNT_SCOPE_OPTIONS, type DiscountScope } from "@/lib/discount-scope.mjs";
@@ -32,7 +36,6 @@ import {
   SegmentedControl,
   Sheet,
   StatusBadge,
-  Tooltip,
   cn,
   toast,
   useConfirm,
@@ -85,6 +88,7 @@ const FIX_LABEL: Record<NonNullable<ReviewCheck["fix"]>, string> = {
   narrow_basis: "Basis anpassen",
   swap_products: "Produkt tauschen",
   rebuild_bundle: "Set neu erstellen",
+  remove_discount: "Rabatt entfernen",
   generate_hero: "Hero erzeugen",
   shorten_subject: "Betreff kürzen",
 };
@@ -172,6 +176,9 @@ export function ReviewColumn({
         if (item.bundle) void actions.archiveBundle(id);
         setBundleOpen(true);
         break;
+      case "remove_discount":
+        void actions.setDiscount(id, 0);
+        break;
       case "generate_hero":
         heroRef.current?.generate();
         break;
@@ -184,6 +191,18 @@ export function ReviewColumn({
   };
 
   const recIds = item.recommendations.map((r) => r.id);
+  const isSetMail = offerKind(Boolean(item.bundle)) === "set";
+  const availableRecs = item.recommendations.filter((r) => r.available === true).length;
+  const switchToItems = async () => {
+    const ok = await confirm({
+      title: "Set entfernen?",
+      description:
+        "Die Mail zeigt dann wieder die einzelnen Empfehlungen (optional mit Rabattcode). Das Set wird beendet und in Shopify gelöscht; der Text wird neu generiert.",
+      confirmLabel: "Set entfernen",
+      tone: "destructive",
+    });
+    if (ok) void actions.archiveBundle(id);
+  };
   const discountValue = DISCOUNT_STEPS.includes(String(item.discountPercent) as (typeof DISCOUNT_STEPS)[number])
     ? String(item.discountPercent)
     : "custom";
@@ -242,195 +261,179 @@ export function ReviewColumn({
         )}
       </section>
 
-      {/* Empfehlungen */}
-      <section className="px-3 py-2.5">
-        <BlockHeader
-          title="Empfehlungen"
-          meta={num(item.recommendations.length)}
-          info="Änderungen werden sofort gespeichert, ein angehängtes Set wird angepasst und der Text automatisch neu generiert."
-          actions={
-            <Button
-              variant="ghost"
-              size="xs"
-              className="-my-1 h-6 px-1.5"
-              aria-pressed={pickerOpen}
-              disabled={locked}
-              onClick={() => setPickerOpen((v) => !v)}
-            >
-              <Plus /> Produkt
-            </Button>
-          }
-        />
-        {item.recommendations.length === 0 ? (
-          <div className="text-xs text-muted-foreground">Keine.</div>
-        ) : (
-          <ul className="space-y-1">
-            {item.recommendations.map((r) => (
-              <li key={r.id} className="flex items-center gap-2 text-xs">
-                {r.imageUrl ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img
-                    src={r.imageUrl}
-                    alt=""
-                    className="size-8 shrink-0 rounded-md border border-border bg-white object-contain"
-                    onError={(e) => {
-                      e.currentTarget.style.visibility = "hidden";
-                    }}
-                  />
-                ) : (
-                  <span className="size-8 shrink-0 rounded-md border border-dashed border-border bg-surface-2" aria-hidden />
-                )}
-                <span className="min-w-0 flex-1">
-                  {r.url ? (
-                    <a
-                      href={r.url}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="inline-flex max-w-full items-center gap-1 truncate underline-offset-2 hover:underline"
-                    >
-                      <span className="truncate">{r.name}</span>
-                      <ExternalLink className="size-3 shrink-0 text-muted-foreground" aria-hidden />
-                    </a>
-                  ) : (
-                    <span className="block truncate">{r.name}</span>
-                  )}
-                  {r.available === false ? (
-                    <StatusBadge tone="warning" className="mt-0.5">
-                      Ausverkauft
-                    </StatusBadge>
-                  ) : r.available === null ? (
-                    <StatusBadge tone="warning" className="mt-0.5">
-                      Nicht im Katalog
-                    </StatusBadge>
-                  ) : null}
+      {/* Empfehlungen — in a set mail: the set's contents */}
+      {isSetMail && item.bundle ? (
+        <section className="px-3 py-2.5">
+          <BlockHeader
+            title="Im Set"
+            meta={num(item.bundle.components.length)}
+            info="Die Mail zeigt nur dieses Set — keine einzelnen Empfehlungen, keinen Rabattcode. Um den Inhalt zu ändern, das Set unter „Angebot“ entfernen und neu erstellen."
+          />
+          <ul className="space-y-1 text-xs">
+            {item.bundle.components.map((line, i) => (
+              <li key={i} className="flex items-baseline gap-1.5">
+                <span className="text-muted-foreground" aria-hidden>
+                  •
                 </span>
-                <span className="shrink-0 text-muted-foreground tabular-nums">
-                  {r.price !== null ? eur(r.price) : ""}
-                </span>
-                <IconButton
-                  label={`${r.name} entfernen`}
-                  size="icon-sm"
-                  className="-my-1 shrink-0 text-muted-foreground hover:text-destructive"
-                  disabled={locked || item.recommendations.length <= 1}
-                  onClick={() => void actions.updateRecommendations(id, recIds.filter((x) => x !== r.id))}
-                >
-                  <X />
-                </IconButton>
+                <span className="min-w-0 flex-1 truncate">{line}</span>
               </li>
             ))}
           </ul>
-        )}
-        {pickerOpen && (
-          <div className="mt-2">
-            <CatalogProductPicker
-              placeholder="Produkt hinzufügen (tippen)…"
-              ariaLabel="Produkt für Empfehlung suchen"
-              maxResults={6}
-              showThumbnails
-              onSelect={(hit, variant) => {
-                const ref = variant?.variantId ? `${hit.productId}~${variant.variantId}` : hit.productId;
-                if (locked || recIds.includes(ref)) return;
-                void actions.updateRecommendations(id, [...recIds, ref]);
-                setPickerOpen(false);
-              }}
-              isSelected={(hit, variant) =>
-                recIds.includes(variant?.variantId ? `${hit.productId}~${variant.variantId}` : hit.productId)
-              }
-              disableReason={(hit, variant) => {
-                if (locked) return "Speichert…";
-                if (variant ? !variant.available : !hit.inStock) return "Ausverkauft";
-                return null;
-              }}
-              onError={(err) =>
-                toast({ variant: "error", title: "Katalogsuche fehlgeschlagen", description: err.message })
-              }
-            />
-          </div>
-        )}
-      </section>
+        </section>
+      ) : (
+        <section className="px-3 py-2.5">
+          <BlockHeader
+            title="Empfehlungen"
+            meta={num(item.recommendations.length)}
+            info="Nur verfügbare Produkte lassen sich hinzufügen; der Bestand stammt aus dem letzten Katalogabgleich mit Shopify (nur wo Shopify ihn führt). Ausgegraute Empfehlungen sind inzwischen ausverkauft oder nicht mehr im Katalog — tauschen; beim nächsten Speichern fallen sie automatisch heraus. Änderungen werden sofort gespeichert und der Text automatisch neu generiert."
+            actions={
+              <Button
+                variant="ghost"
+                size="xs"
+                className="-my-1 h-6 px-1.5"
+                aria-pressed={pickerOpen}
+                disabled={locked}
+                onClick={() => setPickerOpen((v) => !v)}
+              >
+                <Plus /> Produkt
+              </Button>
+            }
+          />
+          {item.recommendations.length === 0 ? (
+            <div className="text-xs text-muted-foreground">Keine.</div>
+          ) : (
+            <ul className="space-y-1">
+              {item.recommendations.map((r) => {
+                const available = r.available === true;
+                const stock = stockLabel(r);
+                return (
+                  <li key={r.id} className={cn("flex items-center gap-2 text-xs", !available && "text-muted-foreground")}>
+                    {r.imageUrl ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={r.imageUrl}
+                        alt=""
+                        className={cn(
+                          "size-8 shrink-0 rounded-md border border-border bg-white object-contain",
+                          !available && "opacity-40 grayscale"
+                        )}
+                        onError={(e) => {
+                          e.currentTarget.style.visibility = "hidden";
+                        }}
+                      />
+                    ) : (
+                      <span className="size-8 shrink-0 rounded-md border border-dashed border-border bg-surface-2" aria-hidden />
+                    )}
+                    <span className="min-w-0 flex-1">
+                      {r.url ? (
+                        <a
+                          href={r.url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="inline-flex max-w-full items-center gap-1 truncate underline-offset-2 hover:underline"
+                        >
+                          <span className={cn("truncate", !available && "line-through")}>{r.name}</span>
+                          <ExternalLink className="size-3 shrink-0 text-muted-foreground" aria-hidden />
+                        </a>
+                      ) : (
+                        <span className={cn("block truncate", !available && "line-through")}>{r.name}</span>
+                      )}
+                      {!available ? (
+                        <StatusBadge tone="warning" className="mt-0.5">
+                          {stock ?? "Nicht verfügbar"}
+                        </StatusBadge>
+                      ) : stock ? (
+                        <span className="block text-2xs text-muted-foreground tabular-nums">{stock}</span>
+                      ) : null}
+                    </span>
+                    <span className="shrink-0 text-muted-foreground tabular-nums">
+                      {r.price !== null ? eur(r.price) : ""}
+                    </span>
+                    <IconButton
+                      label={`${r.name} entfernen`}
+                      size="icon-sm"
+                      className="-my-1 shrink-0 text-muted-foreground hover:text-destructive"
+                      disabled={locked || item.recommendations.length <= 1}
+                      onClick={() => void actions.updateRecommendations(id, recIds.filter((x) => x !== r.id))}
+                    >
+                      <X />
+                    </IconButton>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+          {pickerOpen && (
+            <div className="mt-2">
+              <CatalogProductPicker
+                placeholder="Produkt hinzufügen (tippen)…"
+                ariaLabel="Produkt für Empfehlung suchen"
+                maxResults={6}
+                showThumbnails
+                onSelect={(hit, variant) => {
+                  const ref = variant?.variantId ? `${hit.productId}~${variant.variantId}` : hit.productId;
+                  if (locked || recIds.includes(ref)) return;
+                  void actions.updateRecommendations(id, [...recIds, ref]);
+                  setPickerOpen(false);
+                }}
+                isSelected={(hit, variant) =>
+                  recIds.includes(variant?.variantId ? `${hit.productId}~${variant.variantId}` : hit.productId)
+                }
+                disableReason={(hit, variant) => {
+                  if (locked) return "Speichert…";
+                  if (variant ? !variant.available : !hit.inStock) return "Ausverkauft";
+                  return null;
+                }}
+                onError={(err) =>
+                  toast({ variant: "error", title: "Katalogsuche fehlgeschlagen", description: err.message })
+                }
+              />
+            </div>
+          )}
+        </section>
+      )}
 
-      {/* Angebot */}
+      {/* Angebot — single products (+ optional code) XOR one set */}
       <section className="px-3 py-2.5">
         <BlockHeader
           title="Angebot"
           info={
-            item.discountPercent > 0
-              ? `Aktuell ${item.discountPercent} % — der echte MK-Code wird beim Senden erzeugt${
-                  item.discountExpiresAt
-                    ? ` (voraussichtlich gültig bis ${formatAdmin(item.discountExpiresAt, ADMIN_DATE)})`
-                    : ""
-                }. „Gilt für“ legt fest, worauf Shopify den Code anwendet: die gesamte Bestellung, nur die empfohlenen Produkte dieser Mail oder nur das angehängte Set — Coupon-Text und Fließtext folgen dem. Eine Änderung generiert den Text automatisch neu.`
-              : "Kein Rabatt. Eine Änderung generiert den Text automatisch neu; Code und Rabattzeile werden beim Versand angehängt."
+            isSetMail
+              ? "Set-Mail: Die Mail zeigt nur das Set — mit Set-Preis, Ersparnis gegenüber dem Normalpreis und „Zur Kasse“. Einen Rabattcode gibt es bei einem Set nicht; der Set-Preis ist das Angebot. „Einzelprodukte“ entfernt das Set und generiert den Text neu."
+              : item.discountPercent > 0
+                ? `Einzelprodukte mit ${item.discountPercent} % — der echte MK-Code wird beim Senden erzeugt${
+                    item.discountExpiresAt
+                      ? ` (voraussichtlich gültig bis ${formatAdmin(item.discountExpiresAt, ADMIN_DATE)})`
+                      : ""
+                  }. „Gilt für“ legt fest, worauf Shopify den Code anwendet: die gesamte Bestellung oder nur die empfohlenen Produkte dieser Mail — Coupon-Text und Fließtext folgen dem. Eine Mail bietet entweder Einzelprodukte (optional mit Code) oder ein Set, nie beides. Eine Änderung generiert den Text automatisch neu.`
+                : "Eine Mail bietet entweder Einzelprodukte (optional mit Rabattcode) oder ein Set, nie beides. „Set“ öffnet den Set-Dialog; der Set-Preis ersetzt dann den Code. Eine Änderung generiert den Text automatisch neu; Code und Rabattzeile werden beim Versand angehängt."
           }
         />
         <div className="flex flex-col gap-2 text-xs">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="w-12 shrink-0 font-medium text-muted-foreground">Rabatt</span>
+            <span className="w-12 shrink-0 font-medium text-muted-foreground">Art</span>
             <SegmentedControl
-              label="Rabatt-Tiefe"
-              value={discountValue}
+              label="Angebotsart"
+              value={isSetMail ? "set" : "items"}
               disabled={locked}
               onChange={(v) => {
-                if (v === "custom") {
-                  setCustomDiscount(String(item.discountPercent));
-                  return;
-                }
-                setCustomDiscount(null);
-                void actions.setDiscount(id, Number(v));
+                if (v === "set" && !isSetMail) setBundleOpen(true);
+                if (v === "items" && isSetMail) void switchToItems();
               }}
               options={[
-                ...DISCOUNT_STEPS.map((v) => ({ value: v as string, label: `${v} %` })),
-                { value: "custom", label: discountValue === "custom" ? `${item.discountPercent} %` : "…" },
+                { value: "items", label: "Einzelprodukte" },
+                { value: "set", label: "Set", disabled: !isSetMail && (!shopifyConfigured || availableRecs === 0) },
               ]}
             />
-            {customDiscount !== null && (
-              <form
-                className="flex items-center gap-1"
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  const depth = clampDiscountPercent(customDiscount);
-                  setCustomDiscount(null);
-                  void actions.setDiscount(id, depth);
-                }}
-              >
-                <Input
-                  type="number"
-                  min={0}
-                  max={DISCOUNT_PERCENT_MAX}
-                  value={customDiscount}
-                  onChange={(e) => setCustomDiscount(e.target.value)}
-                  className="h-7 w-16 text-xs"
-                  aria-label="Rabatt-Tiefe in Prozent"
-                  autoFocus
-                />
-                <Button type="submit" variant="outline" size="xs" disabled={locked}>
-                  Übernehmen
-                </Button>
-              </form>
+            {!isSetMail && !shopifyConfigured && <span className="text-muted-foreground">Shopify nicht konfiguriert</span>}
+            {!isSetMail && shopifyConfigured && availableRecs === 0 && (
+              <span className="text-muted-foreground">Keine verfügbaren Empfehlungen</span>
             )}
           </div>
-          {item.discountPercent > 0 && (
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="w-12 shrink-0 font-medium text-muted-foreground">Gilt für</span>
-              <SegmentedControl
-                label="Rabatt gilt für"
-                value={item.discountScope}
-                disabled={locked}
-                onChange={(v) => void actions.setDiscountScope(id, v as DiscountScope)}
-                options={DISCOUNT_SCOPE_OPTIONS.map((o) => ({ value: o.value, label: o.label }))}
-              />
-              {item.discountScope === "set" && !item.bundle && (
-                <span className="text-warning">Kein Set angehängt</span>
-              )}
-              {item.discountScope === "recommendations" && item.recommendations.length === 0 && (
-                <span className="text-warning">Keine Empfehlungen</span>
-              )}
-            </div>
-          )}
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="w-12 shrink-0 font-medium text-muted-foreground">Set</span>
-            {item.bundle ? (
-              <>
+          {isSetMail && item.bundle ? (
+            <>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="w-12 shrink-0 font-medium text-muted-foreground">Set</span>
                 <span className="min-w-0 flex-1 truncate">
                   <span className="font-medium">{item.bundle.title}</span>
                   <span className="text-muted-foreground tabular-nums">
@@ -443,52 +446,99 @@ export function ReviewColumn({
                     {item.bundle.expiresAt ? ` · bis ${formatAdmin(item.bundle.expiresAt, ADMIN_DATE)}` : ""}
                   </span>
                 </span>
-                <Tooltip
-                  content={
-                    <ul className="list-disc pl-4">
-                      {item.bundle.components.map((line, i) => (
-                        <li key={i}>{line}</li>
-                      ))}
-                    </ul>
-                  }
-                >
-                  <span tabIndex={0} className="text-muted-foreground">
-                    <Info className="size-3.5" aria-label="Bestandteile" />
-                  </span>
-                </Tooltip>
-                <Button
-                  variant="ghost"
-                  size="xs"
-                  className="-my-1 h-6 px-1.5"
+                {Number(item.bundle.bundlePrice) < Number(item.bundle.componentsSum) && Number(item.bundle.componentsSum) > 0 && (
+                  <StatusBadge tone="success" dot={false} className="tabular-nums">
+                    −{num(Math.round((1 - Number(item.bundle.bundlePrice) / Number(item.bundle.componentsSum)) * 100))} %
+                  </StatusBadge>
+                )}
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="w-12 shrink-0 font-medium text-muted-foreground">Rabatt</span>
+                {item.discountPercent > 0 ? (
+                  <>
+                    <span className="text-destructive">Noch {num(item.discountPercent)} % gesetzt — bei einem Set nicht erlaubt</span>
+                    <Button
+                      variant="outline"
+                      size="xs"
+                      disabled={locked}
+                      loading={busy === "discount"}
+                      onClick={() => void actions.setDiscount(id, 0)}
+                    >
+                      Rabatt entfernen
+                    </Button>
+                  </>
+                ) : (
+                  <span className="text-muted-foreground">Entfällt — der Set-Preis ist das Angebot</span>
+                )}
+              </div>
+            </>
+          ) : (
+            <>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="w-12 shrink-0 font-medium text-muted-foreground">Rabatt</span>
+                <SegmentedControl
+                  label="Rabatt-Tiefe"
+                  value={discountValue}
                   disabled={locked}
-                  loading={busy === "bundle"}
-                  onClick={() => void actions.archiveBundle(id)}
-                >
-                  Entfernen
-                </Button>
-              </>
-            ) : (
-              <Tooltip
-                content={
-                  !shopifyConfigured
-                    ? "Shopify nicht konfiguriert — keine Set-Angebote möglich."
-                    : "Keine Empfehlungen, aus denen ein Set gebaut werden könnte."
-                }
-                disabled={shopifyConfigured && item.recommendations.length > 0}
-              >
-                <span className="inline-flex">
-                  <Button
-                    variant="outline"
-                    size="xs"
-                    disabled={locked || !shopifyConfigured || item.recommendations.length === 0}
-                    onClick={() => setBundleOpen(true)}
+                  onChange={(v) => {
+                    if (v === "custom") {
+                      setCustomDiscount(String(item.discountPercent));
+                      return;
+                    }
+                    setCustomDiscount(null);
+                    void actions.setDiscount(id, Number(v));
+                  }}
+                  options={[
+                    ...DISCOUNT_STEPS.map((v) => ({ value: v as string, label: `${v} %` })),
+                    { value: "custom", label: discountValue === "custom" ? `${item.discountPercent} %` : "…" },
+                  ]}
+                />
+                {customDiscount !== null && (
+                  <form
+                    className="flex items-center gap-1"
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      const depth = clampDiscountPercent(customDiscount);
+                      setCustomDiscount(null);
+                      void actions.setDiscount(id, depth);
+                    }}
                   >
-                    Set erstellen…
-                  </Button>
-                </span>
-              </Tooltip>
-            )}
-          </div>
+                    <Input
+                      type="number"
+                      min={0}
+                      max={DISCOUNT_PERCENT_MAX}
+                      value={customDiscount}
+                      onChange={(e) => setCustomDiscount(e.target.value)}
+                      className="h-7 w-16 text-xs"
+                      aria-label="Rabatt-Tiefe in Prozent"
+                      autoFocus
+                    />
+                    <Button type="submit" variant="outline" size="xs" disabled={locked}>
+                      Übernehmen
+                    </Button>
+                  </form>
+                )}
+              </div>
+              {item.discountPercent > 0 && (
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="w-12 shrink-0 font-medium text-muted-foreground">Gilt für</span>
+                  <SegmentedControl
+                    label="Rabatt gilt für"
+                    value={item.discountScope}
+                    disabled={locked}
+                    onChange={(v) => void actions.setDiscountScope(id, v as DiscountScope)}
+                    options={DISCOUNT_SCOPE_OPTIONS.map((o) => ({ value: o.value, label: o.label }))}
+                  />
+                  {item.discountScope === "set" && (
+                    <span className="text-warning">„Set“ gibt es nicht mehr — bitte wählen</span>
+                  )}
+                  {item.discountScope === "recommendations" && availableRecs === 0 && (
+                    <span className="text-warning">Keine verfügbaren Empfehlungen</span>
+                  )}
+                </div>
+              )}
+            </>
+          )}
         </div>
       </section>
 
@@ -680,20 +730,21 @@ export function ReviewColumn({
         open={bundleOpen}
         onOpenChange={setBundleOpen}
         title="Set-Angebot erstellen"
-        description="Erstellt ein echtes (unlisted) Shopify-Set aus den Empfehlungen; der Text wird automatisch neu generiert und der Angebots-Block beim Versand angehängt."
-        size="sm"
+        description="Erstellt ein echtes (unlisted) Shopify-Set aus den Empfehlungen. Die Mail zeigt dann nur das Set; der Text wird automatisch neu generiert."
+        size="md"
       >
-        <BundleSection
-          bundle={null}
-          recommendations={item.recommendations}
-          shopifyConfigured={shopifyConfigured}
-          busy={locked}
-          creating={busy === "bundle"}
-          onCreate={(ids, price) => {
-            void actions.createBundle(id, ids, price).then((ok) => ok && setBundleOpen(false));
-          }}
-          onArchive={() => void actions.archiveBundle(id)}
-        />
+        {bundleOpen && (
+          <BundleSection
+            recommendations={item.recommendations}
+            shopifyConfigured={shopifyConfigured}
+            busy={locked}
+            creating={busy === "bundle"}
+            discountPercent={item.discountPercent}
+            onCreate={(choices, price) => {
+              void actions.createBundle(id, choices, price).then((ok) => ok && setBundleOpen(false));
+            }}
+          />
+        )}
       </Sheet>
       {confirmDialog}
     </div>

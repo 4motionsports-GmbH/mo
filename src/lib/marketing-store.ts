@@ -465,6 +465,35 @@ export async function updateDraftText(
 }
 
 /**
+ * Drop the discount of an OPEN draft — a set was attached to it, and a set
+ * mail carries no code (offer-mode.mjs). Nothing was minted yet (codes are
+ * minted at send), so clearing the depth is all it takes; the prose follows
+ * on the next regenerate. Returns true when a draft row was updated.
+ */
+export async function clearDraftDiscount(
+  sendId: number,
+  sql: Sql | null = getSql()
+): Promise<boolean> {
+  if (!sql) return false;
+  try {
+    const rows = (await sql`
+      UPDATE marketing_sends
+         SET discount_percent = 0,
+             discount_code = NULL,
+             discount_code_gid = NULL,
+             discount_expires_at = NULL,
+             updated_at = now()
+       WHERE id = ${sendId} AND status = 'draft'
+      RETURNING id
+    `) as Array<Record<string, unknown>>;
+    return rows.length > 0;
+  } catch (err) {
+    reportError(err, { route: "lib/marketing-store", phase: "clearDraftDiscount" });
+    return false;
+  }
+}
+
+/**
  * DELETE an unsent marketing-email draft. Guarded to status = 'draft' — the
  * inverse of the "sent is read-only" guarantee: a 'sent' row is immutable (never
  * deletable, preserves the audit/analytics record) and an 'approved' row is an

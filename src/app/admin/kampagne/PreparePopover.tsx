@@ -10,7 +10,7 @@ import * as React from "react";
 import { Sparkles } from "lucide-react";
 import { EMAIL_TEXT_MODE_LABELS } from "@/lib/email-text-mode.mjs";
 import { clampDiscountPercent } from "@/lib/discount-validation.mjs";
-import { DISCOUNT_SCOPE_OPTIONS, parseDiscountScope } from "@/lib/discount-scope.mjs";
+import { DEFAULT_DISCOUNT_SCOPE, DISCOUNT_SCOPE_OPTIONS, parseEditableDiscountScope } from "@/lib/discount-scope.mjs";
 import { prepareEstimate } from "@/lib/campaign-desk-core.mjs";
 import { eur, num, plural } from "@/lib/admin-format.mjs";
 import { Button, Checkbox, InfoTip, Popover, Select } from "../ui";
@@ -125,7 +125,7 @@ export function PreparePopover({
               <Select
                 id="campaign-prepare-scope"
                 value={settings.scope}
-                onChange={(e) => onSettings({ scope: parseDiscountScope(e.target.value) })}
+                onChange={(e) => onSettings({ scope: parseEditableDiscountScope(e.target.value) ?? DEFAULT_DISCOUNT_SCOPE })}
                 className="h-8 w-auto min-w-[8rem] py-0 pr-8 text-xs"
                 aria-label="Worauf der Rabattcode der neuen Entwürfe gilt"
                 disabled={disabled}

@@ -33,6 +33,7 @@ import { prepareDraftForContact } from "@/lib/campaign-prepare";
 import { shouldReuseCampaignDraft } from "@/lib/campaign-draft-core.mjs";
 import { getActiveBundleForCampaignContact } from "@/lib/bundle-offers-store";
 import { resolveProductSelections } from "@/lib/product-catalog";
+import { bundleItemLabel, bundleItemList } from "@/lib/bundle-offer-core.mjs";
 import { recommendationView } from "@/lib/campaign-recommendation-view";
 import { isSuppressed } from "@/lib/email-capture-store";
 import {
@@ -64,7 +65,8 @@ async function draftResponsePayload(contactId: number, draft: CampaignDraftRow) 
       ? {
           id: bundle.id,
           title: bundle.title ?? "Dein persönliches Set",
-          components: bundle.components.map((c) => c.title),
+          // "2× Name" — the same counted lines the desk shows after creating a set.
+          components: bundleItemList(bundle.components).map(bundleItemLabel),
           bundlePrice: bundle.bundlePrice,
           componentsSum: bundle.componentsSum,
           currency: bundle.currency,
