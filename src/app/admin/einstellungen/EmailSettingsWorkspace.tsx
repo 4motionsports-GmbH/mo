@@ -11,6 +11,9 @@
 //   - Zuordnung: per e-mail type, which design is currently live ("version
 //     control" pointer — older designs stay selectable forever).
 //   - Versand-Konfiguration + Systemstatus: env-derived, read-only.
+//   - Kontakthäufigkeit: the soft warning threshold („Warnung ab n Werbe-Mails
+//     in N Tagen“, admin_settings 0078) — editable; next to it, read-only, the
+//     HARD cap MARKETING_MIN_SEND_INTERVAL_DAYS so the two never get mixed up.
 //
 // Designs are NOT edited here — a new design is a new code module; after
 // deployment it appears in this list automatically. The server component
@@ -18,7 +21,7 @@
 // and calls the guarded /api/admin/email-designs routes.
 
 import * as React from "react";
-import { Check, Eye, Mail, Palette } from "lucide-react";
+import { BellRing, Check, Eye, Mail, Palette, Save } from "lucide-react";
 import {
   EMAIL_THEME_KINDS,
   EMAIL_THEME_KIND_HINTS,
@@ -26,18 +29,29 @@ import {
 } from "@/lib/email-theme.mjs";
 import { ADMIN_DATE_MEDIUM, formatAdmin } from "@/lib/admin-datetime.mjs";
 import {
+  CONTACT_FREQUENCY_COUNTED,
+  CONTACT_FREQUENCY_LIMITS,
+  DEFAULT_CONTACT_FREQUENCY,
+  contactFrequencySummary,
+  sendIntervalLabel,
+  validateContactFrequencyInput,
+} from "@/lib/contact-frequency.mjs";
+import {
   Button,
   Callout,
   Card,
   CardContent,
   CardHeader,
   CardTitle,
+  Field,
   InfoTip,
+  Input,
   Select,
   StatusBadge,
   toast,
 } from "../ui";
 import { adminFetch, friendlyErrorMessage } from "../lib/admin-fetch";
+import { useAsyncAction } from "../lib/use-async-action";
 import {
   DesignPreviewDialog,
   type DesignPreviewTarget,
@@ -45,6 +59,7 @@ import {
 import { SystemStatusCard } from "./SystemStatusCard";
 import { ShopifySyncCard, type ShopifySyncCardProps } from "./ShopifySyncCard";
 import type {
+  ContactFrequencyCardProps,
   EmailDesignMetaItem,
   SendConfigProps,
   SystemStatus,
@@ -60,6 +75,7 @@ export function EmailSettingsWorkspace({
   designs,
   initialSelections,
   sendConfig,
+  contactFrequency,
   systemStatus,
   shopifySync,
 }: {
@@ -67,6 +83,7 @@ export function EmailSettingsWorkspace({
   designs: EmailDesignMetaItem[];
   initialSelections: Partial<Record<string, string>>;
   sendConfig: SendConfigProps;
+  contactFrequency: ContactFrequencyCardProps;
   systemStatus: SystemStatus;
   /** Einstellungen → Shopify-Abgleich (null without a database). */
   shopifySync: ShopifySyncCardProps | null;
@@ -318,6 +335,8 @@ export function EmailSettingsWorkspace({
         </CardContent>
       </Card>
 
+      <ContactFrequencyCard dbReady={dbReady} {...contactFrequency} />
+
       {shopifySync && <ShopifySyncCard {...shopifySync} />}
 
       <SystemStatusCard status={systemStatus} />
@@ -327,11 +346,173 @@ export function EmailSettingsWorkspace({
   );
 }
 
+/** The field's own error (the shared strict rule, one field at a time). */
+function fieldError(field: "maxMails" | "windowDays", raw: string): string | null {
+  const probe = validateContactFrequencyInput(
+    field === "maxMails" ? { maxMails: raw, windowDays: 0 } : { maxMails: 0, windowDays: raw },
+  );
+  return probe.ok ? null : probe.message;
+}
+
+/**
+ * „Kontakthäufigkeit“ — the soft warning before a marketing mail to a person
+ * who already received several (lib/contact-frequency.mjs). Saved through the
+ * guarded settings route; without a database the inputs are disabled and the
+ * default applies. Next to it, read-only, the hard cap
+ * MARKETING_MIN_SEND_INTERVAL_DAYS.
+ */
+function ContactFrequencyCard({
+  dbReady,
+  settings,
+  minSendIntervalDays,
+}: ContactFrequencyCardProps & { dbReady: boolean }) {
+  const [saved, setSaved] = React.useState(settings);
+  const [maxMails, setMaxMails] = React.useState(String(settings.maxMails));
+  const [windowDays, setWindowDays] = React.useState(String(settings.windowDays));
+  const maxMailsError = fieldError("maxMails", maxMails);
+  const windowDaysError = fieldError("windowDays", windowDays);
+  const parsed = validateContactFrequencyInput({ maxMails, windowDays });
+  const dirty =
+    !parsed.ok ||
+    parsed.settings.maxMails !== saved.maxMails ||
+    parsed.settings.windowDays !== saved.windowDays;
+
+  const save = useAsyncAction(
+    async () => {
+      if (!parsed.ok) throw new Error(parsed.message);
+      const json = await adminFetch<{ ok?: boolean; settings?: { maxMails: number; windowDays: number } }>(
+        "/api/admin/settings/contact-frequency",
+        { body: parsed.settings },
+      );
+      return json.settings ?? parsed.settings;
+    },
+    {
+      errorToast: "Kontakthäufigkeit nicht gespeichert",
+      onSuccess: (next) => {
+        setSaved(next);
+        setMaxMails(String(next.maxMails));
+        setWindowDays(String(next.windowDays));
+        toast({
+          variant: "success",
+          title: "Kontakthäufigkeit gespeichert",
+          description: contactFrequencySummary(next),
+        });
+      },
+    },
+  );
+
+  const { maxMails: mailBounds, windowDays: dayBounds } = CONTACT_FREQUENCY_LIMITS;
+  const disabled = !dbReady || save.pending;
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <BellRing className="size-4" aria-hidden /> Kontakthäufigkeit
+          <InfoTip panelClassName="max-w-md">
+            <p>
+              Ein Hinweis vor dem Senden, wenn eine Person in kurzer Zeit schon
+              mehrere Werbe-Mails bekommen hat — im Prüftisch der Kampagne (auch
+              beim Einplanen) und in Kunden → Marketing. Es ist nur eine Warnung:
+              „Trotzdem senden“ verschickt die Mail.
+            </p>
+            <p>{CONTACT_FREQUENCY_COUNTED}</p>
+            <p>
+              Testkontakte bekommen nie eine Warnung; der automatische Versand
+              eingeplanter Mails prüft sie nicht. 0 in einem der beiden Felder
+              schaltet die Warnung aus. Standard: ab{" "}
+              {DEFAULT_CONTACT_FREQUENCY.maxMails} Werbe-Mails in{" "}
+              {DEFAULT_CONTACT_FREQUENCY.windowDays} Tagen.
+            </p>
+          </InfoTip>
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-3">
+        {!dbReady && (
+          <Callout tone="warning" compact>
+            Keine Datenbank konfiguriert (DATABASE_URL) — die Einstellung kann
+            nicht gespeichert werden. Es gilt der Standard.
+          </Callout>
+        )}
+        <form
+          className="flex flex-wrap items-end gap-3"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (!disabled && dirty && parsed.ok) void save.run();
+          }}
+        >
+          <Field
+            label="Warnung ab … Werbe-Mails"
+            info={`Ganze Zahl von ${mailBounds.min} bis ${mailBounds.max}. Die Warnung erscheint, wenn die Person schon so viele oder mehr bekommen hat; 0 = aus.`}
+            error={maxMailsError}
+            className="w-44"
+          >
+            <Input
+              type="number"
+              inputMode="numeric"
+              min={mailBounds.min}
+              max={mailBounds.max}
+              step={1}
+              value={maxMails}
+              onChange={(e) => setMaxMails(e.target.value)}
+              disabled={disabled}
+            />
+          </Field>
+          <Field
+            label="in … Tagen"
+            info={`Ganze Zahl von ${dayBounds.min} bis ${dayBounds.max}: der Zeitraum, in dem gezählt wird (rückwärts ab jetzt); 0 = aus.`}
+            error={windowDaysError}
+            className="w-44"
+          >
+            <Input
+              type="number"
+              inputMode="numeric"
+              min={dayBounds.min}
+              max={dayBounds.max}
+              step={1}
+              value={windowDays}
+              onChange={(e) => setWindowDays(e.target.value)}
+              disabled={disabled}
+            />
+          </Field>
+          <Button
+            type="submit"
+            size="sm"
+            className="mb-px"
+            loading={save.pending}
+            disabled={!dbReady || !dirty || !parsed.ok}
+          >
+            <Save /> Speichern
+          </Button>
+        </form>
+        <dl className="grid gap-x-8 text-sm sm:grid-cols-2">
+          <ConfigRow label="Gilt jetzt">{contactFrequencySummary(saved)}</ConfigRow>
+          <ConfigRow
+            label={
+              <span className="flex items-center gap-1">
+                Sperrfrist
+                <InfoTip>
+                  MARKETING_MIN_SEND_INTERVAL_DAYS aus den Umgebungsvariablen —
+                  eine harte Grenze: Solange die letzte Werbe-Mail an die
+                  Adresse jünger ist, lehnt der Server den Versand ab. Die
+                  Kontakthäufigkeit oben ist dagegen nur ein Hinweis.
+                </InfoTip>
+              </span>
+            }
+          >
+            {sendIntervalLabel(minSendIntervalDays)}
+          </ConfigRow>
+        </dl>
+      </CardContent>
+    </Card>
+  );
+}
+
 function ConfigRow({
   label,
   children,
 }: {
-  label: string;
+  label: React.ReactNode;
   children: React.ReactNode;
 }) {
   return (

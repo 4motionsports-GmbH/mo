@@ -18,6 +18,13 @@ import { campaignSegmentByKey } from "@/lib/campaign-segments.mjs";
 import { DISCOUNT_PERCENT_MAX, clampDiscountPercent } from "@/lib/discount-validation.mjs";
 import { DISCOUNT_SCOPE_OPTIONS, type DiscountScope } from "@/lib/discount-scope.mjs";
 import { abGroupOf } from "@/lib/campaign-review-checks.mjs";
+import {
+  CONTACT_FREQUENCY_CHECK,
+  CONTACT_FREQUENCY_COUNTED,
+  contactFrequencyEnabled,
+  contactFrequencySummary,
+  recentMailsText,
+} from "@/lib/contact-frequency.mjs";
 import { purchaseHistoryCoverage } from "@/lib/campaign-desk-core.mjs";
 import {
   Button,
@@ -647,15 +654,34 @@ export function ReviewColumn({
           <DescriptionItem
             label="Letzte Mail"
             info={
-              minSendIntervalDays > 0
-                ? `Neueste Sendung an diese Adresse über beide Kanäle (Kampagne und Kunden-Marketing). Sperrfrist: ${minSendIntervalDays} Tage (MARKETING_MIN_SEND_INTERVAL_DAYS).`
-                : "Neueste Sendung an diese Adresse über beide Kanäle (Kampagne und Kunden-Marketing). Keine Sperrfrist konfiguriert."
+              <>
+                <p>
+                  {minSendIntervalDays > 0
+                    ? `Neueste Sendung an diese Adresse über beide Kanäle (Kampagne und Kunden-Marketing). Sperrfrist: ${minSendIntervalDays} Tage (MARKETING_MIN_SEND_INTERVAL_DAYS).`
+                    : "Neueste Sendung an diese Adresse über beide Kanäle (Kampagne und Kunden-Marketing). Keine Sperrfrist konfiguriert."}
+                </p>
+                <p className="mt-1">
+                  {contactFrequencyEnabled(actions.contactFrequency)
+                    ? `Kontakthäufigkeit: ${contactFrequencySummary(actions.contactFrequency)} — nur ein Hinweis, Senden fragt einmal nach (Einstellungen). ${CONTACT_FREQUENCY_COUNTED}`
+                    : "Kontakthäufigkeit: Warnung aus (Einstellungen)."}
+                </p>
+              </>
             }
           >
             <span className="text-xs">
               {item.lastSendAt ? formatAdmin(item.lastSendAt, ADMIN_DATE_TIME_SHORT) : "noch nie"}
               {untilIso && <span className="text-destructive"> · Sperrfrist bis {formatAdmin(untilIso, ADMIN_DATE)}</span>}
             </span>
+            {item.recentMailCount !== null && contactFrequencyEnabled(actions.contactFrequency) && (
+              <span
+                className={cn(
+                  "block text-xs tabular-nums",
+                  checks.some((c) => c.key === CONTACT_FREQUENCY_CHECK) ? "text-warning" : "text-muted-foreground"
+                )}
+              >
+                {recentMailsText(item.recentMailCount, actions.contactFrequency.windowDays)}
+              </span>
+            )}
           </DescriptionItem>
           <DescriptionItem
             label="A/B-Gruppe"
