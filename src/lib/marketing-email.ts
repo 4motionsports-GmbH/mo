@@ -12,7 +12,10 @@
 //      we can't build one (no signing secret), we REFUSE to send rather than
 //      ship a marketing email without an opt-out.
 //   3. CART + DISCOUNT — appended deterministically from the stored row, so the
-//      admin's edits to the prose can never remove them.
+//      admin's edits to the prose can never remove them. A mail is a set offer
+//      OR single items (offer-mode.mjs): a set mail shows only the set — no
+//      cart, no code; a draft with an active set AND a discount is refused
+//      (offer_conflict) before anything is claimed or minted.
 //   4. LOGGING / SUPPRESSION — delivery goes through Resend (lib/email) which
 //      logs failures; the status flip records that it was sent.
 //
@@ -47,7 +50,7 @@ import { withEmailDesign, withEmailRenderData } from "./email-design-context";
 import { getCachedEmailDesignForKind } from "./email-design-store";
 import { getEmailHeroRenderData } from "./email-hero-store";
 import { getCustomerById } from "./customer-store";
-import { renderEmailProductRows, productRowItems, firstProductImageUrl, catalogNameLookup } from "./email-products";
+import { renderEmailProductRows, productRowItems, catalogNameLookup } from "./email-products";
 import { unsubscribeFooter } from "./consent-copy";
 import { getBaseUrl } from "./base-url";
 import {
@@ -64,13 +67,15 @@ import {
 import { buildPrefilledCartUrlForIds } from "./cart";
 import { mintAttributionToken } from "./mo-orders-store";
 import { withCartAttribution } from "./order-attribution.mjs";
-import { getActiveBundleForSend } from "./bundle-offers-store";
+import { getActiveBundleForSend, type BundleOfferRow } from "./bundle-offers-store";
 import { buildBundleRedirectUrl } from "./bundle-offers";
-import { renderBundleOfferBlock } from "./bundle-email";
+import { bundleEmailComponents, renderBundleOfferBlock } from "./bundle-email";
 import { countdownText, earliestDeadline } from "./offer-countdown.mjs";
 import { shouldRenderBundleBlock } from "./bundle-email-core.mjs";
+import { OFFER_CONFLICT_MESSAGE, offerConflict } from "./offer-mode.mjs";
 import { loadProductCatalog } from "./catalog-store";
 import { reportError } from "./observability";
+import type { PrefilledCart } from "./cart";
 import type { Product } from "./types";
 
 /**
@@ -103,11 +108,36 @@ export type ApproveAndSendResult =
         | "no_unsubscribe"
         | "claim_failed"
         | "discount_mismatch"
+        | "offer_conflict"
         | "discount_failed"
         | "email_not_configured"
         | "send_failed";
       message: string;
     };
+
+/**
+ * The products the mail shows: exactly the ones that made it into the cart
+ * link — available, resolvable, each once. buildPrefilledCartUrl also lists
+ * the lines it left OUT (sold out with excludeSoldOut, a vanished pinned
+ * variant, no numeric variant) for explanation; those never reach the mail.
+ */
+function cartProducts(cart: Pick<PrefilledCart, "lines" | "resolvedProductIds">): Product[] {
+  const inCart = new Set(cart.resolvedProductIds ?? []);
+  const seen = new Set<string>();
+  const out: Product[] = [];
+  for (const line of cart.lines ?? []) {
+    if (!line.product || !inCart.has(line.productId) || seen.has(line.productId)) continue;
+    seen.add(line.productId);
+    out.push(line.product);
+  }
+  return out;
+}
+
+const NO_CART: Pick<PrefilledCart, "url" | "lines" | "resolvedProductIds"> = {
+  url: null,
+  lines: [],
+  resolvedProductIds: [],
+};
 
 /**
  * Minimum days between two marketing sends to the SAME recipient (per-recipient
@@ -171,6 +201,16 @@ export async function approveAndSend(sendId: number): Promise<ApproveAndSendResu
       }
     }
 
+    // GATE 1d — a mail is a set offer OR single items (offer-mode.mjs): a set
+    // mail carries no code, the set price is the offer. Fail closed for a
+    // draft from before the rule that has both — before the claim, so nothing
+    // is claimed or minted. The send renders THIS row (setBundle).
+    const activeBundle = await getActiveBundleForSend(sendId);
+    const setBundle = shouldRenderBundleBlock(activeBundle) ? activeBundle : null;
+    if (offerConflict({ discountPercent: send.discountPercent, hasActiveBundle: setBundle !== null })) {
+      return { ok: false, reason: "offer_conflict", message: OFFER_CONFLICT_MESSAGE };
+    }
+
     // GATE 2 — a working unsubscribe link is mandatory. No link → no send.
     const unsubToken = buildUnsubscribeToken(email);
     if (!unsubToken) {
@@ -193,6 +233,13 @@ export async function approveAndSend(sendId: number): Promise<ApproveAndSendResu
     }
 
     try {
+      // The claimed row is the one that ships — re-check the offer kind on it
+      // (a discount set between the read above and the claim).
+      if (offerConflict({ discountPercent: claimed.discountPercent, hasActiveBundle: setBundle !== null })) {
+        await revertClaim(sendId);
+        return { ok: false, reason: "offer_conflict", message: OFFER_CONFLICT_MESSAGE };
+      }
+
       // GATE 3a — the percentage the customer READS comes only from the editable
       // prose (the code + deadline ship deterministically, but the % does not).
       // Refuse if the body clearly states a DIFFERENT discount than the chosen
@@ -237,7 +284,8 @@ export async function approveAndSend(sendId: number): Promise<ApproveAndSendResu
       let discountCodeGid: string | null = null;
       let discountExpiresAt: string | null = null;
 
-      if (claimed.discountPercent > 0) {
+      // Never for a set mail (the re-check above refused set + discount).
+      if (claimed.discountPercent > 0 && !setBundle) {
         const minted = await createUniqueDiscountCode({
           percentage: claimed.discountPercent / 100,
         });
@@ -268,30 +316,44 @@ export async function approveAndSend(sendId: number): Promise<ApproveAndSendResu
         });
       }
 
+      // Render inside the design selected for this email type (admin
+      // Einstellungen); null → classic built-ins. Fail-soft, never blocks.
+      const emailDesign = await getCachedEmailDesignForKind("marketing");
+
+      // SET MAIL: the set block, from the row the gate checked, built inside
+      // the design (it is HTML rendered through the design's renderers;
+      // building it outside shipped the classic block inside a Performance
+      // mail). A block that fails to build degrades to the item mail (never
+      // blocks a send — and carries no code: a set draft has no discount).
+      const bundleBlock = setBundle
+        ? await withEmailDesign(emailDesign, () => buildBundleBlockForSend(setBundle, claimed.productHighlights))
+        : null;
+
       // Build the cart permalink that actually ships: it carries ?discount=CODE
       // only when a real code was minted; otherwise no discount param.
       // excludeSoldOut re-checked at SEND time (not just draft time) so an item
       // that sold out while the draft sat around never enters the shipped cart.
-      const cart = claimed.productIds.length
+      // A SET MAIL has no cart: the set's own „Zur Kasse“ (its tracked link)
+      // is its one action, so no single-item cart link (or token) is made.
+      const cart = !bundleBlock && claimed.productIds.length
         ? await buildPrefilledCartUrlForIds(claimed.productIds, {
             discountCode: discountCode ?? undefined,
             excludeSoldOut: true,
           })
-        : { url: null as string | null, lines: [] };
+        : NO_CART;
       // ORDER ATTRIBUTION: stamp the shipped cart with the session's opaque
       // token (attributes[_mo]) so even a code-less checkout via this link is
       // attributable (docs/ORDER_ATTRIBUTION.md). Minting failure → unstamped
       // link (the send must never block on attribution).
-      const moToken = await mintAttributionToken(capture.sessionId, "marketing_email");
+      const moToken = cart.url ? await mintAttributionToken(capture.sessionId, "marketing_email") : null;
       const cartUrl = withCartAttribution(cart.url, moToken);
 
       // The recommended products, exactly as the shipped cart contains them —
-      // rendered as the newsletter's picture grid above the cart CTA. Purely
-      // presentational (the cart link stays the source of truth), so a resolve
-      // failure just drops the grid, never the send.
-      const recommendedProducts = (cart.lines ?? [])
-        .map((l) => l.product)
-        .filter((p): p is Product => p != null);
+      // sold-out or unresolvable ones are left out of the cart AND the mail.
+      // Rendered as the product rows above the cart CTA. Purely presentational
+      // (the cart link stays the source of truth), so a resolve failure just
+      // drops the rows, never the send.
+      const recommendedProducts = cartProducts(cart);
 
       // CLICK-TRACKING: route the click through our own redirect so it's visible
       // to the KPI dashboard. The REAL Shopify cart URL (with ?discount=CODE)
@@ -305,10 +367,7 @@ export async function approveAndSend(sendId: number): Promise<ApproveAndSendResu
         linkUrl = `${getBaseUrl()}/api/r/${redirectToken}`;
       }
 
-      // Render inside the design selected for this email type (admin
-      // Einstellungen); null → classic built-ins. Fail-soft, never blocks.
       // The per-send hero image (email-hero.ts) rides along for hero designs.
-      const emailDesign = await getCachedEmailDesignForKind("marketing");
       const hero = await getEmailHeroRenderData("marketing", sendId);
       const recipientFirstName = await recipientFirstNameForSend(claimed.customerId);
       const { text, html } = await withEmailDesign(emailDesign, () =>
@@ -327,15 +386,9 @@ export async function approveAndSend(sendId: number): Promise<ApproveAndSendResu
           : null,
         discountExpiresAt,
         unsubscribe: unsubscribeFooter(unsubscribeUrl, "de", buildErasureUrl(email)),
-        // SPECIAL-OFFER block — ADDITIVE. When a created, still-active bundle
-        // is attached to this send, its offer block rides in the body. This
-        // touches NONE of the send safeguards above (eligibility, unsubscribe,
-        // discount minting, click-tracking) — a send may carry a discount, a
-        // bundle, both, or neither; a resolution failure degrades to "no
-        // block". Built HERE, inside withEmailDesign: the block is HTML
-        // rendered through the design's renderers, and building it before the
-        // design was active shipped the classic block inside a Performance mail.
-        bundle: await buildBundleBlockForSend(sendId),
+        // A set mail shows only the set (offer-mode.mjs) — the renderer drops
+        // product rows, cart button and code note when the block is given.
+        bundle: bundleBlock,
         labelForUrl: await catalogNameLookup("lib/marketing-email"),
       })));
 
@@ -403,45 +456,31 @@ export async function approveAndSend(sendId: number): Promise<ApproveAndSendResu
 
 
 /**
- * Resolve the bundle attached to this send (if any) and render its special-offer
- * block. Returns null when no live bundle is attached — so the block is OMITTED
- * (the pure shouldRenderBundleBlock guard centralizes that "active-only" rule).
- * Also returns the component names so the recommendation section can drop
- * products the set already shows (no duplicate presentation). Never throws; a
- * failure degrades to "no block" so a send is never blocked by the bundle path.
+ * Render the set block for a send's set row (null / no longer active → null —
+ * the pure shouldRenderBundleBlock guard centralizes that "active-only" rule).
+ * The components carry the snapshot count and unit price, a fresh catalog
+ * image (the row snapshots no images) and the draft's highlight as their
+ * short description (bundleEmailComponents). Never throws; a failure degrades
+ * to "no block" so a send is never blocked by the bundle path.
  */
 async function buildBundleBlockForSend(
-  sendId: number
-): Promise<{ text: string; html: string; componentNames: string[]; expiresAt: string | null } | null> {
+  bundle: BundleOfferRow | null,
+  highlights: Array<{ name: string; description: string }> | null
+): Promise<{ text: string; html: string; expiresAt: string | null } | null> {
   try {
-    const bundle = await getActiveBundleForSend(sendId);
-    if (!shouldRenderBundleBlock(bundle) || !bundle) return null;
+    if (!bundle || !shouldRenderBundleBlock(bundle)) return null;
     const offerUrl = buildBundleRedirectUrl(bundle.redirectToken);
     if (!offerUrl) return null;
-
-    // Resolve component images from the live catalog (the row snapshots names +
-    // prices, not images — the latter can drift, so we look them up fresh); the
-    // block lists the contents with the snapshotted count of each item.
     const catalog = await loadProductCatalog();
-    const byId = new Map(catalog.map((p) => [p.id, p]));
-    const components = bundle.components.map((c) => {
-      const product = byId.get(c.productId);
-      return {
-        name: c.title,
-        imageUrl: firstProductImageUrl(product),
-        quantity: c.quantity,
-      };
-    });
-
     const block = renderBundleOfferBlock({
       title: bundle.title ?? "Dein persönliches Set",
-      components,
+      components: bundleEmailComponents(bundle.components, new Map(catalog.map((p) => [p.id, p])), highlights),
       bundlePrice: bundle.bundlePrice,
       componentsSum: bundle.componentsSum,
       currency: bundle.currency,
       offerUrl,
     });
-    return { ...block, componentNames: components.map((c) => c.name), expiresAt: bundle.expiresAt };
+    return { ...block, expiresAt: bundle.expiresAt };
   } catch (err) {
     reportError(err, { route: "lib/marketing-email", phase: "buildBundleBlockForSend" });
     return null;
@@ -489,19 +528,22 @@ export async function renderMarketingEmailPreview(
     ? `${getBaseUrl()}/api/unsubscribe?token=${encodeURIComponent(unsubToken)}`
     : "#";
 
-  // Same cart resolution as the send path, minus discount + tracking (both
-  // exist only at send time). The grid shows exactly the cart's contents.
-  const cart = send.productIds.length
-    ? await buildPrefilledCartUrlForIds(send.productIds, { excludeSoldOut: true })
-    : { url: null as string | null, lines: [] };
-  const products = (cart.lines ?? [])
-    .map((l) => l.product)
-    .filter((p): p is Product => p != null);
-
   // The preview renders inside the SAME selected design as the send path —
-  // including the per-send hero image and the bundle block, built inside the
-  // design context below — so what the operator reviews is what ships.
+  // including the per-send hero image and the set block, built inside the
+  // design context — so what the operator reviews is what ships.
   const emailDesign = await getCachedEmailDesignForKind("marketing");
+  const bundle = await withEmailDesign(emailDesign, async () =>
+    buildBundleBlockForSend(await getActiveBundleForSend(sendId), send.productHighlights)
+  );
+
+  // Same cart resolution as the send path, minus discount + tracking (both
+  // exist only at send time). The rows show exactly the cart's contents; a
+  // set mail has no cart.
+  const cart = !bundle && send.productIds.length
+    ? await buildPrefilledCartUrlForIds(send.productIds, { excludeSoldOut: true })
+    : NO_CART;
+  const products = cartProducts(cart);
+
   const hero = await getEmailHeroRenderData("marketing", sendId);
   const recipientFirstName = await recipientFirstNameForSend(send.customerId);
   const { html } = await withEmailDesign(emailDesign, () =>
@@ -522,7 +564,7 @@ export async function renderMarketingEmailPreview(
       "de",
       capture ? buildErasureUrl(capture.email) : null
     ),
-    bundle: await buildBundleBlockForSend(sendId),
+    bundle,
     labelForUrl: await catalogNameLookup("lib/marketing-email"),
   })));
   return { ok: true, subject, html };
@@ -551,27 +593,32 @@ export function renderMarketingEmail(opts: {
    * with the set's expiry (the earlier one counts). */
   discountExpiresAt?: string | Date | null;
   unsubscribe: { text: string; html: string };
-  /** Optional special-offer block for an attached bundle (text + HTML parts +
-   *  component names, so those products aren't shown twice). */
-  bundle: { text: string; html: string; componentNames?: string[]; expiresAt?: string | null } | null;
+  /** The set block of an attached, active set (text + HTML parts + its
+   *  deadline). Given → a SET MAIL: only the set is shown — products, the
+   *  cart button/link and the code note are dropped (offer-mode.mjs). */
+  bundle: { text: string; html: string; expiresAt?: string | null } | null;
   /** Names a bare product URL in the prose (catalog lookup); null → compact
    * host/path label. Markdown links carry their own label. */
   labelForUrl?: (url: string) => string | null;
 }): { text: string; html: string } {
-  const { subject, body, linkUrl, products, discountCode, discountExpiresLabel, unsubscribe, bundle } = opts;
+  const { subject, body, discountExpiresLabel, unsubscribe, bundle } = opts;
+
+  // SET MAIL xor ITEM MAIL (offer-mode.mjs): with a set block the mail offers
+  // only the set — no product rows, no single-item cart (its link would carry
+  // ?discount=) and no code; the set's „Zur Kasse“ is the one action.
+  const setMail = bundle !== null;
+  const linkUrl = setMail ? null : opts.linkUrl;
+  const discountCode = setMail ? null : opts.discountCode;
 
   const validityNote = discountExpiresLabel
     ? `, gültig bis ${discountExpiresLabel}`
     : "";
 
-  // The personalised recommendation rows — products the attached set already
-  // shows are dropped here so nothing appears twice (the set block is their
-  // presentation), each remaining row carrying its personalised description.
-  const rowItems = productRowItems(products, {
-    locale: "de",
-    highlights: opts.productHighlights,
-    excludeNames: bundle?.componentNames ?? null,
-  });
+  // Item mail: the personalised recommendation rows, each carrying its
+  // personalised description.
+  const rowItems = setMail
+    ? []
+    : productRowItems(opts.products, { locale: "de", highlights: opts.productHighlights });
 
   // --- text part — markdown links flatten to "Label (URL)" ---
   const textLines = [emailProseToText(body.trim())];
@@ -584,14 +631,15 @@ export function renderMarketingEmail(opts: {
       )
     );
   }
-  // The special-offer block (when a bundle is attached) sits right after the
-  // prose, before the cart link + unsubscribe footer.
+  // Set mail: the set block sits right after the prose, before the
+  // unsubscribe footer.
   if (bundle) textLines.push(bundle.text);
-  // The offer countdown: the earlier of discount expiry and set expiry, only
-  // while something with a deadline is actually in the mail.
-  const offerExpiresAt =
-    discountCode || bundle
-      ? earliestDeadline(discountCode ? opts.discountExpiresAt : null, bundle?.expiresAt)
+  // The offer countdown runs to the deadline of the one offer in the mail:
+  // the set's expiry (set mail) or the code's (item mail with a code).
+  const offerExpiresAt = bundle
+    ? earliestDeadline(bundle.expiresAt)
+    : discountCode
+      ? earliestDeadline(opts.discountExpiresAt)
       : null;
   const countdownLine = offerExpiresAt ? countdownText(offerExpiresAt, "de") : "";
   if (countdownLine) textLines.push("", countdownLine);
@@ -654,7 +702,8 @@ export function renderMarketingEmail(opts: {
                       { labelForUrl: opts.labelForUrl, linkStyle: emailLinkStyle() }
                     )}</p>`,
     // Full-width newsletter sections between prose and the cart pill: the
-    // product picture grid, then the bundle special-offer block (if any).
+    // offer — the product rows (item mail) or the set block (set mail) — and
+    // its countdown.
     preCtaRowsHtml: `${productsRows}${bundle ? bundle.html : ""}${
       offerExpiresAt ? renderOfferCountdown({ expiresAt: offerExpiresAt, language: "de" }) : ""
     }`,

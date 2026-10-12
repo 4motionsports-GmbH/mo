@@ -23,6 +23,8 @@ const STATUS_BY_REASON: Record<string, number> = {
   no_unsubscribe: 503,
   claim_failed: 409,
   discount_mismatch: 409,
+  // A set mail with a discount (offer-mode.mjs): set price XOR code.
+  offer_conflict: 409,
   discount_failed: 502,
   email_not_configured: 503,
   send_failed: 502,

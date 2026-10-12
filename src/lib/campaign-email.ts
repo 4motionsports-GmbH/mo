@@ -19,7 +19,10 @@
 //      List-Unsubscribe header); if we can't build one, we REFUSE to send.
 //   3. DISCOUNT — the real unique MK- code is minted only now (never at draft
 //      time) and swapped for the placeholder via the SAME logic the marketing
-//      path uses (discount-swap.mjs); mismatched prose refuses to ship.
+//      path uses (discount-swap.mjs); mismatched prose refuses to ship. A mail
+//      is a set offer OR single items (offer-mode.mjs): a set mail carries NO
+//      code — a draft with an active set AND a discount is refused
+//      (offer_conflict), and no code is ever minted for a set mail.
 //   4. PROMO + FOOTER — the Mo-promo block (deep link) and the unsubscribe/
 //      Impressum footer are appended deterministically, outside the editable
 //      prose.
@@ -72,7 +75,7 @@ import {
   renderOfferCountdown,
   renderDiscountCoupon,
 } from "./email-template";
-import { renderEmailProductRows, productRowItems, firstProductImageUrl, catalogNameLookup } from "./email-products";
+import { renderEmailProductRows, productRowItems, catalogNameLookup } from "./email-products";
 import { unsubscribeFooter } from "./consent-copy";
 import { getBaseUrl } from "./base-url";
 import { withLocaleParam } from "./locale";
@@ -91,12 +94,13 @@ import {
   emailProseToText,
 } from "./email-prose.mjs";
 import { generateRedirectToken } from "./marketing-store";
-import { getActiveBundleForCampaignContact } from "./bundle-offers-store";
+import { getActiveBundleForCampaignContact, type BundleOfferRow } from "./bundle-offers-store";
 import { buildBundleRedirectUrl } from "./bundle-offers";
-import { renderBundleOfferBlock } from "./bundle-email";
+import { bundleEmailComponents, renderBundleOfferBlock, type BundleEmailComponent } from "./bundle-email";
 import { countdownText, earliestDeadline } from "./offer-countdown.mjs";
 import { couponText } from "./discount-coupon.mjs";
 import { shouldRenderBundleBlock } from "./bundle-email-core.mjs";
+import { OFFER_CONFLICT_MESSAGE, offerConflict } from "./offer-mode.mjs";
 import { loadProductCatalog } from "./catalog-store";
 import { resolveProductSelections } from "./product-catalog";
 import { reportError } from "./observability";
@@ -124,11 +128,16 @@ export type CampaignSendResult =
         | "claim_failed"
         | "discount_mismatch"
         | "discount_scope_unresolved"
+        | "offer_conflict"
         | "discount_failed"
         | "email_not_configured"
         | "send_failed";
       message: string;
     };
+
+/** Refusal text for a draft still carrying the retired scope "set"
+ * (discount-scope.mjs: history only since 12.10.2026). */
+const SET_SCOPE_RETIRED_MESSAGE = "„Gilt für: Set“ gibt es nicht mehr — bitte „Gilt für“ ändern.";
 
 // One parser for the cadence cap (campaign-flags.mjs) — the review desk shows
 // the same number, so a blocked contact is visible before the gate refuses it.
@@ -147,6 +156,10 @@ type CampaignSendPreflight =
       person: Awaited<ReturnType<typeof getCustomerById>> | null;
       recipient: string;
       unsubscribeUrl: string;
+      /** The active, unexpired set attached to the contact (null → an item
+       * mail). The gates decided on THIS row and the send renders it, so the
+       * offer kind checked is the offer kind shipped. */
+      bundle: BundleOfferRow | null;
     }
   | CampaignSendRefusal;
 
@@ -262,6 +275,22 @@ export async function campaignSendPreflight(contactId: number): Promise<Campaign
       };
     }
 
+    // GATE 1c — a mail is a set offer OR single items (offer-mode.mjs): a set
+    // mail carries no code, the set price is the offer. Fail closed for a
+    // draft from before the rule that has both.
+    const activeBundle = await getActiveBundleForCampaignContact(contactId);
+    const bundle = shouldRenderBundleBlock(activeBundle) ? activeBundle : null;
+    if (offerConflict({ discountPercent: draft.discountPercent, hasActiveBundle: bundle !== null })) {
+      return { ok: false, reason: "offer_conflict", message: OFFER_CONFLICT_MESSAGE };
+    }
+
+    // GATE 1d — the code only on the set (scope "set") is history: only an
+    // item mail carries a code now. Never mint against a scope that no longer
+    // exists — the operator picks „Alles“ or „Empfehlungen“.
+    if (draft.discountPercent > 0 && draft.discountScope === "set") {
+      return { ok: false, reason: "discount_scope_unresolved", message: SET_SCOPE_RETIRED_MESSAGE };
+    }
+
     // GATE 2 — a working unsubscribe link is mandatory. No link → no send.
     const unsubToken = buildUnsubscribeToken(recipient);
     if (!unsubToken) {
@@ -276,7 +305,7 @@ export async function campaignSendPreflight(contactId: number): Promise<Campaign
       `${getBaseUrl()}/api/unsubscribe?token=${encodeURIComponent(unsubToken)}` +
       (contact.language === "en" ? "&locale=en" : "");
 
-    return { ok: true, contact, draft, campaign, person, recipient, unsubscribeUrl };
+    return { ok: true, contact, draft, campaign, person, recipient, unsubscribeUrl, bundle };
   } catch (err) {
     reportError(err, { route: "lib/campaign-email", phase: "campaignSendPreflight" });
     return { ok: false, reason: "send_failed", message: "Unexpected error while checking the send." };
@@ -297,6 +326,9 @@ export async function approveAndSendCampaign(contactId: number): Promise<Campaig
     const pre = await campaignSendPreflight(contactId);
     if (!pre.ok) return pre;
     const { contact, draft, campaign, person, recipient, unsubscribeUrl } = pre;
+    // The set the gates saw (null → an item mail). A set mail never gets a
+    // code: GATE 1c refused set + discount, and minting below checks again.
+    const setBundle = pre.bundle;
 
     // Claim atomically so concurrent sends can't both proceed.
     const claimed = await claimContactForSend(contactId);
@@ -333,11 +365,11 @@ export async function approveAndSendCampaign(contactId: number): Promise<Campaig
       let discountCodeGid: string | null = null;
       let discountExpiresAt: string | null = null;
 
-      if (draft.discountPercent > 0) {
-        // Scope (migration 0058): a code for "Empfehlungen" or "Set" is minted
-        // against exactly those Shopify products. A scope that cannot be
-        // resolved refuses the send — never a silently wider code.
-        const scoped = await resolveDiscountScopeProducts(draft.discountScope, draft.recommendedProductIds, contactId);
+      if (draft.discountPercent > 0 && !setBundle) {
+        // Scope (migration 0058): a code for "Empfehlungen" is minted against
+        // exactly the products the mail shows (available ones only). A scope
+        // that cannot be resolved refuses the send — never a silently wider code.
+        const scoped = await resolveDiscountScopeProducts(draft.discountScope, draft.recommendedProductIds);
         if (!scoped.ok) {
           await revertContactClaim(contactId);
           return { ok: false, reason: "discount_scope_unresolved", message: scoped.message };
@@ -348,7 +380,7 @@ export async function approveAndSendCampaign(contactId: number): Promise<Campaig
           // An Aktion's codes all end with it (discount_valid_until, 0066).
           endsAt: campaign.discountValidUntil,
           title: `Kampagnen-Rabatt (${draft.discountPercent}%${
-            draft.discountScope === "recommendations" ? ", Empfehlungen" : draft.discountScope === "set" ? ", Set" : ""
+            draft.discountScope === "recommendations" ? ", Empfehlungen" : ""
           })`,
           productIds: scoped.productIds,
         });
@@ -414,42 +446,42 @@ export async function approveAndSendCampaign(contactId: number): Promise<Campaig
       const { text, html } = await withEmailDesign(emailDesign, () =>
         withEmailRenderData(
           { ...hero, recipientFirstName: contact.firstName?.trim() || null },
-          async () => renderCampaignEmail({
-        subject: draft.subject,
-        body,
-        language: contact.language,
-        products: await resolveRecommendedProducts(draft.recommendedProductIds),
-        productHighlights: draft.productHighlights,
-        discountCode,
-        discountExpiresLabel: discountExpiresAt
-          ? formatExpiryDateForLanguage(discountExpiresAt, contact.language)
-          : null,
-        discountExpiresAt,
-        discountPercent: draft.discountPercent,
-        discountScope: draft.discountScope,
-        unsubscribe: unsubscribeFooter(
-          unsubscribeUrl,
-          contact.language,
-          buildErasureUrl(recipient, contact.language)
-        ),
-        // SPECIAL-OFFER block — ADDITIVE, exactly like the marketing path:
-        // when a created, still-active bundle is attached to this contact,
-        // its offer block rides below the prose. Touches NONE of the send
-        // safeguards; a bundle resolution failure degrades to "no block",
-        // never blocks a send. Built HERE, inside withEmailDesign: the block
-        // is HTML rendered through the design's renderers, and building it
-        // before the design was active shipped the classic block inside a
-        // Performance mail.
-        bundle: await (async () => {
-          const b = await buildBundleBlockForContact(contactId, contact.language);
-          bundleOfferId = b?.offerId ?? null;
-          return b;
-        })(),
-        labelForUrl: await catalogNameLookup("lib/campaign-email"),
-        ctaUrl: trackedCtaUrl,
-        ...campaignCtaOptions(campaign, contact.language),
-      }))
-        );
+          async () => {
+            // SET MAIL or ITEM MAIL (offer-mode.mjs). The set block is built
+            // from the row the gates checked, HERE inside withEmailDesign (the
+            // block is HTML rendered through the design's renderers; building
+            // it before the design was active shipped the classic block inside
+            // a Performance mail). A set mail shows only the set; a block that
+            // fails to build degrades to the item mail (never blocks a send —
+            // and it carries no code: a set draft has no discount).
+            const bundle = await buildBundleBlock(setBundle, contact.language, draft.productHighlights);
+            bundleOfferId = bundle?.offerId ?? null;
+            return renderCampaignEmail({
+              subject: draft.subject,
+              body,
+              language: contact.language,
+              products: bundle ? [] : await resolveRecommendedProducts(draft.recommendedProductIds),
+              productHighlights: draft.productHighlights,
+              discountCode,
+              discountExpiresLabel: discountExpiresAt
+                ? formatExpiryDateForLanguage(discountExpiresAt, contact.language)
+                : null,
+              discountExpiresAt,
+              discountPercent: draft.discountPercent,
+              discountScope: draft.discountScope,
+              unsubscribe: unsubscribeFooter(
+                unsubscribeUrl,
+                contact.language,
+                buildErasureUrl(recipient, contact.language)
+              ),
+              bundle,
+              labelForUrl: await catalogNameLookup("lib/campaign-email"),
+              ctaUrl: trackedCtaUrl,
+              ...campaignCtaOptions(campaign, contact.language),
+            });
+          }
+        )
+      );
 
       const threading = outboundThreading();
       const result = await sendEmail({
@@ -560,45 +592,23 @@ export function campaignCtaOptions(
 }
 
 /**
- * Resolve the draft's recommended product ids (including review-time curation;
- * possibly variant-pinned refs) against the live catalog — the campaign's
- * picture-grid source, exactly like the marketing channel's cart contents.
- * Returns variant-projected display products, so the grid shows the CHOSEN
- * variant's name, price and deep link. Purely presentational: a resolve
- * failure just drops the grid (the prose keeps its product links), it never
- * blocks a send.
- *
- * Hard block: a ref whose pinned variant no longer exists is DROPPED (and
- * reported), never silently downgraded to the default variant — a marketing
- * mail must not show a price the admin didn't approve (PAngV).
- */
-/**
  * The Shopify product gids a scoped discount code is minted against
- * (discount-scope.mjs): the recommended products (their handles resolved in
- * Shopify) or the attached set's product. "all" → no restriction. Fails
- * (ok: false, German message for the desk) when the scope cannot be
- * honoured — no recommendations, an unresolvable handle, no active set — so
- * the send path refuses instead of minting a code wider than promised.
+ * (discount-scope.mjs): for "Empfehlungen" exactly the products the mail
+ * shows — resolveRecommendedProducts, so a sold-out recommendation is neither
+ * shown nor covered — with their handles resolved in Shopify. "all" → no
+ * restriction. The retired scope "set" (only the set; history since a set
+ * mail carries no code) is refused — GATE 1d already stops it. Fails (ok:
+ * false, German message for the desk) when the scope cannot be honoured — no
+ * available recommendations, an unresolvable handle — so the send path
+ * refuses instead of minting a code wider than promised.
  */
 async function resolveDiscountScopeProducts(
   scope: DiscountScope,
-  recommendedProductIds: string[],
-  contactId: number
+  recommendedProductIds: string[]
 ): Promise<{ ok: true; productIds: string[] } | { ok: false; message: string }> {
   if (scope === "all") return { ok: true, productIds: [] };
+  if (scope !== "recommendations") return { ok: false, message: SET_SCOPE_RETIRED_MESSAGE };
   try {
-    if (scope === "set") {
-      const bundle = await getActiveBundleForCampaignContact(contactId);
-      if (!bundle?.shopifyProductId) {
-        return {
-          ok: false,
-          message:
-            "Der Rabatt soll nur für das Set gelten, aber es ist kein aktives Set-Angebot angehängt. " +
-            "Set anlegen oder den Rabatt-Bereich ändern.",
-        };
-      }
-      return { ok: true, productIds: [bundle.shopifyProductId] };
-    }
     const products = await resolveRecommendedProducts(recommendedProductIds);
     const handles = [...new Set(products.map((p) => p.slug || p.id).filter(Boolean))];
     if (handles.length === 0) {
@@ -627,6 +637,22 @@ async function resolveDiscountScopeProducts(
   }
 }
 
+/**
+ * Resolve the draft's recommended product ids (including review-time curation;
+ * possibly variant-pinned refs) against the live catalog — the campaign's
+ * product rows, exactly like the marketing channel's cart contents. Returns
+ * variant-projected display products, so a row shows the CHOSEN variant's
+ * name, price and deep link. Purely presentational: a resolve failure just
+ * drops the rows (the prose keeps its product links), it never blocks a send.
+ *
+ * Dropped:
+ *   - a ref whose pinned variant no longer exists (reported) — never silently
+ *     downgraded to the default variant: a marketing mail must not show a
+ *     price the admin didn't approve (PAngV);
+ *   - a SOLD-OUT product/variant — a mail never advertises what cannot be
+ *     bought (the catalog sync keeps stock fresh; the scoped code follows,
+ *     since resolveDiscountScopeProducts reads this same list).
+ */
 async function resolveRecommendedProducts(productIds: string[]): Promise<Product[]> {
   if (productIds.length === 0) return [];
   try {
@@ -643,6 +669,7 @@ async function resolveRecommendedProducts(productIds: string[]): Promise<Product
       );
     }
     return selections
+      .filter((s) => s.available)
       .map((s) => s.display)
       .filter((p): p is Product => p !== null);
   } catch (err) {
@@ -652,38 +679,31 @@ async function resolveRecommendedProducts(productIds: string[]): Promise<Product
 }
 
 /**
- * Resolve the bundle attached to a campaign contact (if any) and render its
- * special-offer block — the campaign sibling of marketing-email's
+ * Render the set block for a campaign contact's set row (null / no longer
+ * active → null) — the campaign sibling of marketing-email's
  * buildBundleBlockForSend: same active-only guard (shouldRenderBundleBlock),
- * same tracked redirect, same renderer, fresh catalog images. Never throws; a
- * failure degrades to "no block" so a send is never blocked by the bundle path.
+ * same tracked redirect, same renderer and component mapping (snapshot count
+ * and unit price, fresh catalog image, the draft's highlight as description).
+ * Never throws; a failure degrades to "no block" so a send is never blocked
+ * by the bundle path.
  */
-async function buildBundleBlockForContact(
-  contactId: number,
-  language: "de" | "en"
-): Promise<{ text: string; html: string; componentNames: string[]; expiresAt: string | null; offerId: number } | null> {
+async function buildBundleBlock(
+  bundle: BundleOfferRow | null,
+  language: "de" | "en",
+  highlights: Array<{ name: string; description: string }> | null
+): Promise<{ text: string; html: string; expiresAt: string | null; offerId: number } | null> {
   try {
-    const bundle = await getActiveBundleForCampaignContact(contactId);
-    if (!shouldRenderBundleBlock(bundle) || !bundle) return null;
+    if (!bundle || !shouldRenderBundleBlock(bundle)) return null;
     const offerUrl = buildBundleRedirectUrl(bundle.redirectToken, language);
     if (!offerUrl) return null;
-
-    // Component images fresh from the catalog; the block lists the contents
-    // with the snapshotted count of each item.
     const catalog = await loadProductCatalog();
-    const byId = new Map(catalog.map((p) => [p.id, p]));
-    const components = bundle.components.map((c) => {
-      const product = byId.get(c.productId);
-      return {
-        name: c.title,
-        imageUrl: firstProductImageUrl(product),
-        quantity: c.quantity,
-      };
-    });
-
+    const components: BundleEmailComponent[] = bundleEmailComponents(
+      bundle.components,
+      new Map(catalog.map((p) => [p.id, p])),
+      highlights
+    );
     const block = renderBundleOfferBlock({
-      title:
-        bundle.title ?? (language === "en" ? "Your personal set" : "Dein persönliches Set"),
+      title: bundle.title ?? (language === "en" ? "Your personal set" : "Dein persönliches Set"),
       components,
       bundlePrice: bundle.bundlePrice,
       componentsSum: bundle.componentsSum,
@@ -691,9 +711,9 @@ async function buildBundleBlockForContact(
       offerUrl,
       language,
     });
-    return { ...block, componentNames: components.map((c) => c.name), expiresAt: bundle.expiresAt, offerId: bundle.id };
+    return { ...block, expiresAt: bundle.expiresAt, offerId: bundle.id };
   } catch (err) {
-    reportError(err, { route: "lib/campaign-email", phase: "buildBundleBlockForContact" });
+    reportError(err, { route: "lib/campaign-email", phase: "buildBundleBlock" });
     return null;
   }
 }
@@ -747,33 +767,39 @@ export async function renderCampaignEmailPreview(
     campaign?.heroMode === "none"
       ? { heroImageUrl: null, heroImageMobileUrl: null, heroHeadline: null }
       : await getEmailHeroRenderData("campaign", contactId);
+  const activeBundle = await getActiveBundleForCampaignContact(contactId);
   const { html } = await withEmailDesign(emailDesign, () =>
     withEmailRenderData(
       { ...hero, recipientFirstName: contact.firstName?.trim() || null },
-      async () => renderCampaignEmail({
-    subject,
-    body,
-    language: contact.language,
-    products: await resolveRecommendedProducts(draft.recommendedProductIds),
-    productHighlights: draft.productHighlights,
-    discountCode: draft.discountPercent > 0 ? PLACEHOLDER_DISCOUNT_CODE : null,
-    discountExpiresLabel:
-      draft.discountPercent > 0 && draft.discountExpiresAt
-        ? formatExpiryDateForLanguage(draft.discountExpiresAt, contact.language)
-        : null,
-    discountExpiresAt: draft.discountPercent > 0 ? draft.discountExpiresAt : null,
-    discountPercent: draft.discountPercent,
-    discountScope: draft.discountScope,
-    unsubscribe: unsubscribeFooter(
-          unsubscribeUrl,
-          contact.language,
-          buildErasureUrl(contact.email, contact.language)
-        ),
-    bundle: await buildBundleBlockForContact(contactId, contact.language),
-    labelForUrl: await catalogNameLookup("lib/campaign-email"),
-    ...campaignCtaOptions(campaign, contact.language),
-  }))
-    );
+      async () => {
+        // Set mail or item mail, decided exactly like the send path.
+        const bundle = await buildBundleBlock(activeBundle, contact.language, draft.productHighlights);
+        return renderCampaignEmail({
+          subject,
+          body,
+          language: contact.language,
+          products: bundle ? [] : await resolveRecommendedProducts(draft.recommendedProductIds),
+          productHighlights: draft.productHighlights,
+          discountCode: draft.discountPercent > 0 ? PLACEHOLDER_DISCOUNT_CODE : null,
+          discountExpiresLabel:
+            draft.discountPercent > 0 && draft.discountExpiresAt
+              ? formatExpiryDateForLanguage(draft.discountExpiresAt, contact.language)
+              : null,
+          discountExpiresAt: draft.discountPercent > 0 ? draft.discountExpiresAt : null,
+          discountPercent: draft.discountPercent,
+          discountScope: draft.discountScope,
+          unsubscribe: unsubscribeFooter(
+            unsubscribeUrl,
+            contact.language,
+            buildErasureUrl(contact.email, contact.language)
+          ),
+          bundle,
+          labelForUrl: await catalogNameLookup("lib/campaign-email"),
+          ...campaignCtaOptions(campaign, contact.language),
+        });
+      }
+    )
+  );
   return { ok: true, subject, html };
 }
 
@@ -834,12 +860,13 @@ export async function renderCampaignSample(input: {
 }
 
 /**
- * Render the campaign email (text + HTML): the (edited) prose, the recommended
- * products as the newsletter's picture-grid section ("Für dich ausgesucht" —
- * black separator band + two-column image grid), an optional bundle
- * special-offer block, then the deterministic Mo-promo block with the
- * deep-link CTA, the deterministic discount line (code + deadline outside the
- * editable prose), and the unsubscribe footer. The branded shell carries the
+ * Render the campaign email (text + HTML): the (edited) prose, then the OFFER —
+ * EITHER the set block (a set mail: `bundle` given — only the set, no product
+ * rows, no coupon, the countdown runs to the set's deadline) OR the item mail
+ * (the recommended products as rows under „Für dich ausgesucht“ plus the
+ * coupon card when a code was minted, the countdown to the code's expiry) —
+ * offer-mode.mjs; then the deterministic Mo-promo block with the deep-link
+ * CTA and the unsubscribe footer. The branded shell carries the
  * social/company/Impressum footer (email-template.ts), matching every other
  * outgoing mail.
  */
@@ -850,8 +877,9 @@ export function renderCampaignEmail(opts: {
   body: string;
   language: "de" | "en";
   /** The draft's recommended products (curation included) — rendered as
-   *  personalised rows between prose and CTA. Optional so the test-send
-   *  script and legacy callers can omit it. */
+   *  personalised rows between prose and CTA in an ITEM mail (ignored in a
+   *  set mail). Optional so the test-send script and legacy callers can omit
+   *  it. */
   products?: Product[];
   /** The draft's stored per-product personalised descriptions (matched by
    *  name; catalog shortDescription is the fallback). */
@@ -868,9 +896,10 @@ export function renderCampaignEmail(opts: {
    * text part follow it. Omitted → the whole order. */
   discountScope?: string | null;
   unsubscribe: { text: string; html: string };
-  /** Optional special-offer block for an attached bundle (text + HTML parts +
-   *  component names, so those products aren't shown twice). */
-  bundle: { text: string; html: string; componentNames?: string[]; expiresAt?: string | null } | null;
+  /** The set block of an attached, active set (text + HTML parts + its
+   *  deadline). Given → a SET MAIL: only the set is shown — products,
+   *  discountCode and the coupon are ignored (offer-mode.mjs). */
+  bundle: { text: string; html: string; expiresAt?: string | null } | null;
   /** Names a bare product URL in the prose (catalog lookup); null → compact
    * host/path label. Markdown links carry their own label. */
   labelForUrl?: (url: string) => string | null;
@@ -885,9 +914,7 @@ export function renderCampaignEmail(opts: {
   /** Untracked shop link for previews (the send path tracks via ctaUrl). */
   shopCtaUrl?: string | null;
 }): { text: string; html: string } {
-  const { subject, body, language, discountCode, discountExpiresLabel, unsubscribe, bundle } =
-    opts;
-  const products = opts.products ?? [];
+  const { subject, body, language, discountExpiresLabel, unsubscribe, bundle } = opts;
   const en = language === "en";
   const moPromo = opts.moPromo !== false;
   const shopCta = opts.shopCtaLabel ? { label: opts.shopCtaLabel, url: opts.ctaUrl ?? opts.shopCtaUrl ?? "" } : null;
@@ -895,21 +922,21 @@ export function renderCampaignEmail(opts: {
   // kept) then links Mo directly, untracked.
   const deeplink = shopCta ? campaignMoDeeplinkUrl() : (opts.ctaUrl ?? campaignMoDeeplinkUrl());
 
-  // The personalised recommendation rows — products the attached set already
-  // shows are dropped so nothing appears twice (the set block presents them).
-  const rowItems = productRowItems(products, {
-    locale: language,
-    highlights: opts.productHighlights,
-    excludeNames: bundle?.componentNames ?? null,
-  });
+  // SET MAIL xor ITEM MAIL (offer-mode.mjs): with a set block the mail offers
+  // only the set — no product rows and no code (the set price is the offer).
+  const setMail = bundle !== null;
+  const discountCode = setMail ? null : opts.discountCode;
+  const rowItems = setMail
+    ? []
+    : productRowItems(opts.products ?? [], { locale: language, highlights: opts.productHighlights });
 
   // --- text part — markdown links flatten to "Label (URL)" ---
   const textBody = emailProseToText(body.trim());
   const textLines = [textBody];
-  // The special-offer block (when a bundle is attached) sits right after the
-  // prose, before the discount line / promo / unsubscribe footer.
+  // The set block (set mail) sits right after the prose, before the promo /
+  // unsubscribe footer.
   if (bundle) textLines.push(bundle.text);
-  // The coupon: code, value, terms and the one-click redeem link
+  // Item mail: the coupon — code, value, terms and the one-click redeem link
   // (discount-coupon.mjs) — outside the editable prose, so code and deadline
   // are always stated exactly once, deterministically.
   if (discountCode) {
@@ -923,11 +950,12 @@ export function renderCampaignEmail(opts: {
       })
     );
   }
-  // The offer countdown: the earlier of discount expiry and set expiry, only
-  // while something with a deadline is actually in the mail.
-  const offerExpiresAt =
-    discountCode || bundle
-      ? earliestDeadline(discountCode ? opts.discountExpiresAt : null, bundle?.expiresAt)
+  // The offer countdown runs to the deadline of the one offer in the mail:
+  // the set's expiry (set mail) or the code's (item mail with a code).
+  const offerExpiresAt = bundle
+    ? earliestDeadline(bundle.expiresAt)
+    : discountCode
+      ? earliestDeadline(opts.discountExpiresAt)
       : null;
   const countdownLine = offerExpiresAt ? countdownText(offerExpiresAt, language) : "";
   if (countdownLine) textLines.push("", countdownLine);
@@ -937,9 +965,8 @@ export function renderCampaignEmail(opts: {
   const text = textLines.join("\n");
 
   // --- html part — the shared branded template ---
-  // The coupon card (renderDiscountCoupon; a design lays it out) sits under
-  // the set offer and above the countdown, so both offers precede the one
-  // deadline that counts for them.
+  // Item mail: the coupon card (renderDiscountCoupon; a design lays it out)
+  // sits under the product rows and above the countdown of its deadline.
   const couponRows = discountCode
     ? renderDiscountCoupon({
         code: discountCode,
@@ -985,8 +1012,8 @@ export function renderCampaignEmail(opts: {
                       { labelForUrl: opts.labelForUrl, linkStyle: emailLinkStyle() }
                     )}</p>`,
     // Full-width newsletter sections between the body and the CTA pill: the
-    // recommended-products picture grid, the bundle offer block (if any), and
-    // last the Mo-promo media row — directly above its "Beratung starten" CTA.
+    // offer (product rows + coupon, or the set block), its countdown, and last
+    // the Mo-promo media row — directly above its "Beratung starten" CTA.
     preCtaRowsHtml:
       `${productsRows}${bundle ? bundle.html : ""}${couponRows}${
         offerExpiresAt ? renderOfferCountdown({ expiresAt: offerExpiresAt, language }) : ""
