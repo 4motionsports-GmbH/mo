@@ -15,12 +15,14 @@
 // always talks about exactly the products the review card shows.
 // `refreshRecommendations: true` recomputes them instead — from the purchase
 // basis in `purchaseSelection` (catalog product ids; null = all purchases;
-// omitted = the draft's stored selection). An attached bundle is rebuilt to
-// match on refresh.
+// omitted = the draft's stored selection). While a set is attached the mail is
+// a set offer (offer-mode.mjs): a refresh leaves the recommendations and the
+// set untouched, and the draft carries no code whatever depth is requested
+// (prepareDraftForContact coerces it).
 //
 // The response carries the persisted draft PLUS the resolved recommendation
-// products and the (possibly rebuilt) bundle, so the review card can patch
-// itself without a reload. Auth + CSRF via guardAdminPost (the proxy already
+// products and the attached set, so the review card can patch itself without
+// a reload. Auth + CSRF via guardAdminPost (the proxy already
 // gates /api/admin/*).
 
 import { guardAdminPost, adminJson, adminJsonError } from "@/lib/admin-api";
@@ -41,7 +43,7 @@ import {
   DISCOUNT_PERCENT_MAX,
 } from "@/lib/discount-validation.mjs";
 import { EMAIL_TEXT_MODES, parseEmailTextMode } from "@/lib/email-text-mode.mjs";
-import { parseDiscountScope, type DiscountScope } from "@/lib/discount-scope.mjs";
+import { parseEditableDiscountScope, type DiscountScope } from "@/lib/discount-scope.mjs";
 import type { EmailTextMode } from "@/lib/marketing-draft";
 import { reportError } from "@/lib/observability";
 
@@ -138,8 +140,16 @@ export async function POST(req: Request) {
       );
     }
     // Optional discount scope (0058). Omitted/null = keep the draft's stored
-    // scope; a changed scope always regenerates (the prose states it).
-    discountScope = body.discountScope == null ? null : parseDiscountScope(body.discountScope);
+    // scope; a changed scope always regenerates (the prose states it). "set"
+    // is history (offer-mode.mjs) and refused like any unknown value.
+    if (body.discountScope == null) {
+      discountScope = null;
+    } else {
+      discountScope = parseEditableDiscountScope(body.discountScope);
+      if (!discountScope) {
+        return adminJsonError("bad_request", "discountScope must be all or recommendations.", 400);
+      }
+    }
     // Optional prose length. Omitted/null = keep the existing draft's stored
     // mode (campaign-prepare resolves the effective value).
     if (body.textMode == null) {

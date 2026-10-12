@@ -638,6 +638,7 @@ export function ReviewColumn({
             appliedSelection={item.purchaseSelectedIds}
             busy={locked}
             applying={busy === "selection" || busy === "regen"}
+            setAttached={isSetMail}
             onApply={(selection) => actions.applyPurchaseSelection(id, selection)}
           />
         </Disclosure>

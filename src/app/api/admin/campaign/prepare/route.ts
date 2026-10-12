@@ -24,7 +24,7 @@ import {
   parseEmailTextMode,
 } from "@/lib/email-text-mode.mjs";
 import type { EmailTextMode } from "@/lib/marketing-draft";
-import { parseDiscountScope, type DiscountScope } from "@/lib/discount-scope.mjs";
+import { parseEditableDiscountScope, type DiscountScope } from "@/lib/discount-scope.mjs";
 import { reportError } from "@/lib/observability";
 
 export const maxDuration = 300;
@@ -80,8 +80,9 @@ export async function POST(req: Request) {
       );
     }
     textMode = parsedMode;
-    // Unknown values fall back to "all" — the classic whole-order code.
-    discountScope = parseDiscountScope(body.discountScope);
+    // Unknown values (and the retired "set") fall back to "all" — the classic
+    // whole-order code.
+    discountScope = parseEditableDiscountScope(body.discountScope) ?? "all";
   } catch {
     return adminJsonError("bad_request", "Invalid JSON body", 400);
   }
