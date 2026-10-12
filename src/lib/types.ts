@@ -70,10 +70,15 @@ export interface Product {
   //   inventoryQuantity   — units in stock across variants/locations
   //                         (Shopify `Product.totalInventory`). Omitted when
   //                         inventory isn't tracked.
+  //   tracksInventory     — Shopify `Product.tracksInventory`. When false the
+  //                         quantities above are meaningless (0 or absent) —
+  //                         the admin then shows no stock number
+  //                         (stock-level.mjs). Omitted when unknown.
   //   anyVariantAvailable — whether ANY variant is `availableForSale` (already
   //                         accounts for oversell policy). Omitted when no
   //                         availability data was present (e.g. fallback bundle).
   inventoryQuantity?: number;
+  tracksInventory?: boolean;
   anyVariantAvailable?: boolean;
   deliveryTime: string;
   series?: string;

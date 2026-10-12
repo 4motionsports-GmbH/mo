@@ -2,7 +2,8 @@
 // sync health, write-back outbox) and everything e-mail — the
 // registered CODE designs (src/lib/email-designs/registry.ts) with live
 // previews, the per-email-type design selection, the read-only send
-// configuration and the Systemstatus overview (decision D-5, env-derived
+// configuration, the editable contact-frequency warning (admin_settings,
+// migration 0078) and the Systemstatus overview (decision D-5, env-derived
 // booleans only). Data is gathered here on the server and handed to the client
 // EmailSettingsWorkspace, which owns the selection state and calls the
 // /api/admin/email-designs routes.
@@ -19,7 +20,10 @@ import {
   isCampaignReleaseEnabled,
   isCampaignSendsApproved,
   isSingleOptInAllowed,
+  marketingMinSendIntervalDays,
 } from "@/lib/campaign-flags.mjs";
+import { getContactFrequencySettings } from "@/lib/admin-settings-store";
+import { DEFAULT_CONTACT_FREQUENCY } from "@/lib/contact-frequency.mjs";
 import {
   aiProfileScope,
   appProxySigninMaxAgeHours,
@@ -46,15 +50,16 @@ import type { SystemStatus } from "./einstellungen/types";
 
 export async function EinstellungenTab({ dbReady }: { dbReady: boolean }) {
   const designs = listEmailDesignMeta();
-  const [selections, health, runs, outbox, alignment] = dbReady
+  const [selections, health, runs, outbox, alignment, contactFrequency] = dbReady
     ? await Promise.all([
         listEmailDesignSelections(),
         getSyncHealth(),
         listSyncRuns(8),
         getOutboxStats(),
         getConsentAlignmentReport(),
+        getContactFrequencySettings(),
       ])
-    : [{}, null, [], null, null];
+    : [{}, null, [], null, null, { ...DEFAULT_CONTACT_FREQUENCY }];
 
   // Presence checks only — the values never leave the server.
   const systemStatus: SystemStatus = {
@@ -103,6 +108,7 @@ export async function EinstellungenTab({ dbReady }: { dbReady: boolean }) {
         inboundAddress: inboundEmailAddress() ?? null,
         logoOverride: process.env.EMAIL_LOGO_URL ?? null,
       }}
+      contactFrequency={{ settings: contactFrequency, minSendIntervalDays: marketingMinSendIntervalDays() }}
       systemStatus={systemStatus}
       shopifySync={dbReady ? { health, runs, outbox, alignment, flags: shopifySyncFlags() } : null}
     />

@@ -43,6 +43,7 @@ const STATUS_BY_REASON: Record<string, number> = {
   campaign_closed: 409,
   discount_mismatch: 409,
   discount_scope_unresolved: 409,
+  offer_conflict: 409,
   sends_not_approved: 403,
   opt_in_blocked: 403,
   no_consent: 403,

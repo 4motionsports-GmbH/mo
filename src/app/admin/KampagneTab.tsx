@@ -6,7 +6,8 @@
 //
 // Data is fetched once on the SERVER (counts, the drafted queue with resolved
 // recommendation products, attached bundles, hero state and the cross-channel
-// last-send fact, the skipped contacts, the legal-gate flags, whether the
+// last-send fact, the marketing mails per recipient in the contact-frequency
+// window with that setting, the skipped contacts, the legal-gate flags, whether the
 // campaign design has a hero, the recorded AI costs for the Vorbereiten
 // estimate and the 30-day delivery strip) and handed to the client
 // KampagneWorkspace, which owns the desk: selection, filters, the review
@@ -54,6 +55,8 @@ import { getCachedEmailDesignForKind, getEmailDesignForKey } from "@/lib/email-d
 import { designSupportsKind, emailDesignHasHero, listEmailDesignMeta } from "@/lib/email-designs/registry";
 import { isHeroGenerationConfigured } from "@/lib/email-hero";
 import { isShopifyConfigured } from "@/lib/shopify";
+import { countRecentMarketingMails, getContactFrequencySettings } from "@/lib/admin-settings-store";
+import { contactFrequencyEnabled } from "@/lib/contact-frequency.mjs";
 import { CampaignsOverview, KampagneWorkspace } from "./lazy";
 import type { CampaignQueueItemProps } from "./kampagne/types";
 import type { CampaignCardProps } from "./kampagnen/types";
@@ -210,7 +213,7 @@ export async function KampagneTab({
   const campaignId = campaign.id;
 
   const shopifyConfigured = isShopifyConfigured();
-  const [counts, queue, skipped, design, costs, sentSummary, scheduled, letterCounts] = await Promise.all([
+  const [counts, queue, skipped, design, costs, sentSummary, scheduled, letterCounts, contactFrequency] = await Promise.all([
     getCampaignCounts(campaignId, { windowed: campaign.kind === "laufend" }),
     listDraftedQueue(campaignId),
     listSkippedContacts(campaignId),
@@ -219,6 +222,7 @@ export async function KampagneTab({
     getCampaignDeliverySummary(30, campaignId),
     listApprovedQueue(campaignId),
     campaign.kind !== "einzel" ? getCampaignLetterCounts(campaignId) : Promise.resolve(null),
+    getContactFrequencySettings(),
   ]);
 
   // Resolve the recommended products once for the whole queue (name, link,
@@ -231,13 +235,25 @@ export async function KampagneTab({
     : [];
   const productByRef = new Map(recommendedSelections.map((s) => [s.ref, s]));
 
-  // Attached (active) bundle offers for the whole queue in one query, and the
+  // Attached (active) bundle offers for the whole queue in one query, the
   // suppression state of every queued address (the send gate's fact, so the
-  // desk can flag a refusal before the operator presses Senden).
-  const [bundleByContact, suppressedEmails] = await Promise.all([
+  // desk can flag a refusal before the operator presses Senden) and the
+  // marketing mails per real recipient in the contact-frequency window (one
+  // query; skipped while the warning is off — Testkontakte never warn).
+  const counted = queue.filter((q) => !q.contact.isTest);
+  const [bundleByContact, suppressedEmails, recentCounts] = await Promise.all([
     listActiveBundlesForCampaignContacts(queue.map((q) => q.contact.id)),
     listSuppressedEmails(queue.map((q) => q.contact.email)),
+    contactFrequencyEnabled(contactFrequency) && counted.length > 0
+      ? countRecentMarketingMails(
+          counted.map((q) => q.contact.email),
+          counted.map((q) => q.contact.customerId),
+          contactFrequency.windowDays
+        )
+      : Promise.resolve(null),
   ]);
+  const recentByContact = new Map<number, number>();
+  if (recentCounts) counted.forEach((q, i) => recentByContact.set(q.contact.id, recentCounts[i] ?? 0));
 
   const queueItems: CampaignQueueItemProps[] = queue.map((q) => {
     const b = bundleByContact.get(q.contact.id);
@@ -286,6 +302,7 @@ export async function KampagneTab({
       draftUpdatedAt: q.draft.updatedAt ?? q.draft.createdAt,
       isTest: q.contact.isTest,
       suppressed: suppressedEmails.has(q.contact.email),
+      recentMailCount: recentByContact.get(q.contact.id) ?? null,
       // Why the release job held an approved mail back („Einplanen“, 0072).
       sendError: q.contact.releaseError,
     };
@@ -351,6 +368,7 @@ export async function KampagneTab({
       }
       heroGenerationConfigured={isHeroGenerationConfigured()}
       minSendIntervalDays={marketingMinSendIntervalDays()}
+      contactFrequency={contactFrequency}
       costs={costs}
       sentSummary={sentSummary}
       initialContactId={initialContactId}

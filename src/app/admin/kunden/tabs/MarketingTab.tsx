@@ -21,6 +21,15 @@ import { DEFAULT_EMAIL_TEXT_MODE, EMAIL_TEXT_MODE_HINTS } from "@/lib/email-text
 import { ADMIN_DATE, formatAdmin } from "@/lib/admin-datetime.mjs";
 import { adminTabHref } from "@/lib/admin-tabs.mjs";
 import {
+  CONTACT_FREQUENCY_HINT_DETAIL,
+  contactFrequencyEnabled,
+  contactFrequencyQuestion,
+  contactFrequencyTitle,
+  contactFrequencyWarning,
+  readContactFrequencyConflict,
+  recentMailsText,
+} from "@/lib/contact-frequency.mjs";
+import {
   Button,
   buttonVariants,
   Callout,
@@ -35,7 +44,7 @@ import {
   toast,
   useConfirm,
 } from "../../ui";
-import { adminFetch, errorMessage } from "../../lib/admin-fetch";
+import { AdminApiError, adminFetch, errorMessage } from "../../lib/admin-fetch";
 import { EmailPreviewButton } from "../../EmailPreviewButton";
 import { EmailTextModeToggle, type EmailTextModeValue } from "../../EmailTextModeToggle";
 import { HeroImagePanel } from "../../HeroImagePanel";
@@ -109,15 +118,33 @@ function Einzelansprache({ customer }: { customer: CustomerDetail }) {
     }
   }
 
+  // Contact frequency (lib/contact-frequency.mjs): the person's marketing
+  // mails in the window — a warning tone at the threshold, never a block.
+  const recent = customer.recentMarketingMails;
+  const frequency = contactFrequencyWarning({ count: recent, settings: customer.contactFrequency });
+
   return (
     <section className="flex flex-col gap-2 rounded-lg border border-border bg-surface-2 p-3">
-      <div className="flex items-center gap-1.5 text-sm font-semibold">
+      <div className="flex flex-wrap items-center gap-1.5 text-sm font-semibold">
         Einzelansprache
         <InfoTip>
           Eine persönliche Mail nur an diese Person — mit Profil, Käufen und Gesprächen, auf Wunsch mit
           Rabatt oder Set. Der Entwurf landet im Prüftisch der Kampagne „Einzelansprache“ und geht
           erst nach deiner Prüfung raus (gleiche Prüfungen und Sperren wie jede Kampagne).
         </InfoTip>
+        {recent !== null && contactFrequencyEnabled(customer.contactFrequency) && (
+          <span className="ml-auto">
+            {frequency ? (
+              <StatusBadge tone="warning" dot={false}>
+                {contactFrequencyTitle(frequency)}
+              </StatusBadge>
+            ) : (
+              <span className="text-xs font-normal tabular-nums text-muted-foreground">
+                {recentMailsText(recent, customer.contactFrequency.windowDays)}
+              </span>
+            )}
+          </span>
+        )}
       </div>
       {open ? (
         <div className="flex flex-wrap items-center gap-2 text-sm">
@@ -205,6 +232,10 @@ function LegacyMarketingMail({ customer }: { customer: CustomerDetail }) {
       ? ((send?.textMode ?? "detailed") as EmailTextModeValue)
       : (DEFAULT_EMAIL_TEXT_MODE as EmailTextModeValue)
   );
+  // An active, unsent set is attached to the next/open mail — a set mail
+  // carries no discount code (offer-mode.mjs), so the depth is fixed at 0.
+  const setAttached = customer.bundles.some((b) => b.status === "active" && !b.emailSentAt);
+  const effectiveDiscount = setAttached ? 0 : discountPercent;
   const [busy, setBusy] = React.useState<null | "draft" | "save" | "send" | "delete">(null);
 
   // Depth, instructions or text mode changed vs. the open draft ⇒ the visible
@@ -212,7 +243,7 @@ function LegacyMarketingMail({ customer }: { customer: CustomerDetail }) {
   const needsRegenerate =
     hasDraft &&
     send != null &&
-    (discountPercent !== send.discountPercent ||
+    (effectiveDiscount !== send.discountPercent ||
       instructions.trim() !== (send.adminInstructions ?? "") ||
       textMode !== (send.textMode ?? "detailed"));
 
@@ -227,7 +258,7 @@ function LegacyMarketingMail({ customer }: { customer: CustomerDetail }) {
         {
           body: {
             customerId: customer.id,
-            discountPercent,
+            discountPercent: effectiveDiscount,
             adminInstructions: instructions.trim() || null,
             textMode,
             // Overwrite an existing open draft; after a SENT mail this creates a
@@ -302,29 +333,54 @@ function LegacyMarketingMail({ customer }: { customer: CustomerDetail }) {
       });
       return;
     }
+    // Contact frequency (lib/contact-frequency.mjs): a warning only — the
+    // same confirm asks „trotzdem senden?“ and the send skips the route's
+    // 409 backstop; a 409 without the local warning asks once more.
+    const frequency = contactFrequencyWarning({
+      count: customer.recentMarketingMails,
+      settings: customer.contactFrequency,
+    });
     const ok = await confirm({
-      title: `E-Mail an ${customer.email} senden?`,
+      title: frequency ? contactFrequencyQuestion(frequency) : `E-Mail an ${customer.email} senden?`,
       description: (
         <span>
+          {frequency && <>An {customer.email} · </>}
           Betreff: <strong className="text-foreground">{subject || "—"}</strong>
-          {discountPercent > 0 ? (
+          {effectiveDiscount > 0 ? (
             <>
               {" "}
-              · Rabatt {discountPercent} % (einmaliger Code wird beim Senden erzeugt)
+              · Rabatt {effectiveDiscount} % (einmaliger Code wird beim Senden erzeugt)
             </>
           ) : (
             " · ohne Rabatt"
           )}
+          {frequency && <> · {CONTACT_FREQUENCY_HINT_DETAIL}</>}
         </span>
       ),
-      confirmLabel: "Jetzt senden",
+      confirmLabel: frequency ? "Trotzdem senden" : "Jetzt senden",
     });
     if (!ok) return;
     setBusy("send");
     try {
       // Persist any unsaved edits first so the sent mail matches the textarea.
       await adminFetch("/api/admin/marketing/update", { body: { sendId: send.id, subject, body } });
-      await adminFetch("/api/admin/marketing/send", { body: { sendId: send.id } });
+      const sendMail = (ignoreContactFrequency: boolean) =>
+        adminFetch("/api/admin/marketing/send", {
+          body: { sendId: send.id, ...(ignoreContactFrequency ? { ignoreContactFrequency: true } : {}) },
+        });
+      try {
+        await sendMail(frequency !== null);
+      } catch (err) {
+        const conflict = err instanceof AdminApiError ? readContactFrequencyConflict(err.details) : null;
+        if (!conflict) throw err;
+        const again = await confirm({
+          title: contactFrequencyQuestion(conflict),
+          description: `An ${customer.email}. ${CONTACT_FREQUENCY_HINT_DETAIL}`,
+          confirmLabel: "Trotzdem senden",
+        });
+        if (!again) return;
+        await sendMail(true);
+      }
       setSend({
         ...send,
         status: "sent",
@@ -391,7 +447,8 @@ function LegacyMarketingMail({ customer }: { customer: CustomerDetail }) {
           </Field>
           <Field
             label="Rabatt (%)"
-            info={`0 = kein Rabatt, kein Code. ${DISCOUNT_PERCENT_MIN}–${DISCOUNT_PERCENT_MAX} % erzeugt beim Versand einen einmaligen, 7 Tage gültigen Code.`}
+            info={`0 = kein Rabatt, kein Code. ${DISCOUNT_PERCENT_MIN}–${DISCOUNT_PERCENT_MAX} % erzeugt beim Versand einen einmaligen, 7 Tage gültigen Code. Mit angehängtem Set gibt es keinen Code — die Mail zeigt dann nur das Set, der Set-Preis ist das Angebot.`}
+            hint={setAttached ? "Entfällt — ein Set ist angehängt" : undefined}
           >
             <Input
               id={id("discount")}
@@ -400,8 +457,8 @@ function LegacyMarketingMail({ customer }: { customer: CustomerDetail }) {
               min={DISCOUNT_PERCENT_MIN}
               max={DISCOUNT_PERCENT_MAX}
               step={1}
-              value={discountPercent}
-              disabled={disabled}
+              value={effectiveDiscount}
+              disabled={disabled || setAttached}
               onChange={(e) => setDiscountPercent(clampDiscountPercent(e.target.valueAsNumber))}
               className="w-24"
             />
@@ -422,8 +479,8 @@ function LegacyMarketingMail({ customer }: { customer: CustomerDetail }) {
             </StatusBadge>
             {!needsRegenerate && (
               <span className="text-xs text-muted-foreground">
-                {discountPercent > 0
-                  ? `Platzhalter-Code MO-XXXX bitte nicht ändern — er wird beim Versand durch den echten ${discountPercent}%-Code ersetzt.`
+                {effectiveDiscount > 0
+                  ? `Platzhalter-Code MO-XXXX bitte nicht ändern — er wird beim Versand durch den echten ${effectiveDiscount}%-Code ersetzt.`
                   : "Ohne Rabatt: kein Code im Text, kein Rabatt im Warenkorb-Link."}
               </span>
             )}
@@ -449,7 +506,7 @@ function LegacyMarketingMail({ customer }: { customer: CustomerDetail }) {
           <Field
             label="E-Mail-Text"
             info={`Beim Versand werden Warenkorb-Button und Abmeldelink automatisch angehängt${
-              discountPercent > 0 ? " und der einmalige Rabattcode erzeugt" : ""
+              effectiveDiscount > 0 ? " und der einmalige Rabattcode erzeugt" : ""
             }. Gesendet wird nur an bestätigte, nicht abgemeldete Adressen.`}
           >
             <Textarea
@@ -474,7 +531,7 @@ function LegacyMarketingMail({ customer }: { customer: CustomerDetail }) {
               title={`Vorschau — ${customer.email}`}
               description={
                 "So wird die E-Mail im Postfach gerendert (inkl. Produktbilder, Bundle und Footer). " +
-                (discountPercent > 0
+                (effectiveDiscount > 0
                   ? "Der Rabatt zeigt den Platzhalter-Code MO-XXXX — der echte Code und der getrackte Warenkorb-Link entstehen erst beim Senden."
                   : "Der getrackte Warenkorb-Link entsteht erst beim Senden.")
               }

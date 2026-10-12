@@ -550,8 +550,9 @@ The sheet's sections, top to bottom (every field, column, bound and default per 
   (`campaigns/audience-preview`, debounced): total, with Mo chat, DE / EN, the
   plain-German description, a few names and — when there are any — „Ohne
   Einwilligung passen weitere N — davon M per Brief erreichbar“ (InfoTip).
-- **Angebot** — Rabatt, Gilt für, „Codes gültig bis“ (Aktion): starting values
-  for Vorbereiten; codes are minted at send.
+- **Angebot** — Rabatt, Gilt für (Alles / Empfehlungen), „Codes gültig bis“
+  (Aktion): starting values for Vorbereiten; codes are minted at send. A card
+  that gets a set carries no code (offer-mode.mjs).
 - **Gestaltung** — Design, Titelbild, Textlänge, „Button führt zu“ Mo-Chat /
   Shop, „Mo-Hinweis anhängen“ (Mo-Chat without the hint is refused: „Der Button
   zu Mo steht im Mo-Hinweis — …“).
@@ -627,10 +628,18 @@ clearing 100–200 e-mails a day:
   check, computed by [`campaign-review-checks.mjs`](../src/lib/campaign-review-checks.mjs);
   which check blocks and which only hints: [`CAMPAIGNS.md`](./CAMPAIGNS.md) §5
   „Prüfpunkte“),
-  Empfehlungen (thumbnails, prices, availability, „+ Produkt“ with the catalog
-  picker), Angebot (Rabatt 0/5/10/15/20/custom, „Gilt für“ Alles / Empfehlungen /
-  Set — what Shopify applies the code to, coupon and prose follow; Set line with
-  the composer in a sheet), Text (Sprache, Modus), Hero (only when the campaign design has a
+  Empfehlungen (thumbnails, prices, stock „n auf Lager“ where Shopify tracks it,
+  sold-out or vanished products greyed out with „Ausverkauft“ / „Nicht im
+  Katalog“, „+ Produkt“ with the catalog picker — or, in a set mail, „Im Set“
+  with the set's counted contents), Angebot („Art: Einzelprodukte | Set“ — a
+  mail offers single products with an optional code OR one set, never both;
+  Einzelprodukte: Rabatt 0/5/10/15/20/custom and „Gilt für“ Alles / Empfehlungen
+  — what Shopify applies the code to, coupon and prose follow; Set: the set
+  line with price, „statt“, saving badge and end date, „Rabatt: Entfällt“. „Set“
+  opens the set dialog in a sheet: a fresh availability check of the
+  recommendations, unavailable ones greyed out, unit price + stock + count
+  1–10 per product, the normal price greyed in the empty „Set-Preis“ field and
+  the live saving — [`CAMPAIGNS.md`](./CAMPAIGNS.md) §4), Text (Sprache, Modus), Hero (only when the campaign design has a
   hero: Erzeugen, Anpassen… sheet, Entfernen), Kundenprofil (persona badge,
   plain-text excerpt of the central profile, „Öffnen“ → the customer in
   Kunden), Kaufhistorie (collapsed, with the recommendation basis; "Letzte 5
@@ -659,6 +668,19 @@ clearing 100–200 e-mails a day:
   and text changes (Rabatt, Sprache, Modus, Empfehlungen, Set) persist at once
   and batch into ONE background regenerate („Text wird angepasst…“); every
   card has its own busy state. Vorbereiten runs while the review continues.
+- **Kontakthäufigkeit** (a warning, never a block — rules:
+  [`CAMPAIGNS.md`](./CAMPAIGNS.md) §3). The server counts each real recipient's
+  marketing mails in the window once per desk (`recentMailCount`); the Kontakt
+  row „Letzte Mail“ adds „n Werbe-Mails in N Tagen“ (warning tone at the
+  threshold, InfoTip with what counts and the setting) and at the threshold
+  the card carries the hint „Schon n Werbe-Mails in N Tagen“. Senden on it
+  opens ONE confirmation („… an diese Adresse — trotzdem senden?“, „Trotzdem
+  senden“) that also replaces the first-send-of-the-day question; a 409 from
+  the server's fresh count brings the card back without a refusal and opens the
+  same confirmation with the server's numbers (also on a Postausgang retry).
+  The Einplanen dialog shows the warning as a Callout — pressing „Einplanen“
+  acknowledges it. Testkontakte never warn; the threshold is set in
+  Einstellungen (§3.10).
 - **Liste.** The queue as a sortable table with multi-select and bulk
   Überspringen (free, undoable), Neu generieren… and Rabatt setzen… (confirmed
   with count and cost estimate). The Hero column shows only for the KI hero
@@ -807,7 +829,7 @@ mounted, so an edit survives switching):
 | Aktivität | one timeline, newest first: orders, Mo chats, campaign mails (with „angeklickt“ for any click), consent changes, mail in / out ([`customer-timeline.mjs`](../src/lib/customer-timeline.mjs); amounts through `admin-format.mjs`); **„Frag Mo“** — a question about this person (3–500 characters) answered from the record in one writer-tier call with cited sources („[n] Datum · Art · Titel“; the AI profile only without an Art. 21 objection) | `customers/ask` |
 | Käufe | the order ledger (`customer_orders`, migration 0062: Artikel, Bestellnummer, Rabattcode, storniert, Datum, Summe, Status; „die neuesten n von m“) with paid count, revenue and Ø; for a person not (yet) mirrored the cached per-e-mail history with „Käufe aktualisieren“ | `customers/purchases` |
 | Gespräche | the person's conversations with the shared `TranscriptView` and „Im Gespräche-Tab öffnen“ | — |
-| Marketing | **Werbe-Einwilligung** — the one consent shared with Shopify: state, Seit, Quelle, „Verlauf (n)“ from `consent_events`; „Abmelden“ on request and „Abmeldung aufheben“ for a mistaken unsubscribe (no e-mail; the change reaches Shopify through the outbox); **Einzelansprache** (only with consent: „Hinweis für die KI“ + „Einzelansprache vorbereiten“, or the open one with „Im Prüftisch öffnen“, §3.2); **Kampagnen** — the person's participation (campaign, status, date, subject, geklickt — any click, the button or the set link —, danach abgemeldet). An open draft of the former personal marketing e-mail stays editable and sendable in the Disclosure „Persönliche E-Mail (bisheriger Weg) — offener Entwurf“ (only while the consent is sendable) until it is sent or deleted (§4) | `customers/marketing-optout`, `campaigns/add-recipient`; former path: `customers/marketing-draft`, `marketing/*`, `bundles/*`, `catalog/search`, `email-hero/*` |
+| Marketing | **Werbe-Einwilligung** — the one consent shared with Shopify: state, Seit, Quelle, „Verlauf (n)“ from `consent_events`; „Abmelden“ on request and „Abmeldung aufheben“ for a mistaken unsubscribe (no e-mail; the change reaches Shopify through the outbox); **Einzelansprache** (only with consent: „Hinweis für die KI“ + „Einzelansprache vorbereiten“, or the open one with „Im Prüftisch öffnen“, §3.2; its title row shows the person's marketing mails in the Kontakthäufigkeit window — „n Werbe-Mails in N Tagen“, a warning badge „Schon n Werbe-Mails in N Tagen“ at the threshold, [`CAMPAIGNS.md`](./CAMPAIGNS.md) §3); **Kampagnen** — the person's participation (campaign, status, date, subject, geklickt — any click, the button or the set link —, danach abgemeldet). An open draft of the former personal marketing e-mail stays editable and sendable in the Disclosure „Persönliche E-Mail (bisheriger Weg) — offener Entwurf“ (only while the consent is sendable) until it is sent or deleted (§4); at the threshold its send confirm asks „Schon n Werbe-Mails in den letzten N Tagen an diese Adresse — trotzdem senden?“ („Trotzdem senden“), and a 409 `contact_frequency` from the route asks once more with the server's numbers before sending with `ignoreContactFrequency` | `customers/marketing-optout`, `campaigns/add-recipient`; former path: `customers/marketing-draft`, `marketing/*`, `bundles/*`, `catalog/search`, `email-hero/*` |
 | Korrespondenz | sent + received mail threads (lazy body), reply composer with preview | `correspondence/*` |
 | Brief | physical letter: AI draft, preview, „Brief senden“ (gated by `PHYSICAL_MAIL_SENDS_APPROVED`); **„Widerspruch gegen Briefwerbung eintragen“** (Art. 21, confirmed — deletes the letter draft; the tab then shows only the objection with „Aufheben“, and drafting and sending are refused). **Since migration 0074 only a purchase address counts** — the shipping address of the person's latest completed order (source `purchase`); any other stored address (e.g. the Shopify account address, `consented_capture`) is refused at send (`not_purchase_address`, 409), as is an address a letter came back from as undeliverable (`address_invalid`). Without a usable purchase address the tab shows **„Adresse aus letzter Bestellung holen“**: reads that order's shipping address from Shopify and stores it (toast „Adresse aus der letzten Bestellung übernommen“, or „Keine abgeschlossene Bestellung“ / „Die letzte Bestellung hat keine vollständige Lieferadresse“; refused while `PHYSICAL_MAIL_SENDS_APPROVED` is off) | `customers/letter-draft`, `customers/letter-preview`, `physical/send`, `customers/objection`, `customers/letter-address` |
 
@@ -1194,7 +1216,8 @@ directive's measured effect from the newest run) and Mo's self-snapshot
 The e-mail design library (the registered code designs with **one** „Vorschau“
 per design — the e-mail type is switched inside the dialog), the per-type design
 assignment (`email-designs/assign`; `null`/`classic` clears), the read-only send
-configuration (sender, inbound address, logo override), the **Shopify-Abgleich**
+configuration (sender, inbound address, logo override), the **Kontakthäufigkeit**
+card (below), the **Shopify-Abgleich**
 card and the **Systemstatus** card (decision D-5): DB, Shopify, Resend send +
 webhook, Pingen, Anthropic and OpenAI keys, the rate-limit store (Upstash KV), the
 three legal gates and the group **Funktionen**: the feature switches as An /
@@ -1217,6 +1240,22 @@ read through `platform-flags.mjs`, `page-context.ts` and `consent-variants.mjs` 
 (screenshots `docs/screenshots/systemstatus/`, the voucher rows
 `docs/screenshots/2026-10-11-reward-switches/`). Details:
 [`EMAIL_DESIGNS.md`](./EMAIL_DESIGNS.md).
+
+**Kontakthäufigkeit** (migration 0078, `ContactFrequencyCard` in
+[`einstellungen/EmailSettingsWorkspace.tsx`](../src/app/admin/einstellungen/EmailSettingsWorkspace.tsx),
+after „Versand-Konfiguration“) — the threshold of the soft warning before a
+marketing mail to a person who already got several
+([`CAMPAIGNS.md`](./CAMPAIGNS.md) §3): an InfoTip on the title (what counts, a
+warning only, Testkontakte never, 0 = aus), two number fields **„Warnung ab
+(Mails)“** (0–50) and **„Zeitraum (Tage)“** (0–365) with the shared validation of
+[`contact-frequency.mjs`](../src/lib/contact-frequency.mjs) as field errors,
+**„Speichern“** (`settings/contact-frequency`, `useAsyncAction`, success toast
+with the new summary), the line „Gilt jetzt“ („Warnung ab 3 Werbe-Mails in 30
+Tagen“ / „Aus“) and, read-only next to it, **„Sperrfrist“** =
+`MARKETING_MIN_SEND_INTERVAL_DAYS` („aus“ / „n Tage“, InfoTip: a hard refusal,
+unlike the warning). Without a database a Callout and disabled inputs (the
+default applies); before migration 0078 the page shows the default and saving
+answers „Migration 0078 fehlt — bitte zuerst ausführen.“
 
 **Shopify-Abgleich**
 ([`einstellungen/ShopifySyncCard.tsx`](../src/app/admin/einstellungen/ShopifySyncCard.tsx);
@@ -1303,7 +1342,10 @@ consent is sendable
 Rabatt (%) 0–50 (`DISCOUNT_PERCENT_MAX`; > 0 mints a single-use code valid 7
 days at send), Textmodus, „Besondere Hinweise (optional)“, „Neu generieren“
 (`customers/marketing-draft`), Betreff and E-Mail-Text, the hero image, the
-Set-Angebot composer (`bundles/*`), „Speichern“ (`marketing/update`), the
+Set-Angebot composer (`bundles/*`; count per product, the normal price greyed
+in the empty price field, stock from the picker; an active set fixes the Rabatt
+at 0 — „Entfällt — ein Set ist angehängt“ — and creating one clears the open
+draft's code), „Speichern“ (`marketing/update`), the
 preview (`marketing/email-preview`, placeholder code `MO-XXXX`), **„Freigeben &
 senden“** (`marketing/send` → `approveAndSend`, §4.3) and „Entwurf löschen“
 (`marketing/delete`). Changing Rabatt, Textmodus or the Hinweise after
@@ -2432,11 +2474,11 @@ anomaly is logged server-side.
 
 ## 11. Admin API routes
 
-All under `/api/admin/*` — 103 route files —, gated by the Edge proxy **and**
+All under `/api/admin/*` — 106 route files —, gated by the Edge proxy **and**
 `guardAdminPost(req)` / `guardAdminGet()` in the handler (§1); JSON envelope
 `{ error: { code, message } }` on failure. Grouped by the screen that calls
 them. Actions that read or act on one person's data write the admin access log
-(`recordAdminAccess`, 39 route files) — among them `customers/ask`,
+(`recordAdminAccess`, 40 route files) — among them `customers/ask`,
 `customers/objection`, `campaigns/add-recipient(s)`, `campaigns/letters`,
 `customers/letter-address`, `inbox/accept`, `inbox/suggest` and
 `correspondence/assign-prospect`.
@@ -2460,11 +2502,11 @@ them. Actions that read or act on one person's data write the admin access log
 | Kunden | `POST campaigns/add-recipients { customerIds, campaignId?, adminNote? }` | „Zur Kampagne…“ for a selection (≤ 200 ids, else 400): `addRecipient` per person — without consent or with a block counted and skipped, never added; nothing drafted or sent → `{ campaignId, campaignSlug, added, alreadyIn, noConsent, blocked, notFound, failed }`; 404 / 409 `campaign_closed` for an ended or archived campaign (access log `campaign.add_recipients` with counts) |
 | Kampagnen (desk) | `POST campaign/prepare { campaignId, count, discountPercent?, textMode?, discountScope? }` | draft the next *n* pending recipients of one campaign (offer defaults from the campaign; 409 `campaign_closed` when not active or past its end) |
 | | `POST campaign/draft { contactId, … }` | (re)generate one draft |
-| | `POST campaign/update / discount / recommendations / language` | edit text, discount depth, recommended products, language pin of a draft |
+| | `POST campaign/update / discount / recommendations / language` | edit text, discount depth, recommended products, language pin of a draft (`discount`: 409 `offer_conflict` for a depth above 0 while a set is attached, 400 for scope `set`; `recommendations`: 409 `set_attached` while a set is attached, stale stored products come back as `dropped`) |
 | | `POST campaign/email-preview` | render the on-screen draft as text/html |
-| | `POST campaign/send { contactId }` | approve & send through the system (`approveAndSendCampaign`); a refusal answers with its reason as the code — e.g. `campaign_closed` 409, `sends_not_approved` / `no_consent` / `opt_in_blocked` 403, `too_soon` 429 |
+| | `POST campaign/send { contactId, ignoreContactFrequency? }` | approve & send through the system (`approveAndSendCampaign`); a refusal answers with its reason as the code — e.g. `campaign_closed` 409, `sends_not_approved` / `no_consent` / `opt_in_blocked` 403, `too_soon` 429. Before that, unless `ignoreContactFrequency: true`: 409 `contact_frequency` with `frequency { count, maxMails, windowDays }` when the person reached the Kontakthäufigkeit threshold (a warning, never for Testkontakte — [`CAMPAIGNS.md`](./CAMPAIGNS.md) §3) |
 | | `POST campaign/skip / unskip / mark-done` | review decisions; `mark-done` closes the copy workflow (consent + block checked) |
-| | `POST campaign/approve { contactId, releaseAt? }` | „Einplanen“: approve this reviewed mail for the release job from `releaseAt` (empty = next run, ≤ 30 days ahead); runs every send gate now without sending (`campaignSendPreflight`) plus the set-expired / placeholder blockers; refusals 409 with the reason (`release_disabled`, `blocked`, `no_consent`, …); audit `campaign.approve` |
+| | `POST campaign/approve { contactId, releaseAt?, ignoreContactFrequency? }` | „Einplanen“: approve this reviewed mail for the release job from `releaseAt` (empty = next run, ≤ 30 days ahead); runs every send gate now without sending (`campaignSendPreflight`) plus the set-expired / placeholder blockers; refusals 409 with the reason (`release_disabled`, `blocked`, `no_consent`, …); 409 `contact_frequency` like `campaign/send` unless `ignoreContactFrequency: true` (the release job never checks it); audit `campaign.approve` |
 | | `POST campaign/unapprove { contactId }` | „Zurücknehmen“: the planned mail returns to the queue; audit `campaign.approve.revoke` |
 | | `POST campaign/reset-queue { campaignId }` | rebuild one campaign's review queue (destructive, behind confirm) |
 | | `POST campaign/contacts { query, campaignId? }` | contact search within a campaign's recipients |
@@ -2482,9 +2524,10 @@ them. Actions that read or act on one person's data write the admin access log
 | | `POST customers/language { customerId, language: de \| en \| null }` | pin / clear the e-mail language (`setCustomerLanguageOverride` in `customer-store.ts`: `customers.language_override`, open recipient rows follow); 404 unknown customer, 500 when it could not be saved (also without a database) |
 | | `POST customers/objection { customerId, kind: profile \| postal, objected }` | record / lift an Art. 21 objection: `profile` deletes the AI profile and stops it and queues the removal of Mo's `mo-` tags in Shopify (`removeInsightTags`, §3.10), `postal` stops advertising letters (access log `customer.objection`) |
 | | `POST customers/marketing-draft` | per-customer marketing draft of the former path (§4; the UI calls it only to regenerate an open draft) |
-| | `POST marketing/update / email-preview / send / delete` | edit, preview, approve & send (`approveAndSend`), delete an open draft of the former path |
-| | `POST bundles/suggest / create / archive / delete` | Set-Angebot composer |
-| | `POST catalog/search { query }` | product search for the composer and pickers |
+| | `POST marketing/update / email-preview / send / delete` | edit, preview, approve & send (`approveAndSend`), delete an open draft of the former path; `send` answers 409 `contact_frequency` (with `frequency`) unless `ignoreContactFrequency: true`, and 409 `offer_conflict` for a set mail that still has a code |
+| | `POST bundles/suggest / create / archive / delete` | Set-Angebot composer (`create`: `quantity` 1–10 per component, else 400 `bad_quantity`; a ref `handle~variantId` as `productId` is split; refusals carry `offenders` + `offenderNames` and a German message naming the products; on success the attached campaign or legacy draft's code is cleared → `discountCleared`) |
+| | `POST catalog/search { query }` | product search for the composer and pickers (with `stock` per product and variant — null when unknown or not tracked) |
+| Kampagnen (desk) | `POST catalog/availability { refs }` | the set dialog's final check: the card's recommendation refs re-resolved against the current catalog (availability, unit price, stock) |
 | | `POST correspondence/send / message / assign / email-preview` | reply (closes the person's open „E-Mail beantworten“ item → `closedItems`), lazy body, assign unmatched inbound (now from the Eingang; opens the item → `itemId`), preview |
 | Eingang | `POST correspondence/assign-prospect { messageId }` | „Als Interessent anlegen“: a customer from the sender (no consent), the mail assigned, the item opened → `{ customerId, itemId }` (access log `correspondence.assign_prospect`) |
 | | `POST customers/letter-draft / letter-preview`, `POST physical/send` | physical letter (`letter-draft` 409 after a postal objection; since 0074 `physical/send` answers 409 `objection`, `not_purchase_address` or `address_invalid` too) |
@@ -2496,7 +2539,8 @@ them. Actions that read or act on one person's data write the admin access log
 | Analyse | `GET analytics`, `GET analytics/<id>`, `GET analytics/<id>/pdf`, `POST analytics/estimate / create / step / delete` | Komplettanalysen; `estimate` also returns `strategistEur`, `minutes { low, high }` and `previousReport`; `step` answers `busy: true` while another step holds the report's claim (0077) |
 | Verbesserung | `GET improve`, `GET improve/<id>`, `GET improve/backlog`, `POST improve/run / step / suggestion / adopt / delete` | improvement runs, the open backlog |
 | | `POST directives/save / toggle`, `GET directives/versions?id=` | Mo's live directives |
-| Einstellungen | `POST email-designs/preview / assign` | design preview and per-type assignment |
+| Einstellungen | `POST email-designs/preview / assign` | design preview (`preview { designKey, kind, sample?: items \| set }` — marketing and campaign samples as an item mail or a set mail) and per-type assignment |
+| | `POST settings/contact-frequency { maxMails, windowDays }` | „Kontakthäufigkeit“: store the warning threshold (`admin_settings`, 0078; whole numbers 0–50 / 0–365, 0 = aus) → `{ ok, settings }`; German 400 on invalid input, 503 without a database or before migration 0078 („Migration 0078 fehlt — bitte zuerst ausführen.“); audit `settings.contact_frequency` |
 | | `GET shopify/status` | Shopify-Abgleich: `{ health, runs, outbox, alignment, flags }` (pure DB) |
 | | `POST shopify/import { action: start \| step \| cancel }` | the full customer + order import, stepped (`useStepLoop`); a finished import computes a first batch of figures |
 | | `POST shopify/outbox { id }` | „Erneut versuchen“ for a dead write-back |

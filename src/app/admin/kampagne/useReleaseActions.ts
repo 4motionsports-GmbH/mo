@@ -5,13 +5,19 @@
 // card leaves the queue at once; the server checks every gate the send would
 // check (without sending) and the job sends it from the chosen time on. „Zu-
 // rücknehmen“ in the view „Eingeplant“ brings it back to the queue.
+//
+// Contact frequency (contact-frequency.mjs): a card with the hint shows the
+// warning in the dialog; pressing „Einplanen“ acknowledges it
+// (`ignoreContactFrequency: true`). A 409 from the route for a card without
+// the local hint reopens the dialog with the server's numbers.
 
 import * as React from "react";
 import { reviewVerdict } from "@/lib/campaign-review-checks.mjs";
 import { formatAdmin, ADMIN_DATE_TIME_SHORT } from "@/lib/admin-datetime.mjs";
+import type { ContactFrequencyWarning } from "@/lib/contact-frequency.mjs";
 import { toast } from "../ui";
 import { adminFetch, errorMessage } from "../lib/admin-fetch";
-import type { CampaignActions } from "./useCampaignActions";
+import { contactFrequencyOfChecks, contactFrequencyOfError, type CampaignActions } from "./useCampaignActions";
 import type { ScheduledItemProps } from "./types";
 
 export function useReleaseActions({
@@ -27,7 +33,31 @@ export function useReleaseActions({
   React.useEffect(() => setList(scheduled), [scheduled]);
   const [scheduleId, setScheduleId] = React.useState<number | null>(null);
   const [revoking, setRevoking] = React.useState<number | null>(null);
+  // The numbers of the approve route's contact-frequency 409, for a card whose
+  // local hint did not show them (the dialog reopens with the warning).
+  const [conflict, setConflict] = React.useState<{
+    contactId: number;
+    frequency: ContactFrequencyWarning;
+    /** The time option the operator picked — the reopened dialog keeps it. */
+    choiceKey: string | null;
+  } | null>(null);
   const { items, checksOf, busyOf, removeItem, restoreItem, reloadFromServer } = actions;
+
+  /** The contact-frequency warning for a card (its hint, else the server's
+   * last answer), or null. The dialog shows it; „Einplanen“ acknowledges it. */
+  const frequencyOf = React.useCallback(
+    (contactId: number): ContactFrequencyWarning | null =>
+      contactFrequencyOfChecks(checksOf(contactId)) ??
+      (conflict?.contactId === contactId ? conflict.frequency : null),
+    [checksOf, conflict]
+  );
+
+  /** The time option picked before a contact-frequency 409 reopened the
+   * dialog for this card, or null. */
+  const conflictChoiceOf = React.useCallback(
+    (contactId: number): string | null => (conflict?.contactId === contactId ? conflict.choiceKey : null),
+    [conflict]
+  );
 
   /** Whether a card may be planned (same conditions as Senden, never a Testkontakt). */
   const canSchedule = React.useCallback(
@@ -51,17 +81,21 @@ export function useReleaseActions({
 
   /** Confirmed in the dialog: the card leaves the queue, the server approves. */
   const confirm = React.useCallback(
-    async (releaseAt: string | null) => {
+    async (releaseAt: string | null, choiceKey: string | null = null) => {
       const id = scheduleId;
       setScheduleId(null);
       if (id === null) return;
       const item = items.find((it) => it.contactId === id);
       if (!item) return;
+      // Pressing „Einplanen“ while the dialog shows the contact-frequency
+      // warning is the acknowledgement.
+      const acknowledged = frequencyOf(id) !== null;
       removeItem(id);
       try {
         const json = await adminFetch<{ releaseAt: string }>("/api/admin/campaign/approve", {
-          body: { contactId: id, releaseAt },
+          body: { contactId: id, releaseAt, ...(acknowledged ? { ignoreContactFrequency: true } : {}) },
         });
+        setConflict((c) => (c?.contactId === id ? null : c));
         setList((l) =>
           [
             ...l.filter((e) => e.contactId !== id),
@@ -83,12 +117,21 @@ export function useReleaseActions({
           duration: 3000,
         });
       } catch (err) {
+        // Contact-frequency 409: not a refusal — the card returns without a
+        // sendError and the dialog reopens, now with the warning.
+        const frequency = contactFrequencyOfError(err);
+        if (frequency) {
+          restoreItem({ ...item, sendError: null, recentMailCount: frequency.count });
+          setConflict({ contactId: id, frequency, choiceKey });
+          setScheduleId(id);
+          return;
+        }
         const message = errorMessage(err);
         restoreItem({ ...item, sendError: message });
         toast({ variant: "error", title: `Nicht eingeplant — ${item.email}`, description: message });
       }
     },
-    [scheduleId, items, removeItem, restoreItem]
+    [scheduleId, items, frequencyOf, removeItem, restoreItem]
   );
 
   /** „Zurücknehmen“: the mail returns to the review queue (server refresh). */
@@ -109,7 +152,7 @@ export function useReleaseActions({
     [reloadFromServer]
   );
 
-  return { enabled, list, scheduleId, setScheduleId, canSchedule, open, confirm, revoke, revoking };
+  return { enabled, list, scheduleId, setScheduleId, canSchedule, open, confirm, revoke, revoking, frequencyOf, conflictChoiceOf };
 }
 
 export type ReleaseActions = ReturnType<typeof useReleaseActions>;

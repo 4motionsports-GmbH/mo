@@ -19,6 +19,7 @@ import {
   bundleDescriptionHtml,
   isDeletableBundleStatus,
   DELETABLE_BUNDLE_STATUSES,
+  BUNDLE_QUANTITY_MAX,
 } from "./bundle-offer-core.mjs";
 
 // ── Deletable-draft guard ─────────────────────────────────────────────────────
@@ -54,6 +55,20 @@ test("toCents rejects junk and negatives", () => {
   assert.equal(toCents(""), null);
   assert.equal(toCents("abc"), null);
   assert.equal(toCents(-1), null);
+  assert.equal(toCents("12abc"), null);
+  assert.equal(toCents("1,2,3"), null);
+});
+
+test("toCents reads prices the way operators type them (German grouping, € sign)", () => {
+  assert.equal(toCents("1.299,00"), 129900);
+  assert.equal(toCents("1.299,00 €"), 129900);
+  assert.equal(toCents("1.299"), 129900);
+  assert.equal(toCents("12.345.678,9"), 1234567890);
+  assert.equal(toCents("159,90\u00a0€"), 15990);
+  assert.equal(toCents("149 EUR"), 14900);
+  // Shopify Money strings keep their dot decimal
+  assert.equal(toCents("1299.00"), 129900);
+  assert.equal(toCents("6.5"), 650);
 });
 
 test("centsToMoney formats back to a 2-decimal string", () => {
@@ -165,7 +180,7 @@ test("validateAndSnapshotComponents snapshots price + numeric variant id", () =>
   const cat = catalog([IN_STOCK_A, IN_STOCK_B]);
   const result = validateAndSnapshotComponents(cat, [
     { productId: "atx-bar", quantity: 2 },
-    { productId: "atx-bands", quantity: 30 },
+    { productId: "atx-bands", quantity: 10 },
   ]);
   assert.equal(result.ok, true);
   assert.deepEqual(result.components[0], {
@@ -179,8 +194,51 @@ test("validateAndSnapshotComponents snapshots price + numeric variant id", () =>
   });
   // bare numeric variant id is preserved as numericVariantId
   assert.equal(result.components[1].numericVariantId, "222");
-  // sum honours the snapshot prices + quantities: 2*149 + 30*6.50 = 493.00
-  assert.equal(computeComponentsSum(result.components), "493.00");
+  // sum honours the snapshot prices + quantities: 2*149 + 10*6.50 = 363.00
+  assert.equal(computeComponentsSum(result.components), "363.00");
+});
+
+test("validateAndSnapshotComponents refuses more than BUNDLE_QUANTITY_MAX of one item", () => {
+  assert.equal(BUNDLE_QUANTITY_MAX, 10);
+  const cat = catalog([IN_STOCK_A, IN_STOCK_B]);
+  const result = validateAndSnapshotComponents(cat, [
+    { productId: "atx-bar", quantity: 2 },
+    { productId: "atx-bands", quantity: BUNDLE_QUANTITY_MAX + 1 },
+  ]);
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, "bad_quantity");
+  assert.deepEqual(result.badQuantity, ["atx-bands"]);
+  assert.equal(result.titles["atx-bands"], "ATX Bands");
+});
+
+test("validateAndSnapshotComponents accepts a numeric-string quantity", () => {
+  const cat = catalog([IN_STOCK_A]);
+  const result = validateAndSnapshotComponents(cat, [{ productId: "atx-bar", quantity: "3" }]);
+  assert.equal(result.ok, true);
+  assert.equal(result.components[0].quantity, 3);
+});
+
+test("validateAndSnapshotComponents resolves a variant-pinned ref passed as productId", () => {
+  const product = {
+    ...IN_STOCK_A,
+    variants: [
+      { id: "111", title: "", price: 149, available: true, isDefault: true, options: [] },
+      { id: "112", title: "Schwarz", price: 159, available: true, isDefault: false, options: [] },
+    ],
+  };
+  const cat = catalog([product]);
+  const result = validateAndSnapshotComponents(cat, [{ productId: "atx-bar~112" }]);
+  assert.equal(result.ok, true);
+  assert.equal(result.components[0].productId, "atx-bar");
+  assert.equal(result.components[0].numericVariantId, "112");
+  assert.equal(result.components[0].unitPrice, "159.00");
+});
+
+test("validateAndSnapshotComponents names sold-out offenders", () => {
+  const cat = catalog([IN_STOCK_A, { ...IN_STOCK_B, inStock: false }]);
+  const result = validateAndSnapshotComponents(cat, [{ productId: "atx-bar" }, { productId: "atx-bands" }]);
+  assert.equal(result.reason, "sold_out");
+  assert.equal(result.titles["atx-bands"], "ATX Bands");
 });
 
 test("validateAndSnapshotComponents prefers salePrice as the unit price", () => {

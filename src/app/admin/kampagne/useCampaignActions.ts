@@ -24,10 +24,22 @@
 import * as React from "react";
 import { useRouter } from "next/navigation";
 import { EMAIL_TEXT_MODE_LABELS, DEFAULT_EMAIL_TEXT_MODE } from "@/lib/email-text-mode.mjs";
-import { DEFAULT_DISCOUNT_SCOPE, parseDiscountScope, type DiscountScope } from "@/lib/discount-scope.mjs";
+import {
+  DEFAULT_DISCOUNT_SCOPE,
+  parseDiscountScope,
+  parseEditableDiscountScope,
+  type DiscountScope,
+} from "@/lib/discount-scope.mjs";
 import { emailProseToText } from "@/lib/email-prose.mjs";
 import { bundleItemLabel, bundleItemList } from "@/lib/bundle-offer-core.mjs";
+import { OFFER_CONFLICT_MESSAGE } from "@/lib/offer-mode.mjs";
+import { parseProductRef } from "@/lib/product-ref.mjs";
 import { abGroupOf, reviewChecks, reviewVerdict } from "@/lib/campaign-review-checks.mjs";
+import {
+  CONTACT_FREQUENCY_CHECK,
+  readContactFrequencyConflict,
+  type ContactFrequencyWarning,
+} from "@/lib/contact-frequency.mjs";
 import {
   deskProgress,
   matchesQueueFilter,
@@ -38,7 +50,7 @@ import {
   upsertOutbox,
 } from "@/lib/campaign-desk-core.mjs";
 import { toast } from "../ui";
-import { adminFetch, errorMessage } from "../lib/admin-fetch";
+import { AdminApiError, adminFetch, errorMessage } from "../lib/admin-fetch";
 import type { EmailTextModeValue } from "../EmailTextModeToggle";
 import { forgetPreviews } from "./useRenderedPreview";
 import {
@@ -67,6 +79,7 @@ export type ReviewFix =
   | "narrow_basis"
   | "swap_products"
   | "rebuild_bundle"
+  | "remove_discount"
   | "generate_hero"
   | "shorten_subject"
   | null;
@@ -100,6 +113,33 @@ function rememberFirstSendConfirm(): void {
   } catch {
     // best-effort only
   }
+}
+
+/** The contact-frequency hint's numbers on a card (its review check's meta),
+ * or null when the card carries no such hint. */
+export function contactFrequencyOfChecks(checks: ReviewCheck[]): ContactFrequencyWarning | null {
+  const meta = checks.find((c) => c.key === CONTACT_FREQUENCY_CHECK)?.meta;
+  if (!meta) return null;
+  const count = Number(meta.count);
+  const maxMails = Number(meta.maxMails);
+  const windowDays = Number(meta.windowDays);
+  return [count, maxMails, windowDays].every(Number.isFinite) ? { count, maxMails, windowDays } : null;
+}
+
+/** The numbers of a send route's 409 „contact_frequency“ answer, or null. */
+export function contactFrequencyOfError(err: unknown): ContactFrequencyWarning | null {
+  return err instanceof AdminApiError ? readContactFrequencyConflict(err.details) : null;
+}
+
+/** The one send confirmation: the first REAL send of the day and/or the
+ * contact-frequency warning (one dialog, never two). */
+export interface SendConfirm {
+  contactId: number;
+  /** The once-a-day confirmation is due. */
+  firstOfDay: boolean;
+  /** The person already received this many marketing mails — confirming
+   * sends with `ignoreContactFrequency: true`. */
+  frequency: ContactFrequencyWarning | null;
 }
 
 const PREPARE_SETTINGS_KEY = "ms-campaign-prepare";
@@ -140,7 +180,8 @@ function loadPrepareSettings(campaignId: number, defaults: PrepareSettings): Pre
     return {
       count: [25, 50, 100].includes(Number(parsed.count)) ? Number(parsed.count) : PREPARE_TOTAL,
       depth: Number.isInteger(parsed.depth) ? Number(parsed.depth) : defaults.depth,
-      scope: parseDiscountScope(parsed.scope ?? defaults.scope),
+      // A stored "set" (retired, offer-mode.mjs) falls back to the default.
+      scope: parseEditableDiscountScope(parsed.scope ?? defaults.scope) ?? DEFAULT_DISCOUNT_SCOPE,
       textMode: (["detailed", "compact", "minimal"] as const).includes(
         parsed.textMode as EmailTextModeValue
       )
@@ -243,6 +284,32 @@ interface BundleOfferResponse {
 const fail = (title: string, err: unknown) =>
   toast({ variant: "error", title, description: errorMessage(err) });
 
+/** Offender refs/ids → the names the operator sees on the card. */
+function offenderList(offenders: string[], recs: CampaignRecommendation[]): string {
+  const nameOf = (o: string) =>
+    recs.find((r) => r.id === o)?.name ??
+    recs.find((r) => parseProductRef(r.id).productId === parseProductRef(o).productId)?.name ??
+    o;
+  return offenders.map(nameOf).join(", ");
+}
+
+/** A refusal that lists offenders (bundles/create, campaign/recommendations)
+ * gets its ids replaced by the card's product names — the server only knows
+ * names for items still in the catalog. Other errors pass through. */
+function withOffenderNames(err: unknown, recs: CampaignRecommendation[]): unknown {
+  if (!(err instanceof AdminApiError)) return err;
+  const details = err.details as { offenders?: unknown; offenderNames?: Record<string, string> } | null;
+  const offenders = Array.isArray(details?.offenders) ? details.offenders.map(String) : [];
+  // Only messages shaped „<Grund>: <Namen>.“ are rewritten; any other text
+  // already reads as a whole sentence.
+  const colon = err.message.indexOf(": ");
+  if (offenders.length === 0 || colon < 0) return err;
+  const known = details?.offenderNames ?? {};
+  const names = offenders.map((o) => known[o] ?? offenderList([o], recs));
+  const reason = err.message.slice(0, colon);
+  return new AdminApiError(`${reason}: ${names.join(", ")}.`, err.status, err.code, err.details);
+}
+
 const REGENERATE_BATCH_MS = 1500;
 const OUTBOX_FADE_MS = 8000;
 
@@ -255,6 +322,7 @@ export function useCampaignActions({
   allowSingleOptIn,
   heroDesignActive,
   minSendIntervalDays,
+  contactFrequency,
   initialContactId,
   initialView,
   initialFilter,
@@ -268,6 +336,7 @@ export function useCampaignActions({
   | "allowSingleOptIn"
   | "heroDesignActive"
   | "minSendIntervalDays"
+  | "contactFrequency"
   | "initialContactId"
   | "initialView"
   | "initialFilter"
@@ -307,7 +376,12 @@ export function useCampaignActions({
     React.useState<PrepareSettings>(DEFAULT_PREPARE_SETTINGS);
   const [bulkProgress, setBulkProgress] = React.useState<BulkProgress | null>(null);
   const [copiedId, setCopiedId] = React.useState<number | null>(null);
-  const [confirmSendId, setConfirmSendId] = React.useState<number | null>(null);
+  const [confirmSend, setConfirmSend] = React.useState<SendConfirm | null>(null);
+  // Mirror for async callbacks (a late 409 must see the confirm that is open now).
+  const confirmSendRef = React.useRef<SendConfirm | null>(null);
+  React.useEffect(() => {
+    confirmSendRef.current = confirmSend;
+  }, [confirmSend]);
   const [resetOpen, setResetOpen] = React.useState(false);
   // Rendered-HTML viewer (full-size draft preview + sent-email view). Own busy
   // flag — a read-only preview never blocks the desk.
@@ -363,12 +437,13 @@ export function useCampaignActions({
       heroMode: campaign.heroMode,
       sendWindowApplies: campaign.kind === "laufend",
       minSendIntervalDays,
+      contactFrequency,
       now: Date.now(),
     };
     const map = new Map<number, ReviewCheck[]>();
     for (const it of items) map.set(it.contactId, reviewChecks(it, ctx) as ReviewCheck[]);
     return map;
-  }, [items, sendsApproved, allowSingleOptIn, heroDesignActive, minSendIntervalDays, campaign.heroMode, campaign.kind]);
+  }, [items, sendsApproved, allowSingleOptIn, heroDesignActive, minSendIntervalDays, contactFrequency, campaign.heroMode, campaign.kind]);
 
   const checksOf = React.useCallback(
     (contactId: number): ReviewCheck[] => checksById.get(contactId) ?? [],
@@ -591,8 +666,10 @@ export function useCampaignActions({
   );
 
   // ── Postausgang: sending without waiting ─────────────────────────────────
+  /** `ignoreContactFrequency`: the operator confirmed the contact-frequency
+   * warning („Trotzdem senden“) — the route skips its 409 backstop. */
   const sendNow = React.useCallback(
-    async (contactId: number) => {
+    async (contactId: number, opts: { ignoreContactFrequency?: boolean } = {}) => {
       const item = itemsRef.current.find((it) => it.contactId === contactId);
       if (!item || removedRef.current.has(contactId)) return;
       const entry = { contactId, email: item.email, name: contactName(item) };
@@ -600,7 +677,7 @@ export function useCampaignActions({
       setOutbox((o) => upsertOutbox(o, { ...entry, state: "sending" }));
       try {
         const json = await adminFetch<{ test?: boolean }>("/api/admin/campaign/send", {
-          body: { contactId },
+          body: { contactId, ...(opts.ignoreContactFrequency ? { ignoreContactFrequency: true } : {}) },
         });
         setOutbox((o) => upsertOutbox(o, { ...entry, state: "sent" }));
         if (json.test) {
@@ -626,6 +703,30 @@ export function useCampaignActions({
           setOutbox((o) => o.filter((e) => !(e.contactId === contactId && e.state === "sent")));
         }, OUTBOX_FADE_MS);
       } catch (err) {
+        // The contact-frequency backstop (409): not a refusal — the card comes
+        // back WITHOUT a sendError (that would block it) and the confirm opens
+        // with the server's fresh numbers.
+        const frequency = contactFrequencyOfError(err);
+        if (frequency) {
+          restoreItem({ ...item, sendError: null, recentMailCount: frequency.count });
+          setOutbox((o) => o.filter((e) => e.contactId !== contactId));
+          // Never take over a confirm that is already open for another card —
+          // that one would be acknowledged for the wrong address. This card
+          // keeps its hint (recentMailCount) and asks when it is sent again.
+          const open = confirmSendRef.current;
+          if (!open || open.contactId === contactId) {
+            const next = { contactId, firstOfDay: false, frequency };
+            confirmSendRef.current = next;
+            setConfirmSend(next);
+          } else {
+            toast({
+              variant: "warning",
+              title: `Nicht gesendet — ${item.email}`,
+              description: "Kontakthäufigkeit: die Karte ist zurück in der Warteschlange und fragt beim nächsten Senden nach.",
+            });
+          }
+          return;
+        }
         const message = errorMessage(err);
         restoreItem({ ...item, sendError: message });
         setOutbox((o) => upsertOutbox(o, { ...entry, state: "failed", error: message }));
@@ -642,11 +743,19 @@ export function useCampaignActions({
       const checks = checksById.get(contactId) ?? [];
       if (reviewVerdict(checks) === "blocked") return;
       if (busyById[contactId]) return;
-      // The once-a-day confirmation guards the first REAL send; a Testmail to
-      // the operator's own inbox neither asks nor counts as the day's start.
+      // A Testmail to the operator's own inbox neither asks nor counts as the
+      // day's start (and never carries the contact-frequency hint).
       const isTest = itemsRef.current.find((it) => it.contactId === contactId)?.isTest === true;
-      if (!isTest && needsFirstSendConfirm()) {
-        setConfirmSendId(contactId);
+      if (isTest) {
+        void sendNow(contactId);
+        return;
+      }
+      // ONE confirmation for a real send: the once-a-day question and/or the
+      // contact-frequency warning — never two dialogs in a row.
+      const frequency = contactFrequencyOfChecks(checks);
+      const firstOfDay = needsFirstSendConfirm();
+      if (frequency || firstOfDay) {
+        setConfirmSend({ contactId, firstOfDay, frequency });
         return;
       }
       void sendNow(contactId);
@@ -654,12 +763,16 @@ export function useCampaignActions({
     [checksById, busyById, sendNow]
   );
   const confirmAndSend = React.useCallback(() => {
+    const pending = confirmSend;
+    setConfirmSend(null);
+    if (!pending) return;
+    // Any confirmed real send also satisfies the once-a-day question.
     rememberFirstSendConfirm();
-    const id = confirmSendId;
-    setConfirmSendId(null);
-    if (id !== null) void sendNow(id);
-  }, [confirmSendId, sendNow]);
-  /** Retry a refused/failed send from the Postausgang. */
+    void sendNow(pending.contactId, { ignoreContactFrequency: pending.frequency !== null });
+  }, [confirmSend, sendNow]);
+  const cancelSendConfirm = React.useCallback(() => setConfirmSend(null), []);
+  /** Retry a refused/failed send from the Postausgang. A contact-frequency
+   * 409 on the retry opens the same confirmation as Senden (see sendNow). */
   const retrySend = React.useCallback(
     (contactId: number) => {
       patchItem(contactId, { sendError: null });
@@ -1016,6 +1129,11 @@ export function useCampaignActions({
     async (contactId: number, depth: number) => {
       const item = itemsRef.current.find((it) => it.contactId === contactId);
       if (!item || depth === item.discountPercent) return;
+      // A set mail carries no code (offer-mode.mjs); removing one stays allowed.
+      if (item.bundle && depth > 0) {
+        toast({ variant: "warning", title: "Kein Rabattcode bei einem Set", description: OFFER_CONFLICT_MESSAGE });
+        return;
+      }
       const busyKind = busyById[contactId];
       if (busyKind && busyKind !== "regen") return;
       setBusy(contactId, "discount");
@@ -1037,12 +1155,12 @@ export function useCampaignActions({
     [busyById, setBusy, patchItem, scheduleRegenerate]
   );
 
-  /** What the code applies to (Alles / Empfehlungen / Set): persists on the
-   * draft, then regenerates — the prose states the scope, so it must follow. */
+  /** What the code applies to (Alles / Empfehlungen): persists on the draft,
+   * then regenerates — the prose states the scope, so it must follow. */
   const setDiscountScope = React.useCallback(
     async (contactId: number, scope: DiscountScope) => {
       const item = itemsRef.current.find((it) => it.contactId === contactId);
-      if (!item || scope === item.discountScope) return;
+      if (!item || scope === item.discountScope || item.bundle) return;
       const busyKind = busyById[contactId];
       if (busyKind && busyKind !== "regen") return;
       setBusy(contactId, "discount");
@@ -1102,35 +1220,36 @@ export function useCampaignActions({
     [busyById, patchItem, scheduleRegenerate]
   );
 
-  /** Persist a curated recommendation list; the server also rebuilds an
-   * attached bundle to match. Immediate persist per change — no save button. */
+  /** Persist a curated recommendation list (item mails only — while a set is
+   * attached the set is the offer and its contents are fixed). Immediate
+   * persist per change — no save button. */
   const updateRecommendations = React.useCallback(
     async (contactId: number, productIds: string[]) => {
       const item = itemsRef.current.find((it) => it.contactId === contactId);
-      if (!item) return;
+      if (!item || item.bundle) return;
       const busyKind = busyById[contactId];
       if (busyKind && busyKind !== "regen") return;
       setBusy(contactId, "recs");
       try {
         const json = await adminFetch<{
           recommendations?: CampaignRecommendation[];
-          bundle?: CampaignBundle | null;
-          bundleError?: string | null;
+          dropped?: string[];
         }>("/api/admin/campaign/recommendations", { body: { contactId, productIds } });
         patchItem(contactId, {
           recommendations: json.recommendations ?? item.recommendations,
-          // The server rebuilt (or failed to rebuild) an attached bundle; when
-          // none was attached, `bundle` is null and stays null.
-          bundle: item.bundle ? (json.bundle ?? null) : (json.bundle ?? item.bundle),
           lowConfidence: false,
         });
-        if (json.bundleError) {
-          toast({ variant: "warning", title: "Set-Angebot", description: json.bundleError });
+        if (json.dropped?.length) {
+          toast({
+            variant: "warning",
+            title: "Nicht mehr verfügbare Empfehlungen entfernt",
+            description: offenderList(json.dropped, item.recommendations),
+          });
         }
         scheduleRegenerate(contactId);
       } catch (err) {
         setBusy(contactId, null);
-        fail("Empfehlungen nicht gespeichert", err);
+        fail("Empfehlungen nicht gespeichert", withOffenderNames(err, item.recommendations));
       }
     },
     [busyById, setBusy, patchItem, scheduleRegenerate]
@@ -1156,8 +1275,11 @@ export function useCampaignActions({
     [busyById, runRegenerateGuarded]
   );
 
+  /** Build a set from chosen recommendations (ref + count each). The set
+   * turns the card into a set mail: the server clears its discount code
+   * (offer-mode.mjs) and the text is regenerated for the set. */
   const createBundle = React.useCallback(
-    async (contactId: number, productIds: string[], priceOverride: string) => {
+    async (contactId: number, choices: Array<{ ref: string; quantity: number }>, priceOverride: string) => {
       const item = itemsRef.current.find((it) => it.contactId === contactId);
       if (!item) return false;
       const busyKind = busyById[contactId];
@@ -1167,7 +1289,12 @@ export function useCampaignActions({
         const json = await adminFetch<{ offer?: BundleOfferResponse }>("/api/admin/bundles/create", {
           body: {
             campaignContactId: contactId,
-            components: productIds.map((productId) => ({ productId })),
+            // Recommendations are refs ("handle~variantId" pins a variant) —
+            // split them so the set uses exactly the recommended variant.
+            components: choices.map(({ ref, quantity }) => {
+              const { productId, variantId } = parseProductRef(ref);
+              return { productId, ...(variantId ? { variantId } : {}), quantity };
+            }),
             ...(priceOverride.trim() ? { bundlePriceOverride: priceOverride.trim() } : {}),
           },
         });
@@ -1182,16 +1309,18 @@ export function useCampaignActions({
               currency: json.offer.currency,
               expiresAt: json.offer.expiresAt,
             },
+            discountPercent: 0,
+            discountScope: "all",
           });
-          toast({ variant: "success", title: "Set-Angebot erstellt", description: "Text wird angepasst…" });
-          scheduleRegenerate(contactId);
+          toast({ variant: "success", title: "Set-Angebot erstellt", description: "Die Mail zeigt jetzt nur das Set — Text wird angepasst…" });
+          scheduleRegenerate(contactId, { depth: 0, scope: "all" });
           return true;
         }
         setBusy(contactId, null);
         return false;
       } catch (err) {
         setBusy(contactId, null);
-        fail("Set-Erstellung fehlgeschlagen", err);
+        fail("Set nicht erstellt", withOffenderNames(err, item.recommendations));
         return false;
       }
     },
@@ -1208,7 +1337,7 @@ export function useCampaignActions({
       try {
         await adminFetch("/api/admin/bundles/archive", { body: { id: item.bundle.id } });
         patchItem(contactId, { bundle: null });
-        toast({ variant: "success", title: "Set-Angebot entfernt", description: "Text wird angepasst…" });
+        toast({ variant: "success", title: "Set-Angebot entfernt", description: "Die Mail zeigt wieder die Einzelprodukte — Text wird angepasst…" });
         scheduleRegenerate(contactId);
       } catch (err) {
         setBusy(contactId, null);
@@ -1475,6 +1604,8 @@ export function useCampaignActions({
     currentVerdict,
     sendBlocked,
     optInBlocked,
+    /** The contact-frequency setting the hints use (Einstellungen). */
+    contactFrequency,
     // in-flight
     busyById,
     busyOf,
@@ -1486,7 +1617,7 @@ export function useCampaignActions({
     prepareSettings,
     bulkProgress,
     copiedId,
-    confirmSendId,
+    confirmSend,
     resetOpen,
     emailView,
     emailViewBusy,
@@ -1496,7 +1627,7 @@ export function useCampaignActions({
     setEditMode,
     setFocusMode,
     setPrepareSettings,
-    setConfirmSendId,
+    cancelSendConfirm,
     setResetOpen,
     closeEmailView,
     // navigation

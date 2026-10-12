@@ -534,6 +534,19 @@ export function renderBrandedEmail(opts: BrandedEmailOptions): string {
         /* Product ROWS keep image-left | text-right on phones — the image
            just shrinks into its third so rows stay one symmetric block. */
         .prow-image { width: 100% !important; height: auto !important; }
+        /* The set frame (bundle-email.ts): eyecatcher text and badge stack
+           centred; each item row keeps a smaller picture on the left and
+           stacks name and price beside it. */
+        .set-eye-text, .set-eye-badge, .set-item-text, .set-item-price { display: block !important; width: 100% !important; box-sizing: border-box !important; }
+        .set-eye-text { padding: 0 !important; }
+        .set-eye-text p { text-align: center !important; }
+        .set-eye-badge { padding-top: 14px !important; }
+        .set-badge { float: none !important; margin: 0 auto !important; }
+        .set-item-img { width: 64px !important; height: 64px !important; }
+        .set-item-img-cell { width: 74px !important; padding-right: 10px !important; }
+        .set-item-text { padding: 14px 0 4px 0 !important; }
+        .set-item-price { padding: 0 0 14px 0 !important; }
+        .set-item-price p { text-align: left !important; }
       }
     </style>
   </head>

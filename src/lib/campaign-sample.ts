@@ -18,7 +18,7 @@ import { PLACEHOLDER_DISCOUNT_CODE, formatExpiryDateForLanguage } from "./shopif
 import { generateCampaignDraft } from "./campaign-draft";
 import type { EmailTextMode } from "./marketing-draft";
 import { DEFAULT_EMAIL_TEXT_MODE } from "./email-text-mode.mjs";
-import type { DiscountScope } from "./discount-scope.mjs";
+import { parseEditableDiscountScope, type DiscountScope } from "./discount-scope.mjs";
 import { loadCampaignPersonalization } from "./campaign-recommendations";
 import { resolveProductSelections } from "./product-catalog";
 import { projectedExpiry, daysUntil } from "./campaign-prepare";
@@ -99,7 +99,9 @@ export async function composeCampaignSample(
       preloaded ?? undefined
     );
     const textMode: EmailTextMode = config.textMode ?? DEFAULT_EMAIL_TEXT_MODE;
-    const discountScope: DiscountScope = config.discountScope ?? "all";
+    // A sample is an item mail (no set is attached to a sample); the history
+    // scope "set" of an old campaign reads as "all" (offer-mode.mjs).
+    const discountScope: DiscountScope = parseEditableDiscountScope(config.discountScope) ?? "all";
     const hasDiscount = config.discountPercent > 0;
     const expiry = hasDiscount ? projectedExpiry(config) : null;
     const products = recommendations.products;
@@ -118,6 +120,7 @@ export async function composeCampaignSample(
       focusPurchaseTitles: null,
       recommendations: products.map((p) => ({ name: p.name, url: p.shopifyUrl, category: p.category || null })),
       lowConfidence: recommendations.lowConfidence,
+      offerKind: "items",
       attachedBundle: null,
       textMode,
       segment,
@@ -244,7 +247,7 @@ export async function sendCampaignSampleTest(input: SampleTestInput): Promise<Sa
       body: input.body,
       discountPercent: campaign.discountPercent,
       discountExpiresAt: expiry ? expiry.toISOString() : null,
-      discountScope: campaign.discountScope ?? "all",
+      discountScope: parseEditableDiscountScope(campaign.discountScope) ?? "all",
       purchaseSummary: null,
       recommendedProductIds: refs,
       productHighlights: input.productHighlights,

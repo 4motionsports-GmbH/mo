@@ -26,7 +26,7 @@ function readyItem(overrides = {}) {
       { id: "a", name: "A", url: "https://shop/a", available: true },
       { id: "b", name: "B", url: "https://shop/b", available: true },
     ],
-    bundle: { expiresAt: new Date(NOW.getTime() + 6 * DAY_MS).toISOString() },
+    bundle: null,
     segment: "ausbauen_frueh",
     heroUrl: "https://blob/hero.jpg",
     draftUpdatedAt: new Date(NOW.getTime() - 2 * DAY_MS).toISOString(),
@@ -115,12 +115,39 @@ test("prose stating a different percentage than the set discount blocks (send-pa
   assert.match(c.detail, /10 %/);
 });
 
-test("a scoped discount without its target blocks (send-path rule)", () => {
+// A set mail for the tests: a set attached, no code, prose without one.
+const SET_MAIL = {
+  discountPercent: 0,
+  body: "Hallo Lea, dein persönliches Set für dein Training.",
+  bundle: { expiresAt: new Date(NOW.getTime() + 6 * DAY_MS).toISOString() },
+};
+
+test("a set mail without a code is clean", () => {
+  const checks = reviewChecks(readyItem(SET_MAIL), ctx());
+  assert.deepEqual(keys(checks), ["hero_present"]);
+});
+
+test("a set mail with a code blocks (set XOR items), fixed by removing the discount", () => {
+  const checks = reviewChecks(readyItem({ ...SET_MAIL, discountPercent: 10, body: readyItem().body }), ctx());
+  const c = checks.find((x) => x.key === "offer_conflict");
+  assert.ok(c);
+  assert.equal(c.level, "blocked");
+  assert.equal(c.fix, "remove_discount");
+  assert.equal(reviewVerdict(checks), "blocked");
+});
+
+test("the retired scope \"set\" blocks while a code is set", () => {
   const noSet = reviewChecks(readyItem({ discountScope: "set", bundle: null }), ctx());
   assert.ok(keys(noSet).includes("discount_scope_no_set"));
+  assert.equal(noSet.find((x) => x.key === "discount_scope_no_set").fix, "remove_discount");
   assert.equal(reviewVerdict(noSet), "blocked");
-  const withSet = reviewChecks(readyItem({ discountScope: "set" }), ctx());
+  // With a set attached the conflict check speaks instead.
+  const withSet = reviewChecks(readyItem({ discountScope: "set", bundle: SET_MAIL.bundle }), ctx());
   assert.ok(!keys(withSet).includes("discount_scope_no_set"));
+  assert.ok(keys(withSet).includes("offer_conflict"));
+});
+
+test("a scoped discount without its target blocks (send-path rule)", () => {
 
   const noRecs = reviewChecks(readyItem({ discountScope: "recommendations", recommendations: [] }), ctx());
   assert.ok(keys(noRecs).includes("discount_scope_no_recommendations"));
@@ -129,6 +156,12 @@ test("a scoped discount without its target blocks (send-path rule)", () => {
     ctx()
   );
   assert.ok(keys(soldOut).includes("discount_scope_no_recommendations"));
+  // a recommendation whose pinned variant is gone reads available: null — not usable
+  const gone = reviewChecks(
+    readyItem({ discountScope: "recommendations", recommendations: [{ id: "kb~999", name: "KB", url: "https://shop/kb", available: null }] }),
+    ctx()
+  );
+  assert.ok(keys(gone).includes("discount_scope_no_recommendations"));
   const fine = reviewChecks(readyItem({ discountScope: "recommendations" }), ctx());
   assert.ok(!keys(fine).includes("discount_scope_no_recommendations"));
   // Without a discount the scope is irrelevant.
@@ -150,27 +183,36 @@ test("placeholder in the text while no discount is set blocks", () => {
   assert.ok(!keys(fine).includes("placeholder_without_discount"));
 });
 
-test("low confidence, unavailable products, expiring and expired sets are hints", () => {
+test("low confidence and unavailable products are hints in an item mail", () => {
   const item = readyItem({
     lowConfidence: true,
     recommendations: [
       { id: "a", name: "A", url: "https://shop/a", available: false },
       { id: "b", name: "B", url: null, available: true },
+      { id: "c", name: "C", url: "https://shop/c", available: null },
+      { id: "d", name: "D", url: "https://shop/d", available: true },
     ],
+  });
+  const checks = reviewChecks(item, ctx());
+  assert.deepEqual(keys(checks), ["low_confidence", "product_unavailable", "hero_present"]);
+  // sold out, no link, and no longer in the catalog all count
+  assert.equal(checks[1].detail, "A, B, C");
+  assert.equal(reviewVerdict(checks), "hints");
+});
+
+test("a set mail ignores the recommendation hints; expiring and expired sets are hints", () => {
+  const item = readyItem({
+    ...SET_MAIL,
+    lowConfidence: true,
+    recommendations: [{ id: "a", name: "A", url: "https://shop/a", available: false }],
     bundle: { expiresAt: new Date(NOW.getTime() + 1 * DAY_MS).toISOString() },
   });
   const checks = reviewChecks(item, ctx());
-  assert.deepEqual(keys(checks), [
-    "low_confidence",
-    "product_unavailable",
-    "bundle_expiring",
-    "hero_present",
-  ]);
-  assert.equal(checks[1].detail, "A, B");
+  assert.deepEqual(keys(checks), ["bundle_expiring", "hero_present"]);
   assert.equal(reviewVerdict(checks), "hints");
 
   const expired = reviewChecks(
-    readyItem({ bundle: { expiresAt: new Date(NOW.getTime() - DAY_MS).toISOString() } }),
+    readyItem({ ...SET_MAIL, bundle: { expiresAt: new Date(NOW.getTime() - DAY_MS).toISOString() } }),
     ctx()
   );
   assert.ok(keys(expired).includes("bundle_expired"));
@@ -257,4 +299,32 @@ test("a suppressed address blocks a real contact and only informs a test contact
   assert.equal(test.find((c) => c.key === "suppressed"), undefined);
   assert.equal(test.find((c) => c.key === "test_suppressed")?.level, "info");
   assert.equal(reviewVerdict(test), "ready");
+});
+
+test("contact frequency: a hint at/over the threshold with the numbers in meta", () => {
+  const settings = { maxMails: 3, windowDays: 30 };
+  const below = reviewChecks(readyItem({ recentMailCount: 2 }), ctx({ contactFrequency: settings }));
+  assert.equal(below.find((c) => c.key === "contact_frequency"), undefined);
+  const at = reviewChecks(readyItem({ recentMailCount: 3 }), ctx({ contactFrequency: settings }));
+  const hint = at.find((c) => c.key === "contact_frequency");
+  assert.equal(hint?.level, "hint");
+  assert.equal(hint?.title, "Schon 3 Werbe-Mails in 30 Tagen");
+  assert.match(hint?.detail ?? "", /Nur ein Hinweis/);
+  assert.equal(hint?.fix, null);
+  assert.deepEqual(hint?.meta, { count: 3, maxMails: 3, windowDays: 30 });
+  // A warning, never a block.
+  assert.equal(reviewVerdict(at), "hints");
+});
+
+test("contact frequency: no hint when off, unknown, without settings or for a Testkontakt", () => {
+  const item = readyItem({ recentMailCount: 9 });
+  assert.equal(reviewChecks(item, ctx()).find((c) => c.key === "contact_frequency"), undefined);
+  for (const contactFrequency of [{ maxMails: 0, windowDays: 30 }, { maxMails: 3, windowDays: 0 }, null]) {
+    const checks = reviewChecks(item, ctx({ contactFrequency }));
+    assert.equal(checks.find((c) => c.key === "contact_frequency"), undefined, JSON.stringify(contactFrequency));
+  }
+  const unknown = reviewChecks(readyItem({ recentMailCount: null }), ctx({ contactFrequency: { maxMails: 1, windowDays: 30 } }));
+  assert.equal(unknown.find((c) => c.key === "contact_frequency"), undefined);
+  const test = reviewChecks(readyItem({ recentMailCount: 9, isTest: true }), ctx({ contactFrequency: { maxMails: 1, windowDays: 30 } }));
+  assert.equal(test.find((c) => c.key === "contact_frequency"), undefined);
 });

@@ -88,6 +88,18 @@ test("planReset: aborts when a kept table references a wiped one", () => {
   assert.match(plan.errors[1], /audit\.trail/);
 });
 
+test("admin_settings (0078) is configuration — created by a migration and kept by a reset", () => {
+  assert.ok(tablesFromMigrations(repoMigrations()).includes("admin_settings"));
+  assert.ok(Object.keys(RESET_PRESERVE_TABLES).includes("admin_settings"));
+  const plan = planReset({
+    liveTables: ["_migrations", "admin_settings", "campaign_sends"],
+    migrationTables: ["admin_settings", "campaign_sends"],
+  });
+  assert.deepEqual(plan.errors, []);
+  assert.deepEqual(plan.truncate, ["campaign_sends"]);
+  assert.deepEqual(plan.preserved, ["_migrations", "admin_settings"]);
+});
+
 test("quoteIdent: doubles embedded quotes", () => {
   assert.equal(quoteIdent("messages"), '"messages"');
   assert.equal(quoteIdent('we"ird'), '"we""ird"');

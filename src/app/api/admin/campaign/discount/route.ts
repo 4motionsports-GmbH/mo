@@ -9,6 +9,11 @@
 // enforces as a hard block), so the UI can advise a regenerate instead of the
 // admin discovering the refusal at send time.
 //
+// Item mails only: while a set is attached the mail is a set offer and
+// carries no code (offer-mode.mjs) — a depth above 0 is refused (409
+// offer_conflict); 0 stays allowed so an old conflicting draft can be
+// cleaned up. Scope "set" is history and no longer accepted (400).
+//
 // Auth + CSRF via guardAdminPost (the proxy already gates /api/admin/*).
 
 import { guardAdminPost, adminJson, adminJsonError } from "@/lib/admin-api";
@@ -25,7 +30,10 @@ import {
   detectDiscountTextMismatch,
   DISCOUNT_PERCENT_MAX,
 } from "@/lib/discount-validation.mjs";
-import { parseDiscountScope, type DiscountScope } from "@/lib/discount-scope.mjs";
+import { parseEditableDiscountScope, type DiscountScope } from "@/lib/discount-scope.mjs";
+import { OFFER_CONFLICT_MESSAGE, offerConflict } from "@/lib/offer-mode.mjs";
+import { getActiveBundleForCampaignContact } from "@/lib/bundle-offers-store";
+import { shouldRenderBundleBlock } from "@/lib/bundle-email-core.mjs";
 import { reportError } from "@/lib/observability";
 
 export const maxDuration = 10;
@@ -52,8 +60,19 @@ export async function POST(req: Request) {
       );
     }
     discountPercent = parsed;
-    // Omitted = keep the draft's stored scope; unknown values read as "all".
-    discountScope = body.discountScope == null ? null : parseDiscountScope(body.discountScope);
+    // Omitted = keep the draft's stored scope.
+    if (body.discountScope == null) {
+      discountScope = null;
+    } else {
+      discountScope = parseEditableDiscountScope(body.discountScope);
+      if (!discountScope) {
+        return adminJsonError(
+          "bad_request",
+          "„Gilt für“: gesamte Bestellung oder nur die Empfehlungen.",
+          400
+        );
+      }
+    }
   } catch {
     return adminJsonError("bad_request", "Invalid JSON body", 400);
   }
@@ -68,6 +87,12 @@ export async function POST(req: Request) {
     if (!existing) {
       return adminJsonError("not_editable", "No draft exists for this contact.", 409);
     }
+    const activeSet = await getActiveBundleForCampaignContact(contactId);
+    if (offerConflict({ discountPercent, hasActiveBundle: Boolean(activeSet && shouldRenderBundleBlock(activeSet)) })) {
+      return adminJsonError("offer_conflict", OFFER_CONFLICT_MESSAGE, 409);
+    }
+    // A stored legacy "set" scope does not survive an edit.
+    const scope = discountScope ?? parseEditableDiscountScope(existing.discountScope) ?? "all";
 
     // Projected expiry for the preview; the real MK- code gets its own at send
     // (the send step swaps a stale date label — same rule as generation).
@@ -80,7 +105,7 @@ export async function POST(req: Request) {
       contactId,
       discountPercent,
       expiresAt,
-      discountScope ?? existing.discountScope
+      scope
     );
     if (!draft) {
       return adminJsonError("not_editable", "Draft not found or no longer editable.", 409);

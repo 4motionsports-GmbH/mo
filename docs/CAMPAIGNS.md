@@ -5,8 +5,9 @@ in **campaigns**: the running lifecycle campaign „Bestandskunden – Lebenszyk
 **Aktionen** the team creates in the admin (Black Friday, a launch …), and the built-in
 **Einzelansprache** for single, hand-picked mails. For each recipient the system generates a
 personalised email from the customer profile, the past purchases and the campaign's **Briefing**,
-recommends 2–3 suitable catalog products, optionally weaves in a unique single-use discount code
-(`MK-` prefix) and/or a bundle offer, and ends with the campaign's call to action — the Mo chatbot
+offers **either** 2–3 suitable catalog products — optionally with a unique single-use discount code
+(`MK-` prefix) — **or** one personal set (bundle offer, no code), never both (§4), and ends with the
+campaign's call to action — the Mo chatbot
 deep link that auto-opens the widget, or a shop link. A human reviews **every** email on the
 campaign's review desk (Prüftisch) in the **Kampagnen** screen of `/admin` before anything is sent.
 
@@ -139,7 +140,7 @@ again on the server (`validateCampaignInput`):
 | Grundlagen | Name 3–80 chars (`name`, a unique `slug` is derived), Art (`kind`), Start/Ende (`starts_at`/`ends_at`, end after start), Priorität 0–100 (`priority`) |
 | Briefing | `brief`, max 4,000 chars — Anlass, Ziel, Ton, Muss rein, Bitte nicht. The drafter reads it for every mail of the campaign (§4). „Briefing vorschlagen“ drafts one from name, kind, end date, discount and notes. |
 | Zielgruppe | The audience spec (`audience`, below), Fest/Dynamisch (`audience_mode`), „Erneut aufnehmen nach“ (`reentry_days`, `laufend` only, 14–3,650 days, empty = never), live count. Hidden for the Einzelansprache. |
-| Angebot | Rabatt (`discount_percent`, 0–`DISCOUNT_PERCENT_MAX`), Gilt für (`discount_scope`: all / recommendations / set), Codes gültig bis (`discount_valid_until`) — the starting values for Vorbereiten; each draft can still change them |
+| Angebot | Rabatt (`discount_percent`, 0–`DISCOUNT_PERCENT_MAX`), Gilt für (`discount_scope`: all / recommendations — `set` is history, refused for new values), Codes gültig bis (`discount_valid_until`) — the starting values for Vorbereiten; each draft can still change them. A recipient with a set attached is drafted without a code whatever the default says (set XOR items, §4) |
 | Gestaltung | Design (`design_key`; empty = the design selected for campaign mails in Einstellungen), Titelbild (`hero_mode`: `none` / `default` / `ai_ab` / `ai_all`), Textlänge (`text_mode`), Button führt zu (`cta_kind`: `mo_chat` / `shop`) + Shop-Link (`cta_url`, `https://` required for `shop`), Mo-Hinweis anhängen (`mo_promo`, default on — the chat button lives in the Mo hint, so `mo_chat` with `mo_promo = false` is refused: „Der Button zu Mo steht im Mo-Hinweis — Hinweis einschalten oder den Button auf den Shop zeigen lassen.“) |
 | Brief | Letters as a channel (migration `0074`, §8): „Briefe“ (`letter_mode`: „Keine Briefe“ `aus` — the default —, „An alle ohne E-Mail-Einwilligung“ `ohne_einwilligung`, „An alle (auch mit Einwilligung)“ `alle`), „Porto-Budget (€)“ (`letter_budget_cents`, 0–100,000 €, empty = no cap) and the live line „Per Brief: N Empfänger:innen (Adresse schon bekannt: M) · ≈ X € Porto bei Y € je Brief“ (M counts purchase addresses only); Callouts while `PHYSICAL_MAIL_SENDS_APPROVED` is off or Pingen is not configured. Hidden for the Einzelansprache. |
 | Automatik | Automatisch vorbereiten 0–500 drafts per night (`auto_prepare_per_day`, §5), Tagesziel (`daily_target`, 1–5,000 — no automation; shown as „Tagesziel n“ next to today's progress in the desk header) |
@@ -285,7 +286,7 @@ written to the admin access log (`campaign.add_recipient`, `campaign.add_recipie
 | --- | --- | --- |
 | `campaigns` (`0066`) | One row per campaign | `name`, `slug` (unique), `kind`, `status`, `brief`, `audience` (jsonb spec), `audience_mode` (`dynamisch` \| `fest`), `priority`, `starts_at`/`ends_at`, `daily_target`, `auto_prepare_per_day`, `reentry_days`, `discount_percent`, `discount_scope`, `discount_valid_until`, `design_key`, `hero_mode`, `text_mode`, `mo_promo`, `cta_kind`/`cta_url`, `letter_mode` + `letter_budget_cents` (`0074`, §8), `audience_refreshed_at`, `started_at`/`ended_at` |
 | `campaign_contacts` (`0034`, recipients since `0066`) | One row per person per campaign per cycle + the review-queue lifecycle | `campaign_id` (FK campaigns, cascade), `customer_id` (FK customers, SET NULL, `0059`), `cycle` (default 1), normalized `email`, `first_name`/`last_name`, `language` + `language_override` (`0040`), `opt_in_level`, `consent_updated_at`, `orders_count`, `total_spent_cents`, `last_order_at` (`0052`), `last_synced_at`, `status` (`pending → drafted → sending → sent` \| `skipped` \| `suppressed` \| `excluded` \| `draft_failed`), `excluded_reason`, `admin_note`, `conversation_id` (FK conversations, SET NULL), `added_at`, `created_at`, `sent_at`, `skipped_at`; `is_test` + `test_source_email` (`0057`, Testkontakte — §5); `added_manually` (`0069`, hand-added — §2.4); `approved_at`, `release_at`, `approved_fingerprint`, `release_error`, `claimed_at` (`0072`, Einplanen — §5). Unique `(campaign_id, customer_id, cycle)` for real rows and `(campaign_id, email)` for test rows; `shopify_customer_id` (`0034`) is not unique and may be NULL. |
-| `campaign_drafts` | ONE editable draft per recipient (unique `contact_id`, cascade) | `subject`, `body` (with `MO-XXXX` placeholder), `discount_percent`, projected `discount_expires_at`, `discount_scope` (`all` \| `recommendations` \| `set`, `0058`), compact `purchase_summary` (jsonb), `purchase_selected_ids` (`0043`, the recommendation basis), `recommended_product_ids`, `low_confidence`, `product_highlights` (`0046`), `text_mode` (`0047`), `segment` + `segment_days` (`0052`), the KI-Hero `hero_image_url` + `hero_image_prompt` (`0050`), `hero_headline` (`0051`), `hero_image_mobile_url` (`0053`) — [`EMAIL_DESIGNS.md`](./EMAIL_DESIGNS.md) |
+| `campaign_drafts` | ONE editable draft per recipient (unique `contact_id`, cascade) | `subject`, `body` (with `MO-XXXX` placeholder), `discount_percent`, projected `discount_expires_at`, `discount_scope` (`all` \| `recommendations`; `set` only on drafts from before 12.10.2026 — history, `0058`), compact `purchase_summary` (jsonb), `purchase_selected_ids` (`0043`, the recommendation basis), `recommended_product_ids`, `low_confidence`, `product_highlights` (`0046`), `text_mode` (`0047`), `segment` + `segment_days` (`0052`), the KI-Hero `hero_image_url` + `hero_image_prompt` (`0050`), `hero_headline` (`0051`), `hero_image_mobile_url` (`0053`) — [`EMAIL_DESIGNS.md`](./EMAIL_DESIGNS.md) |
 | `campaign_sends` | Immutable send record (audit + KPI) | `contact_id` (SET NULL), `campaign_id` (FK campaigns, SET NULL, `0066`), `customer_id` (FK customers, SET NULL, `0066`), `email`, `subject`, `body_hash` (SHA-256 of the shipped text), `body_text`/`body_html` (the shipped parts as delivered — `0038`; `body_html` NULL on the copy path, both NULL for pre-0038 rows), `sent_via` (`email`/`copy`), real `discount_code` (`MK-…`) + `discount_code_gid` + `discount_expires_at`, `redirect_token`/`clicked_at` (`0041` — the tracked CTA, see below; NULL for copy sends and pre-0041 rows), `sent_at`; `segment` (`0052`); the snapshot of `0054` — `design_key`, `hero_variant`, `hero_image_url`, `hero_headline`, `text_mode`, `language`, `discount_percent`, `bundle_offer_id`, `bundle_clicked_at`, `unsubscribed_at` — plus `discount_scope` (`0058`); `is_test` (`0057`); the delivery columns of `0055` — `provider_email_id`, `delivered_at`, `bounced_at`, `bounce_type`, `complained_at` (both: sections below) |
 | `campaign_letters` (`0074`) | One letter per person per campaign per cycle (the letter channel, §8.1) — separate from `campaign_contacts`, whose queries all assume the e-mail consent | `campaign_id` (FK campaigns, cascade), `customer_id` (FK customers, cascade), `cycle` (always 0), `status`, `excluded_reason`, `subject`/`body`, `edited`, `admin_note`, `drafted_at`/`approved_at`/`sent_at`, `page_count`, `physical_letter_id` (FK physical_letters, SET NULL), `error`, `added_at`/`updated_at`; unique `(campaign_id, customer_id, cycle)` |
 
@@ -330,6 +331,27 @@ minted (`discount_failed` 502).
 Testkontakte (§5) skip gates 2, 4 and 5 — they are the operator's own inboxes. The **copy path**
 (`POST /api/admin/campaign/mark-done`) delivers nothing, so the master flag does not apply; it does
 check the consent and the block list (409 `not_eligible`).
+
+**Kontakthäufigkeit — a warning, not a gate** (migration `0078`, owner decision 12.10.2026;
+[`contact-frequency.mjs`](../src/lib/contact-frequency.mjs), tested). When the person already
+received `maxMails` or more marketing mails in the last `windowDays` days, the desk shows a hint
+(§5) and Senden asks once („Trotzdem senden“) — the operator can always send anyway. The threshold
+is edited in Einstellungen → „Kontakthäufigkeit“ (`admin_settings` key `contact_frequency`,
+`{ maxMails, windowDays }`; default **3 in 30 days**, i.e. the warning comes before the 4th mail;
+bounds 0–50 / 0–365, invalid → default; **0 in either field switches it off**). Counted
+(`countRecentMarketingMails` in [`admin-settings-store.ts`](../src/lib/admin-settings-store.ts), one
+query per desk): `campaign_sends` with `is_test = false` — every campaign, the Einzelansprache and
+the copy path included — plus `marketing_sends` with status `sent`, matched by e-mail **or**
+customer id. Not counted: DOI, chat summary, correspondence replies, test sends, letters (never
+read from `email_messages`). Server backstop: `POST /api/admin/campaign/send`, `/approve` and
+`/api/admin/marketing/send` count fresh and answer **409** `{ error: { code: "contact_frequency",
+message }, frequency: { count, maxMails, windowDays } }` unless the body carries
+`ignoreContactFrequency: true`. The check lives in those routes, not in `approveAndSendCampaign` /
+`campaignSendPreflight`, so the release cron and sample sends never see it; Testkontakte never
+warn. Fail-soft: before 0078 or on a read error the defaults apply, a failed count never warns.
+**Not the same as gate 5:** `MARKETING_MIN_SEND_INTERVAL_DAYS` is a hard refusal (429) while the
+*last* send is too recent and comes from the environment; the Kontakthäufigkeit counts *how many*
+mails in a window, is set in the dashboard and never refuses.
 
 **What the two flags stand for:** `CAMPAIGN_SENDS_APPROVED` — mailing this audience on the basis of
 Shopify's checkbox consent at all; `CAMPAIGN_ALLOW_SINGLE_OPT_IN` — whether `SINGLE_OPT_IN`/`UNKNOWN`
@@ -378,6 +400,31 @@ campaign.
 Per recipient ([`campaign-draft.ts`](../src/lib/campaign-draft.ts), same model + fallback
 discipline as `marketing-draft.ts`):
 
+**Set XOR items (owner, 12.10.2026).** A mail offers **either** single products (the
+recommendations, optionally with a discount code) **or** one set — never both. The kind is
+**derived**, not stored: an active, unexpired set attached to the recipient
+(`shouldRenderBundleBlock`, the guard the send path renders the set block with) makes it a **set
+mail** ([`offer-mode.mjs`](../src/lib/offer-mode.mjs) `offerKind`). `prepareDraftForContact`
+enforces it for every caller — desk depth, campaign default, Vorbereiten popover, Eingang
+suggestion, nightly auto-prepare: a set mail is generated and saved with `discount_percent = 0` and
+scope `all` whatever was requested; an item mail keeps the requested depth, and a requested or
+stored scope `set` (history: „x % only on the set“) gets **no code** — never widened to the whole
+order (`effectiveDraftOffer` in
+[`draft-offer.mjs`](../src/lib/draft-offer.mjs), tested). The prompt variant follows
+(`draftPromptPlan`):
+
+| | Item mail | Set mail |
+| --- | --- | --- |
+| Prompt shows | the 2–3 recommendations with URLs | the set's contents with counts („2× Kettlebell – 16 kg“, `setContentsLines`) as **the** offer — not „außerdem ein Set“ |
+| Discount | the code block (`discountHint`), scope `all` \| `recommendations` | the „KEIN Rabattangebot“ branch: no code, no percentage — the set price is the concession |
+| Rules | link products as `[Name](URL)`, no invented prices | the mail is about this one set, no other products, no links; no price, saving or percentage from the model — the set block below the prose states price and the genuine „statt“ (PAngV). „Günstiger als einzeln“ only when the set really costs less (`hasSaving`) |
+| `product_highlights` | one per recommended product | one per set product, named exactly like the component titles the set block lists (`setHighlightNames`; `alignHighlightNames` snaps copied „2× …“ prefixes and case back), so the block can show them |
+| KI-Hero | products and reference photos from the recommendations | from the set's components, with counts ([`email-hero.ts`](../src/lib/email-hero.ts)) |
+
+The templated fallback follows the same split. The legacy Kunden draft
+(`POST /api/admin/customers/marketing-draft`, `generateCustomerMarketingDraft`) branches the same
+way: a live set attached to the customer makes it a set mail drafted with depth 0.
+
 0. **The campaign and the customer profile are the brief.** The prompt opens with an „Anlass“
    section: for an Aktion or the Einzelansprache the campaign name and kind (and an Aktion's real
    end date), the campaign's **Briefing**, and the recipient's `admin_note` (Einzelansprache,
@@ -392,7 +439,8 @@ discipline as `marketing-draft.ts`):
 1. Personal greeting by first name (graceful fallback).
 2. A natural, warm reference to the purchase history — one category or one
    item, never an itemized dump.
-3. 2–3 recommendations with product URLs, briefly reasoned
+3. 2–3 recommendations with product URLs (item mail; a set mail presents the set
+   instead), briefly reasoned
    ([`campaign-recommendations.ts`](../src/lib/campaign-recommendations.ts)),
    written as **markdown links** `[Produktname](URL)` — the HTML part renders
    every link as clickable text, never a raw pasted URL
@@ -412,8 +460,13 @@ discipline as `marketing-draft.ts`):
    A **regenerate preserves the draft's stored product list** (auto-picked or
    manually curated) so the prose, the picture grid and the review card can
    never drift apart; recommendations are recomputed only for the first
-   draft or an explicit basis change (`refreshRecommendations`).
-4. Optional discount block — the **exact existing mechanism**: the campaign
+   draft or an explicit basis change (`refreshRecommendations`). While a set
+   is attached they are never replaced — not even by a refresh: the stored
+   list is the set's source and is saved back unchanged, and the set itself
+   (its per-item counts and the operator's set price) stays untouched —
+   nothing rebuilds a set automatically.
+4. Optional discount block (item mails only — a set mail carries no code, see
+   above) — the **exact existing mechanism**: the campaign
    (or the admin) picks 0–50 % (`discount-validation.mjs`), the draft weaves in
    the `MO-XXXX` placeholder + projected expiry
    (`formatGermanExpiryDate`/`discountExpiryDaysPublic`; for a campaign with
@@ -422,34 +475,43 @@ discipline as `marketing-draft.ts`):
    explicit regenerate overwrites the open draft (`shouldReuseCampaignDraft`)
    so text and eventual code never disagree.
    **Scope** (`discount_scope`, migration `0058`, `discount-scope.mjs`): the
-   code applies to the whole order (`all`, the default), only to the products
-   recommended in this mail (`recommendations`) or only to the attached set
-   (`set`). The prompt states the scope (`discountHint`: "gilt NICHT für den
-   Rest der Bestellung"), the coupon's benefit line and the text part use the
-   same phrase (`discountScopePhrase`), and at send time the code is minted
-   with `customerGets.items.products.productsToAdd` = the Shopify product gids
-   of that scope (recommended handles resolved via
-   `fetchProductGidsByHandles`, the set's `shopify_product_id`). A scope that
-   cannot be honoured (no available recommendation, unresolvable handle, no
-   active set) **refuses the send** (`discount_scope_unresolved`) — the desk
-   shows the same rule as a blocked Prüfpunkt beforehand
-   (`discount_scope_no_set` / `discount_scope_no_recommendations`). A changed
-   scope regenerates the prose. Recommendation: with a set attached, scope the
-   code to the recommendations so each offer has one clear price.
-   **Bundle offers** (alternative or addition to a percentage code): the card's
+   code applies to the whole order (`all`, the default) or only to the
+   products recommended in this mail (`recommendations`). The third value,
+   `set` (the code only on the attached set), is **history** since the set XOR
+   items rule: it still parses so older sends read back, but no new draft or
+   campaign takes it (`parseEditableDiscountScope`; a draft regenerated with a
+   stored `set` and no set gets no code at all — never a whole-order code). The prompt states the scope (`discountHint`:
+   "gilt NICHT für den Rest der Bestellung"), the coupon's benefit line and
+   the text part use the same phrase (`discountScopePhrase`), and at send time
+   the code is minted with `customerGets.items.products.productsToAdd` = the
+   Shopify product gids of that scope (recommended handles resolved via
+   `fetchProductGidsByHandles`) — no code is ever minted on a set. A scope
+   that cannot be honoured (no available recommendation, unresolvable handle)
+   **refuses the send** (`discount_scope_unresolved`); so does a draft still
+   stored with `set` and a depth above 0, with or without a set („„Gilt für:
+   Set“ gibt es nicht mehr — bitte „Gilt für“ ändern.“) — the desk shows the
+   same rules as blocked Prüfpunkte beforehand
+   (`discount_scope_no_recommendations` / `discount_scope_no_set` /
+   `offer_conflict`). A changed
+   scope regenerates the prose.
+   **Bundle offers** (the set mail — instead of the recommendations and
+   instead of a percentage code, never in addition): the card's
    "Set-Angebot" section creates a real UNLISTED Shopify set from the card's
    recommendations via the **existing** bundle mechanism
    (`/api/admin/bundles/create` with `campaignContactId` — migration `0035`
    adds the nullable FK on `bundle_offers`, parallel to
    `customer_id`/`marketing_send_id`; see [`BUNDLES.md`](./BUNDLES.md) for
-   scopes, pricing/PAngV and expiry). A regenerate weaves a natural mention
-   into the prose (`bundleHint`); the deterministic offer block (components,
-   price, genuine "statt", tracked `/api/r/<token>` CTA) is appended at send
-   time (`buildBundleBlockForContact`, same active-only guard + renderer as
-   the marketing path) and a resolution failure degrades to "no block", never
+   scopes, pricing/PAngV and expiry). Attaching it turns the mail into a set
+   mail; a regenerate then presents the set as the offer (`setOfferSection`,
+   contents with counts, no price from the model) and drafts without a code.
+   The deterministic offer block (components with counts, price, genuine
+   "statt", tracked `/api/r/<token>` CTA) is appended at send time
+   (`buildBundleBlock`, same active-only guard + renderer as the
+   marketing path) and a resolution failure degrades to "no block", never
    blocking a send. Expiry stays with the existing cron (it deletes the set's
    Shopify product); "Set entfernen" uses the existing archive route, which
-   deletes it too.
+   deletes it too — the mail is an item mail again, with the stored
+   recommendations it had.
 5. Call to action — appended **deterministically** at send time, never editable
    prose, per the campaign's `cta_kind` and `mo_promo`:
    - `mo_chat` (default): the Mo promo block + deep link (`CAMPAIGN_MO_DEEPLINK_URL`, default
@@ -509,9 +571,11 @@ keyed by contact id, so filtering never mis-targets a card.
 while `CAMPAIGN_ALLOW_SINGLE_OPT_IN` is off, address on the block list or without the one consent,
 address inside the cross-channel frequency cap, prose naming a different percentage than the set
 discount — the same `detectDiscountTextMismatch` the send path enforces — or the
-`MO-XXXX` placeholder without a discount, or a refusal the server returned for
-the last attempt), *hint* when worth a look (low-confidence recommendations, a
-recommended product gone or sold out, an attached set expired or expiring
+`MO-XXXX` placeholder without a discount, a set mail that still carries a code
+(`offer_conflict`, fix „Rabatt entfernen“ — set XOR items, §4), the retired
+scope „Gilt für: Set“ with a code (`discount_scope_no_set`, also fixed by „Rabatt entfernen“), or a refusal the server returned for
+the last attempt), *hint* when worth a look (in an item mail: low-confidence recommendations, a
+recommended product gone or sold out; an attached set expired or expiring
 within two days, a missing KI-Hero while the campaign design has a hero —
 following the campaign's hero mode: under `ai_ab` an A-group card without one,
 under `ai_all` every card without one („Ohne KI-Hero“), under `default` /
@@ -520,8 +584,19 @@ under `ai_all` every card without one („Ohne KI-Hero“), under `default` /
 subject over 70 characters), *info* (edited by hand, a Testkontakt, a Testkontakt address on the
 block list, a KI-Hero present). Each check carries one fix action
 (Überspringen, Neu generieren, Basis anpassen, Produkt tauschen, Set neu
-erstellen, Hero erzeugen, Betreff kürzen). The rail dot, the „Hinweise“ /
+erstellen, Rabatt entfernen, Hero erzeugen, Betreff kürzen). The rail dot, the „Hinweise“ /
 „Blockiert“ chips and the Liste column show the same verdict.
+
+**Kontakthäufigkeit** (§3) is a *hint* too (`contact_frequency`, e.g. „Schon 3 Werbe-Mails in 30
+Tagen“, meta `{ count, maxMails, windowDays }`; skipped for a Testkontakt, while the warning is off
+and below the threshold): the server hands every card its `recentMailCount` (one batch count per
+desk), the „Letzte Mail“ row shows „n Werbe-Mails in N Tagen“ (warning tone at the threshold).
+Senden on such a card opens ONE confirmation („Schon n Werbe-Mails in den letzten N Tagen an diese
+Adresse — trotzdem senden?“, „Trotzdem senden“) that also stands in for the first-send-of-the-day
+question, then sends with `ignoreContactFrequency`. When the server's fresh count answers 409
+(the count moved since the page loaded, or a retry from the Postausgang), the card comes back
+WITHOUT a refusal and the same confirmation opens with the server's numbers. „Einplanen“ shows the
+warning in its dialog; pressing „Einplanen“ is the acknowledgement.
 
 **Sending never blocks the next card.** The desk takes a sent card out of the queue at once and
 waits for the server in the Postausgang; a refusal brings the card back with the server's reason as
@@ -580,21 +655,30 @@ revenue stay on the KPI screen with its Shopify cache.
 The workflow is generated-first but everything stays adjustable per card
 WITHOUT regenerating (the deterministic send-time blocks make that safe):
 
-- **Recommendations** are editable: remove per item, add via the shared
-  catalog picker (`/api/admin/catalog/search`); each change persists
-  immediately (`POST /api/admin/campaign/recommendations` — validates against
-  the sync-fresh catalog, refuses sold-out products, clears `low_confidence`)
-  and an attached bundle offer is **rebuilt to match** (snapshots are
-  immutable, so "update" = archive + recreate through the unchanged bundle
-  mechanism). The UI then chains a regenerate; because a regenerate
-  preserves the stored list (§4.3), the fresh prose talks about exactly the
-  curated products.
+- **Recommendations** are editable in an item mail: remove per item, add via
+  the shared catalog picker (`/api/admin/catalog/search`, which shows the stock
+  per product and variant); each change persists immediately
+  (`POST /api/admin/campaign/recommendations`, clears `low_confidence`). A
+  NEWLY added product must be in the sync-fresh catalog, keep its pinned
+  variant and be available — refusals are German and name the product. A
+  product that was already on the draft and has sold out or left the catalog
+  since does not block the edit: it drops out and comes back as `dropped`
+  (toast „Nicht mehr verfügbare Empfehlungen entfernt“); a list with nothing
+  available left is refused (`nothing_available`). The card shows each
+  recommendation's price and — where Shopify tracks it — the stock („12 auf
+  Lager“, for a multi-variant product without a pinned variant the total, „(gesamt)“, [`stock-level.mjs`](../src/lib/stock-level.mjs)); sold-out or
+  vanished ones are greyed out with „Ausverkauft“ / „Nicht im Katalog“. While a
+  set is attached the list is fixed (409 `set_attached`): the mail shows only
+  the set, and the card lists its contents as „Im Set“. The UI then chains a
+  regenerate; because a regenerate preserves the stored list (§4.3), the
+  fresh prose talks about exactly the curated products.
 - **Purchase basis** is selectable: every purchased item that maps to a
   current catalog product gets a checkbox in the card's Kaufhistorie (all
   selected = default). Changing the selection and clicking "Empfehlungen &
   Text neu erzeugen" recomputes the recommendations from the selected
-  purchases, focuses the prose's purchase reference on them, rebuilds an
-  attached bundle, and regenerates the text — one round-trip
+  purchases, focuses the prose's purchase reference on them, and regenerates
+  the text — one round-trip (with a set attached the recommendations and the
+  set stay as they are, §4.3)
   (`POST /api/admin/campaign/draft` with `refreshRecommendations` +
   `purchaseSelection`). The selection persists on the draft
   (`purchase_selected_ids`, migration `0043`), so later regenerates /
@@ -608,14 +692,37 @@ WITHOUT regenerating (the deterministic send-time blocks make that safe):
   because the Kontakt block's Umsatz is the lifetime figure of the recipient snapshot
   (`customer_facts` at the last audience refresh) and will not equal the sum of the shown orders
   (`purchaseHistoryCoverage` in `campaign-desk-core.mjs`).
-- **Discount** can be set/changed/cleared AFTER generation
+- **Discount** can be set/changed/cleared AFTER generation in an item mail
   (`POST /api/admin/campaign/discount { contactId, discountPercent, discountScope? }`):
-  depth and scope („Gilt für“: Alles / Empfehlungen / Set) live on the draft,
+  depth and scope („Gilt für“: Alles / Empfehlungen) live on the draft,
   the real MK- code + deadline ship deterministically outside the prose, and
   the route warns when the current prose clearly states a different
   percentage (which the send route would refuse — regenerate then). A scope
-  change regenerates automatically, because the prose states the scope.
-- **Bundle** can be attached/removed after generation (see §4).
+  change regenerates automatically, because the prose states the scope. While
+  a set is attached a depth above 0 is refused (409 `offer_conflict`); 0 stays
+  allowed so an older draft that still has both can be cleaned up. Scope
+  `set` is no longer accepted (400) — it only still reads on old sends.
+- **Set or single products.** A mail offers EITHER single products (with an
+  optional code) OR one set — never both
+  ([`offer-mode.mjs`](../src/lib/offer-mode.mjs)). The card's Angebot block
+  switches „Art: Einzelprodukte | Set“: „Set“ opens the set dialog (below),
+  „Einzelprodukte“ removes the set after a confirm. Creating a set clears the
+  draft's code on the server; the review check `offer_conflict` (blocked, fix
+  „Rabatt entfernen“) catches a draft from before this rule.
+- **Set dialog** („Set erstellen…“, sheet): on open it re-resolves the card's
+  recommendations against the current catalog
+  (`POST /api/admin/catalog/availability { refs }`) — the final check. Available
+  products are pre-selected; sold-out or vanished ones stay visible but greyed
+  out and cannot be chosen. Each row shows the unit price, the stock and a
+  count 1–10 (`BUNDLE_QUANTITY_MAX`, capped by the known stock of the variant
+  the set uses). The empty „Set-Preis“ field shows the normal price (Σ unit
+  price × count) in grey — empty means the set costs that and the mail shows no
+  strike price; a lower price shows the saving live („Ersparnis … (16 %)“), a
+  price at or above it says there is none
+  ([`set-composer-core.mjs`](../src/lib/set-composer-core.mjs)). A set needs at
+  least two units (one product twice, or two products). Variant-pinned
+  recommendations keep their variant (`handle~variantId` is split into
+  `productId` + `variantId`), and every refusal names the products (§4).
 
 Actions:
 
@@ -755,11 +862,13 @@ Shopify side: [`DATA_RETENTION.md`](./DATA_RETENTION.md) „Complete erasure“ 
 | Nightly prepare (cron, off by default) | `GET/POST /api/cron/prepare-campaign-drafts` (`CRON_SECRET`, `CAMPAIGN_AUTO_PREPARE_*`, per-campaign `auto_prepare_per_day`) |
 | Single draft / regenerate / purchase-basis selection | `POST /api/admin/campaign/draft` |
 | Save edits | `POST /api/admin/campaign/update` |
-| Curate recommendations (+ bundle rebuild) | `POST /api/admin/campaign/recommendations` |
-| Set discount post-generation | `POST /api/admin/campaign/discount` |
+| Curate recommendations (item mails; 409 `set_attached` while a set is attached) | `POST /api/admin/campaign/recommendations` |
+| Set discount post-generation (item mails; 409 `offer_conflict` with a set) | `POST /api/admin/campaign/discount` |
+| Set dialog: availability, price and stock of the card's recommendations | `POST /api/admin/catalog/availability` |
 | Rebuild one campaign's queue (discard its open drafts → pending) | `POST /api/admin/campaign/reset-queue` (`campaignId`) |
-| Skip / undo skip / mark-done / send | `POST /api/admin/campaign/{skip,unskip,mark-done,send}` |
+| Skip / undo skip / mark-done / send | `POST /api/admin/campaign/{skip,unskip,mark-done,send}` (`send` and `approve`: 409 `contact_frequency` unless `ignoreContactFrequency: true`, §3) |
 | Einplanen / Zurücknehmen | `POST /api/admin/campaign/{approve,unapprove}` |
+| Kontakthäufigkeit (warning threshold, Einstellungen) | `POST /api/admin/settings/contact-frequency` (`{ maxMails, windowDays }`) |
 | Release job (cron, off by default) | `GET/POST /api/cron/release-campaign-mails` (`CRON_SECRET`, every 10 min, `CAMPAIGN_RELEASE_*`) |
 | Contact search (all statuses, one campaign) | `POST /api/admin/campaign/contacts` (`query`, `campaignId`) |
 | Testkontakte (list / create + draft / delete) | `GET ?campaignId=` + `POST /api/admin/campaign/test-contacts` |
@@ -772,7 +881,7 @@ Shopify side: [`DATA_RETENTION.md`](./DATA_RETENTION.md) „Complete erasure“ 
 | Letter as printed (read-only, `application/pdf`) | `POST /api/admin/campaigns/letters/preview` (`{ id, subject?, body? }`) |
 | Purchase address of one customer (Kunden → Brief) | `POST /api/admin/customers/letter-address` (`{ customerId }`) |
 | UI | `src/app/admin/KampagneTab.tsx` (overview or desk); overview + editor in `src/app/admin/kampagnen/` (`CampaignsOverview`, `CampaignEditor`, `CampaignCheckSection`); desk in `src/app/admin/kampagne/` (`KampagneWorkspace`, `CampaignHeader`, `PreparePopover`, `QueueRail`, `MailPane`, `ReviewColumn`, `ListView`, `ScheduledViews` (Einplanen dialog + view „Eingeplant“), `SentHistory`, `EmailViewerDialog`, `ContactHistorySheet`, `TestContactsSheet`, `LettersView`, `badges`, `sections/` (`BundleSection`, `HeroBlock`, `PurchaseHistorySection`), `useCampaignActions`, `useReleaseActions`, `useRenderedPreview`); the hero state hook `src/app/admin/useEmailHero.ts` |
-| Libs | `campaigns-store.ts`, `audience-store.ts`, `campaign-{store,prepare,draft,recommendations,email,recommendation-view,assist,sample,release}.ts`, `campaign-{def,language,flags,gates,segments,complement,draft-core,review-checks,desk-core,sample-core,release-core}.mjs`, `audience-spec.mjs`, `discount-swap.mjs`, `discount-scope.mjs`; letters: `campaign-letters{,-store}.ts`, `campaign-letter-draft.ts`, `postal-address-fill.ts`, `campaign-letter-core.mjs`, `postal-address.mjs`, `physical-mail.ts` (`submitLetter`) |
+| Libs | `campaigns-store.ts`, `audience-store.ts`, `campaign-{store,prepare,draft,recommendations,email,recommendation-view,assist,sample,release}.ts`, `campaign-{def,language,flags,gates,segments,complement,draft-core,review-checks,desk-core,sample-core,release-core}.mjs`, `audience-spec.mjs`, `discount-swap.mjs`, `discount-scope.mjs`, `offer-mode.mjs` (set XOR items), `draft-offer.mjs`, `stock-level.mjs`, `set-composer-core.mjs`; letters: `campaign-letters{,-store}.ts`, `campaign-letter-draft.ts`, `postal-address-fill.ts`, `campaign-letter-core.mjs`, `postal-address.mjs`, `physical-mail.ts` (`submitLetter`) |
 
 All admin routes sit behind the existing proxy gate + `guardAdminPost` / `guardAdminGet`
 (auth + JSON-content-type CSRF defense). Everything fails closed: missing

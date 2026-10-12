@@ -3,7 +3,8 @@
 // the Shopify mirror, the one consent with its history, the computed figures
 // (customer_facts), the order ledger, Mo chats with transcripts, campaign
 // participation, the activity timeline, bundle offers, correspondence,
-// physical letters and the letter draft. Read-only; every source is fail-soft.
+// physical letters, the letter draft and the marketing mails of the
+// contact-frequency window. Read-only; every source is fail-soft.
 
 import {
   getCustomerById,
@@ -30,6 +31,8 @@ import { listCampaignParticipation, type CampaignParticipation } from "./campaig
 import { buildCustomerTimeline, type TimelineEntry } from "./customer-timeline.mjs";
 import { aiProfileScope, isShopifyErasureSyncEnabled, mayBuildAiProfile } from "./platform-flags.mjs";
 import { getProductsByIds } from "./product-catalog";
+import { countRecentMarketingMailsFor, getContactFrequencySettings } from "./admin-settings-store";
+import { contactFrequencyEnabled, type ContactFrequencySettings } from "./contact-frequency.mjs";
 
 export interface CustomerDetailTranscriptTurn {
   role: "user" | "assistant" | "system" | "tool";
@@ -137,6 +140,12 @@ export interface CustomerDetail {
   marketingStatus: "none" | "pending" | "confirmed" | "unsubscribed";
   adminInstructions: string | null;
   marketingSend: CustomerDetailMarketingSend | null;
+  /** Marketing mails this person received in the last
+   * `contactFrequency.windowDays` days (lib/contact-frequency.mjs); null =
+   * not counted (warning off, or the count failed — never warns). */
+  recentMarketingMails: number | null;
+  /** The soft contact-frequency warning's setting (Einstellungen). */
+  contactFrequency: ContactFrequencySettings;
   profileSummary: string | null;
   profileSummaryUpdatedAt: string | null;
   /** Structured profile fields (migration 0059), or null before the first profile. */
@@ -160,6 +169,19 @@ export interface CustomerDetail {
   letterDraftBody: string | null;
 }
 
+/** The contact-frequency setting and this person's count in its window (by
+ * e-mail OR customer id). Fail-soft: settings fall back to the default, a
+ * failed count is null (no warning); counted only while the warning is on. */
+async function loadContactFrequency(
+  email: string,
+  customerId: number
+): Promise<{ settings: ContactFrequencySettings; count: number | null }> {
+  const settings = await getContactFrequencySettings();
+  if (!contactFrequencyEnabled(settings)) return { settings, count: null };
+  const count = await countRecentMarketingMailsFor(email, customerId, settings.windowDays);
+  return { settings, count };
+}
+
 function personaDisplay(label: string | null): string | null {
   if (!label) return null;
   const meta = ARCHETYPE_META[label as PersonaArchetype];
@@ -171,7 +193,7 @@ export async function loadCustomerDetail(customerId: number): Promise<CustomerDe
   const c = await getCustomerById(customerId);
   if (!c) return null;
 
-  const [sessions, send, bundles, correspondence, physicalLetters, optOut, consentEvents, figures, ledger, campaigns] =
+  const [sessions, send, bundles, correspondence, physicalLetters, optOut, consentEvents, figures, ledger, campaigns, frequency] =
     await Promise.all([
       loadCustomerSessions(c.id),
       getLatestSendForEmail(c.email),
@@ -183,6 +205,7 @@ export async function loadCustomerDetail(customerId: number): Promise<CustomerDe
       getCustomerFigures(c.id),
       listCustomerOrders(c.id, { limit: 50 }),
       listCampaignParticipation(c.id),
+      loadContactFrequency(c.email, c.id),
     ]);
   const physical = physicalEligibilityForCustomer(c);
   const blockReason = figures?.blockReason ?? null;
@@ -284,6 +307,8 @@ export async function loadCustomerDetail(customerId: number): Promise<CustomerDe
           sentAt: send.sentAt,
         }
       : null,
+    recentMarketingMails: frequency.count,
+    contactFrequency: frequency.settings,
     profileSummary: c.profileSummary,
     profileSummaryUpdatedAt: c.profileSummaryUpdatedAt,
     profileData: c.profileData,

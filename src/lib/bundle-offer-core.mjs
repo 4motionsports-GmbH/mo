@@ -12,6 +12,7 @@
 
 import {
   formatProductRef,
+  parseProductRef,
   resolveProductRef,
   effectiveVariantPrice,
   isVariantAvailable,
@@ -99,9 +100,15 @@ export function toCents(value) {
   if (value == null) return null;
   let s = String(value).trim();
   if (!s) return null;
-  // Accept a German decimal comma defensively (catalog prices are numbers, but
-  // snapshots may be strings).
-  s = s.replace(/\s/g, "").replace(",", ".");
+  // Operators type prices the German way ("1.299,00 €", "149,90"); catalog
+  // prices are numbers and snapshots are "149.00" strings. Drop the currency
+  // sign and spaces; then a dot followed by groups of exactly three digits
+  // (optionally ending in a comma decimal) is a thousands separator, and a
+  // comma is the decimal separator.
+  s = s.replace(/[\s\u00a0€]/g, "").replace(/EUR$/i, "");
+  if (/^\d{1,3}(\.\d{3})+(,\d+)?$/.test(s)) s = s.replace(/\./g, "");
+  s = s.replace(",", ".");
+  if (!/^\d+(\.\d+)?$/.test(s)) return null;
   const n = Number(s);
   if (!Number.isFinite(n) || n < 0) return null;
   return Math.round(n * 100);
@@ -119,6 +126,14 @@ export function centsToMoney(cents) {
 }
 
 // ── Component snapshot + sum ──────────────────────────────────────────────────
+
+/**
+ * The most units of ONE item a set may contain. Both composers (Kampagne set
+ * dialog, Kunden composer) offer 1…this, and the server refuses more
+ * (`bad_quantity`) — an unbounded count would also overflow the NUMERIC(10,2)
+ * sum columns.
+ */
+export const BUNDLE_QUANTITY_MAX = 10;
 
 /**
  * Compute the TRUE component sum (the PAngV "statt €X" reference) from a list of
@@ -185,10 +200,19 @@ export function computeCompareAtPrice(bundlePrice, componentsSum) {
  * @param {Map<string, { id: string, name?: string, price?: number, salePrice?: number,
  *   currency?: string, shopifyVariantId?: string, inStock?: boolean,
  *   variants?: Array<object> }>} catalogById
+ * A `productId` may also arrive as a ref ("handle~123", the shape stored in
+ * campaign_drafts.recommended_product_ids): it is split here, so a
+ * variant-pinned recommendation resolves instead of reading as unknown.
+ *
+ * Every refusal carries the offenders of its class plus `titles` — offender →
+ * catalog name for the ones the catalog knows — so the admin can say WHICH
+ * item is the problem.
+ *
  * @param {Array<{ productId: string, variantId?: string|null, quantity?: number }>} inputs
  * @returns {{ ok: true, components: Array<object> } |
- *   { ok: false, reason: "empty" | "unknown_products" | "sold_out" | "no_variant" | "variant_not_found",
- *     unknown?: string[], soldOut?: string[], noVariant?: string[], variantNotFound?: string[] }}
+ *   { ok: false, reason: "empty" | "unknown_products" | "sold_out" | "no_variant" | "variant_not_found" | "bad_quantity",
+ *     unknown?: string[], soldOut?: string[], noVariant?: string[], variantNotFound?: string[],
+ *     badQuantity?: string[], titles?: Record<string, string> }}
  */
 export function validateAndSnapshotComponents(catalogById, inputs) {
   const list = Array.isArray(inputs) ? inputs : [];
@@ -198,19 +222,29 @@ export function validateAndSnapshotComponents(catalogById, inputs) {
   const soldOut = [];
   const noVariant = [];
   const variantNotFound = [];
+  const badQuantity = [];
+  /** @type {Record<string, string>} */
+  const titles = {};
   const components = [];
 
   for (const input of list) {
-    const productId = String(input?.productId ?? "").trim();
-    const requestedVariantId =
+    const parsed = parseProductRef(String(input?.productId ?? "").trim());
+    const productId = parsed.productId;
+    const explicitVariantId =
       input?.variantId != null && String(input.variantId).trim() !== ""
         ? String(input.variantId).trim()
         : null;
-    const quantity =
-      Number.isFinite(input?.quantity) && input.quantity > 0 ? Math.floor(input.quantity) : 1;
+    const requestedVariantId = explicitVariantId ?? parsed.variantId;
+    const rawQuantity = Number(input?.quantity);
+    const quantity = Number.isFinite(rawQuantity) && rawQuantity > 0 ? Math.floor(rawQuantity) : 1;
     const product = productId ? catalogById.get(productId) : undefined;
     if (!product) {
       unknown.push(productId || "(empty)");
+      continue;
+    }
+    if (product.name) titles[productId] = product.name;
+    if (quantity > BUNDLE_QUANTITY_MAX) {
+      badQuantity.push(productId);
       continue;
     }
     const resolved = resolveProductRef(
@@ -218,7 +252,9 @@ export function validateAndSnapshotComponents(catalogById, inputs) {
       formatProductRef(productId, requestedVariantId)
     );
     if (!resolved || resolved.missingVariant) {
-      variantNotFound.push(formatProductRef(productId, requestedVariantId));
+      const ref = formatProductRef(productId, requestedVariantId);
+      if (product.name) titles[ref] = product.name;
+      variantNotFound.push(ref);
       continue;
     }
     const variant = resolved.variant;
@@ -226,6 +262,8 @@ export function validateAndSnapshotComponents(catalogById, inputs) {
     // make the native bundle unbuyable the moment it's created — refuse now
     // (spike §4 mitigation 1).
     if (!isVariantAvailable(product, variant)) {
+      const name = variantDisplayName(product, variant);
+      if (name) titles[productId] = name;
       soldOut.push(productId);
       continue;
     }
@@ -254,10 +292,11 @@ export function validateAndSnapshotComponents(catalogById, inputs) {
     });
   }
 
-  if (unknown.length) return { ok: false, reason: "unknown_products", unknown };
-  if (variantNotFound.length) return { ok: false, reason: "variant_not_found", variantNotFound };
-  if (soldOut.length) return { ok: false, reason: "sold_out", soldOut };
-  if (noVariant.length) return { ok: false, reason: "no_variant", noVariant };
+  if (unknown.length) return { ok: false, reason: "unknown_products", unknown, titles };
+  if (variantNotFound.length) return { ok: false, reason: "variant_not_found", variantNotFound, titles };
+  if (soldOut.length) return { ok: false, reason: "sold_out", soldOut, titles };
+  if (badQuantity.length) return { ok: false, reason: "bad_quantity", badQuantity, titles };
+  if (noVariant.length) return { ok: false, reason: "no_variant", noVariant, titles };
   return { ok: true, components };
 }
 

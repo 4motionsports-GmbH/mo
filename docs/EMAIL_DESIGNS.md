@@ -29,7 +29,7 @@ actually differs.
 |---|---|---|
 | `classic` | Shopify-newsletter clone (the default) | Built in, no module |
 | `studio` | Editorial-minimal (example/reference) | Tokens + one renderer override (`sectionBand`) + one variant (`doi` without the social row) |
-| `performance` | Image-first conversion design (`hasHero: true`) | Full shell: hero with an (AI) image, personal greeting, product cards, set card + discount coupon + offer countdown in the same light card style, „Frag Mo“ panel, smiley rating, hero pipeline (below) |
+| `performance` | Image-first conversion design (`hasHero: true`) | Full shell: hero with an (AI) image, personal greeting, product cards + discount coupon (item mail) or the framed set card (set mail), offer countdown in the same light card style, „Frag Mo“ panel, smiley rating, hero pipeline (below) |
 
 ## The two styling layers
 
@@ -38,8 +38,9 @@ actually differs.
    logo override, social icons on/off. Same layout structure, different look — the cheap way.
 2. **Renderer overrides** (`renderers: EmailDesignRenderers`, see `email-design-context.ts`):
    replace whole building blocks — `sectionBand`, `sectionRow`, `ctaButton`, `productGrid`,
-   `productRows`, `bundleBlock` (HTML only; the text part and the PAngV price computation stay
-   central), `moPromoBlock` (the Mo hint of the campaign mail — the tracked CTA URL comes in as
+   `productRows`, `bundleBlock` (HTML only; it receives the computed set model — see „Set card“
+   below — and lays it out; the text part and every money/PAngV decision stay central),
+   `moPromoBlock` (the Mo hint of the campaign mail — the tracked CTA URL comes in as
    input and must stay clickable), `offerCountdown`, `discountCoupon`,
    `textStyle`/`mutedTextStyle`/`linkStyle`, up to `shell` (the complete HTML document). With these
    a design can look **fundamentally different**.
@@ -61,8 +62,9 @@ a white disc (`public/email-rating-1.png` … `-5.png`, shown at 32 px, alt text
 „sehr gut“) — emoji would render in colour in every mail client.
 
 **Performance colours and buttons (owner, 06.10.2026).** Text links and the short rule under card
-headlines are blue (`#008ccb`, like the badges); every card button — „Zum Produkt“, „Zur Kasse“,
-„Code einlösen“ — has the black outline look of „Beratung mit Mo starten“ (white, 1 px `#111111`
+headlines are blue (`#008ccb`, like the badges); every card button — „Zum Produkt“ (single-product
+cards only; the set's item rows have none), „Zur Kasse“, „Code einlösen“ — has the black outline
+look of „Beratung mit Mo starten“ (white, 1 px `#111111`
 border, black bold capitals). Red remains for the filled primary call-to-action buttons (the hero
 button and extra CTA rows of non-campaign mails, the `ctaButton` hook), a reduced price next to the
 struck-through old one, and the countdown digits.
@@ -86,8 +88,10 @@ back to the classic implementation.
    list reads like a changelog).
 4. **Check**: `npx tsc --noEmit && npm run lint && npm test && npm run build`.
 5. **Look**: Admin → Einstellungen → Design-Bibliothek → „Vorschau“ per type (renders the real
-   production composers with sample data), or locally write `renderEmailDesignPreview` from
-   `email-design-preview.ts` to an HTML file. Check all four types, desktop and phone (390 px).
+   production composers with sample data; for Marketing and Kampagne the switch „Angebot“ shows
+   the item mail — „Einzelprodukte“ — and the set mail — „Set-Angebot“), or locally write
+   `renderEmailDesignPreview(kind, design, "items" | "set")` from `email-design-preview.ts` to an
+   HTML file. Check all four types and both offer samples, desktop and phone (390 px).
 6. Deploy — the design appears in the library automatically. The operator picks the design per type
    in Einstellungen; a campaign can pick its own (`design_key`, above).
 
@@ -107,9 +111,18 @@ back to the classic implementation.
 
 ## Offer countdown, set card and coupon
 
+**One offer per mail (owner, 12.10.2026).** A marketing or campaign mail is EITHER a **set mail**
+(an active set is attached — the set card is the only offer: no product rows, no coupon, no code
+note, no single-item cart button; the set price is the concession) OR an **item mail** (the product
+rows, plus the coupon when a code was minted). The kind is derived from whether an active set is
+attached (`offer-mode.mjs`); `renderCampaignEmail` / `renderMarketingEmail` switch on the `bundle`
+input, HTML and text part alike. The send paths refuse a draft that has both (`offer_conflict`,
+409) and never mint a code for a set mail — see [`CAMPAIGNS.md`](./CAMPAIGNS.md) and
+[`BUNDLES.md`](./BUNDLES.md).
+
 **Countdown.** Campaign and marketing mails show under the offer how long it is still valid: the
-**earlier** of the two deadlines — expiry of the discount code and expiry of the set offer
-(`earliestDeadline`, `offer-countdown.mjs`, tested). The counter is **live**: the mail embeds
+deadline of the one offer in the mail — the set's expiry in a set mail, the code's expiry in an
+item mail with a code (`earliestDeadline`, `offer-countdown.mjs`, tested). The counter is **live**: the mail embeds
 `GET /api/email-countdown/<token>` as an image, and on every open the server renders days / hours /
 minutes until the deadline at exactly that moment — after the deadline „Angebot abgelaufen“. The
 token carries only the deadline and the language, signed with the unsubscribe secret
@@ -146,21 +159,55 @@ hook `offerCountdown` (`renderOfferCountdown` in `email-template.ts`): classic s
 muted line; the Performance design a white card with the `#e5e5e5` border of the product cards
 (image or tiles on top, the exact deadline as a grey line below).
 
-**Set card.** In the Performance design the same white card frame as the product cards — a **blue**
-„BUNDLE DEAL“ badge (`#008ccb`, white text), the component images, a headline with the blue stroke
-of the product cards, the price trio (single prices struck through in grey, **set price black and
-bold**, the saving „Du sparst …“ as a blue pill) and the black outline „Zur Kasse“ button. The headline is
-short: the operator's title when it is short, otherwise „Dein persönliches Set“ (`bundleHeadline`,
-tested — generated titles of the form „Set: A + B + C“ or over 40 characters give way to the
-default); the full product names stand in the grey line below. The button says **„Zur Kasse“**
-(„To checkout“), because the link lands in the prefilled checkout.
+**Set card.** Everything of the set sits in **one frame** that marks it as a bundle, in every
+design:
 
-**Discount-code coupon.** Campaign mails with a code show it as a card of its own between the set
-card and the countdown (`renderDiscountCoupon` in `email-template.ts`, renderer hook
-`discountCoupon`; wording and link in `discount-coupon.mjs`, tested): the code large and bold on a
-dashed blue „ticket“, next to it the value („5 % auf deine gesamte Bestellung“ — or „… auf die
-empfohlenen Produkte aus dieser E-Mail“ / „… auf dein persönliches Set“, depending on the draft's
-discount scope, `discount-scope.mjs`), the terms („Einmalig einlösbar · gültig bis …“) and the black
+1. **Eyecatcher** at the top, on a pale band: the kicker („BUNDLE DEAL“), the short headline (the
+   operator's title when it is short, otherwise „Dein persönliches Set“ — `bundleHeadline`, tested:
+   generated titles of the form „Set: A + B + C“ or over 40 characters give way to the default), a
+   line like „3 Produkte · zusammen günstiger“ and a big solid badge. With a **genuine saving** the
+   badge shows „−15 %“ (large, white, bold) and „Du sparst 98,90 €“ below; without one it shows
+   „Set-Preis“ + the amount — never a saving, and the line then reads „3 Produkte in einem Set“. A
+   genuine saving under 1 % keeps the struck-through „Einzelkauf“ price in the summary but gets
+   the „Set-Preis“ badge, no percentage and no „Du sparst“ line (`bundleSaving`,
+   `bundleEyecatcherKind`).
+2. **Item rows** in the design's product-row structure — picture | the count in the accent colour
+   („2×“) with the name and a short description | the unit price, muted: „je 239,00 €“ for more than
+   one, „79,95 €“ for one. **No „Zum Produkt“ button and no per-item link** — the set is bought as
+   one. The unit price is the component's **snapshot** (`bundle_offers.components[].unitPrice`,
+   never a live catalog price) and is printed only when Σ unit price × count equals the component
+   sum; the description is the draft's AI highlight for that product when one exists, else the
+   catalog short description, clamped (`bundleEmailComponents` in `bundle-email.ts`).
+3. **Price summary** — „Einzelkauf“ struck through (only when the set genuinely costs less — PAngV)
+   and „Set-Preis“ big and bold — and **one** action, **„Zur Kasse“** („Checkout“), on the tracked
+   `/api/r/<token>` link that lands in the prefilled checkout.
+
+Performance: a 2 px blue (`#008ccb`) frame with a 10 px radius, a pale-blue eyecatcher band
+(`#eaf6fc`) with the blue pill and a solid blue badge, the rows with the blue stroke of the product
+cards, the black outline „Zur Kasse“ button. Classic: a 2 px frame and the badge in
+`emailAccentColor()`, the band a light tint of it (`tintHex`), the theme's CTA button
+(`renderCtaButton`) under the „Dein persönliches Angebot“ band — Studio inherits this with its black
+accent and square button. On phones (shell media rules) the eyecatcher stacks centred and each row
+keeps a smaller picture on the left with name, description and price stacked beside it. Outlook
+ignores the radius (square corners).
+
+All values come from **`bundleBlockModel`** (`bundle-email-core.mjs`, tested) and reach a
+`bundleBlock` override as `BundleBlockComputed`: `headline`, `priceLabel`, `stattLabel` /
+`savingLabel` / `savingPct` (non-null only for a genuine saving; the percentage is rounded down),
+`labels` (incl. `deal`, `separately`, `cta`), `items` (`name`, `quantity`, `imageUrl`,
+`description`, `unitPriceLabel`), `itemCount`, `pieceCount`, `eyecatcher` (`"saving"` | `"price"`),
+`eyecatcherCopy` (`label`, `value`, `note`) and `tagline`. An override only lays these out — it
+never computes a price, a strike or a saving. The text part is shared (`bundleBlockText`): the short
+headline (`bundleHeadline`), one line per item („- 2× Name — je 239,00 €“), the set price (+ „statt …“ and „Du sparst …
+(x %)“ only when genuine) and „Zur Kasse: <url>“.
+
+**Discount-code coupon.** Item mails with a code show it as a card of its own between the product
+rows and the countdown (`renderDiscountCoupon` in `email-template.ts`, renderer hook
+`discountCoupon`; wording and link in `discount-coupon.mjs`, tested); a set mail never carries one.
+The code large and bold on a dashed blue „ticket“, next to it the value („5 % auf deine gesamte
+Bestellung“ — or „… auf die empfohlenen Produkte aus dieser E-Mail“, depending on the draft's
+discount scope, `discount-scope.mjs`; the old scope „Set“ is history and only reads back on old
+sends), the terms („Einmalig einlösbar · gültig bis …“) and the black
 outline button **„Code einlösen“**. The button leads to Shopify's discount link
 `https://motionsports.de/discount/<code>`, which stores the code in the shop session and applies it
 at checkout — an e-mail cannot copy anything to the clipboard (no JavaScript), and a tap is easier
@@ -296,8 +343,9 @@ and the picture shown as a row of its own **under** the text.
 
 `email-hero-context.mjs` (tested): the condensed **customer understanding** (goals, space, noise,
 level), the **purchase history** (what is already there — the new equipment visibly completes the
-existing setup), the **recommended products with brand, product name, type and colour** (below), an
-**attached set** as a group, persona/team hints, for campaigns also the **customer status** (first
+existing setup), the **recommended products with brand, product name, type and colour** (below) —
+in a set mail instead the **set's products with their counts** („2× …“), shown together as ONE
+offer (a mail is a set offer or single items, never both) —, persona/team hints, for campaigns also the **customer status** (first
 buyer to regular) and the language — plus the **season** for light and mood. The headline names the
 person's goal or situation; discounts, prices and product names are deliberately banned from it
 (they stand deterministically elsewhere and would go stale here).
@@ -404,7 +452,8 @@ documented in `.env.example`. The prompt once given for the default image is in
 | `src/lib/email-design-context.ts` | `withEmailDesign` / `withEmailRenderData` (AsyncLocalStorage) + the `EmailDesignRenderers` interface |
 | `src/lib/email-theme-context.ts` / `email-theme.mjs` | Token layer (colours/font/buttons) + the vocabulary of the e-mail types |
 | `src/lib/email-design-store.ts` | Selection per type (DB, 5-minute cache, fail-soft) and `getEmailDesignForKey` (a campaign's own design) |
-| `src/lib/email-design-preview.ts` | Sample renderings per type for the admin preview |
+| `src/lib/email-design-preview.ts` | Sample renderings per type for the admin preview (marketing / campaign: item mail or set mail) |
+| `src/lib/bundle-email.ts` / `bundle-email-core.mjs` | The set card (classic implementation, `bundleEmailComponents`) and its model + text part (`bundleBlockModel`, `bundleBlockText`), tested |
 | `src/lib/email-template.ts` | Classic shell + public render helpers (override detection), `renderOfferCountdown`, `renderDiscountCoupon` |
 | `src/lib/email-products.ts` | Classic product grid/rows (override detection) |
 | `src/app/admin/einstellungen/EmailSettingsWorkspace.tsx` | Design library + assignment (admin screen „Einstellungen“, `DesignPreviewDialog.tsx` for the preview) |

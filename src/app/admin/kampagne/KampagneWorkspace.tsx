@@ -16,7 +16,8 @@
 import * as React from "react";
 import { Inbox, RefreshCw, Sparkles } from "lucide-react";
 import { num } from "@/lib/admin-format.mjs";
-import { Button, ConfirmDialog, EmptyState, Kbd, Sheet, cn } from "../ui";
+import { contactFrequencyQuestion } from "@/lib/contact-frequency.mjs";
+import { Button, ConfirmDialog, EmptyState, Kbd, Sheet, cn, type ConfirmOptions } from "../ui";
 import { CampaignHeader } from "./CampaignHeader";
 import { ContactHistorySheet } from "./ContactHistorySheet";
 import { EmailViewerDialog } from "./EmailViewerDialog";
@@ -27,7 +28,7 @@ import { ReviewColumn } from "./ReviewColumn";
 import { SentHistory } from "./SentHistory";
 import { TestContactsSheet } from "./TestContactsSheet";
 import type { CampaignDeskProps } from "./types";
-import { useCampaignActions } from "./useCampaignActions";
+import { useCampaignActions, type SendConfirm } from "./useCampaignActions";
 import { useReleaseActions } from "./useReleaseActions";
 import { ScheduleDialog, ScheduledList } from "./ScheduledViews";
 import { LettersView } from "./LettersView";
@@ -55,6 +56,29 @@ function isTyping(el: HTMLElement | null): boolean {
 
 function overlayOpen(): boolean {
   return document.querySelector('[role="dialog"][aria-modal="true"], [role="menu"]') !== null;
+}
+
+const FIRST_SEND_TEXT =
+  "Alle weiteren sendest du wie gewohnt einzeln mit „Senden“ (S); diese Rückfrage erscheint heute nur einmal. Die Warteschlange wird nie automatisch komplett versendet.";
+
+/** The one send confirmation: the contact-frequency warning (which also
+ * stands in for the first send of the day) or the once-a-day question. */
+function sendConfirmOptions(pending: SendConfirm | null, email: string): ConfirmOptions {
+  if (pending?.frequency) {
+    return {
+      title: contactFrequencyQuestion(pending.frequency),
+      // Short on purpose: what counts is in the Prüfpunkt's InfoTip; this
+      // confirm also stands in for the first-send-of-the-day question, and it
+      // too sends only this one mail.
+      description: `Nur diese eine E-Mail an ${email}. Ein Hinweis, keine Sperre — die Schwelle steht in Einstellungen → Kontakthäufigkeit.`,
+      confirmLabel: "Trotzdem senden",
+    };
+  }
+  return {
+    title: "Erste E-Mail heute senden?",
+    description: `Nur diese eine E-Mail geht raus — an ${email}. ${FIRST_SEND_TEXT}`,
+    confirmLabel: "Nur diese E-Mail senden",
+  };
 }
 
 export function KampagneWorkspace(props: CampaignDeskProps) {
@@ -334,15 +358,12 @@ export function KampagneWorkspace(props: CampaignDeskProps) {
       />
 
       <ConfirmDialog
-        open={a.confirmSendId !== null}
-        options={{
-          title: "Erste E-Mail heute senden?",
-          description: `Nur diese eine E-Mail geht raus — an ${
-            items.find((it) => it.contactId === a.confirmSendId)?.email ?? "—"
-          }. Alle weiteren sendest du wie gewohnt einzeln mit „Senden“ (S); diese Rückfrage erscheint heute nur einmal. Die Warteschlange wird nie automatisch komplett versendet.`,
-          confirmLabel: "Nur diese E-Mail senden",
-        }}
-        onClose={(ok) => (ok ? a.confirmAndSend() : a.setConfirmSendId(null))}
+        open={a.confirmSend !== null}
+        options={sendConfirmOptions(
+          a.confirmSend,
+          items.find((it) => it.contactId === a.confirmSend?.contactId)?.email ?? "—"
+        )}
+        onClose={(ok) => (ok ? a.confirmAndSend() : a.cancelSendConfirm())}
       />
 
       <EmailViewerDialog view={a.emailView} onClose={a.closeEmailView} />

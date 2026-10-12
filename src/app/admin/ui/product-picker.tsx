@@ -24,6 +24,7 @@ import { ChevronDown, Plus, Search } from "lucide-react";
 import { cn } from "./cn";
 import { Button } from "./button";
 import { Input } from "./input";
+import { num } from "@/lib/admin-format.mjs";
 
 export interface CatalogVariantHit {
   variantId: string | null;
@@ -31,6 +32,8 @@ export interface CatalogVariantHit {
   unitPrice: number | null;
   currency: string;
   available: boolean;
+  /** Units in stock, or null/absent when unknown or not tracked. */
+  stock?: number | null;
   sku?: string;
 }
 
@@ -41,6 +44,8 @@ export interface CatalogSearchHit {
   unitPrice: number;
   currency: string;
   inStock: boolean;
+  /** Units in stock across variants, or null/absent when unknown or not tracked. */
+  stock?: number | null;
   url: string | null;
   priceMin?: number;
   priceMax?: number;
@@ -53,6 +58,11 @@ const MIN_QUERY_CHARS = 2;
 export function fmtPickerMoney(amount: number | null | undefined, currency = "EUR"): string {
   if (typeof amount !== "number") return "—";
   return new Intl.NumberFormat("de-DE", { style: "currency", currency }).format(amount);
+}
+
+/** "12 auf Lager" — only for a known, positive stock (the route sends null otherwise). */
+function stockText(stock: number): string {
+  return `${num(stock)} auf Lager`;
 }
 
 /** True when the hit has a genuine variant choice (more than one variant). */
@@ -206,7 +216,11 @@ export function CatalogProductPicker({
                     ))}
                   <span className="min-w-0 flex-1">
                     {hit.title} <span className="text-muted-foreground">· {range}</span>
-                    {!hit.inStock && <span className="text-destructive"> · ausverkauft</span>}
+                    {!hit.inStock ? (
+                      <span className="text-destructive"> · ausverkauft</span>
+                    ) : hit.stock != null ? (
+                      <span className="text-muted-foreground tabular-nums"> · {stockText(hit.stock)}</span>
+                    ) : null}
                   </span>
                   {multi ? (
                     <Button
@@ -253,9 +267,11 @@ export function CatalogProductPicker({
                             <span className="text-muted-foreground">
                               · {fmtPickerMoney(v.unitPrice, v.currency)}
                             </span>
-                            {!v.available && (
+                            {!v.available ? (
                               <span className="text-destructive"> · ausverkauft</span>
-                            )}
+                            ) : v.stock != null ? (
+                              <span className="text-muted-foreground tabular-nums"> · {stockText(v.stock)}</span>
+                            ) : null}
                           </span>
                           <Button
                             variant="ghost"

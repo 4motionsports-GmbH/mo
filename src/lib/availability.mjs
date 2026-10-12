@@ -30,3 +30,22 @@ export function isAvailable(product) {
 export function filterAvailable(products) {
   return (Array.isArray(products) ? products : []).filter(isAvailable);
 }
+
+/**
+ * Stricter than isAvailable, for surfaces that show a bare product as its
+ * DEFAULT variant — the campaign mail cards and the review desk resolve a
+ * recommendation without a pinned variant to the default variant's name,
+ * price and stock (product-catalog resolveProductSelections). A product whose
+ * default variant is sold out would be picked, then greyed out as
+ * „Ausverkauft“ on the desk and left out of the mail — so it is not picked.
+ * Without variant data it falls back to isAvailable.
+ * @param {{ inStock?: boolean, variants?: Array<{ isDefault?: boolean, available?: boolean }> } | null | undefined} product
+ * @returns {boolean}
+ */
+export function isDefaultVariantAvailable(product) {
+  if (!isAvailable(product)) return false;
+  const variants = Array.isArray(product.variants) ? product.variants.filter(Boolean) : [];
+  if (variants.length === 0) return true;
+  const def = variants.find((v) => v.isDefault) ?? variants[0];
+  return def.available !== false;
+}

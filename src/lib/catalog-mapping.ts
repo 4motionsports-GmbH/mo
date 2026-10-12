@@ -537,6 +537,7 @@ export function mapShopifyProducts(
       images: uniqueImages,
       inStock,
       ...(totalInventory != null ? { inventoryQuantity: totalInventory } : {}),
+      ...(typeof p.tracksInventory === "boolean" ? { tracksInventory: p.tracksInventory } : {}),
       ...(anyVariantAvailable != null ? { anyVariantAvailable } : {}),
       deliveryTime,
       ...(series ? { series } : {}),

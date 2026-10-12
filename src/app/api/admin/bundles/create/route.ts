@@ -4,7 +4,15 @@
 //     campaignContactId? }
 //
 // variantId (numeric Shopify id) pins a specific variant of the component —
-// the picker's second-stage selection; omitted = default variant.
+// the picker's second-stage selection; omitted = default variant. A ref
+// ("handle~123") as productId is split the same way. quantity: 1 to
+// BUNDLE_QUANTITY_MAX (10) units of that item; omitted = 1.
+//
+// Refusals carry { error: { code, message }, offenders, offenderNames } — the
+// German message already names the offending items.
+//
+// A set makes the attached draft a set mail (offer-mode.mjs): on success the
+// campaign draft's / legacy draft's discount is cleared (discountCleared).
 //
 // Create a personalized bundle offer (S10). customerId is optional (null = an
 // ad-hoc offer); campaignContactId attaches the offer to a campaign contact
@@ -20,6 +28,9 @@ import {
   type CreateBundleOfferOptions,
 } from "@/lib/bundle-offers";
 import { reportError } from "@/lib/observability";
+import { BUNDLE_QUANTITY_MAX } from "@/lib/bundle-offer-core.mjs";
+import { updateCampaignDraftDiscount } from "@/lib/campaign-store";
+import { clearDraftDiscount } from "@/lib/marketing-store";
 
 export const maxDuration = 60;
 
@@ -34,6 +45,7 @@ const STATUS_BY_REASON: Record<string, number> = {
   // The pinned variant vanished between picking and creating (catalog sync
   // ran in between) — a conflict the UI resolves by re-picking.
   variant_not_found: 409,
+  bad_quantity: 400,
   bad_price: 400,
   create_failed: 502,
 };
@@ -70,6 +82,7 @@ export async function POST(req: Request) {
     if (!Array.isArray(body.components) || body.components.length === 0) {
       return adminJsonError("bad_request", "components must be a non-empty array", 400);
     }
+    let badQuantity = false;
     components = body.components.map((c) => {
       const item = c as { productId?: unknown; variantId?: unknown; quantity?: unknown };
       const productId = String(item.productId ?? "").trim();
@@ -78,6 +91,9 @@ export async function POST(req: Request) {
           ? String(item.variantId).trim()
           : null;
       const quantity = item.quantity != null ? Number(item.quantity) : undefined;
+      if (quantity != null && (!Number.isInteger(quantity) || quantity < 1 || quantity > BUNDLE_QUANTITY_MAX)) {
+        badQuantity = true;
+      }
       return {
         productId,
         ...(variantId ? { variantId } : {}),
@@ -86,6 +102,13 @@ export async function POST(req: Request) {
     });
     if (components.some((c) => !c.productId)) {
       return adminJsonError("bad_request", "every component needs a productId", 400);
+    }
+    if (badQuantity) {
+      return adminJsonError(
+        "bad_quantity",
+        `Anzahl pro Produkt: 1 bis ${BUNDLE_QUANTITY_MAX} Stück.`,
+        400
+      );
     }
 
     const expiryDays = body.expiryDays != null ? Number(body.expiryDays) : undefined;
@@ -118,7 +141,19 @@ export async function POST(req: Request) {
   try {
     const result = await createBundleOffer(customerId, components, options);
     if (result.ok) {
-      return adminJson({ ok: true, offer: result.offer, redirectUrl: result.redirectUrl });
+      // The set turns the draft into a set mail, which carries no discount
+      // code (offer-mode.mjs): clear the draft's depth so the regenerate
+      // writes for the set. Fail-soft — the send gates refuse a set mail that
+      // still has a code anyway.
+      let discountCleared = false;
+      if (options.campaignContactId != null) {
+        discountCleared = Boolean(
+          await updateCampaignDraftDiscount(options.campaignContactId, 0, null, "all")
+        );
+      } else if (options.marketingSendId != null) {
+        discountCleared = await clearDraftDiscount(options.marketingSendId);
+      }
+      return adminJson({ ok: true, offer: result.offer, redirectUrl: result.redirectUrl, discountCleared });
     }
     const status = STATUS_BY_REASON[result.reason] ?? 400;
     // Error envelope ({ error: { code, message } }) plus structured detail so the
@@ -127,6 +162,7 @@ export async function POST(req: Request) {
       {
         error: { code: result.reason, message: result.message },
         ...(result.offenders ? { offenders: result.offenders } : {}),
+        ...(result.offenderNames ? { offenderNames: result.offenderNames } : {}),
         ...(result.offer ? { offer: result.offer } : {}),
       },
       status

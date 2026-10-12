@@ -26,6 +26,7 @@ export function PurchaseHistorySection({
   appliedSelection,
   busy,
   applying,
+  setAttached = false,
   onApply,
 }: {
   summary: CampaignPurchaseSummary | null;
@@ -34,6 +35,9 @@ export function PurchaseHistorySection({
   appliedSelection: string[] | null;
   busy: boolean;
   applying: boolean;
+  /** A set mail: the recommendations are the set's source and stay as they
+   * are (offer-mode.mjs) — the basis cannot be re-applied. */
+  setAttached?: boolean;
   onApply: (selection: string[] | null) => void;
 }) {
   // All selectable product ids (catalog-matched purchases), first-seen order.
@@ -188,12 +192,17 @@ export function PurchaseHistorySection({
           Kaufauswahl wird nach „Neu generieren“ verfügbar.
         </p>
       )}
+      {dirty && setAttached && (
+        <p className="mt-1.5 text-xs text-muted-foreground">
+          Set-Mail: Die Empfehlungen sind die Grundlage des Sets — um die Basis zu ändern, zuerst das Set entfernen.
+        </p>
+      )}
       {dirty && (
         <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
           <Button
             size="sm"
             onClick={() => onApply(allSelected ? null : [...selected])}
-            disabled={busy || selected.size === 0}
+            disabled={busy || selected.size === 0 || setAttached}
             loading={applying}
           >
             <RefreshCw /> Empfehlungen &amp; Text neu erzeugen

@@ -1,16 +1,21 @@
 "use client";
 
 // Set-Angebot (bundle) composer + per-customer bundle list. Workflow: suggest
-// (AI) → edit composition (remove / add via catalog search) → set price / title
-// / expiry → create. A created, active bundle is attached to the open email
-// draft and rendered as a special-offer block at send time.
+// (AI) → edit composition (remove / add via catalog search, count per item) →
+// set price / title / expiry → create. The empty price field shows the normal
+// price (Σ price × count) greyed out; empty = the set costs that. A created,
+// active bundle is attached to the open email draft and rendered as the set
+// block at send time — a set mail carries no discount code (offer-mode.mjs),
+// so the draft's code is cleared.
 
 import * as React from "react";
 import { ExternalLink, Gift, Sparkles, Trash2, X } from "lucide-react";
 import type { CustomerDetailBundle } from "@/lib/customer-detail";
 import { ADMIN_DATE, formatAdmin } from "@/lib/admin-datetime.mjs";
 import { money, num, plural } from "@/lib/admin-format.mjs";
-import { bundleItemLabel, bundleItemList } from "@/lib/bundle-offer-core.mjs";
+import { BUNDLE_QUANTITY_MAX, bundleItemLabel, bundleItemList, centsToMoney } from "@/lib/bundle-offer-core.mjs";
+import { setNormalPriceCents, setPriceCheck } from "@/lib/set-composer-core.mjs";
+import { maxSetQuantity } from "@/lib/stock-level.mjs";
 import {
   Button,
   Callout,
@@ -35,8 +40,7 @@ const DEFAULT_BUNDLE_TITLE = "Dein persönliches Set";
 const DEFAULT_EXPIRY_DAYS = 7;
 const BUNDLE_MIN = 2;
 const BUNDLE_MAX = 5;
-const QUANTITY_MAX = 10;
-const QUANTITY_OPTIONS = Array.from({ length: QUANTITY_MAX }, (_, i) => i + 1);
+
 
 interface ComposerComponent {
   productId: string;
@@ -51,6 +55,8 @@ interface ComposerComponent {
   rationale?: string;
   /** How many of this item the set contains (≥ 1). */
   quantity: number;
+  /** Units in stock (picker), or null/absent when unknown or not tracked. */
+  stock?: number | null;
 }
 
 /** Composite key — the same product may appear once per pinned variant. */
@@ -106,27 +112,21 @@ export function BundleComposer({
   const [components, setComponents] = React.useState<ComposerComponent[]>([]);
   const [title, setTitle] = React.useState(DEFAULT_BUNDLE_TITLE);
   const [price, setPrice] = React.useState<string>("");
-  const [priceEdited, setPriceEdited] = React.useState(false);
   const [expiryDays, setExpiryDays] = React.useState<number>(DEFAULT_EXPIRY_DAYS);
   const [busy, setBusy] = React.useState<null | "suggest" | "create">(null);
   const [bundles, setBundles] = React.useState<CustomerDetailBundle[]>(initialBundles);
 
-  const componentSum = components.reduce((s, c) => s + c.unitPrice * c.quantity, 0);
-  const priceNum = Number(price.replace(",", "."));
-  const priceValid = Number.isFinite(priceNum) && priceNum > 0;
-  const aboveSum = priceValid && priceNum > componentSum + 0.0001;
+  const normalCents = setNormalPriceCents(components.map((c) => ({ price: c.unitPrice, quantity: c.quantity })));
+  const priceCheck = setPriceCheck({ normalCents, input: price });
+  const priceValid = priceCheck.kind !== "invalid";
   const countOk = components.length >= BUNDLE_MIN && components.length <= BUNDLE_MAX;
+  const normalLabel = normalCents != null ? money(Number(centsToMoney(normalCents))) : null;
 
   const fail = (e: unknown, fallback: string) =>
     toast({ variant: "error", title: "Fehler", description: errorMessage(e, fallback) });
 
-  // Keep the price defaulted to the live component sum until the admin edits it.
   function applyComponents(next: ComposerComponent[]) {
     setComponents(next);
-    if (!priceEdited) {
-      const sum = next.reduce((s, c) => s + c.unitPrice * c.quantity, 0);
-      setPrice(next.length ? sum.toFixed(2) : "");
-    }
   }
 
   async function onSuggest() {
@@ -169,6 +169,7 @@ export function BundleComposer({
       currency: variant?.currency ?? hit.currency,
       inStock: variant ? variant.available : hit.inStock,
       quantity: 1,
+      stock: variant ? (variant.stock ?? null) : (hit.stock ?? null),
     };
     if (components.some((c) => componentKey(c) === componentKey(next))) return;
     applyComponents([...components, next]);
@@ -179,7 +180,7 @@ export function BundleComposer({
   }
 
   function setQuantity(key: string, value: number) {
-    const quantity = Math.min(QUANTITY_MAX, Math.max(1, Math.floor(value) || 1));
+    const quantity = Math.min(BUNDLE_QUANTITY_MAX, Math.max(1, Math.floor(value) || 1));
     applyComponents(components.map((c) => (componentKey(c) === key ? { ...c, quantity } : c)));
   }
 
@@ -195,8 +196,8 @@ export function BundleComposer({
     if (!priceValid) {
       toast({
         variant: "warning",
-        title: "Preis fehlt",
-        description: "Bitte einen Set-Preis größer als 0 € angeben.",
+        title: "Ungültiger Preis",
+        description: "Bitte einen Set-Preis größer als 0 € angeben (z. B. 159,90) oder leer lassen.",
       });
       return;
     }
@@ -210,7 +211,7 @@ export function BundleComposer({
             ...(c.variantId ? { variantId: c.variantId } : {}),
             quantity: c.quantity,
           })),
-          bundlePriceOverride: priceNum,
+          ...(priceCheck.kind === "empty" ? {} : { bundlePriceOverride: price.trim() }),
           title: title.trim() || DEFAULT_BUNDLE_TITLE,
           expiryDays,
           ...(sendId != null ? { marketingSendId: sendId } : {}),
@@ -249,28 +250,32 @@ export function BundleComposer({
       setComponents([]);
       setTitle(DEFAULT_BUNDLE_TITLE);
       setPrice("");
-      setPriceEdited(false);
       toast({
         variant: "success",
         title: "Set erstellt",
         description:
           sendId != null
-            ? "An die E-Mail angehängt. Tipp: E-Mail neu generieren, damit der Text das Set erwähnt."
+            ? "An die E-Mail angehängt — sie zeigt jetzt nur das Set, ein Rabattcode entfällt. Bitte E-Mail neu generieren, damit der Text das Set beschreibt."
             : "Es wird an die nächste generierte E-Mail angehängt.",
       });
       refresh();
     } catch (e) {
-      // Sold-out components come back as a 4xx with the offending titles.
-      if (e instanceof AdminApiError && e.code === "sold_out") {
-        const offenders = (e.details as { offenders?: string[] } | null)?.offenders ?? [];
-        toast({
-          variant: "error",
-          title: "Ausverkauft",
-          description: offenders.length
-            ? `${e.message} Ausverkauft: ${offenders.join(", ")}. Bitte entfernen und erneut versuchen.`
-            : e.message,
-        });
-        return;
+      // Refusals name the offending items (the server message lists the names
+      // it knows; the rest are mapped from the composer's own titles).
+      if (e instanceof AdminApiError) {
+        const details = e.details as { offenders?: string[]; offenderNames?: Record<string, string> } | null;
+        const offenders = details?.offenders ?? [];
+        if (offenders.length) {
+          const names = offenders.map(
+            (o) => details?.offenderNames?.[o] ?? components.find((c) => componentKey(c) === o || c.productId === o)?.title ?? o
+          );
+          toast({
+            variant: "error",
+            title: "Set nicht erstellt",
+            description: `${e.message.split(":")[0]}: ${names.join(", ")}. Bitte anpassen und erneut versuchen.`,
+          });
+          return;
+        }
       }
       fail(e, "Set-Erstellung fehlgeschlagen.");
     } finally {
@@ -365,6 +370,7 @@ export function BundleComposer({
                   <div className="truncate text-sm font-medium">{c.title}</div>
                   <div className="truncate text-xs text-muted-foreground">
                     {money(c.unitPrice, c.currency)}
+                    {c.stock != null ? ` · ${num(c.stock)} auf Lager` : ""}
                     {c.rationale ? ` · ${c.rationale}` : ""}
                   </div>
                 </div>
@@ -375,7 +381,7 @@ export function BundleComposer({
                     onChange={(e) => setQuantity(componentKey(c), Number(e.target.value))}
                     className="h-8"
                   >
-                    {QUANTITY_OPTIONS.map((n) => (
+                    {Array.from({ length: Math.max(c.quantity, maxSetQuantity(c.stock, BUNDLE_QUANTITY_MAX)) }, (_, i) => i + 1).map((n) => (
                       <option key={n} value={n}>
                         {n}×
                       </option>
@@ -392,7 +398,7 @@ export function BundleComposer({
               </div>
             ))}
             <div className="text-right text-xs text-muted-foreground">
-              Komponentensumme: <strong className="text-foreground">{money(componentSum)}</strong>
+              Normalpreis: <strong className="text-foreground">{normalLabel ?? "—"}</strong>
             </div>
           </div>
         )}
@@ -418,19 +424,18 @@ export function BundleComposer({
         {components.length > 0 && (
           <>
             <div className="flex flex-wrap items-end gap-3">
-              <Field label="Set-Preis (€)">
+              <Field
+                label="Set-Preis"
+                info="Leer lassen = das Set kostet den Normalpreis (grau im Feld), dann zeigt die Mail keinen Streichpreis. Ein niedrigerer Preis wird als Ersparnis gegenüber dem Normalpreis hervorgehoben."
+              >
                 <Input
-                  type="number"
+                  type="text"
                   inputMode="decimal"
-                  min={0}
-                  step={0.01}
+                  placeholder={normalLabel ?? "Set-Preis €"}
                   value={price}
                   aria-invalid={!priceValid}
-                  onChange={(e) => {
-                    setPrice(e.target.value);
-                    setPriceEdited(true);
-                  }}
-                  className="w-28"
+                  onChange={(e) => setPrice(e.target.value)}
+                  className="w-32 tabular-nums"
                 />
               </Field>
               <Field label="Titel" className="min-w-[12rem] flex-1">
@@ -453,10 +458,16 @@ export function BundleComposer({
                 Set erstellen
               </Button>
             </div>
-            {aboveSum && (
+            {priceCheck.kind === "saving" && (
+              <div className="text-xs text-success">
+                Ersparnis {money(Number(centsToMoney(priceCheck.savingCents)))}
+                {priceCheck.savingPct != null ? ` (${num(priceCheck.savingPct)} %)` : ""} gegenüber dem Normalpreis.
+              </div>
+            )}
+            {priceCheck.kind === "no_saving" && (
               <Callout tone="warning" compact>
-                Preis über der Komponentensumme ({money(componentSum)}) — es wird keine „statt“-Zeile
-                angezeigt, das Set ist nicht günstiger als die Einzelprodukte.
+                Preis nicht unter dem Normalpreis ({normalLabel}) — es wird keine „statt“-Zeile angezeigt, das Set ist
+                nicht günstiger als die Einzelprodukte.
               </Callout>
             )}
           </>

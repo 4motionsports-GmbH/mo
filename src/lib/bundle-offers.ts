@@ -28,6 +28,7 @@ import {
   isDeletableBundleStatus,
   bundleItemList,
   bundleItemLabel,
+  BUNDLE_QUANTITY_MAX,
 } from "./bundle-offer-core.mjs";
 import {
   createBundleProduct,
@@ -106,11 +107,14 @@ export type CreateBundleOfferResult =
         | "sold_out"
         | "no_variant"
         | "variant_not_found"
+        | "bad_quantity"
         | "bad_price"
         | "create_failed";
       message: string;
-      /** Offending product ids for the validation reasons. */
+      /** Offending product ids (refs for variant_not_found) for the validation reasons. */
       offenders?: string[];
+      /** Offender → catalog name, for the offenders the catalog knows. */
+      offenderNames?: Record<string, string>;
       /** The persisted failed offer (create_failed), for audit. */
       offer?: BundleOfferRow;
     };
@@ -123,14 +127,23 @@ function deriveTitle(components: BundleComponentRecord[]): string {
   return `Set: ${names.join(" + ")}`.slice(0, 250);
 }
 
+// German: the admin shows these verbatim (toasts in Kampagne and Kunden).
 const VALIDATION_MESSAGES: Record<string, string> = {
-  empty: "A bundle needs at least one component.",
-  unknown_products: "One or more components are not in the catalog.",
-  sold_out: "One or more components are sold out — a native bundle would be unbuyable.",
-  no_variant: "One or more components have no resolvable Shopify variant / price.",
-  variant_not_found:
-    "One or more selected variants no longer exist in the catalog — re-pick the variant.",
+  empty: "Ein Set braucht mindestens ein Produkt.",
+  unknown_products: "Nicht im Katalog",
+  sold_out: "Ausverkauft — ein Set damit wäre nicht kaufbar",
+  no_variant: "Ohne Shopify-Variante oder Preis",
+  variant_not_found: "Die gewählte Variante gibt es nicht mehr — bitte neu wählen",
+  bad_quantity: `Mehr als ${BUNDLE_QUANTITY_MAX} Stück eines Produkts sind pro Set nicht möglich`,
 };
+
+/** "Ausverkauft — …: Kettlebell 16 kg, Hantelbank." — the reason plus the
+ *  offenders by name (the id when the catalog does not know it). */
+function validationMessage(reason: string, offenders: string[] | undefined, names: Record<string, string>): string {
+  const base = VALIDATION_MESSAGES[reason] ?? "Ungültige Set-Bestandteile";
+  if (!offenders?.length) return base.endsWith(".") ? base : `${base}.`;
+  return `${base}: ${offenders.map((o) => names[o] ?? o).join(", ")}.`;
+}
 
 /**
  * Create a personalized bundle offer end-to-end.
@@ -160,13 +173,16 @@ export async function createBundleOffer(
       validated.unknown ??
       validated.variantNotFound ??
       validated.soldOut ??
+      validated.badQuantity ??
       validated.noVariant ??
       undefined;
+    const names = (validated.titles ?? {}) as Record<string, string>;
     return {
       ok: false,
       reason: validated.reason,
-      message: VALIDATION_MESSAGES[validated.reason] ?? "Invalid components.",
+      message: validationMessage(validated.reason, offenders, names),
       ...(offenders ? { offenders } : {}),
+      ...(offenders && Object.keys(names).length ? { offenderNames: names } : {}),
     };
   }
   const snapshot = validated.components as BundleComponentRecord[];
@@ -180,7 +196,7 @@ export async function createBundleOffer(
       return {
         ok: false,
         reason: "bad_price",
-        message: "bundlePriceOverride must be a positive amount.",
+        message: "Der Set-Preis muss ein positiver Betrag sein (z. B. 149,90).",
       };
     }
     bundlePrice = centsToMoney(cents);
