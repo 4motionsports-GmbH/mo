@@ -1,6 +1,8 @@
 // Sends ONE TEST EMAIL OF EVERY REDESIGNED TYPE (summary, DOI, marketing,
 // campaign) to a given address so the new newsletter design can be checked in
-// a real inbox. Everything renders through the EXACT production renderers —
+// a real inbox — marketing and campaign twice: as an ITEM mail (product rows +
+// code) and as a SET mail (only the set; a mail is one or the other,
+// offer-mode.mjs). Everything renders through the EXACT production renderers —
 // only the data is sample data, and every subject carries a [TEST] prefix.
 //
 //   npx tsx --env-file=.env scripts/send-test-emails.mjs [recipient]
@@ -49,7 +51,7 @@ const withImages = catalog.filter(
     Array.isArray(p.images) &&
     p.images.some((u) => typeof u === "string" && u.startsWith("https://"))
 );
-if (withImages.length < 6) {
+if (withImages.length < 7) {
   console.error("Catalog has too few products with images for a representative test.");
   process.exit(1);
 }
@@ -61,6 +63,35 @@ const FAKE_CONFIRM_URL = "https://motionsports.de/api/confirm-marketing?token=TE
 const SHOP_URL = "https://motionsports.de";
 
 const firstImage = (p) => p.images.find((u) => u.startsWith("https://")) ?? null;
+const unitPrice = (p) =>
+  typeof p.salePrice === "number" && p.salePrice > 0 && p.salePrice < p.price ? p.salePrice : p.price;
+const inFourDays = () => new Date(Date.now() + 4 * 86_400_000).toISOString();
+
+/**
+ * A sample set block: the products (the first twice) with their current price
+ * as the snapshot unit price; `discount` (0…1) below the component sum, 0 =
+ * the set costs exactly its parts (no strike, no saving — the PAngV guard).
+ */
+function sampleSet(products, { discount, language = "de" }) {
+  const components = products.map((p, i) => ({
+    name: p.name,
+    imageUrl: firstImage(p),
+    quantity: i === 0 ? 2 : 1,
+    unitPrice: unitPrice(p).toFixed(2),
+    description: p.shortDescription ?? null,
+  }));
+  const sumCents = components.reduce((n, c) => n + Math.round(Number(c.unitPrice) * 100) * c.quantity, 0);
+  const priceCents = discount > 0 ? Math.floor((sumCents * (1 - discount)) / 100) * 100 - 10 : sumCents;
+  const block = renderBundleOfferBlock({
+    title: language === "en" ? "Your home gym set" : "Dein Home-Gym-Set",
+    components,
+    bundlePrice: (priceCents / 100).toFixed(2),
+    componentsSum: (sumCents / 100).toFixed(2),
+    offerUrl: SHOP_URL,
+    language,
+  });
+  return { ...block, expiresAt: inFourDays() };
+}
 
 const results = [];
 async function sendTest(label, { subject, text, html }) {
@@ -100,17 +131,8 @@ async function sendTest(label, { subject, text, html }) {
   await sendTest("doi", { subject: doiEmailSubject("de"), text, html });
 }
 
-// --- 3. Personalised marketing email (grid + bundle + discount note) ----------
+// --- 3. Marketing ITEM mail (product rows + cart + code note) -----------------
 {
-  const products = withImages.slice(0, 4);
-  const bundleComponents = withImages.slice(4, 6);
-  const bundle = renderBundleOfferBlock({
-    title: "Dein persönliches Home-Gym Set",
-    components: bundleComponents.map((p) => ({ name: p.name, imageUrl: firstImage(p) })),
-    bundlePrice: 899,
-    componentsSum: 998,
-    offerUrl: SHOP_URL,
-  });
   const { text, html } = renderMarketingEmail({
     subject: "Deine persönliche Empfehlung von motion sports",
     body:
@@ -118,29 +140,43 @@ async function sendTest(label, { subject, text, html }) {
       "Beratung haben wir eine persönliche Auswahl für dich zusammengestellt — " +
       "inklusive einem kleinen Dankeschön: 10 % auf deinen vorbereiteten Warenkorb.",
     linkUrl: SHOP_URL,
-    products,
+    products: withImages.slice(0, 4),
     discountCode: "MS5-TEST123",
     discountExpiresLabel: "31.12.2026",
+    discountExpiresAt: inFourDays(),
     unsubscribe: unsubscribeFooter(FAKE_UNSUBSCRIBE_URL),
-    bundle,
+    bundle: null,
   });
-  await sendTest("marketing", {
+  await sendTest("marketing (Einzelprodukte)", {
     subject: "Deine persönliche Empfehlung von motion sports",
     text,
     html,
   });
 }
 
-// --- 4. Campaign email (prose + bundle + Mo promo + discount note) ------------
+// --- 4. Marketing SET mail (only the set; no saving → no strike, PAngV guard) -
 {
-  const bundleComponents = withImages.slice(0, 2);
-  const bundle = renderBundleOfferBlock({
-    title: "Dein persönliches Set",
-    components: bundleComponents.map((p) => ({ name: p.name, imageUrl: firstImage(p) })),
-    bundlePrice: 449,
-    componentsSum: 449, // equal sum → no strike line (PAngV guard visible in test)
-    offerUrl: SHOP_URL,
+  const { text, html } = renderMarketingEmail({
+    subject: "Dein persönliches Set von motion sports",
+    body:
+      "Hallo,\n\nvielen Dank für dein Gespräch mit Mo! Passend zu deiner Beratung " +
+      "haben wir dir ein Set zusammengestellt.",
+    linkUrl: null,
+    products: [],
+    discountCode: null,
+    discountExpiresLabel: null,
+    unsubscribe: unsubscribeFooter(FAKE_UNSUBSCRIBE_URL),
+    bundle: sampleSet(withImages.slice(4, 7), { discount: 0 }),
   });
+  await sendTest("marketing (Set, ohne Ersparnis)", {
+    subject: "Dein persönliches Set von motion sports",
+    text,
+    html,
+  });
+}
+
+// --- 5. Campaign ITEM mail (product rows + coupon + Mo promo) -----------------
+{
   const { text, html } = renderCampaignEmail({
     subject: "Deine persönliche Empfehlung von motion sports",
     body:
@@ -152,12 +188,33 @@ async function sendTest(label, { subject, text, html }) {
     products: withImages.slice(2, 5),
     discountCode: "MK-TEST123",
     discountExpiresLabel: "31.12.2026",
+    discountExpiresAt: inFourDays(),
     discountPercent: 5,
     unsubscribe: unsubscribeFooter(FAKE_UNSUBSCRIBE_URL),
-    bundle,
+    bundle: null,
   });
-  await sendTest("campaign", {
+  await sendTest("campaign (Einzelprodukte)", {
     subject: "Deine persönliche Empfehlung von motion sports",
+    text,
+    html,
+  });
+}
+
+// --- 6. Campaign SET mail (only the set, genuine saving + Mo promo) -----------
+{
+  const { text, html } = renderCampaignEmail({
+    subject: "Dein persönliches Set von motion sports",
+    body:
+      "Hallo,\n\nschön, dass du wieder da bist! Passend zu deinem letzten Einkauf " +
+      "haben wir dir ein Set zusammengestellt — zusammen günstiger als einzeln.",
+    language: "de",
+    discountCode: null,
+    discountExpiresLabel: null,
+    unsubscribe: unsubscribeFooter(FAKE_UNSUBSCRIBE_URL),
+    bundle: sampleSet(withImages.slice(0, 3), { discount: 0.15 }),
+  });
+  await sendTest("campaign (Set, mit Ersparnis)", {
+    subject: "Dein persönliches Set von motion sports",
     text,
     html,
   });

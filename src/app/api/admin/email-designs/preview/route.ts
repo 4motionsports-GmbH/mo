@@ -1,6 +1,8 @@
 // POST /api/admin/email-designs/preview — render the sample email of one
 // email type inside one registered design and return raw text/html for the
-// EmailPreviewButton iframe. Body: { designKey: string, kind: EmailThemeKind }.
+// EmailPreviewButton iframe. Body: { designKey: string, kind: EmailThemeKind,
+// sample?: "items" | "set" } — `sample` picks the item mail (default) or the
+// set mail for marketing / campaign (a mail is one or the other).
 //
 // The sample renders through the REAL production composers with fake data
 // (email-design-preview.ts), so the preview per design × type is exactly what
@@ -13,7 +15,11 @@ import {
   resolveEmailDesignForKind,
   type EmailDesignKind,
 } from "@/lib/email-designs/registry";
-import { renderEmailDesignPreview } from "@/lib/email-design-preview";
+import {
+  parseEmailDesignPreviewSample,
+  renderEmailDesignPreview,
+  type EmailDesignPreviewSample,
+} from "@/lib/email-design-preview";
 import { parseEmailThemeKind } from "@/lib/email-theme.mjs";
 import { reportError } from "@/lib/observability";
 
@@ -25,8 +31,10 @@ export async function POST(req: Request) {
 
   let kind: EmailDesignKind;
   let designKey: string;
+  let sample: EmailDesignPreviewSample;
   try {
-    const body = (await req.json()) as { designKey?: unknown; kind?: unknown };
+    const body = (await req.json()) as { designKey?: unknown; kind?: unknown; sample?: unknown };
+    sample = parseEmailDesignPreviewSample(body.sample);
     const parsedKind = parseEmailThemeKind(body.kind);
     if (!parsedKind) {
       return adminJsonError("bad_request", "Unbekannter E-Mail-Typ.", 400);
@@ -49,7 +57,7 @@ export async function POST(req: Request) {
 
   try {
     const design = resolveEmailDesignForKind(designKey, kind);
-    const html = await renderEmailDesignPreview(kind, design);
+    const html = await renderEmailDesignPreview(kind, design, sample);
     return adminEmailHtml(html);
   } catch (err) {
     reportError(err, { route: "api/admin/email-designs/preview" });
