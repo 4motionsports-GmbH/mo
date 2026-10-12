@@ -19,6 +19,7 @@ defaults („default off in code“), never what is currently live. Screenshots 
 | Document | What it covers |
 | --- | --- |
 | [`ROLLOUT_TODO.md`](./ROLLOUT_TODO.md) | The operator's open list (top box „Open for M“), step-by-step procedures, live status, Claude's open items. |
+| [`WELCOME_VOUCHER_TODO.md`](./WELCOME_VOUCHER_TODO.md) | M's checklist for switching on the newsletter welcome voucher: questions for the client and the lawyer (ready to send), Shopify steps, the frontend prompt, switch-on and live test (open list items 1–6 of `ROLLOUT_TODO.md`, which stays the owner). |
 | [`ADMIN_DASHBOARD.md`](./ADMIN_DASHBOARD.md) | The admin dashboard: screens, URL contract, KPI sections (§5), admin API routes (§11). |
 | [`FEATURE_INVENTORY.md`](./FEATURE_INVENTORY.md) | Every capability with its id; nothing is removed without the maintainer's decision. |
 | [`CUSTOMERS.md`](./CUSTOMERS.md) | The customer entity, Shopify mirror, order ledger, nightly facts, webhooks, erasure, and the design decisions of the customer platform. |

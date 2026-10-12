@@ -22,6 +22,8 @@ Everything below this box is the detailed history and the step-by-step instructi
 the single list of what is still open for M. C's open items are at the end of „C · Claude's tasks“.
 **Before running any script: `git pull` in your local checkout** (the scripts change with C's PRs).
 Commands are meant to be copied as they are — only words in CAPITALS are yours to replace.
+**Items 1–6 (the welcome voucher) as one checklist** — with the questions for the client and the
+lawyer ready to send, the Shopify steps and the frontend prompt: [`WELCOME_VOUCHER_TODO.md`](./WELCOME_VOUCHER_TODO.md).
 
 1. **Decide: who issues the welcome codes (blocks the switch-on; tell C).** Your decisions of 11.10.
    (O-1…O-9, dossier § 22.3) want a **personal code per customer, valid 30 days**. Shopify Messaging
