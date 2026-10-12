@@ -5,7 +5,10 @@
 //      two-line hero claim from everything we know about this recipient
 //      (email-hero-context.mjs assembles it: what they already own, the
 //      condensed customer understanding, the recommended product categories,
-//      an attached set, persona/team notes, loyalty, season). The prompt is
+//      persona/team notes, loyalty, season). In a SET mail (offer-mode.mjs —
+//      an active set attached) the set IS the offer: the products, their
+//      counts and the reference photos come from the set's components, not
+//      from the stored recommendations the mail does not show. The prompt is
 //      English (image models follow English best), one editable text: the
 //      personal scene followed by the fixed brand-style + constraint
 //      sentences, so the operator sees EXACTLY what the image model gets.
@@ -39,7 +42,15 @@ import { getContactById, getDraftForContact } from "./campaign-store";
 import { getProductsByIds } from "./product-catalog";
 import { getCustomerById } from "./customer-store";
 import { customerProfileForPrompt } from "./customer-profile";
-import { getActiveBundleForSend, getActiveBundleForCampaignContact } from "./bundle-offers-store";
+import {
+  getActiveBundleForSend,
+  getActiveBundleForCampaignContact,
+  type BundleOfferRow,
+} from "./bundle-offers-store";
+import { shouldRenderBundleBlock } from "./bundle-email-core.mjs";
+import { countedLabel, setContentsLines, setHeroProducts } from "./draft-offer.mjs";
+import type { OfferKind } from "./offer-mode.mjs";
+import type { Product } from "./types";
 import {
   clip,
   ensureHeroStyleTail,
@@ -107,16 +118,86 @@ export function isHeroGenerationConfigured(): boolean {
 }
 
 interface HeroContext {
-  /** Recommended product NAMES (for the headline's sense of what's offered). */
+  /** What the mail offers: "set" = the attached set's products are the
+   *  hero's products; "items" = the recommendations. */
+  offerKind: OfferKind;
+  /** Offered product NAMES (for the headline's sense of what's offered). */
   productNames: string[];
-  /** Brand + name + object type + colour of the recommended products — what
-   *  the image prompt names verbatim so the render resembles the real thing. */
+  /** Brand + name + object type + colour of the offered products — what the
+   *  image prompt names verbatim so the render resembles the real thing. In a
+   *  set mail with the count in front („2× …“) when the set holds more. */
   productDescriptors: string[];
-  /** Recommended product CATEGORIES — what the image model can actually draw. */
+  /** Offered product CATEGORIES — what the image model can actually draw. */
   productCategories: string[];
   proseExcerpt: string;
   /** Labelled "Was wir über diese Person wissen" lines (may be empty). */
   extraContext: string[];
+}
+
+/** The products a set mail's hero shows: the live set's components resolved
+ *  against the catalog, in component order, with their counts. */
+interface SetHeroOffer {
+  /** Catalog products of the set (components missing from the catalog are
+   *  dropped here and only named in `descriptors`). */
+  products: Product[];
+  /** One descriptor per distinct product, count in front when > 1. */
+  descriptors: string[];
+  /** Product names (catalog name, else the component title). */
+  names: string[];
+  /** The set's contents as the set block lists them („2× Kettlebell – 16 kg“). */
+  contents: string[];
+}
+
+/**
+ * The set offer for the hero, or null when the mail is an item mail (no set
+ * attached, or one that is no longer live — the same guard the send path
+ * renders the set block with). Never throws: a catalog problem degrades to
+ * the component titles.
+ */
+async function setHeroOffer(bundle: BundleOfferRow | null): Promise<SetHeroOffer | null> {
+  if (!bundle || !shouldRenderBundleBlock(bundle)) return null;
+  const items = setHeroProducts(bundle.components);
+  if (items.length === 0) return null;
+  let catalog: Product[] = [];
+  try {
+    catalog = await getProductsByIds(items.map((i) => i.productId));
+  } catch (err) {
+    reportError(err, { route: "lib/email-hero", phase: "setProducts" });
+  }
+  const byId = new Map(catalog.map((p) => [p.id, p]));
+  const products: Product[] = [];
+  const descriptors: string[] = [];
+  const names: string[] = [];
+  for (const item of items) {
+    const product = byId.get(item.productId);
+    if (product) products.push(product);
+    const descriptor = (product && productHeroDescriptors([product])[0]) || item.title;
+    if (descriptor) descriptors.push(countedLabel(descriptor, item.quantity));
+    const name = product?.name || item.title;
+    if (name) names.push(name);
+  }
+  return { products, descriptors, names, contents: setContentsLines(bundle.components) };
+}
+
+/** The hero context of a set mail, from the set offer + the person lines. */
+function setHeroContext(
+  offer: SetHeroOffer,
+  proseExcerpt: string,
+  personLines: Record<string, string | string[]>
+): HeroContext {
+  const categories = productCategories(offer.products);
+  return {
+    offerKind: "set",
+    productNames: offer.names,
+    productDescriptors: offer.descriptors.slice(0, 6),
+    productCategories: categories,
+    proseExcerpt,
+    extraContext: heroContextLines({
+      ...personLines,
+      "Set-Inhalt (alles zusammen als EIN Angebot zeigen)": offer.contents,
+      "Produktarten im Set": categories,
+    }),
+  };
 }
 
 /**
@@ -126,8 +207,9 @@ interface HeroContext {
  *
  *   - what they already OWN (purchase history) → the scene completes their setup
  *   - the condensed customer understanding (goals, space, noise, level)
- *   - the recommended products' categories → objects the image model can draw
- *   - an attached set offer → show those pieces together
+ *   - the offered products' categories → objects the image model can draw:
+ *     the recommendations of an item mail, or the set (with counts) of a set
+ *     mail — never both (offer-mode.mjs)
  *   - persona / team notes / loyalty / language / season
  *
  * Null → the draft doesn't exist. Every individual lookup is fail-soft: a
@@ -140,7 +222,6 @@ async function loadHeroContext(
   if (kind === "marketing") {
     const send = await getSendById(id);
     if (!send) return null;
-    const products = send.productIds.length ? await getProductsByIds(send.productIds) : [];
 
     // The chat customer's profile + purchases (both fail-soft).
     let profileSummary = "";
@@ -155,29 +236,34 @@ async function loadHeroContext(
       }
     }
 
-    let bundleTitles: string[] = [];
+    const personLines = {
+      "Kundenverständnis (verdichtet)": profileSummary,
+      "Bereits im Besitz (Kaufhistorie)": owned,
+      Persona: send.personaLabel ?? "",
+      "Hinweise vom Team": send.adminInstructions ?? "",
+      Jahreszeit: seasonHint(),
+    };
+    const proseExcerpt = clip(send.draftedText ?? "", 800);
+
+    // A set mail: the set IS the offer — the hero shows its products.
+    let setOffer: SetHeroOffer | null = null;
     try {
-      const bundle = await getActiveBundleForSend(id);
-      bundleTitles = (bundle?.components ?? [])
-        .map((c) => (typeof c.title === "string" ? c.title : ""))
-        .filter(Boolean);
+      setOffer = await setHeroOffer(await getActiveBundleForSend(id));
     } catch (err) {
       reportError(err, { route: "lib/email-hero", phase: "bundleContext" });
     }
+    if (setOffer) return setHeroContext(setOffer, proseExcerpt, personLines);
 
+    const products = send.productIds.length ? await getProductsByIds(send.productIds) : [];
     return {
+      offerKind: "items",
       productNames: products.map((p) => p.name),
       productDescriptors: productHeroDescriptors(products),
       productCategories: productCategories(products),
-      proseExcerpt: clip(send.draftedText ?? "", 800),
+      proseExcerpt,
       extraContext: heroContextLines({
-        "Kundenverständnis (verdichtet)": profileSummary,
-        "Bereits im Besitz (Kaufhistorie)": owned,
+        ...personLines,
         "Empfohlene Produktarten": productCategories(products),
-        "Angehängtes Set (zusammen zeigen)": bundleTitles,
-        Persona: send.personaLabel ?? "",
-        "Hinweise vom Team": send.adminInstructions ?? "",
-        Jahreszeit: seasonHint(),
       }),
     };
   }
@@ -185,9 +271,6 @@ async function loadHeroContext(
   const contact = await getContactById(id);
   const draft = await getDraftForContact(id);
   if (!contact || !draft) return null;
-  const products = draft.recommendedProductIds.length
-    ? await getProductsByIds(draft.recommendedProductIds)
-    : [];
 
   // Their order record plus the central customer profile (migration 0059).
   const owned = ownedProductTitles(draft.purchaseSummary);
@@ -202,30 +285,38 @@ async function loadHeroContext(
       reportError(err, { route: "lib/email-hero", phase: "campaignProfile" });
     }
   }
-  let bundleTitles: string[] = [];
+  const personLines = {
+    "Kundenverständnis (verdichtet)": campaignProfile,
+    "Bereits im Besitz (Kaufhistorie)": owned,
+    Kundenstatus: loyaltyHint(contact.ordersCount, contact.totalSpentCents),
+    Vorname: contact.firstName ?? "",
+    "Empfänger-Sprache": contact.language === "en" ? "Englisch" : "Deutsch",
+    Jahreszeit: seasonHint(),
+  };
+  const proseExcerpt = clip(draft.body, 800);
+
+  // A set mail: the set IS the offer — the hero shows its products, not the
+  // stored recommendations (the set's source, which the mail does not show).
+  let setOffer: SetHeroOffer | null = null;
   try {
-    const bundle = await getActiveBundleForCampaignContact(id);
-    bundleTitles = (bundle?.components ?? [])
-      .map((c) => (typeof c.title === "string" ? c.title : ""))
-      .filter(Boolean);
+    setOffer = await setHeroOffer(await getActiveBundleForCampaignContact(id));
   } catch (err) {
     reportError(err, { route: "lib/email-hero", phase: "bundleContext" });
   }
+  if (setOffer) return setHeroContext(setOffer, proseExcerpt, personLines);
 
+  const products = draft.recommendedProductIds.length
+    ? await getProductsByIds(draft.recommendedProductIds)
+    : [];
   return {
+    offerKind: "items",
     productNames: products.map((p) => p.name),
     productDescriptors: productHeroDescriptors(products),
     productCategories: productCategories(products),
-    proseExcerpt: clip(draft.body, 800),
+    proseExcerpt,
     extraContext: heroContextLines({
-      "Kundenverständnis (verdichtet)": campaignProfile,
-      "Bereits im Besitz (Kaufhistorie)": owned,
+      ...personLines,
       "Empfohlene Produktarten": productCategories(products),
-      "Angehängtes Set (zusammen zeigen)": bundleTitles,
-      Kundenstatus: loyaltyHint(contact.ordersCount, contact.totalSpentCents),
-      Vorname: contact.firstName ?? "",
-      "Empfänger-Sprache": contact.language === "en" ? "Englisch" : "Deutsch",
-      Jahreszeit: seasonHint(),
     }),
   };
 }
@@ -320,12 +411,18 @@ export async function suggestHeroPrompt(
           "Verfügbarkeiten (die stehen deterministisch an anderer Stelle der " +
           "E-Mail und würden hier veralten), Produktnamen, Anrede/Name.",
         prompt: [
-          ctx.productDescriptors.length
-            ? `## Empfohlene Produkte — Marke, Name, Bauart, Farbe\n` +
-              `(wörtlich in die Szene übernehmen)\n${ctx.productDescriptors
+          ctx.offerKind === "set" && ctx.productDescriptors.length
+            ? `## Produkte des Set-Angebots — Anzahl, Marke, Name, Bauart, Farbe\n` +
+              `(wörtlich in die Szene übernehmen; alle zusammen als EIN Set zeigen, ` +
+              `ein Teil mit Anzahl so oft wie angegeben)\n${ctx.productDescriptors
                 .map((n) => `- ${n}`)
                 .join("\n")}`
-            : "## Empfohlene Produkte\n(keine — allgemeines Home-Gym-Zubehör)",
+            : ctx.productDescriptors.length
+              ? `## Empfohlene Produkte — Marke, Name, Bauart, Farbe\n` +
+                `(wörtlich in die Szene übernehmen)\n${ctx.productDescriptors
+                  .map((n) => `- ${n}`)
+                  .join("\n")}`
+              : "## Empfohlene Produkte\n(keine — allgemeines Home-Gym-Zubehör)",
           ctx.extraContext.length
             ? `\n## Was wir über diese Person wissen\n${ctx.extraContext
                 .map((l) => `- ${l}`)
@@ -380,10 +477,11 @@ interface LoadedReference {
 }
 
 /**
- * The catalogue photos of the products this hero should show (recommended
- * ones first, then up to two owned), fetched and downscaled — or [] when the
- * draft has none, a lookup fails, or EMAIL_HERO_REFERENCES=off. Fail-soft:
- * a missing picture never blocks the render, it only makes it less specific.
+ * The catalogue photos of the products this hero should show (the offered
+ * ones first — the set's products in a set mail, else the recommended ones —
+ * then up to two owned), fetched and downscaled — or [] when the draft has
+ * none, a lookup fails, or EMAIL_HERO_REFERENCES=off. Fail-soft: a missing
+ * picture never blocks the render, it only makes it less specific.
  */
 async function loadHeroReferences(
   kind: EmailHeroKind,
@@ -394,10 +492,12 @@ async function loadHeroReferences(
   try {
     let recommendedIds: string[] = [];
     let history: unknown = null;
+    let bundle: BundleOfferRow | null = null;
     if (kind === "marketing") {
       const send = await getSendById(id);
       if (!send) return none;
       recommendedIds = send.productIds;
+      bundle = await getActiveBundleForSend(id);
       if (send.customerId) {
         try {
           history = (await getCustomerById(send.customerId))?.purchaseSummary ?? null;
@@ -409,9 +509,17 @@ async function loadHeroReferences(
       const draft = await getDraftForContact(id);
       if (!draft) return none;
       recommendedIds = draft.recommendedProductIds;
+      bundle = await getActiveBundleForCampaignContact(id);
       history = draft.purchaseSummary;
     }
-    const recommended = recommendedIds.length ? await getProductsByIds(recommendedIds) : [];
+    // A set mail shows the set's products, not the recommendations.
+    const setOffer = await setHeroOffer(bundle);
+    if (setOffer) recommendedIds = setOffer.products.map((p) => p.id);
+    const recommended = setOffer
+      ? setOffer.products
+      : recommendedIds.length
+        ? await getProductsByIds(recommendedIds)
+        : [];
     const ownedIds = ownedProductIds(history as Parameters<typeof ownedProductIds>[0]).filter(
       (pid) => !recommendedIds.includes(pid)
     );
