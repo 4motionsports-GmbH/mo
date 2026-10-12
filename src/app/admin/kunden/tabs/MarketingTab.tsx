@@ -346,10 +346,10 @@ function LegacyMarketingMail({ customer }: { customer: CustomerDetail }) {
         <span>
           {frequency && <>An {customer.email} · </>}
           Betreff: <strong className="text-foreground">{subject || "—"}</strong>
-          {discountPercent > 0 ? (
+          {effectiveDiscount > 0 ? (
             <>
               {" "}
-              · Rabatt {discountPercent} % (einmaliger Code wird beim Senden erzeugt)
+              · Rabatt {effectiveDiscount} % (einmaliger Code wird beim Senden erzeugt)
             </>
           ) : (
             " · ohne Rabatt"
@@ -479,8 +479,8 @@ function LegacyMarketingMail({ customer }: { customer: CustomerDetail }) {
             </StatusBadge>
             {!needsRegenerate && (
               <span className="text-xs text-muted-foreground">
-                {discountPercent > 0
-                  ? `Platzhalter-Code MO-XXXX bitte nicht ändern — er wird beim Versand durch den echten ${discountPercent}%-Code ersetzt.`
+                {effectiveDiscount > 0
+                  ? `Platzhalter-Code MO-XXXX bitte nicht ändern — er wird beim Versand durch den echten ${effectiveDiscount}%-Code ersetzt.`
                   : "Ohne Rabatt: kein Code im Text, kein Rabatt im Warenkorb-Link."}
               </span>
             )}
@@ -506,7 +506,7 @@ function LegacyMarketingMail({ customer }: { customer: CustomerDetail }) {
           <Field
             label="E-Mail-Text"
             info={`Beim Versand werden Warenkorb-Button und Abmeldelink automatisch angehängt${
-              discountPercent > 0 ? " und der einmalige Rabattcode erzeugt" : ""
+              effectiveDiscount > 0 ? " und der einmalige Rabattcode erzeugt" : ""
             }. Gesendet wird nur an bestätigte, nicht abgemeldete Adressen.`}
           >
             <Textarea
@@ -531,7 +531,7 @@ function LegacyMarketingMail({ customer }: { customer: CustomerDetail }) {
               title={`Vorschau — ${customer.email}`}
               description={
                 "So wird die E-Mail im Postfach gerendert (inkl. Produktbilder, Bundle und Footer). " +
-                (discountPercent > 0
+                (effectiveDiscount > 0
                   ? "Der Rabatt zeigt den Platzhalter-Code MO-XXXX — der echte Code und der getrackte Warenkorb-Link entstehen erst beim Senden."
                   : "Der getrackte Warenkorb-Link entsteht erst beim Senden.")
               }

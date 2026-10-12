@@ -139,7 +139,7 @@ test("a set mail with a code blocks (set XOR items), fixed by removing the disco
 test("the retired scope \"set\" blocks while a code is set", () => {
   const noSet = reviewChecks(readyItem({ discountScope: "set", bundle: null }), ctx());
   assert.ok(keys(noSet).includes("discount_scope_no_set"));
-  assert.equal(noSet.find((x) => x.key === "discount_scope_no_set").fix, null);
+  assert.equal(noSet.find((x) => x.key === "discount_scope_no_set").fix, "remove_discount");
   assert.equal(reviewVerdict(noSet), "blocked");
   // With a set attached the conflict check speaks instead.
   const withSet = reviewChecks(readyItem({ discountScope: "set", bundle: SET_MAIL.bundle }), ctx());
@@ -156,6 +156,12 @@ test("a scoped discount without its target blocks (send-path rule)", () => {
     ctx()
   );
   assert.ok(keys(soldOut).includes("discount_scope_no_recommendations"));
+  // a recommendation whose pinned variant is gone reads available: null — not usable
+  const gone = reviewChecks(
+    readyItem({ discountScope: "recommendations", recommendations: [{ id: "kb~999", name: "KB", url: "https://shop/kb", available: null }] }),
+    ctx()
+  );
+  assert.ok(keys(gone).includes("discount_scope_no_recommendations"));
   const fine = reviewChecks(readyItem({ discountScope: "recommendations" }), ctx());
   assert.ok(!keys(fine).includes("discount_scope_no_recommendations"));
   // Without a discount the scope is irrelevant.

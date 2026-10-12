@@ -408,7 +408,8 @@ mail** ([`offer-mode.mjs`](../src/lib/offer-mode.mjs) `offerKind`). `prepareDraf
 enforces it for every caller — desk depth, campaign default, Vorbereiten popover, Eingang
 suggestion, nightly auto-prepare: a set mail is generated and saved with `discount_percent = 0` and
 scope `all` whatever was requested; an item mail keeps the requested depth, and a requested or
-stored scope `set` becomes `all` (`effectiveDraftOffer` in
+stored scope `set` (history: „x % only on the set“) gets **no code** — never widened to the whole
+order (`effectiveDraftOffer` in
 [`draft-offer.mjs`](../src/lib/draft-offer.mjs), tested). The prompt variant follows
 (`draftPromptPlan`):
 
@@ -479,17 +480,19 @@ way: a live set attached to the customer makes it a set mail drafted with depth 
    `set` (the code only on the attached set), is **history** since the set XOR
    items rule: it still parses so older sends read back, but no new draft or
    campaign takes it (`parseEditableDiscountScope`; a draft regenerated with a
-   stored `set` gets `all`). The prompt states the scope (`discountHint`:
+   stored `set` and no set gets no code at all — never a whole-order code). The prompt states the scope (`discountHint`:
    "gilt NICHT für den Rest der Bestellung"), the coupon's benefit line and
    the text part use the same phrase (`discountScopePhrase`), and at send time
    the code is minted with `customerGets.items.products.productsToAdd` = the
    Shopify product gids of that scope (recommended handles resolved via
-   `fetchProductGidsByHandles`; for a draft from before the rule still stored
-   with `set`, the set's `shopify_product_id`). A scope that cannot be
-   honoured (no available recommendation, unresolvable handle, a stored `set`
-   without an active set) **refuses the send** (`discount_scope_unresolved`) —
-   the desk shows the same rule as a blocked Prüfpunkt beforehand
-   (`discount_scope_no_recommendations` / `discount_scope_no_set`). A changed
+   `fetchProductGidsByHandles`) — no code is ever minted on a set. A scope
+   that cannot be honoured (no available recommendation, unresolvable handle)
+   **refuses the send** (`discount_scope_unresolved`); so does a draft still
+   stored with `set` and a depth above 0, with or without a set („„Gilt für:
+   Set“ gibt es nicht mehr — bitte „Gilt für“ ändern.“) — the desk shows the
+   same rules as blocked Prüfpunkte beforehand
+   (`discount_scope_no_recommendations` / `discount_scope_no_set` /
+   `offer_conflict`). A changed
    scope regenerates the prose.
    **Bundle offers** (the set mail — instead of the recommendations and
    instead of a percentage code, never in addition): the card's
@@ -503,7 +506,7 @@ way: a live set attached to the customer makes it a set mail drafted with depth 
    contents with counts, no price from the model) and drafts without a code.
    The deterministic offer block (components with counts, price, genuine
    "statt", tracked `/api/r/<token>` CTA) is appended at send time
-   (`buildBundleBlockForContact`, same active-only guard + renderer as the
+   (`buildBundleBlock`, same active-only guard + renderer as the
    marketing path) and a resolution failure degrades to "no block", never
    blocking a send. Expiry stays with the existing cron (it deletes the set's
    Shopify product); "Set entfernen" uses the existing archive route, which
@@ -570,7 +573,7 @@ address inside the cross-channel frequency cap, prose naming a different percent
 discount — the same `detectDiscountTextMismatch` the send path enforces — or the
 `MO-XXXX` placeholder without a discount, a set mail that still carries a code
 (`offer_conflict`, fix „Rabatt entfernen“ — set XOR items, §4), the retired
-scope „Gilt für: Set“ with a code (`discount_scope_no_set`), or a refusal the server returned for
+scope „Gilt für: Set“ with a code (`discount_scope_no_set`, also fixed by „Rabatt entfernen“), or a refusal the server returned for
 the last attempt), *hint* when worth a look (in an item mail: low-confidence recommendations, a
 recommended product gone or sold out; an attached set expired or expiring
 within two days, a missing KI-Hero while the campaign design has a hero —

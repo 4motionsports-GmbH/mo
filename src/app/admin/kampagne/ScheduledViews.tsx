@@ -35,10 +35,15 @@ export function ScheduleDialog({ release, item }: { release: ReleaseActions; ite
   // The choices are computed when the dialog opens (Berlin time).
   const [options, setOptions] = React.useState<ReturnType<typeof releaseTimeOptions>>([]);
   const [choice, setChoice] = React.useState("now");
+  // Reopened after a contact-frequency 409: keep the time the operator picked
+  // (the option list is recomputed; a key no longer offered falls back to the
+  // first option visibly).
+  const keptChoice = item ? release.conflictChoiceOf(item.contactId) : null;
   React.useEffect(() => {
     if (!open) return;
     setOptions(releaseTimeOptions(Date.now()));
-    setChoice("now");
+    setChoice(keptChoice ?? "now");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
   const picked = options.find((o) => o.key === choice) ?? options[0];
   // The contact-frequency warning (contact-frequency.mjs): pressing
@@ -75,7 +80,7 @@ export function ScheduleDialog({ release, item }: { release: ReleaseActions; ite
           <Button variant="outline" onClick={() => release.setScheduleId(null)}>
             Abbrechen
           </Button>
-          <Button data-autofocus="" onClick={() => void release.confirm(picked?.releaseAt ?? null)}>
+          <Button data-autofocus="" onClick={() => void release.confirm(picked?.releaseAt ?? null, picked?.key ?? null)}>
             <CalendarClock /> Einplanen
           </Button>
         </DialogFooter>

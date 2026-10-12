@@ -300,10 +300,13 @@ function withOffenderNames(err: unknown, recs: CampaignRecommendation[]): unknow
   if (!(err instanceof AdminApiError)) return err;
   const details = err.details as { offenders?: unknown; offenderNames?: Record<string, string> } | null;
   const offenders = Array.isArray(details?.offenders) ? details.offenders.map(String) : [];
-  if (offenders.length === 0) return err;
+  // Only messages shaped „<Grund>: <Namen>.“ are rewritten; any other text
+  // already reads as a whole sentence.
+  const colon = err.message.indexOf(": ");
+  if (offenders.length === 0 || colon < 0) return err;
   const known = details?.offenderNames ?? {};
   const names = offenders.map((o) => known[o] ?? offenderList([o], recs));
-  const reason = err.message.split(":")[0].replace(/\.$/, "");
+  const reason = err.message.slice(0, colon);
   return new AdminApiError(`${reason}: ${names.join(", ")}.`, err.status, err.code, err.details);
 }
 
@@ -374,6 +377,11 @@ export function useCampaignActions({
   const [bulkProgress, setBulkProgress] = React.useState<BulkProgress | null>(null);
   const [copiedId, setCopiedId] = React.useState<number | null>(null);
   const [confirmSend, setConfirmSend] = React.useState<SendConfirm | null>(null);
+  // Mirror for async callbacks (a late 409 must see the confirm that is open now).
+  const confirmSendRef = React.useRef<SendConfirm | null>(null);
+  React.useEffect(() => {
+    confirmSendRef.current = confirmSend;
+  }, [confirmSend]);
   const [resetOpen, setResetOpen] = React.useState(false);
   // Rendered-HTML viewer (full-size draft preview + sent-email view). Own busy
   // flag — a read-only preview never blocks the desk.
@@ -702,7 +710,21 @@ export function useCampaignActions({
         if (frequency) {
           restoreItem({ ...item, sendError: null, recentMailCount: frequency.count });
           setOutbox((o) => o.filter((e) => e.contactId !== contactId));
-          setConfirmSend({ contactId, firstOfDay: false, frequency });
+          // Never take over a confirm that is already open for another card —
+          // that one would be acknowledged for the wrong address. This card
+          // keeps its hint (recentMailCount) and asks when it is sent again.
+          const open = confirmSendRef.current;
+          if (!open || open.contactId === contactId) {
+            const next = { contactId, firstOfDay: false, frequency };
+            confirmSendRef.current = next;
+            setConfirmSend(next);
+          } else {
+            toast({
+              variant: "warning",
+              title: `Nicht gesendet — ${item.email}`,
+              description: "Kontakthäufigkeit: die Karte ist zurück in der Warteschlange und fragt beim nächsten Senden nach.",
+            });
+          }
           return;
         }
         const message = errorMessage(err);

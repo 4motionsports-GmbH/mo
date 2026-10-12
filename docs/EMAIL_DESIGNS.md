@@ -167,8 +167,10 @@ design:
    generated titles of the form „Set: A + B + C“ or over 40 characters give way to the default), a
    line like „3 Produkte · zusammen günstiger“ and a big solid badge. With a **genuine saving** the
    badge shows „−15 %“ (large, white, bold) and „Du sparst 98,90 €“ below; without one it shows
-   „Set-Preis“ + the amount — never a strike price or a saving, and the line then reads „3 Produkte
-   in einem Set“.
+   „Set-Preis“ + the amount — never a saving, and the line then reads „3 Produkte in einem Set“. A
+   genuine saving under 1 % keeps the struck-through „Einzelkauf“ price in the summary but gets
+   the „Set-Preis“ badge, no percentage and no „Du sparst“ line (`bundleSaving`,
+   `bundleEyecatcherKind`).
 2. **Item rows** in the design's product-row structure — picture | the count in the accent colour
    („2×“) with the name and a short description | the unit price, muted: „je 239,00 €“ for more than
    one, „79,95 €“ for one. **No „Zum Produkt“ button and no per-item link** — the set is bought as
@@ -195,8 +197,8 @@ All values come from **`bundleBlockModel`** (`bundle-email-core.mjs`, tested) an
 `labels` (incl. `deal`, `separately`, `cta`), `items` (`name`, `quantity`, `imageUrl`,
 `description`, `unitPriceLabel`), `itemCount`, `pieceCount`, `eyecatcher` (`"saving"` | `"price"`),
 `eyecatcherCopy` (`label`, `value`, `note`) and `tagline`. An override only lays these out — it
-never computes a price, a strike or a saving. The text part is shared (`bundleBlockText`): the set
-title, one line per item („- 2× Name — je 239,00 €“), the set price (+ „statt …“ and „Du sparst …
+never computes a price, a strike or a saving. The text part is shared (`bundleBlockText`): the short
+headline (`bundleHeadline`), one line per item („- 2× Name — je 239,00 €“), the set price (+ „statt …“ and „Du sparst …
 (x %)“ only when genuine) and „Zur Kasse: <url>“.
 
 **Discount-code coupon.** Item mails with a code show it as a card of its own between the product

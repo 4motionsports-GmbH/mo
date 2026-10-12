@@ -214,7 +214,7 @@ Admin endpoints (behind the existing admin auth + CSRF via `guardAdminPost`):
 
 | Endpoint                        | Body                                                            |
 | ------------------------------- | -------------------------------------------------------------- |
-| `POST /api/admin/bundles/create`  | `{ customerId?, components:[{productId,variantId?,quantity?}], bundlePriceOverride?, title?, expiryDays?, marketingSendId?, campaignContactId? }` → `{ offer, redirectUrl }`; refusals: 409 `sold_out` / `variant_not_found`, 400 `bad_price` / `unknown_products`, 502 `create_failed`, 503 `not_configured` |
+| `POST /api/admin/bundles/create`  | `{ customerId?, components:[{productId,variantId?,quantity?}], bundlePriceOverride?, title?, expiryDays?, marketingSendId?, campaignContactId? }` → `{ offer, redirectUrl, discountCleared }` (the attached campaign / legacy draft's code is cleared — a set mail carries none); `quantity` 1–10 (`BUNDLE_QUANTITY_MAX`), a ref `handle~variantId` as `productId` is split; refusals with a German message naming the products plus `offenders` / `offenderNames`: 409 `sold_out` / `variant_not_found`, 400 `bad_price` / `bad_quantity` / `unknown_products`, 502 `create_failed`, 503 `not_configured` |
 | `POST /api/admin/bundles/archive` | `{ id }` → `{ offer }` (active offers)                         |
 | `POST /api/admin/bundles/delete`  | `{ id }` → `{ offer }`; only `pending` / `failed` rows, otherwise 409 `not_deletable` |
 | `POST /api/admin/bundles/suggest` | `{ customerId }` → `{ title, components, componentsSum }` (AI) |
@@ -291,7 +291,9 @@ merged and their counts added (`bundleItemList` / `bundleItemLabel`,
   [`EMAIL_DESIGNS.md`](./EMAIL_DESIGNS.md) „Set card“):
   - an **eyecatcher** at the top: the short set headline, „3 Produkte ·
     zusammen günstiger“ and a big badge — „−15 %“ + „Du sparst 98,90 €“ when the
-    set genuinely costs less than its parts, otherwise „Set-Preis“ + the amount;
+    set genuinely costs less than its parts (a saving under 1 % gets no
+    percentage: then „Set-Preis“ + the amount, the „statt“ price stays in the
+    summary), otherwise „Set-Preis“ + the amount;
   - one **row per item** like the product rows (picture | „2×“ + name + short
     description | the unit price, „je 239,00 €“ for more than one) — **no
     „Zum Produkt“ button and no per-item link**. The unit price is the
@@ -303,7 +305,7 @@ merged and their counts added (`bundleItemList` / `bundleItemLabel`,
 
   All of it comes from `bundleBlockModel` (`bundle-email-core.mjs`, tested), so
   no design computes a price, strike or saving itself. The plain-text part lists
-  the set title, „- 2× Name — je 239,00 €“ per item, the set price (+ „statt …“
+  the short headline (`bundleHeadline`), „- 2× Name — je 239,00 €“ per item, the set price (+ „statt …“
   and „Du sparst … (x %)“ only when genuine) and „Zur Kasse: <url>“. The offer
   countdown under it runs to the set's deadline.
 - **Shopify** — the set product's description (`<p>Dieses Set enthält:</p><ul>…</ul>`,

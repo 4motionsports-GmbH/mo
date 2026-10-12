@@ -2474,7 +2474,7 @@ anomaly is logged server-side.
 
 ## 11. Admin API routes
 
-All under `/api/admin/*` — 105 route files —, gated by the Edge proxy **and**
+All under `/api/admin/*` — 106 route files —, gated by the Edge proxy **and**
 `guardAdminPost(req)` / `guardAdminGet()` in the handler (§1); JSON envelope
 `{ error: { code, message } }` on failure. Grouped by the screen that calls
 them. Actions that read or act on one person's data write the admin access log

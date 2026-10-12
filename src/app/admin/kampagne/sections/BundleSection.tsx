@@ -120,8 +120,9 @@ export function BundleSection({
       case "saving":
         return (
           <span className="text-success">
-            Ersparnis {eurFromCentsPlain(priceCheck.savingCents)} ({num(priceCheck.savingPct)} %) — die Mail zeigt den
-            Normalpreis durchgestrichen.
+            Ersparnis {eurFromCentsPlain(priceCheck.savingCents)}
+            {priceCheck.savingPct != null ? ` (${num(priceCheck.savingPct)} %)` : ""} — die Mail zeigt den Normalpreis
+            durchgestrichen.
           </span>
         );
       case "no_saving":
@@ -170,7 +171,9 @@ export function BundleSection({
             const isChosen = available && chosen.has(r.id);
             const quantity = chosen.get(r.id) ?? 1;
             const maxQty = maxSetQuantity(r.unitStock, BUNDLE_QUANTITY_MAX);
-            const stockText = stockLabel(r);
+            // The set uses the pinned or default variant — show that stock, the
+            // same figure that caps the count (not the product total).
+            const stockText = stockLabel({ available: r.available, stock: r.unitStock, stockScope: "variant" });
             const lineCents = isChosen && r.price != null ? setNormalPriceCents([{ price: r.price, quantity }]) : null;
             return (
               <li

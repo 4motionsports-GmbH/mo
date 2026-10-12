@@ -460,8 +460,8 @@ export function BundleComposer({
             </div>
             {priceCheck.kind === "saving" && (
               <div className="text-xs text-success">
-                Ersparnis {money(Number(centsToMoney(priceCheck.savingCents)))} ({num(priceCheck.savingPct)} %) gegenüber dem
-                Normalpreis.
+                Ersparnis {money(Number(centsToMoney(priceCheck.savingCents)))}
+                {priceCheck.savingPct != null ? ` (${num(priceCheck.savingPct)} %)` : ""} gegenüber dem Normalpreis.
               </div>
             )}
             {priceCheck.kind === "no_saving" && (

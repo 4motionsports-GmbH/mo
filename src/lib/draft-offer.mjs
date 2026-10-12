@@ -26,8 +26,10 @@ import { bundleItemLabel, bundleItemList } from "./bundle-offer-core.mjs";
  *   - with an active set attached: no discount (the set price is the
  *     concession) and scope "all" (a scope without a code means nothing);
  *   - without one: the requested depth, and the requested — else the stored —
- *     scope as long as it is one a new draft may carry; "set" (history) or
- *     anything unknown becomes "all".
+ *     scope as long as it is one a new draft may carry; anything unknown
+ *     becomes "all". The retired "set" (history: „x % only on the set“) means
+ *     NO code — a set never carries one any more, and widening it to the whole
+ *     order would hand out a discount nobody chose.
  *
  * @param {{
  *   discountPercent?: number | null,
@@ -41,6 +43,9 @@ export function effectiveDraftOffer({ discountPercent, requestedScope, storedSco
   const kind = offerKind(hasActiveBundle);
   const percent = discountForOffer(discountPercent, hasActiveBundle);
   if (kind === OFFER_SET) return { kind, discountPercent: percent, discountScope: DEFAULT_DISCOUNT_SCOPE };
+  if ((requestedScope ?? storedScope) === "set") {
+    return { kind, discountPercent: 0, discountScope: DEFAULT_DISCOUNT_SCOPE };
+  }
   return {
     kind,
     discountPercent: percent,

@@ -18,6 +18,7 @@ import { ADMIN_DATE, ADMIN_DATE_TIME_SHORT, formatAdmin } from "@/lib/admin-date
 import { eur, eurFromCents, money, num, plural } from "@/lib/admin-format.mjs";
 import { stockLabel } from "@/lib/stock-level.mjs";
 import { offerKind } from "@/lib/offer-mode.mjs";
+import { bundleSaving } from "@/lib/bundle-email-core.mjs";
 import { campaignSegmentByKey } from "@/lib/campaign-segments.mjs";
 import { DISCOUNT_PERCENT_MAX, clampDiscountPercent } from "@/lib/discount-validation.mjs";
 import { DISCOUNT_SCOPE_OPTIONS, type DiscountScope } from "@/lib/discount-scope.mjs";
@@ -199,6 +200,8 @@ export function ReviewColumn({
 
   const recIds = item.recommendations.map((r) => r.id);
   const isSetMail = offerKind(Boolean(item.bundle)) === "set";
+  // The mail's own percentage (rounded down, none under 1 %).
+  const setSavingPct = item.bundle ? bundleSaving(item.bundle.bundlePrice, item.bundle.componentsSum).pct : null;
   const availableRecs = item.recommendations.filter((r) => r.available === true).length;
   const switchToItems = async () => {
     const ok = await confirm({
@@ -452,9 +455,9 @@ export function ReviewColumn({
                     {item.bundle.expiresAt ? ` · bis ${formatAdmin(item.bundle.expiresAt, ADMIN_DATE)}` : ""}
                   </span>
                 </span>
-                {Number(item.bundle.bundlePrice) < Number(item.bundle.componentsSum) && Number(item.bundle.componentsSum) > 0 && (
+                {setSavingPct != null && (
                   <StatusBadge tone="success" dot={false} className="tabular-nums">
-                    −{num(Math.round((1 - Number(item.bundle.bundlePrice) / Number(item.bundle.componentsSum)) * 100))} %
+                    −{num(setSavingPct)} %
                   </StatusBadge>
                 )}
               </div>

@@ -58,10 +58,27 @@ test("effectiveDraftOffer: an item mail keeps the requested depth and an editabl
   });
 });
 
-test("effectiveDraftOffer: the history scope 'set' becomes 'all' without a set", () => {
-  assert.equal(effectiveDraftOffer({ discountPercent: 10, requestedScope: "set" }).discountScope, "all");
-  assert.equal(effectiveDraftOffer({ discountPercent: 10, storedScope: "set" }).discountScope, "all");
+test("effectiveDraftOffer: the history scope 'set' means no code without a set (never widened)", () => {
+  // „x % only on the set“ must not become x % on the whole order.
+  assert.deepEqual(effectiveDraftOffer({ discountPercent: 10, requestedScope: "set" }), {
+    kind: "items",
+    discountPercent: 0,
+    discountScope: "all",
+  });
+  assert.deepEqual(effectiveDraftOffer({ discountPercent: 15, storedScope: "set" }), {
+    kind: "items",
+    discountPercent: 0,
+    discountScope: "all",
+  });
+  // an explicit new scope wins over a stored "set"
+  assert.deepEqual(effectiveDraftOffer({ discountPercent: 15, requestedScope: "recommendations", storedScope: "set" }), {
+    kind: "items",
+    discountPercent: 15,
+    discountScope: "recommendations",
+  });
+  // an unknown scope is just "all"
   assert.equal(effectiveDraftOffer({ discountPercent: 10, requestedScope: "bogus" }).discountScope, "all");
+  assert.equal(effectiveDraftOffer({ discountPercent: 10, requestedScope: "bogus" }).discountPercent, 10);
 });
 
 test("effectiveDraftOffer: a nonsensical depth reads as no discount", () => {

@@ -239,14 +239,14 @@ export function reviewChecks(item, ctx = {}) {
       key: "discount_scope_no_set",
       level: "blocked",
       title: "„Gilt für: Set“ gibt es nicht mehr",
-      detail: "Einen Rabattcode gibt es nur für Einzelprodukte — „Gilt für“ auf die gesamte Bestellung oder die Empfehlungen ändern, sonst würde der Versand abgelehnt.",
-      fix: null,
+      detail: "„x % nur auf das Set“ gibt es nicht mehr — einen Rabattcode gibt es nur für Einzelprodukte. Rabatt entfernen oder „Gilt für“ auf die gesamte Bestellung bzw. die Empfehlungen ändern, sonst würde der Versand abgelehnt.",
+      fix: "remove_discount",
     });
   }
   if (
     discount > 0 &&
     item.discountScope === "recommendations" &&
-    !(Array.isArray(item.recommendations) ? item.recommendations : []).some((r) => r && r.available !== false && r.url != null)
+    !(Array.isArray(item.recommendations) ? item.recommendations : []).some((r) => r && r.available === true && r.url != null)
   ) {
     blocked.push({
       key: "discount_scope_no_recommendations",

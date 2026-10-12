@@ -35,7 +35,12 @@ export function useReleaseActions({
   const [revoking, setRevoking] = React.useState<number | null>(null);
   // The numbers of the approve route's contact-frequency 409, for a card whose
   // local hint did not show them (the dialog reopens with the warning).
-  const [conflict, setConflict] = React.useState<{ contactId: number; frequency: ContactFrequencyWarning } | null>(null);
+  const [conflict, setConflict] = React.useState<{
+    contactId: number;
+    frequency: ContactFrequencyWarning;
+    /** The time option the operator picked — the reopened dialog keeps it. */
+    choiceKey: string | null;
+  } | null>(null);
   const { items, checksOf, busyOf, removeItem, restoreItem, reloadFromServer } = actions;
 
   /** The contact-frequency warning for a card (its hint, else the server's
@@ -45,6 +50,13 @@ export function useReleaseActions({
       contactFrequencyOfChecks(checksOf(contactId)) ??
       (conflict?.contactId === contactId ? conflict.frequency : null),
     [checksOf, conflict]
+  );
+
+  /** The time option picked before a contact-frequency 409 reopened the
+   * dialog for this card, or null. */
+  const conflictChoiceOf = React.useCallback(
+    (contactId: number): string | null => (conflict?.contactId === contactId ? conflict.choiceKey : null),
+    [conflict]
   );
 
   /** Whether a card may be planned (same conditions as Senden, never a Testkontakt). */
@@ -69,7 +81,7 @@ export function useReleaseActions({
 
   /** Confirmed in the dialog: the card leaves the queue, the server approves. */
   const confirm = React.useCallback(
-    async (releaseAt: string | null) => {
+    async (releaseAt: string | null, choiceKey: string | null = null) => {
       const id = scheduleId;
       setScheduleId(null);
       if (id === null) return;
@@ -110,7 +122,7 @@ export function useReleaseActions({
         const frequency = contactFrequencyOfError(err);
         if (frequency) {
           restoreItem({ ...item, sendError: null, recentMailCount: frequency.count });
-          setConflict({ contactId: id, frequency });
+          setConflict({ contactId: id, frequency, choiceKey });
           setScheduleId(id);
           return;
         }
@@ -140,7 +152,7 @@ export function useReleaseActions({
     [reloadFromServer]
   );
 
-  return { enabled, list, scheduleId, setScheduleId, canSchedule, open, confirm, revoke, revoking, frequencyOf };
+  return { enabled, list, scheduleId, setScheduleId, canSchedule, open, confirm, revoke, revoking, frequencyOf, conflictChoiceOf };
 }
 
 export type ReleaseActions = ReturnType<typeof useReleaseActions>;

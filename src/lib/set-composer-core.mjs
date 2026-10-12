@@ -5,7 +5,8 @@
 // the server re-checks everything (bundle-offer-core.mjs) — this only drives
 // what the operator sees while composing.
 
-import { BUNDLE_QUANTITY_MAX, toCents } from "./bundle-offer-core.mjs";
+import { BUNDLE_QUANTITY_MAX, centsToMoney, toCents } from "./bundle-offer-core.mjs";
+import { bundleSaving } from "./bundle-email-core.mjs";
 
 /** A set needs at least two units in total — one product twice, or two products. */
 export const SET_MIN_UNITS = 2;
@@ -58,12 +59,14 @@ export function setUnits(rows) {
  *   - "saving":    below the normal price — the mail shows the strike price and the saving
  *   - "no_saving": at or above the normal price — no strike price, no saving (PAngV)
  *   - "unknown":   a valid price, but the normal price is unknown
- * The saving percentage is rounded like the mail's (bundle-email.ts).
+ * The saving percentage is the mail's own (bundleSaving: rounded down, null
+ * under 1 %), so the dialog never promises a bigger figure than the mail
+ * prints.
  *
  * @param {{ normalCents: number | null, input: string | null | undefined }} args
  * @returns {{ kind: "empty" } | { kind: "invalid" } | { kind: "unknown", priceCents: number } |
  *   { kind: "no_saving", priceCents: number } |
- *   { kind: "saving", priceCents: number, savingCents: number, savingPct: number }}
+ *   { kind: "saving", priceCents: number, savingCents: number, savingPct: number | null }}
  */
 export function setPriceCheck({ normalCents, input }) {
   const raw = typeof input === "string" ? input.trim() : "";
@@ -73,7 +76,8 @@ export function setPriceCheck({ normalCents, input }) {
   if (normalCents == null || normalCents <= 0) return { kind: "unknown", priceCents };
   if (priceCents >= normalCents) return { kind: "no_saving", priceCents };
   const savingCents = normalCents - priceCents;
-  return { kind: "saving", priceCents, savingCents, savingPct: Math.round((savingCents / normalCents) * 100) };
+  const { pct } = bundleSaving(centsToMoney(priceCents), centsToMoney(normalCents));
+  return { kind: "saving", priceCents, savingCents, savingPct: pct };
 }
 
 /**

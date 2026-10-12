@@ -42,12 +42,20 @@ test("setPriceCheck: empty keeps the normal price", () => {
   assert.deepEqual(setPriceCheck({ normalCents: 18980, input: undefined }), { kind: "empty" });
 });
 
-test("setPriceCheck: a lower price is a genuine saving, rounded like the mail", () => {
+test("setPriceCheck: a lower price is a genuine saving, with the mail's percentage", () => {
+  // 29,90 / 189,80 = 15,75 % — the mail prints 15 % (rounded down), so does the dialog
   assert.deepEqual(setPriceCheck({ normalCents: 18980, input: "159,90" }), {
     kind: "saving",
     priceCents: 15990,
     savingCents: 2990,
-    savingPct: 16,
+    savingPct: 15,
+  });
+  // under 1 %: a saving amount, but no percentage (the mail shows none either)
+  assert.deepEqual(setPriceCheck({ normalCents: 100000, input: "995" }), {
+    kind: "saving",
+    priceCents: 99500,
+    savingCents: 500,
+    savingPct: null,
   });
   // the German way of typing, with grouping and the € sign
   assert.equal(setPriceCheck({ normalCents: 150000, input: "1.299,00 €" }).kind, "saving");

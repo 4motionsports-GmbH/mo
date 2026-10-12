@@ -96,9 +96,12 @@ export function campaignAutoPrepareConfig(env = process.env) {
       : 0;
   const textMode = parseEmailTextMode(env.CAMPAIGN_AUTO_PREPARE_TEXT_MODE) ?? DEFAULT_EMAIL_TEXT_MODE;
   // "set" is no longer a scope a draft can take (a set mail carries no code,
-  // offer-mode.mjs) — it falls back to "all" like any other invalid value.
-  const discountScope = parseEditableDiscountScope(env.CAMPAIGN_AUTO_PREPARE_DISCOUNT_SCOPE) ?? "all";
-  return { count, discountPercent, discountScope, textMode };
+  // offer-mode.mjs): „x % only on the set“ means no code at all — never
+  // widened to the whole order. Any other invalid value falls back to "all".
+  const rawScope = env.CAMPAIGN_AUTO_PREPARE_DISCOUNT_SCOPE;
+  const retiredSet = typeof rawScope === "string" && rawScope.trim() === "set";
+  const discountScope = parseEditableDiscountScope(rawScope) ?? "all";
+  return { count, discountPercent: retiredSet ? 0 : discountPercent, discountScope, textMode };
 }
 
 /**

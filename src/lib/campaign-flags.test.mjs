@@ -40,4 +40,14 @@ test("nightly prepare ships off and reads count, depth and text mode defensively
     }),
     { count: 0, discountPercent: 0, discountScope: "all", textMode: "compact" }
   );
+  // The retired scope "set" (a code only on the set) means no code — never a
+  // whole-order code at the configured depth.
+  assert.deepEqual(
+    campaignAutoPrepareConfig({
+      CAMPAIGN_AUTO_PREPARE_COUNT: "50",
+      CAMPAIGN_AUTO_PREPARE_DISCOUNT: "10",
+      CAMPAIGN_AUTO_PREPARE_DISCOUNT_SCOPE: "set",
+    }),
+    { count: 50, discountPercent: 0, discountScope: "all", textMode: "compact" }
+  );
 });
