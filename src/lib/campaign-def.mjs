@@ -166,9 +166,10 @@ export function validateCampaignInput(raw, opts = {}) {
     else value.discountPercent = v;
   }
   if (has("discountScope")) {
-    if (r.discountScope === "all" || r.discountScope === "recommendations" || r.discountScope === "set") {
+    // "set" is history (offer-mode.mjs): a set mail carries no code.
+    if (r.discountScope === "all" || r.discountScope === "recommendations") {
       value.discountScope = r.discountScope;
-    } else errors.discountScope = "Rabatt gilt für: alles, Empfehlungen oder Set.";
+    } else errors.discountScope = "Rabatt gilt für: gesamte Bestellung oder Empfehlungen.";
   }
   if (has("designKey")) {
     const v = typeof r.designKey === "string" && r.designKey.trim() ? r.designKey.trim() : null;

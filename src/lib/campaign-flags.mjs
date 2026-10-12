@@ -25,7 +25,7 @@
 
 import { DEFAULT_EMAIL_TEXT_MODE, parseEmailTextMode } from "./email-text-mode.mjs";
 import { parseDiscountPercent } from "./discount-validation.mjs";
-import { parseDiscountScope } from "./discount-scope.mjs";
+import { parseEditableDiscountScope } from "./discount-scope.mjs";
 
 const TRUTHY = new Set(["1", "true", "yes", "on"]);
 
@@ -85,7 +85,7 @@ export function marketingMinSendIntervalDays(env = process.env) {
  * discount-scope.mjs) and in which text mode. Invalid values fall back to 0 %,
  * "all" and the modern default text mode.
  * @param {Record<string, string | undefined>} [env]
- * @returns {{ count: number, discountPercent: number, discountScope: "all" | "recommendations" | "set", textMode: "detailed" | "compact" | "minimal" }}
+ * @returns {{ count: number, discountPercent: number, discountScope: "all" | "recommendations", textMode: "detailed" | "compact" | "minimal" }}
  */
 export function campaignAutoPrepareConfig(env = process.env) {
   const count = parseNonNegativeInt(env.CAMPAIGN_AUTO_PREPARE_COUNT, 0);
@@ -95,7 +95,9 @@ export function campaignAutoPrepareConfig(env = process.env) {
       ? (parseDiscountPercent(Number(rawDiscount)) ?? 0)
       : 0;
   const textMode = parseEmailTextMode(env.CAMPAIGN_AUTO_PREPARE_TEXT_MODE) ?? DEFAULT_EMAIL_TEXT_MODE;
-  const discountScope = parseDiscountScope(env.CAMPAIGN_AUTO_PREPARE_DISCOUNT_SCOPE);
+  // "set" is no longer a scope a draft can take (a set mail carries no code,
+  // offer-mode.mjs) — it falls back to "all" like any other invalid value.
+  const discountScope = parseEditableDiscountScope(env.CAMPAIGN_AUTO_PREPARE_DISCOUNT_SCOPE) ?? "all";
   return { count, discountPercent, discountScope, textMode };
 }
 
