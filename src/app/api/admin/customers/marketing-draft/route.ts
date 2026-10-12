@@ -23,6 +23,10 @@
 // written around the MO-XXXX placeholder and the real unique code is minted at
 // APPROVE & SEND time (lib/marketing-email).
 //
+// Set XOR items (offer-mode.mjs): with an active set attached the mail is a
+// SET mail — the prose presents the set, and the draft is generated and saved
+// with depth 0 whatever the request said (the set price is the concession).
+//
 // Auth + CSRF: guardAdminPost (the proxy already gates /api/admin/*).
 
 import { customerProfileForPrompt } from "@/lib/customer-profile";
@@ -60,13 +64,15 @@ import { buildPrefilledCartUrlForIds, chooseCustomerProductIds } from "@/lib/car
 import { filterAvailable } from "@/lib/availability.mjs";
 import {
   generateCustomerMarketingDraft,
+  type DraftSetOffer,
   type EmailTextMode,
 } from "@/lib/marketing-draft";
 import {
   getActiveBundleForCustomer,
   linkBundleOfferToSend,
 } from "@/lib/bundle-offers-store";
-import { computeCompareAtPrice } from "@/lib/bundle-offer-core.mjs";
+import { bundleHeadline, bundleStattPrice, shouldRenderBundleBlock } from "@/lib/bundle-email-core.mjs";
+import { discountForOffer, offerKind } from "@/lib/offer-mode.mjs";
 import { reportError } from "@/lib/observability";
 
 // The Anthropic pass over several transcripts can take a while.
@@ -170,6 +176,30 @@ export async function POST(req: Request) {
     // for a brand-new draft.
     const textMode: EmailTextMode =
       requestedTextMode ?? (existing ? storedTextMode(existing) : DEFAULT_EMAIL_TEXT_MODE);
+
+    // A created, still-live set for this customer is ATTACHED to the email and
+    // makes it a SET mail (offer-mode.mjs): the draft presents the set (prompt
+    // below), carries no discount, and the send path renders its offer block.
+    // The set is linked to the send row after persist. Decided before the
+    // reuse check, so a requested depth a set mail cannot carry never forces
+    // a regenerate.
+    const attachableBundle = await getActiveBundleForCustomer(customerId);
+    const hasActiveBundle = shouldRenderBundleBlock(attachableBundle);
+    const kind = offerKind(hasActiveBundle);
+    discountPercent = discountForOffer(discountPercent, hasActiveBundle);
+    const attachedBundle: DraftSetOffer | null =
+      attachableBundle && hasActiveBundle
+        ? {
+            title: bundleHeadline(attachableBundle.title, "de"),
+            components: attachableBundle.components.map((c) => ({
+              title: c.title,
+              quantity: c.quantity,
+            })),
+            hasSaving:
+              bundleStattPrice(attachableBundle.bundlePrice, attachableBundle.componentsSum) != null,
+          }
+        : null;
+
     // Reuse only when nothing about the request changed — depth, instructions
     // AND text mode; otherwise re-generate so prose, code depth and the audit
     // snapshot always agree.
@@ -213,19 +243,6 @@ export async function POST(req: Request) {
     // Snapshot persona: the newest session's, the freshest signal.
     const personaLabel = sessions.at(-1)?.personaLabel ?? null;
 
-    // A created, still-active bundle for this customer is ATTACHED to the email:
-    // the draft references it naturally (prompt below) and the send path renders
-    // its special-offer block. The bundle is linked to the send row after persist.
-    const attachableBundle = await getActiveBundleForCustomer(customerId);
-    const attachedBundle = attachableBundle
-      ? {
-          title: attachableBundle.title ?? "Dein persönliches Set",
-          componentNames: attachableBundle.components.map((c) => c.title),
-          hasSaving:
-            computeCompareAtPrice(attachableBundle.bundlePrice, attachableBundle.componentsSum) != null,
-        }
-      : null;
-
     const hasDiscount = discountPercent > 0;
     const placeholderCode = hasDiscount ? PLACEHOLDER_DISCOUNT_CODE : null;
     const expiry = hasDiscount ? projectedExpiry() : null;
@@ -244,6 +261,7 @@ export async function POST(req: Request) {
       purchasesKnown: purchases != null,
       products: products.map((p) => ({ name: p.name })),
       adminInstructions,
+      offerKind: kind,
       attachedBundle,
       textMode,
       discountCode: placeholderCode,
@@ -279,8 +297,8 @@ export async function POST(req: Request) {
             409
           );
         }
-        // Attach the active bundle to this send so the send path renders it.
-        if (attachableBundle) await linkBundleOfferToSend(attachableBundle.id, updated.id);
+        // Attach the set to this send so the send path renders it.
+        if (attachableBundle && attachedBundle) await linkBundleOfferToSend(attachableBundle.id, updated.id);
         return adminJson({ send: updated, regenerated: true });
       }
 
@@ -304,8 +322,8 @@ export async function POST(req: Request) {
       if (!send) {
         return adminJsonError("internal_error", "Could not persist the draft.", 500);
       }
-      // Attach the active bundle to this send so the send path renders it.
-      if (attachableBundle) await linkBundleOfferToSend(attachableBundle.id, send.id);
+      // Attach the set to this send so the send path renders it.
+      if (attachableBundle && attachedBundle) await linkBundleOfferToSend(attachableBundle.id, send.id);
       return adminJson({ send });
     } catch (dbErr) {
       reportError(dbErr, {

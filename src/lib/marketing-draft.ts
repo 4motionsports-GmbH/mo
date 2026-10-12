@@ -25,6 +25,14 @@ import {
 import { reportError } from "./observability";
 import { recordAiUsage } from "./ai-usage-store";
 import { formatStoreDate } from "./store-datetime.mjs";
+import {
+  alignHighlightNames,
+  draftPromptPlan,
+  highlightNamesSection,
+  noDiscountHint,
+  setOfferSection,
+} from "./draft-offer.mjs";
+import type { OfferKind } from "./offer-mode.mjs";
 
 // Writer tier (lib/ai-models.mjs) — one voice across the backend.
 const DRAFT_MODEL = modelFor("writer");
@@ -50,8 +58,10 @@ const draftSchema = z.object({
  * (the printed letter has no product table, so it keeps the plain schema). The
  * render path matches entries to products by name — the model must copy the
  * given product names EXACTLY. The description length follows the selected
- * text mode (detailed: 1–3 sentences … minimal: caption-like fragment). */
-function productHighlightsField(textMode: EmailTextMode) {
+ * text mode (detailed: 1–3 sentences … minimal: caption-like fragment). A set
+ * mail describes the set's products (named like the set block lists them), an
+ * item mail the recommended ones. */
+function productHighlightsField(textMode: EmailTextMode, kind: OfferKind = "items") {
   return z
     .array(
       z.object({
@@ -71,14 +81,17 @@ function productHighlightsField(textMode: EmailTextMode) {
       })
     )
     .describe(
-      "Für JEDES empfohlene Produkt (und jedes Set-Produkt, falls ein Set " +
-        "angehängt ist) genau EIN Eintrag mit einer persönlichen Kurzbeschreibung."
+      kind === "set"
+        ? "Für JEDES Produkt des Sets genau EIN Eintrag mit einer persönlichen " +
+            "Kurzbeschreibung — name EXAKT wie in der Set-Liste, ohne die Anzahl."
+        : "Für JEDES empfohlene Produkt genau EIN Eintrag mit einer persönlichen " +
+            "Kurzbeschreibung."
     );
 }
 
-function draftWithHighlightsSchema(textMode: EmailTextMode) {
+function draftWithHighlightsSchema(textMode: EmailTextMode, kind: OfferKind = "items") {
   return draftSchema.extend({
-    productHighlights: productHighlightsField(textMode),
+    productHighlights: productHighlightsField(textMode, kind),
   });
 }
 
@@ -125,7 +138,9 @@ export interface DraftDiscountInput {
   discountPercent: number;
   /**
    * What the code applies to (discount-scope.mjs; campaign channel only —
-   * marketing codes always apply to the whole order). Omitted = "all".
+   * marketing codes always apply to the whole order). Omitted = "all". "set"
+   * is history (offer-mode.mjs: a set mail carries no code) — the type keeps
+   * it only because stored drafts may still read back so.
    */
   discountScope?: "all" | "recommendations" | "set" | null;
   /**
@@ -139,6 +154,20 @@ export interface DraftDiscountInput {
    * discount was selected.
    */
   discountValidityDays: number | null;
+}
+
+/**
+ * The set a SET mail offers (offer-mode.mjs: a mail is a set offer OR single
+ * items). The prose introduces it; the deterministic offer block (pictures,
+ * contents, price, the genuine „statt“ reference, CTA — bundle-email.ts) is
+ * appended at send time, so the model never states a price itself.
+ */
+export interface DraftSetOffer {
+  title: string;
+  /** The set's components as snapshotted: display title + count. */
+  components: Array<{ title: string; quantity: number }>;
+  /** True when the set price is below the component sum (a real saving). */
+  hasSaving: boolean;
 }
 
 export interface GenerateDraftInput extends DraftDiscountInput {
@@ -363,40 +392,33 @@ export interface GenerateCustomerDraftInput extends DraftDiscountInput {
    */
   adminInstructions: string | null;
   /**
-   * A created bundle attached to this send, so the draft references it
-   * NATURALLY. The actual offer block (products, price, "statt", CTA) is
-   * appended deterministically at send time — the prose just mentions the set.
-   * Null = no bundle attached.
+   * What this mail offers (offer-mode.mjs), derived by the caller from whether
+   * an active set is attached: "set" = the attached set IS the offer (no
+   * product recommendations, no code — the route passes depth 0); "items" =
+   * the recommendations, optionally with a code.
    */
-  attachedBundle?: {
-    title: string;
-    componentNames: string[];
-    /** True when the bundle price is below the component sum (a real saving). */
-    hasSaving: boolean;
-  } | null;
+  offerKind: OfferKind;
+  /**
+   * The set of a set mail (offerKind "set"). The actual offer block (products,
+   * price, "statt", CTA) is appended deterministically at send time — the
+   * prose introduces the set. Null = no set attached.
+   */
+  attachedBundle?: DraftSetOffer | null;
   /** Prose length for the generated text (operator-selected in the admin UI).
    * Omitted = 'detailed' (the classic long-form behaviour). */
   textMode?: EmailTextMode;
 }
 
-/** The prompt section describing an attached bundle (or null when none). The
- * model should reference the set warmly, near the call-to-action, WITHOUT
- * inventing a price or a link (the offer block is appended at send time). */
-function bundleHint(bundle: GenerateCustomerDraftInput["attachedBundle"]): string {
-  if (!bundle || bundle.componentNames.length === 0) return "";
-  const items = bundle.componentNames.map((n) => `  - ${n}`).join("\n");
-  return (
-    `## Angehängtes Set-Angebot (im Text natürlich erwähnen)\n` +
-    `Für diesen Kunden ist ein persönliches Produkt-Set „${bundle.title}“ ` +
-    `vorbereitet, das unten in der E-Mail als eigenes Angebot mit Bild, Preis ` +
-    `und Button erscheint. Erwähne dieses Set einladend im Text (nahe der ` +
-    `Handlungsaufforderung), als hättest du es persönlich zusammengestellt.` +
-    (bundle.hasSaving
-      ? ` Es ist günstiger als die Einzelprodukte zusammen — weise freundlich auf den Vorteil hin.`
-      : ``) +
-    ` Nenne KEINEN Preis und baue KEINEN Link ein (beides wird automatisch ` +
-    `angehängt). Das Set enthält:\n${items}\n\n`
-  );
+/** The prompt variant of a per-customer draft (draft-offer.mjs): a set mail
+ * presents the set and drops the products + code; an item mail is unchanged. */
+function customerDraftPlan(input: GenerateCustomerDraftInput) {
+  return draftPromptPlan({
+    offerKind: input.offerKind,
+    setComponents: input.attachedBundle?.components ?? [],
+    recommendationNames: input.products.map((p) => p.name),
+    discountCode: input.discountCode,
+    discountPercent: input.discountPercent,
+  });
 }
 
 function draftSessionBlock(s: CustomerDraftSession, index: number, total: number): string {
@@ -435,10 +457,14 @@ function ownedItemsBlock(input: {
  * honoured by a template — the admin reviews/edits every draft before sending,
  * and the instructions stay visible next to the editor. */
 function fallbackCustomerDraft(input: GenerateCustomerDraftInput): MarketingDraft {
+  const plan = customerDraftPlan(input);
   const first = input.products[0]?.name;
-  const subject = first
-    ? `Deine Empfehlung von motion sports: ${first}`
-    : "Deine persönliche Empfehlung von motion sports";
+  const subject =
+    plan.kind === "set"
+      ? "Dein persönliches Set von motion sports"
+      : first
+        ? `Deine Empfehlung von motion sports: ${first}`
+        : "Deine persönliche Empfehlung von motion sports";
 
   const several = input.sessions.length > 1;
   const lines: string[] = [
@@ -450,23 +476,33 @@ function fallbackCustomerDraft(input: GenerateCustomerDraftInput): MarketingDraf
       : "hier ist Mo von motion sports. Schön, dass wir uns im Chat zu deinem " +
         "Trainingsvorhaben austauschen konnten.",
   ];
-  if (input.products.length > 0) {
+  if (plan.kind === "set") {
+    // A set mail: the set is the offer — its contents, no product list, no code.
     lines.push(
       "",
       several
-        ? "Basierend auf unseren Gesprächen passt aus meiner Sicht besonders gut:"
-        : "Basierend auf unserem Gespräch passt aus meiner Sicht besonders gut:",
-      productLine(input.products)
-    );
-  }
-  const discountParagraph = fallbackDiscountParagraph(input);
-  if (discountParagraph) lines.push("", discountParagraph);
-  if (input.attachedBundle && input.attachedBundle.componentNames.length > 0) {
-    lines.push(
+        ? "Passend zu unseren Gesprächen habe ich dir ein persönliches Set zusammengestellt:"
+        : "Passend zu unserem Gespräch habe ich dir ein persönliches Set zusammengestellt:",
+      ...plan.setLines.map((l) => `- ${l}`),
       "",
-      `Ich habe dir außerdem ein persönliches Set zusammengestellt: ` +
-        `${input.attachedBundle.title}. Die Details und dein Angebot findest du gleich unten.`
+      "Alle Details und deinen Set-Preis findest du gleich unten."
     );
+  } else {
+    if (input.products.length > 0) {
+      lines.push(
+        "",
+        several
+          ? "Basierend auf unseren Gesprächen passt aus meiner Sicht besonders gut:"
+          : "Basierend auf unserem Gespräch passt aus meiner Sicht besonders gut:",
+        productLine(input.products)
+      );
+    }
+    const discountParagraph = fallbackDiscountParagraph({
+      ...input,
+      discountCode: plan.discountCode,
+      discountPercent: plan.discountPercent,
+    });
+    if (discountParagraph) lines.push("", discountParagraph);
   }
   lines.push(
     "",
@@ -507,12 +543,20 @@ export async function generateCustomerMarketingDraft(
     : "";
 
   const textMode = input.textMode ?? LEGACY_EMAIL_TEXT_MODE;
+  // Set XOR items (offer-mode.mjs): which blocks and rules this mail gets.
+  const plan = customerDraftPlan(input);
+  const isSet = plan.kind === "set";
+  const offerInput: DraftDiscountInput = {
+    ...input,
+    discountCode: plan.discountCode,
+    discountPercent: plan.discountPercent,
+  };
 
   try {
     const { object, usage } = await generateObject({
       model: anthropic(DRAFT_MODEL),
       providerOptions: anthropicOptionsFor("writer"),
-      schema: draftWithHighlightsSchema(textMode),
+      schema: draftWithHighlightsSchema(textMode, plan.kind),
       system:
         "Du bist Mo, ein persönlicher, sympathischer Berater bei motion sports " +
         "(Fitness- und Kraftsportgeräte). Du schreibst eine warme, " +
@@ -522,8 +566,14 @@ export async function generateCustomerMarketingDraft(
         "Gespräche, die bisherige E-Mail-Korrespondenz, ein verdichtetes " +
         "Kundenverständnis und die Kaufhistorie.\n\n" +
         "Regeln:\n" +
-        "- Die empfohlenen Produkte erscheinen unterhalb deines Textes " +
-        "AUTOMATISCH als Bildkacheln mit Produktfoto, Name und Preis.\n" +
+        (isSet
+          ? "- Diese Mail handelt von EINEM persönlichen Set: Stelle es als DAS " +
+            "Angebot vor (nicht als Zusatz) und begründe aus dem Kundenwissen, " +
+            "warum genau diese Zusammenstellung passt. Unterhalb deines Textes " +
+            "erscheint AUTOMATISCH der Angebotsblock des Sets mit Bildern, " +
+            "Inhalt, Set-Preis und Button.\n"
+          : "- Die empfohlenen Produkte erscheinen unterhalb deines Textes " +
+            "AUTOMATISCH als Bildkacheln mit Produktfoto, Name und Preis.\n") +
         `- ${textModeBodyRule(textMode)}\n` +
         "- Beziehe dich konkret auf die Gespräche UND, falls vorhanden, auf die " +
         "bisherige E-Mail-Korrespondenz (z. B. auf eine offene Frage aus einer " +
@@ -533,16 +583,21 @@ export async function generateCustomerMarketingDraft(
         "du NICHT noch einmal. Knüpfe stattdessen daran an: empfiehl Ergänzendes " +
         "oder den sinnvollen nächsten Schritt, und freu dich ehrlich über den Kauf, " +
         "wenn es passt.\n" +
-        "- Empfiehl NUR die vorgegebenen Produkte — sei ehrlich, kein Marktschreier, " +
-        "keine erfundenen Produkte, keine erfundenen Preise.\n" +
+        (isSet
+          ? "- Empfiehl KEINE weiteren Produkte neben dem Set — sei ehrlich, kein " +
+            "Marktschreier, keine erfundenen Produkte, keine erfundenen Preise.\n"
+          : "- Empfiehl NUR die vorgegebenen Produkte — sei ehrlich, kein Marktschreier, " +
+            "keine erfundenen Produkte, keine erfundenen Preise.\n") +
         "- Hinweise vom motion-sports-Team (wenn vorhanden) arbeitest du natürlich " +
         "in den Text ein — als deine eigenen Worte, nie als zitierte Anweisung.\n" +
-        "- Wenn dir ein persönliches Rabattangebot vorgegeben wird, webe es klar, " +
-        "warm und einladend in den Text ein (mit dem exakten Code) — als " +
-        "persönliches Angebot für genau diesen Kunden, nicht als Massen-Promo.\n" +
-        "- Wenn ein persönliches Set-Angebot angehängt ist, erwähne es natürlich " +
-        "im Text (es erscheint unten als eigenes Angebot mit Bild, Preis und " +
-        "Button) — nenne aber selbst KEINEN Preis und KEINEN Link.\n" +
+        (isSet
+          ? "- Es gibt KEINEN Rabattcode und keinen Prozent-Rabatt: Der Set-Preis ist " +
+            "das Angebot. Nenne selbst KEINEN Preis, KEINE Ersparnis und KEINE " +
+            "Prozentzahl und baue KEINEN Link ein — Preis, Vergleich und Button " +
+            "stehen im Angebotsblock.\n"
+          : "- Wenn dir ein persönliches Rabattangebot vorgegeben wird, webe es klar, " +
+            "warm und einladend in den Text ein (mit dem exakten Code) — als " +
+            "persönliches Angebot für genau diesen Kunden, nicht als Massen-Promo.\n") +
         "- Unterschreibe mit 'Mo, dein persönlicher Berater bei motion sports'. " +
         "Baue KEINEN Warenkorb-Link und KEINEN Abmeldelink ein — die werden " +
         "separat angehängt.",
@@ -550,9 +605,15 @@ export async function generateCustomerMarketingDraft(
         `## Aktuelles Kundenverständnis (verdichtet)\n` +
         `${input.profileSummary?.trim() || "(noch kein Profil generiert)"}\n\n` +
         `## Bereits gekauft (NICHT erneut empfehlen)\n${ownedItemsBlock(input)}\n\n` +
-        `## Produkte, die diese E-Mail empfehlen soll\n${productLine(input.products)}\n\n` +
-        `${discountHint(input)}\n\n` +
-        bundleHint(input.attachedBundle) +
+        (isSet
+          ? setOfferSection({
+              title: input.attachedBundle?.title ?? "Dein persönliches Set",
+              lines: plan.setLines,
+              hasSaving: input.attachedBundle?.hasSaving === true,
+            })
+          : `## Produkte, die diese E-Mail empfehlen soll\n${productLine(input.products)}\n\n`) +
+        `${isSet ? noDiscountHint("set") : discountHint(offerInput)}\n\n` +
+        highlightNamesSection(plan.highlightNames, plan.kind) +
         adminBlock +
         `## Bisherige Gespräche (chronologisch, älteste zuerst)\n\n` +
         `${sessionBlocks || "(keine Gespräche verknüpft)"}\n\n` +
@@ -570,7 +631,14 @@ export async function generateCustomerMarketingDraft(
     const subject = object.subject?.trim();
     const body = object.body?.trim();
     if (!subject || !body) return fallbackCustomerDraft(input);
-    return { subject, body, productHighlights: sanitizeHighlights(object.productHighlights) };
+    return {
+      subject,
+      body,
+      productHighlights: alignHighlightNames(
+        sanitizeHighlights(object.productHighlights),
+        plan.highlightNames
+      ),
+    };
   } catch (err) {
     reportError(err, { route: "lib/marketing-draft", phase: "generateCustomer" });
     return fallbackCustomerDraft(input);
