@@ -15,6 +15,14 @@ export interface SendConfigProps {
   logoOverride: string | null;
 }
 
+/** Einstellungen → „Kontakthäufigkeit“ (lib/contact-frequency.mjs). */
+export interface ContactFrequencyCardProps {
+  /** The stored warning threshold (defaults before migration 0078 / without a row). */
+  settings: { maxMails: number; windowDays: number };
+  /** MARKETING_MIN_SEND_INTERVAL_DAYS — the HARD cap, read-only here (0 = aus). */
+  minSendIntervalDays: number;
+}
+
 /** Read-only integration/flag overview (decision D-5) — booleans only, never
  *  values: "konfiguriert" means the env var(s) are present. */
 export interface SystemStatus {

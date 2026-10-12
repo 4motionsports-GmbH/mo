@@ -6,6 +6,7 @@
 import type { EmailTextModeValue } from "../EmailTextModeToggle";
 import type { DiscountScope } from "@/lib/discount-scope.mjs";
 import type { CampaignRecommendationView } from "@/lib/campaign-recommendation-view";
+import type { ContactFrequencySettings } from "@/lib/contact-frequency.mjs";
 
 /** The three views of the screen (`?view=`, campaign-desk-core.mjs). */
 export type DeskView = "pruefen" | "liste" | "eingeplant" | "briefe" | "gesendet";
@@ -113,6 +114,10 @@ export interface CampaignQueueItemProps {
   /** The address is on the suppression list / unsubscribed: a real contact is
    * refused at send time (blocked Prüfpunkt), a test contact sends anyway. */
   suppressed: boolean;
+  /** Marketing mails this person received in the last
+   * `contactFrequency.windowDays` days (contact-frequency.mjs); null = not
+   * counted (warning off, Testkontakt, or the count failed — never warns). */
+  recentMailCount: number | null;
   /** Client-only: subject or text edited by hand in this session. */
   edited?: boolean;
   /** Client-only: the server's reason for refusing the last send attempt. */
@@ -266,6 +271,9 @@ export interface CampaignDeskProps {
   heroGenerationConfigured: boolean;
   /** MARKETING_MIN_SEND_INTERVAL_DAYS (0 = no cap). */
   minSendIntervalDays: number;
+  /** The soft contact-frequency warning (Einstellungen, admin_settings 0078);
+   * 0 in either field = off. A warning only — Senden asks once. */
+  contactFrequency: ContactFrequencySettings;
   costs: CampaignCostsProps;
   sentSummary: CampaignSentSummaryProps | null;
   initialContactId: number | null;

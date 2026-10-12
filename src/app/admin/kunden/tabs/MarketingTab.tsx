@@ -21,6 +21,15 @@ import { DEFAULT_EMAIL_TEXT_MODE, EMAIL_TEXT_MODE_HINTS } from "@/lib/email-text
 import { ADMIN_DATE, formatAdmin } from "@/lib/admin-datetime.mjs";
 import { adminTabHref } from "@/lib/admin-tabs.mjs";
 import {
+  CONTACT_FREQUENCY_HINT_DETAIL,
+  contactFrequencyEnabled,
+  contactFrequencyQuestion,
+  contactFrequencyTitle,
+  contactFrequencyWarning,
+  readContactFrequencyConflict,
+  recentMailsText,
+} from "@/lib/contact-frequency.mjs";
+import {
   Button,
   buttonVariants,
   Callout,
@@ -35,7 +44,7 @@ import {
   toast,
   useConfirm,
 } from "../../ui";
-import { adminFetch, errorMessage } from "../../lib/admin-fetch";
+import { AdminApiError, adminFetch, errorMessage } from "../../lib/admin-fetch";
 import { EmailPreviewButton } from "../../EmailPreviewButton";
 import { EmailTextModeToggle, type EmailTextModeValue } from "../../EmailTextModeToggle";
 import { HeroImagePanel } from "../../HeroImagePanel";
@@ -109,15 +118,33 @@ function Einzelansprache({ customer }: { customer: CustomerDetail }) {
     }
   }
 
+  // Contact frequency (lib/contact-frequency.mjs): the person's marketing
+  // mails in the window — a warning tone at the threshold, never a block.
+  const recent = customer.recentMarketingMails;
+  const frequency = contactFrequencyWarning({ count: recent, settings: customer.contactFrequency });
+
   return (
     <section className="flex flex-col gap-2 rounded-lg border border-border bg-surface-2 p-3">
-      <div className="flex items-center gap-1.5 text-sm font-semibold">
+      <div className="flex flex-wrap items-center gap-1.5 text-sm font-semibold">
         Einzelansprache
         <InfoTip>
           Eine persönliche Mail nur an diese Person — mit Profil, Käufen und Gesprächen, auf Wunsch mit
           Rabatt oder Set. Der Entwurf landet im Prüftisch der Kampagne „Einzelansprache“ und geht
           erst nach deiner Prüfung raus (gleiche Prüfungen und Sperren wie jede Kampagne).
         </InfoTip>
+        {recent !== null && contactFrequencyEnabled(customer.contactFrequency) && (
+          <span className="ml-auto">
+            {frequency ? (
+              <StatusBadge tone="warning" dot={false}>
+                {contactFrequencyTitle(frequency)}
+              </StatusBadge>
+            ) : (
+              <span className="text-xs font-normal tabular-nums text-muted-foreground">
+                {recentMailsText(recent, customer.contactFrequency.windowDays)}
+              </span>
+            )}
+          </span>
+        )}
       </div>
       {open ? (
         <div className="flex flex-wrap items-center gap-2 text-sm">
@@ -306,10 +333,18 @@ function LegacyMarketingMail({ customer }: { customer: CustomerDetail }) {
       });
       return;
     }
+    // Contact frequency (lib/contact-frequency.mjs): a warning only — the
+    // same confirm asks „trotzdem senden?“ and the send skips the route's
+    // 409 backstop; a 409 without the local warning asks once more.
+    const frequency = contactFrequencyWarning({
+      count: customer.recentMarketingMails,
+      settings: customer.contactFrequency,
+    });
     const ok = await confirm({
-      title: `E-Mail an ${customer.email} senden?`,
+      title: frequency ? contactFrequencyQuestion(frequency) : `E-Mail an ${customer.email} senden?`,
       description: (
         <span>
+          {frequency && <>An {customer.email} · </>}
           Betreff: <strong className="text-foreground">{subject || "—"}</strong>
           {discountPercent > 0 ? (
             <>
@@ -319,16 +354,33 @@ function LegacyMarketingMail({ customer }: { customer: CustomerDetail }) {
           ) : (
             " · ohne Rabatt"
           )}
+          {frequency && <> · {CONTACT_FREQUENCY_HINT_DETAIL}</>}
         </span>
       ),
-      confirmLabel: "Jetzt senden",
+      confirmLabel: frequency ? "Trotzdem senden" : "Jetzt senden",
     });
     if (!ok) return;
     setBusy("send");
     try {
       // Persist any unsaved edits first so the sent mail matches the textarea.
       await adminFetch("/api/admin/marketing/update", { body: { sendId: send.id, subject, body } });
-      await adminFetch("/api/admin/marketing/send", { body: { sendId: send.id } });
+      const sendMail = (ignoreContactFrequency: boolean) =>
+        adminFetch("/api/admin/marketing/send", {
+          body: { sendId: send.id, ...(ignoreContactFrequency ? { ignoreContactFrequency: true } : {}) },
+        });
+      try {
+        await sendMail(frequency !== null);
+      } catch (err) {
+        const conflict = err instanceof AdminApiError ? readContactFrequencyConflict(err.details) : null;
+        if (!conflict) throw err;
+        const again = await confirm({
+          title: contactFrequencyQuestion(conflict),
+          description: `An ${customer.email}. ${CONTACT_FREQUENCY_HINT_DETAIL}`,
+          confirmLabel: "Trotzdem senden",
+        });
+        if (!again) return;
+        await sendMail(true);
+      }
       setSend({
         ...send,
         status: "sent",

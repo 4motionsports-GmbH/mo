@@ -2,14 +2,18 @@
 
 // „Einplanen“: the time choice for one reviewed mail (ScheduleDialog) and the
 // view „Eingeplant“ with every approved, not yet sent mail of the campaign
-// (ScheduledList). lib/campaign-release-core.mjs owns the time options.
+// (ScheduledList). lib/campaign-release-core.mjs owns the time options. A card
+// with the contact-frequency hint shows the warning in the dialog; pressing
+// „Einplanen“ is the acknowledgement (useReleaseActions).
 
 import * as React from "react";
 import { CalendarClock, Undo2 } from "lucide-react";
 import { releaseTimeOptions } from "@/lib/campaign-release-core.mjs";
 import { formatAdmin, ADMIN_DATE_TIME_SHORT } from "@/lib/admin-datetime.mjs";
+import { CONTACT_FREQUENCY_HINT_DETAIL, contactFrequencyTitle } from "@/lib/contact-frequency.mjs";
 import {
   Button,
+  Callout,
   DataTable,
   Dialog,
   DialogContent,
@@ -37,6 +41,9 @@ export function ScheduleDialog({ release, item }: { release: ReleaseActions; ite
     setChoice("now");
   }, [open]);
   const picked = options.find((o) => o.key === choice) ?? options[0];
+  // The contact-frequency warning (contact-frequency.mjs): pressing
+  // „Einplanen“ acknowledges it — the mail is planned anyway.
+  const frequency = item ? release.frequencyOf(item.contactId) : null;
   return (
     <Dialog open={open} onOpenChange={(v) => !v && release.setScheduleId(null)}>
       <DialogContent size="sm">
@@ -44,6 +51,14 @@ export function ScheduleDialog({ release, item }: { release: ReleaseActions; ite
           <DialogTitle>E-Mail einplanen</DialogTitle>
           <DialogDescription>{item ? `An ${item.email} — „${item.subject}“` : ""}</DialogDescription>
         </DialogHeader>
+        {frequency && (
+          <Callout tone="warning" compact title={contactFrequencyTitle(frequency)}>
+            <span className="inline-flex items-center gap-1">
+              Nur ein Hinweis — „Einplanen“ plant die E-Mail trotzdem ein.
+              <InfoTip>{CONTACT_FREQUENCY_HINT_DETAIL}</InfoTip>
+            </span>
+          </Callout>
+        )}
         <Field
           label="Versand ab"
           info="Der Versand-Job verschickt eingeplante E-Mails alle 10 Minuten nacheinander. Beim Versand werden alle Prüfungen erneut gemacht; hat sich der Entwurf geändert oder lehnt eine Prüfung ab, kommt die E-Mail mit dem Grund zurück in die Warteschlange."

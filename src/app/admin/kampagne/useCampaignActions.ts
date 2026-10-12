@@ -36,6 +36,11 @@ import { OFFER_CONFLICT_MESSAGE } from "@/lib/offer-mode.mjs";
 import { parseProductRef } from "@/lib/product-ref.mjs";
 import { abGroupOf, reviewChecks, reviewVerdict } from "@/lib/campaign-review-checks.mjs";
 import {
+  CONTACT_FREQUENCY_CHECK,
+  readContactFrequencyConflict,
+  type ContactFrequencyWarning,
+} from "@/lib/contact-frequency.mjs";
+import {
   deskProgress,
   matchesQueueFilter,
   nextSelectionAfterRemoval,
@@ -108,6 +113,33 @@ function rememberFirstSendConfirm(): void {
   } catch {
     // best-effort only
   }
+}
+
+/** The contact-frequency hint's numbers on a card (its review check's meta),
+ * or null when the card carries no such hint. */
+export function contactFrequencyOfChecks(checks: ReviewCheck[]): ContactFrequencyWarning | null {
+  const meta = checks.find((c) => c.key === CONTACT_FREQUENCY_CHECK)?.meta;
+  if (!meta) return null;
+  const count = Number(meta.count);
+  const maxMails = Number(meta.maxMails);
+  const windowDays = Number(meta.windowDays);
+  return [count, maxMails, windowDays].every(Number.isFinite) ? { count, maxMails, windowDays } : null;
+}
+
+/** The numbers of a send route's 409 „contact_frequency“ answer, or null. */
+export function contactFrequencyOfError(err: unknown): ContactFrequencyWarning | null {
+  return err instanceof AdminApiError ? readContactFrequencyConflict(err.details) : null;
+}
+
+/** The one send confirmation: the first REAL send of the day and/or the
+ * contact-frequency warning (one dialog, never two). */
+export interface SendConfirm {
+  contactId: number;
+  /** The once-a-day confirmation is due. */
+  firstOfDay: boolean;
+  /** The person already received this many marketing mails — confirming
+   * sends with `ignoreContactFrequency: true`. */
+  frequency: ContactFrequencyWarning | null;
 }
 
 const PREPARE_SETTINGS_KEY = "ms-campaign-prepare";
@@ -287,6 +319,7 @@ export function useCampaignActions({
   allowSingleOptIn,
   heroDesignActive,
   minSendIntervalDays,
+  contactFrequency,
   initialContactId,
   initialView,
   initialFilter,
@@ -300,6 +333,7 @@ export function useCampaignActions({
   | "allowSingleOptIn"
   | "heroDesignActive"
   | "minSendIntervalDays"
+  | "contactFrequency"
   | "initialContactId"
   | "initialView"
   | "initialFilter"
@@ -339,7 +373,7 @@ export function useCampaignActions({
     React.useState<PrepareSettings>(DEFAULT_PREPARE_SETTINGS);
   const [bulkProgress, setBulkProgress] = React.useState<BulkProgress | null>(null);
   const [copiedId, setCopiedId] = React.useState<number | null>(null);
-  const [confirmSendId, setConfirmSendId] = React.useState<number | null>(null);
+  const [confirmSend, setConfirmSend] = React.useState<SendConfirm | null>(null);
   const [resetOpen, setResetOpen] = React.useState(false);
   // Rendered-HTML viewer (full-size draft preview + sent-email view). Own busy
   // flag — a read-only preview never blocks the desk.
@@ -395,12 +429,13 @@ export function useCampaignActions({
       heroMode: campaign.heroMode,
       sendWindowApplies: campaign.kind === "laufend",
       minSendIntervalDays,
+      contactFrequency,
       now: Date.now(),
     };
     const map = new Map<number, ReviewCheck[]>();
     for (const it of items) map.set(it.contactId, reviewChecks(it, ctx) as ReviewCheck[]);
     return map;
-  }, [items, sendsApproved, allowSingleOptIn, heroDesignActive, minSendIntervalDays, campaign.heroMode, campaign.kind]);
+  }, [items, sendsApproved, allowSingleOptIn, heroDesignActive, minSendIntervalDays, contactFrequency, campaign.heroMode, campaign.kind]);
 
   const checksOf = React.useCallback(
     (contactId: number): ReviewCheck[] => checksById.get(contactId) ?? [],
@@ -623,8 +658,10 @@ export function useCampaignActions({
   );
 
   // ── Postausgang: sending without waiting ─────────────────────────────────
+  /** `ignoreContactFrequency`: the operator confirmed the contact-frequency
+   * warning („Trotzdem senden“) — the route skips its 409 backstop. */
   const sendNow = React.useCallback(
-    async (contactId: number) => {
+    async (contactId: number, opts: { ignoreContactFrequency?: boolean } = {}) => {
       const item = itemsRef.current.find((it) => it.contactId === contactId);
       if (!item || removedRef.current.has(contactId)) return;
       const entry = { contactId, email: item.email, name: contactName(item) };
@@ -632,7 +669,7 @@ export function useCampaignActions({
       setOutbox((o) => upsertOutbox(o, { ...entry, state: "sending" }));
       try {
         const json = await adminFetch<{ test?: boolean }>("/api/admin/campaign/send", {
-          body: { contactId },
+          body: { contactId, ...(opts.ignoreContactFrequency ? { ignoreContactFrequency: true } : {}) },
         });
         setOutbox((o) => upsertOutbox(o, { ...entry, state: "sent" }));
         if (json.test) {
@@ -658,6 +695,16 @@ export function useCampaignActions({
           setOutbox((o) => o.filter((e) => !(e.contactId === contactId && e.state === "sent")));
         }, OUTBOX_FADE_MS);
       } catch (err) {
+        // The contact-frequency backstop (409): not a refusal — the card comes
+        // back WITHOUT a sendError (that would block it) and the confirm opens
+        // with the server's fresh numbers.
+        const frequency = contactFrequencyOfError(err);
+        if (frequency) {
+          restoreItem({ ...item, sendError: null, recentMailCount: frequency.count });
+          setOutbox((o) => o.filter((e) => e.contactId !== contactId));
+          setConfirmSend({ contactId, firstOfDay: false, frequency });
+          return;
+        }
         const message = errorMessage(err);
         restoreItem({ ...item, sendError: message });
         setOutbox((o) => upsertOutbox(o, { ...entry, state: "failed", error: message }));
@@ -674,11 +721,19 @@ export function useCampaignActions({
       const checks = checksById.get(contactId) ?? [];
       if (reviewVerdict(checks) === "blocked") return;
       if (busyById[contactId]) return;
-      // The once-a-day confirmation guards the first REAL send; a Testmail to
-      // the operator's own inbox neither asks nor counts as the day's start.
+      // A Testmail to the operator's own inbox neither asks nor counts as the
+      // day's start (and never carries the contact-frequency hint).
       const isTest = itemsRef.current.find((it) => it.contactId === contactId)?.isTest === true;
-      if (!isTest && needsFirstSendConfirm()) {
-        setConfirmSendId(contactId);
+      if (isTest) {
+        void sendNow(contactId);
+        return;
+      }
+      // ONE confirmation for a real send: the once-a-day question and/or the
+      // contact-frequency warning — never two dialogs in a row.
+      const frequency = contactFrequencyOfChecks(checks);
+      const firstOfDay = needsFirstSendConfirm();
+      if (frequency || firstOfDay) {
+        setConfirmSend({ contactId, firstOfDay, frequency });
         return;
       }
       void sendNow(contactId);
@@ -686,12 +741,16 @@ export function useCampaignActions({
     [checksById, busyById, sendNow]
   );
   const confirmAndSend = React.useCallback(() => {
+    const pending = confirmSend;
+    setConfirmSend(null);
+    if (!pending) return;
+    // Any confirmed real send also satisfies the once-a-day question.
     rememberFirstSendConfirm();
-    const id = confirmSendId;
-    setConfirmSendId(null);
-    if (id !== null) void sendNow(id);
-  }, [confirmSendId, sendNow]);
-  /** Retry a refused/failed send from the Postausgang. */
+    void sendNow(pending.contactId, { ignoreContactFrequency: pending.frequency !== null });
+  }, [confirmSend, sendNow]);
+  const cancelSendConfirm = React.useCallback(() => setConfirmSend(null), []);
+  /** Retry a refused/failed send from the Postausgang. A contact-frequency
+   * 409 on the retry opens the same confirmation as Senden (see sendNow). */
   const retrySend = React.useCallback(
     (contactId: number) => {
       patchItem(contactId, { sendError: null });
@@ -1523,6 +1582,8 @@ export function useCampaignActions({
     currentVerdict,
     sendBlocked,
     optInBlocked,
+    /** The contact-frequency setting the hints use (Einstellungen). */
+    contactFrequency,
     // in-flight
     busyById,
     busyOf,
@@ -1534,7 +1595,7 @@ export function useCampaignActions({
     prepareSettings,
     bulkProgress,
     copiedId,
-    confirmSendId,
+    confirmSend,
     resetOpen,
     emailView,
     emailViewBusy,
@@ -1544,7 +1605,7 @@ export function useCampaignActions({
     setEditMode,
     setFocusMode,
     setPrepareSettings,
-    setConfirmSendId,
+    cancelSendConfirm,
     setResetOpen,
     closeEmailView,
     // navigation

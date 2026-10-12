@@ -15,6 +15,8 @@
 //   campaigns                — campaign definitions incl. the built-in
 //                              Einzelansprache / Lebenszyklus (only 0066 creates them)
 //   email_design_selections  — which e-mail design each mail type uses
+//   admin_settings           — operator settings from Einstellungen (e.g. the
+//                              contact-frequency warning, 0078)
 //
 // Guards, before anything is deleted (each ABORTS with exit 1):
 //   · ALLOW_DB_RESET=true is required (above all else);

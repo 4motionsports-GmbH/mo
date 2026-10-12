@@ -162,6 +162,14 @@ lawyer ready to send, the Shopify steps and the frontend prompt: [`WELCOME_VOUCH
    recognition and purchase attribution — and, before the switch-on (item 5), the welcome voucher and
    the actual mail provider instead of the old MailChimp mentions (OPTIN_REWARD owner to-do 5; with
    issuer (1): Mo sends the welcome mail).
+12. **Kontakthäufigkeit (12.10.): run migration `0078` after the deploy (2 min).** `git pull`, then
+   `npm run db:migrate` (applies `0078_admin_settings.sql` — one new table for settings edited in the
+   dashboard). Until it runs nothing breaks: the desk and Kunden → Marketing warn with the default
+   (3 Werbe-Mails in 30 Tagen) and „Speichern“ in Einstellungen → „Kontakthäufigkeit“ answers
+   „Migration 0078 fehlt — bitte zuerst ausführen.“ After it: Einstellungen → „Kontakthäufigkeit“ →
+   set your threshold (0 in a field = aus) → „Speichern“ → the toast shows it. It is a warning only —
+   „Trotzdem senden“ always sends; the hard „Sperrfrist“ (`MARKETING_MIN_SEND_INTERVAL_DAYS`) is
+   unchanged and shown next to it. Rules: [`CAMPAIGNS.md`](./CAMPAIGNS.md) §3.
 
 ## Done
 

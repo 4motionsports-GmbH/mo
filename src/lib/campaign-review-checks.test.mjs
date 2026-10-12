@@ -294,3 +294,31 @@ test("a suppressed address blocks a real contact and only informs a test contact
   assert.equal(test.find((c) => c.key === "test_suppressed")?.level, "info");
   assert.equal(reviewVerdict(test), "ready");
 });
+
+test("contact frequency: a hint at/over the threshold with the numbers in meta", () => {
+  const settings = { maxMails: 3, windowDays: 30 };
+  const below = reviewChecks(readyItem({ recentMailCount: 2 }), ctx({ contactFrequency: settings }));
+  assert.equal(below.find((c) => c.key === "contact_frequency"), undefined);
+  const at = reviewChecks(readyItem({ recentMailCount: 3 }), ctx({ contactFrequency: settings }));
+  const hint = at.find((c) => c.key === "contact_frequency");
+  assert.equal(hint?.level, "hint");
+  assert.equal(hint?.title, "Schon 3 Werbe-Mails in 30 Tagen");
+  assert.match(hint?.detail ?? "", /Nur ein Hinweis/);
+  assert.equal(hint?.fix, null);
+  assert.deepEqual(hint?.meta, { count: 3, maxMails: 3, windowDays: 30 });
+  // A warning, never a block.
+  assert.equal(reviewVerdict(at), "hints");
+});
+
+test("contact frequency: no hint when off, unknown, without settings or for a Testkontakt", () => {
+  const item = readyItem({ recentMailCount: 9 });
+  assert.equal(reviewChecks(item, ctx()).find((c) => c.key === "contact_frequency"), undefined);
+  for (const contactFrequency of [{ maxMails: 0, windowDays: 30 }, { maxMails: 3, windowDays: 0 }, null]) {
+    const checks = reviewChecks(item, ctx({ contactFrequency }));
+    assert.equal(checks.find((c) => c.key === "contact_frequency"), undefined, JSON.stringify(contactFrequency));
+  }
+  const unknown = reviewChecks(readyItem({ recentMailCount: null }), ctx({ contactFrequency: { maxMails: 1, windowDays: 30 } }));
+  assert.equal(unknown.find((c) => c.key === "contact_frequency"), undefined);
+  const test = reviewChecks(readyItem({ recentMailCount: 9, isTest: true }), ctx({ contactFrequency: { maxMails: 1, windowDays: 30 } }));
+  assert.equal(test.find((c) => c.key === "contact_frequency"), undefined);
+});
