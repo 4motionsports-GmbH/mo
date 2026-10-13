@@ -29,6 +29,20 @@
 //
 // Email-client rules as everywhere: tables + inline styles, absolute https
 // images, no flexbox/grid/SVG. Arial only — no web font needed.
+//
+// Outlook for Windows (the desktop app that renders with Word) gets its own
+// branch wherever Word would break the browser markup — conditional comments,
+// mso-* properties and attributes only (email-outlook.mjs), so Gmail, Apple
+// Mail and the new Outlook render exactly what they rendered before. Word
+// ignores @media and display:none on images, so the phone-only hero row and
+// countdown image are hidden from it (they showed as a second hero and a
+// second timer); it drops padding, display and radius on <a>, so every anchor
+// button has a table-cell twin (msoButton) and the set's solid button carries
+// mso-padding-alt on its cell; it ignores a <div>'s size, so the short blue
+// rules are sized cells (msoRule) and the blue pill a padded cell; it sizes
+// images by their width/height attributes only, so those match what the
+// browsers draw from the inline CSS; and it ignores margins on tables and
+// images, so those gaps sit in cell padding or div margins instead.
 
 import type { EmailDesignDefinition } from "./registry";
 import type {
@@ -56,6 +70,17 @@ import type { BundleOfferBlockInput } from "../bundle-email";
 import { defaultHeroImageUrl } from "../email-hero";
 import { campaignMoDeeplinkUrl } from "../campaign-flags.mjs";
 import { SHOP_URL } from "../discount-coupon.mjs";
+import { COUNTDOWN_HEIGHT, COUNTDOWN_WIDTH } from "../email-countdown-image.mjs";
+import {
+  MSO_HTML_ATTRS,
+  forOutlook,
+  hideFromOutlook,
+  msoButton,
+  msoHeadHtml,
+  msoPaddingAlt,
+  msoRule,
+  nbsp,
+} from "../email-outlook.mjs";
 
 const RED = "#e30613";
 /** The brand's second colour: kicker, offer badges ("Bundle Deal", "Du
@@ -92,21 +117,25 @@ function aiImageLabel(en: boolean, extraClass = ""): string {
   // The label IS the official EU lockup — its artwork already reads
   // "AI GENERATED", so no separate text pill. The alt text carries the
   // disclosure for screen readers and for clients that block images.
-  // EMAIL_AI_LABEL_ICON_URL swaps in another hosted PNG (height 28px,
-  // width from the file).
+  // EMAIL_AI_LABEL_ICON_URL swaps in another hosted PNG (height 28px; the
+  // browsers take the width from the file). Outlook for Windows (Word) sizes
+  // an image by its attributes only, so the width attribute is always the
+  // lockup's 146px — a custom icon must be 146×28 at 1× (.env.example).
   const custom = (process.env.EMAIL_AI_LABEL_ICON_URL ?? "").trim();
   const src = /^https?:\/\//.test(custom) ? custom : `${getBaseUrl()}/eu-ai-icon-email.png`;
   const size = custom
-    ? `height="${AI_LABEL_HEIGHT}" style="height:${AI_LABEL_HEIGHT}px; width:auto; display:inline-block; border:0;"`
+    ? `width="${AI_LABEL_WIDTH}" height="${AI_LABEL_HEIGHT}" style="height:${AI_LABEL_HEIGHT}px; width:auto; display:inline-block; border:0;"`
     : `width="${AI_LABEL_WIDTH}" height="${AI_LABEL_HEIGHT}" style="width:${AI_LABEL_WIDTH}px; height:${AI_LABEL_HEIGHT}px; display:inline-block; border:0;"`;
   return `<img class="ai-label${extraClass ? ` ${extraClass}` : ""}" src="${escapeAttr(src)}" ${size} alt="${escapeAttr(text)}" title="${escapeAttr(text)}">`;
 }
 const FONT = "Arial, Helvetica, sans-serif";
 
+// mso-line-height-rule:exactly: without it Word treats a px line-height as a
+// minimum and opens up the lines (every other client ignores the property).
 const textStyle = () =>
-  `font-family: ${FONT}; font-size: 14px; line-height: 22px; color: #333333; Margin: 0;`;
+  `font-family: ${FONT}; font-size: 14px; mso-line-height-rule: exactly; line-height: 22px; color: #333333; Margin: 0;`;
 const mutedTextStyle = () =>
-  `font-family: ${FONT}; font-size: 11px; line-height: 16px; color: #555555; Margin: 0;`;
+  `font-family: ${FONT}; font-size: 11px; mso-line-height-rule: exactly; line-height: 16px; color: #555555; Margin: 0;`;
 const linkStyle = () => `color: ${BLUE}; text-decoration: underline; word-wrap: break-word;`;
 
 // ── Per-kind hero copy (headline comes from opts.heading) ────────────────────
@@ -175,9 +204,37 @@ const HERO_COPY: Record<"summary" | "doi" | "marketing" | "campaign", HeroCopy> 
 
 // ── Building blocks ──────────────────────────────────────────────────────────
 
-function redButton(cta: EmailCta, block = false, className = ""): string {
+// Buttons: every anchor button below is a padded <a>, which Outlook for
+// Windows (Word) shrinks to shaded capitals — it drops padding, display and
+// radius on links. So each one goes out as forOutlook(msoButton(...), anchor):
+// Word gets a table cell with the same padding, border, background and label,
+// every other client the untouched anchor. The twin copies its original
+// exactly — no background where the anchor is transparent, `nowrap` only where
+// the anchor has white-space:nowrap, `align: "center"` only where it sits
+// centred (Word floats a table aligned left or right).
+
+/** The line height browsers give an anchor without one (Arial's "normal",
+ * ≈1.15 × the font size); Word's twin needs it spelled out to match. */
+const normalLineHeight = (fontSizePx: number) => Math.round(fontSizePx * 1.15);
+
+function redButton(cta: EmailCta, block = false, className = "", align: "center" | null = null): string {
+  const href = escapeAttr(cta.url);
+  const label = `${escapeHtml(cta.label.toUpperCase())}&nbsp;&nbsp;&#8594;`;
+  const anchor = `<a href="${href}"${className ? ` class="${className}"` : ""} target="_blank" style="display:${block ? "block" : "inline-block"}; background:${RED}; color:#ffffff; text-align:center; padding:14px 24px; border-radius:3px; font-family:${FONT}; font-size:13px; font-weight:700; letter-spacing:0.2px; text-decoration:none;">${label}</a>`;
+  const word = msoButton({
+    hrefAttr: href,
+    labelHtml: label,
+    color: "#ffffff",
+    bg: RED,
+    padding: "14px 24px",
+    fontSize: 13,
+    lineHeight: normalLineHeight(13),
+    letterSpacing: "0.2px",
+    fullWidth: block,
+    align,
+  });
   return `
-                    <a href="${escapeAttr(cta.url)}"${className ? ` class="${className}"` : ""} target="_blank" style="display:${block ? "block" : "inline-block"}; background:${RED}; color:#ffffff; text-align:center; padding:14px 24px; border-radius:3px; font-family:${FONT}; font-size:13px; font-weight:700; letter-spacing:0.2px; text-decoration:none;">${escapeHtml(cta.label.toUpperCase())}&nbsp;&nbsp;&#8594;</a>`;
+                    ${forOutlook(word, anchor)}`;
 }
 
 /**
@@ -185,23 +242,39 @@ function redButton(cta: EmailCta, block = false, className = ""): string {
  * border, black bold capitals), full width — the coupon's „Code einlösen“.
  */
 function outlineBlockButton(cta: EmailCta): string {
+  const href = escapeAttr(cta.url);
+  const label = `${escapeHtml(cta.label.toUpperCase())}&nbsp;&nbsp;&#8594;`;
+  const anchor = `<a href="${href}" target="_blank" style="display:block; background:#ffffff; color:#111111; border:1px solid #111111; text-align:center; padding:13px 24px; border-radius:3px; font-family:${FONT}; font-size:13px; font-weight:700; letter-spacing:0.2px; text-decoration:none;">${label}</a>`;
+  const word = msoButton({
+    hrefAttr: href,
+    labelHtml: label,
+    color: "#111111",
+    bg: "#ffffff",
+    border: "1px solid #111111",
+    padding: "13px 24px",
+    fontSize: 13,
+    lineHeight: normalLineHeight(13),
+    letterSpacing: "0.2px",
+    fullWidth: true,
+  });
   return `
-                    <a href="${escapeAttr(cta.url)}" target="_blank" style="display:block; background:#ffffff; color:#111111; border:1px solid #111111; text-align:center; padding:13px 24px; border-radius:3px; font-family:${FONT}; font-size:13px; font-weight:700; letter-spacing:0.2px; text-decoration:none;">${escapeHtml(cta.label.toUpperCase())}&nbsp;&nbsp;&#8594;</a>`;
+                    ${forOutlook(word, anchor)}`;
 }
 
 /**
  * The set's „Zur Kasse“: solid black with white bold capitals, full width —
  * the one purchase action of a set mail, so it stands out from the outline
  * card buttons (owner, 12.10.2026). The black also sits on the table cell
- * (bgcolor) so Outlook, which ignores an anchor's background and padding,
- * still shows a black button with white text.
+ * (bgcolor), and the cell's mso-padding-alt gives Word the anchor's padding
+ * plus its border (Word ignores both on the <a>), so Outlook for Windows
+ * still shows a full-size black button with white text — no twin needed.
  */
 function solidBlockButton(cta: EmailCta): string {
   return `
                     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;">
                       <tr>
-                        <td align="center" bgcolor="#111111" style="background:#111111; border-radius:3px;">
-                          <a href="${escapeAttr(cta.url)}" target="_blank" style="display:block; background:#111111; color:#ffffff; border:1px solid #111111; text-align:center; padding:13px 24px; border-radius:3px; font-family:${FONT}; font-size:13px; font-weight:700; letter-spacing:0.2px; text-decoration:none;"><span style="color:#ffffff;">${escapeHtml(cta.label.toUpperCase())}&nbsp;&nbsp;&#8594;</span></a>
+                        <td align="center" bgcolor="#111111" style="background:#111111; border-radius:3px; mso-padding-alt:${msoPaddingAlt("13px 24px", 1)};">
+                          <a href="${escapeAttr(cta.url)}" target="_blank" style="display:block; background:#111111; color:#ffffff; border:1px solid #111111; text-align:center; padding:13px 24px; border-radius:3px; font-family:${FONT}; font-size:13px; font-weight:700; letter-spacing:0.2px; text-decoration:none; mso-padding-alt:0;"><span style="color:#ffffff;">${escapeHtml(cta.label.toUpperCase())}&nbsp;&nbsp;&#8594;</span></a>
                         </td>
                       </tr>
                     </table>`;
@@ -209,24 +282,81 @@ function solidBlockButton(cta: EmailCta): string {
 
 /** The product cards' „Zum Produkt“: the same black outline look, compact. */
 function outlineButton(url: string, label: string): string {
+  const href = escapeAttr(url);
+  const labelHtml = `${escapeHtml(label.toUpperCase())}&nbsp;&#8594;`;
+  const anchor = `<a href="${href}" target="_blank" style="display:inline-block; color:#111111; background:#ffffff; border:1px solid #111111; padding:10px 15px; border-radius:3px; font-family:${FONT}; font-size:11px; font-weight:700; text-decoration:none; white-space:nowrap;">${labelHtml}</a>`;
+  const word = msoButton({
+    hrefAttr: href,
+    labelHtml,
+    color: "#111111",
+    bg: "#ffffff",
+    border: "1px solid #111111",
+    padding: "10px 15px",
+    fontSize: 11,
+    lineHeight: normalLineHeight(11),
+    align: "center",
+    nowrap: true,
+  });
   return `
-                    <a href="${escapeAttr(url)}" target="_blank" style="display:inline-block; color:#111111; background:#ffffff; border:1px solid #111111; padding:10px 15px; border-radius:3px; font-family:${FONT}; font-size:11px; font-weight:700; text-decoration:none; white-space:nowrap;">${escapeHtml(label.toUpperCase())}&nbsp;&#8594;</a>`;
+                    ${forOutlook(word, anchor)}`;
 }
 
-/** The blue offer pill ("BUNDLE DEAL", "Du sparst 37,90 €"): white on BLUE. */
+/**
+ * The Mo advisor card's CTA (panel and campaign promo): the black outline
+ * look, compact and TRANSPARENT — the card's #fafafa shows through, so the
+ * Word twin has no background either, and it may wrap like the original.
+ */
+function moCtaButton(url: string, labelHtml: string): string {
+  const href = escapeAttr(url);
+  const anchor = `<a href="${href}" target="_blank" style="display:inline-block; border:1px solid #111111; color:#111111; padding:11px 15px; border-radius:3px; font-family:${FONT}; font-size:10px; font-weight:700; text-decoration:none;">${labelHtml}</a>`;
+  const word = msoButton({
+    hrefAttr: href,
+    labelHtml,
+    color: "#111111",
+    border: "1px solid #111111",
+    padding: "11px 15px",
+    fontSize: 10,
+    lineHeight: normalLineHeight(10),
+    align: "center",
+  });
+  return forOutlook(word, anchor);
+}
+
+/** The blue offer pill ("BUNDLE DEAL", "Du sparst 37,90 €"): white on BLUE.
+ * Word paints a <span>'s background only behind the letters and ignores its
+ * padding, so Outlook for Windows gets the pill as a padded cell (square
+ * corners; nowrap + &nbsp; because Word ignores white-space). */
 function bluePill(label: string): string {
-  return `<span style="display:inline-block; background:${BLUE}; color:#ffffff; font-family:${FONT}; font-size:11px; line-height:14px; font-weight:700; letter-spacing:0.4px; padding:9px 12px; border-radius:30px; white-space:nowrap;">${escapeHtml(label)}</span>`;
+  const text = escapeHtml(label);
+  return forOutlook(
+    `<table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr><td bgcolor="${BLUE}" nowrap style="padding:9px 12px; font-family:${FONT}; font-size:11px; line-height:14px; mso-line-height-rule:exactly; font-weight:bold; letter-spacing:0.4px; color:#ffffff;">${nbsp(text)}</td></tr></table>`,
+    `<span style="display:inline-block; background:${BLUE}; color:#ffffff; font-family:${FONT}; font-size:11px; line-height:14px; font-weight:700; letter-spacing:0.4px; padding:9px 12px; border-radius:30px; white-space:nowrap;">${text}</span>`
+  );
 }
 
-/** The "— TITLE —" section divider (replaces the classic black band). */
+/** The short 14×2 blue rule under card titles, `gap` px above and below.
+ * Word ignores a <div>'s width and height (it would paint a full-width bar),
+ * so Outlook for Windows gets a sized cell (msoRule) with the gap as padding. */
+function blueRule(gap: number, className = ""): string {
+  return forOutlook(
+    msoRule({ width: 14, height: 2, color: BLUE, padTop: gap, padBottom: gap }),
+    `<div${className ? ` class="${className}"` : ""} style="width:14px; height:2px; background:${BLUE}; margin:${gap}px 0; font-size:0; line-height:0;">&nbsp;</div>`
+  );
+}
+
+/** The "— TITLE —" section divider (replaces the classic black band). Word
+ * ignores white-space:nowrap, so Outlook for Windows gets the title with its
+ * words joined by &nbsp; — a text-only twin, every other client keeps the
+ * original text node unchanged. */
 function sectionBand(title: string): string {
+  const text = escapeHtml(title.toUpperCase());
   return `
                 <tr>
                   <td class="content-pad" style="padding: 22px 40px 14px 40px;" bgcolor="#ffffff">
                     <table width="100%" role="presentation" cellpadding="0" cellspacing="0" border="0">
                       <tr>
                         <td width="30%" style="border-top: 1px solid #cfcfcf; font-size: 0; line-height: 0;">&nbsp;</td>
-                        <td align="center" style="padding: 0 14px; font-family: ${FONT}; color: #111111; font-size: 17px; line-height: 23px; font-weight: 800; letter-spacing: 0.5px; white-space: nowrap;">${escapeHtml(title.toUpperCase())}</td>
+                        <td align="center" style="padding: 0 14px; font-family: ${FONT}; color: #111111; font-size: 17px; line-height: 23px; font-weight: 800; letter-spacing: 0.5px; white-space: nowrap;">${forOutlook(nbsp(text), text)}</td>
                         <td width="30%" style="border-top: 1px solid #cfcfcf; font-size: 0; line-height: 0;">&nbsp;</td>
                       </tr>
                     </table>
@@ -260,8 +390,11 @@ function clampDescription(text: string): string {
 /** One bordered product card: image | name + rule + description | price + button. */
 function productCard(item: EmailProductRowItem): string {
   const href = item.url ? escapeAttr(item.url) : null;
+  // width="130": what Word draws (it reads only the attribute, and 165 would
+  // widen the 32 % column); browsers keep the inline 165px capped at the
+  // column (≈129px). The cell's align="center" replaces Margin:0 auto in Word.
   const image = item.imageUrl
-    ? `<img src="${escapeAttr(item.imageUrl)}" width="165" alt="${escapeAttr(item.name)}" class="product-image" style="width:165px; max-width:100%; height:auto; display:block; Margin:0 auto; border:none;">`
+    ? `<img src="${escapeAttr(item.imageUrl)}" width="130" alt="${escapeAttr(item.name)}" class="product-image" style="width:165px; max-width:100%; height:auto; display:block; Margin:0 auto; border:none;">`
     : "";
   const price = item.priceLabel
     ? item.compareAtLabel
@@ -279,11 +412,11 @@ function productCard(item: EmailProductRowItem): string {
   return `
                     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" class="product-card" style="width:100%; border:1px solid #e5e5e5; border-radius:7px;">
                       <tr>
-                        <td width="32%" valign="middle" class="mobile-stack" style="width:32%; padding:16px;">${image || "&nbsp;"}
+                        <td width="32%" valign="middle" align="center" class="mobile-stack" style="width:32%; padding:16px;">${image || "&nbsp;"}
                         </td>
                         <td width="40%" valign="middle" class="mobile-stack product-content" style="width:40%; padding:16px 10px;">
                           <div style="font-family:${FONT}; font-size:16px; line-height:21px; font-weight:700; color:#111111;">${name}</div>
-                          <div style="width:14px; height:2px; background:${BLUE}; margin:10px 0; font-size:0; line-height:0;">&nbsp;</div>
+                          ${blueRule(10)}
                           ${description}
                         </td>
                         <td width="28%" valign="middle" align="center" class="mobile-stack product-action" style="width:28%; padding:16px 12px;">
@@ -292,7 +425,7 @@ function productCard(item: EmailProductRowItem): string {
                         </td>
                       </tr>
                     </table>
-                    <div style="height:8px; font-size:0; line-height:0;">&nbsp;</div>`;
+                    <div style="height:8px; font-size:8px; line-height:8px; mso-line-height-rule:exactly;">&nbsp;</div>`;
 }
 
 function productRows(items: EmailProductRowItem[]): string {
@@ -329,7 +462,7 @@ const SET_ITEM_IMAGE = 96;
 function bundleBlock(input: BundleOfferBlockInput, c: BundleBlockComputed): string {
   const badgeInner =
     c.eyecatcher === "saving"
-      ? `<div style="font-family:${FONT}; font-size:38px; line-height:40px; font-weight:800; letter-spacing:-1px; color:#ffffff; white-space:nowrap;">${escapeHtml(c.eyecatcherCopy.value)}</div>` +
+      ? `<div style="font-family:${FONT}; font-size:38px; mso-line-height-rule:exactly; line-height:40px; font-weight:800; letter-spacing:-1px; color:#ffffff; white-space:nowrap;">${escapeHtml(c.eyecatcherCopy.value)}</div>` +
         (c.eyecatcherCopy.note
           ? `<div style="font-family:${FONT}; font-size:12px; line-height:16px; font-weight:700; color:#ffffff; margin-top:6px; white-space:nowrap;">${escapeHtml(c.eyecatcherCopy.note)}</div>`
           : "")
@@ -373,15 +506,19 @@ function bundleBlock(input: BundleOfferBlockInput, c: BundleBlockComputed): stri
       const price = item.unitPriceLabel
         ? `<div style="font-family:${FONT}; font-size:12px; line-height:16px; color:#777777; white-space:nowrap;">${escapeHtml(item.unitPriceLabel)}</div>`
         : "&nbsp;";
+      // mso-padding-alt on the image cell: Word gives every cell of a row the
+      // largest vertical padding, so the image cell's 14px would be added to
+      // the text cells' own 14px (a row ~28px taller). With 0 in Word the
+      // nested text cells alone set the row height there.
       return `
                             <tr>
-                              <td width="${SET_ITEM_IMAGE + 16}" valign="middle" class="set-item-img-cell" style="width:${SET_ITEM_IMAGE + 16}px; padding:14px 16px 14px 0; ${divider}">${image}</td>
+                              <td width="${SET_ITEM_IMAGE + 16}" valign="middle" class="set-item-img-cell" style="width:${SET_ITEM_IMAGE + 16}px; padding:14px 16px 14px 0; mso-padding-alt:0 16px 0 0; ${divider}">${image}</td>
                               <td valign="middle" style="padding:0; ${divider}">
                                 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;">
                                   <tr>
                                     <td valign="middle" class="set-item-text" style="padding:14px 12px 14px 0;">
                                       <div style="font-family:${FONT}; font-size:15px; line-height:20px; font-weight:700; color:#111111;"><span style="color:${BLUE}; font-weight:800;">${item.quantity}&times;</span>&nbsp; ${escapeHtml(item.name)}</div>
-                                      <div style="width:14px; height:2px; background:${BLUE}; margin:8px 0; font-size:0; line-height:0;">&nbsp;</div>
+                                      ${blueRule(8)}
                                       ${description}
                                     </td>
                                     <td width="96" valign="middle" align="right" class="set-item-price" style="width:96px; padding:14px 0;">${price}</td>
@@ -393,13 +530,16 @@ function bundleBlock(input: BundleOfferBlockInput, c: BundleBlockComputed): stri
     .join("");
 
   const label = `font-family:${FONT}; color:#555555; font-size:10px; line-height:14px; letter-spacing:0.4px; text-transform:uppercase;`;
+  // The 18px gap above „Zur Kasse“ is bottom padding on both cells (valign
+  // bottom keeps the figures where they were), not a margin on the table —
+  // Word may drop a table's margin and set the price onto the button.
   const summaryCells =
     (c.stattLabel
       ? `
-                                <td valign="bottom" style="padding:0 22px 3px 0;"><div style="${label}">${escapeHtml(c.labels.separately)}</div><div style="font-family:${FONT}; font-size:16px; line-height:22px; color:#777777; text-decoration:line-through; white-space:nowrap;">${escapeHtml(c.stattLabel)}</div></td>`
+                                <td valign="bottom" style="padding:0 22px 21px 0;"><div style="${label}">${escapeHtml(c.labels.separately)}</div><div style="font-family:${FONT}; font-size:16px; line-height:22px; color:#777777; text-decoration:line-through; white-space:nowrap;">${escapeHtml(c.stattLabel)}</div></td>`
       : "") +
     `
-                                <td valign="bottom"><div style="${label}">${escapeHtml(c.labels.price)}</div><div style="font-family:${FONT}; font-size:28px; line-height:34px; color:#111111; font-weight:800; white-space:nowrap;">${escapeHtml(c.priceLabel)}</div></td>`;
+                                <td valign="bottom" style="padding:0 0 18px 0;"><div style="${label}">${escapeHtml(c.labels.price)}</div><div style="font-family:${FONT}; font-size:28px; line-height:34px; color:#111111; font-weight:800; white-space:nowrap;">${escapeHtml(c.priceLabel)}</div></td>`;
 
   return `
                 <tr>
@@ -413,7 +553,7 @@ function bundleBlock(input: BundleOfferBlockInput, c: BundleBlockComputed): stri
                       </tr>
                       <tr>
                         <td style="padding:18px 24px 24px 24px; border-top:1px solid #e5e5e5;">
-                          <table role="presentation" cellpadding="0" cellspacing="0" border="0" class="set-summary" style="margin-bottom:18px;">
+                          <table role="presentation" cellpadding="0" cellspacing="0" border="0" class="set-summary">
                             <tr>${summaryCells}
                             </tr>
                           </table>
@@ -451,7 +591,7 @@ function couponCard(input: DiscountCouponInput): string {
                         </td>
                         <td width="58%" valign="middle" class="bundle-column" style="width:58%; padding:24px 24px 24px 0;">
                           <div style="font-family:${FONT}; font-size:20px; line-height:25px; color:#111111; font-weight:700;">${escapeHtml(input.copy.benefit)}</div>
-                          <div class="bundle-rule" style="width:14px; height:2px; background:${BLUE}; margin:10px 0; font-size:0; line-height:0;">&nbsp;</div>
+                          ${blueRule(10, "bundle-rule")}
                           <div style="${label} margin-bottom:16px;">${escapeHtml(input.copy.terms)}</div>
                           ${outlineBlockButton({ label: input.copy.cta, url: input.redeemUrl })}
                           <div style="${label} font-size:10px; line-height:14px; margin-top:10px;">${escapeHtml(input.copy.hint)}</div>
@@ -475,14 +615,22 @@ function offerCountdownCard(input: OfferCountdownInput): string {
   const card = `width:100%; background:#ffffff; border:1px solid #e5e5e5; border-radius:7px;`;
   const deadline = `font-family:${FONT}; color:#555555; font-size:11px; line-height:16px;`;
   if (input.imageUrl) {
+    // Outlook for Windows (Word) ignores @media and display:none on images,
+    // so the phone image is removed from its markup (it showed as a second
+    // timer under the first). Word sizes the desktop image by its attributes:
+    // the card's 1px border leaves imageWidth − 2 inside, and the height
+    // attribute sizes the placeholder while images are blocked. Browsers keep
+    // the inline width:100% / height:auto.
+    const wordWidth = input.imageWidth - 2;
+    const wordHeight = Math.round((wordWidth * COUNTDOWN_HEIGHT) / COUNTDOWN_WIDTH);
     return `
                 <tr>
                   <td class="content-pad" style="padding: 0 38px 16px 38px;" bgcolor="#ffffff">
                     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="${card}">
                       <tr>
                         <td align="center" style="padding: 0; font-size:0; line-height:0;">
-                          <img src="${escapeAttr(input.imageUrl)}" width="${input.imageWidth}" alt="${escapeAttr(input.imageAlt)}" class="countdown-desktop" style="width:100%; max-width:${input.imageWidth}px; height:auto; display:block; border-radius:7px 7px 0 0;">
-                          <img src="${escapeAttr(input.imageUrlMobile ?? input.imageUrl)}" width="${input.imageWidthMobile}" alt="${escapeAttr(input.imageAlt)}" class="countdown-mobile" style="width:100%; max-width:${input.imageWidthMobile}px; height:auto; display:none; border-radius:7px 7px 0 0;">
+                          <img src="${escapeAttr(input.imageUrl)}" width="${wordWidth}" height="${wordHeight}" alt="${escapeAttr(input.imageAlt)}" class="countdown-desktop" style="width:100%; max-width:${input.imageWidth}px; height:auto; display:block; border-radius:7px 7px 0 0;">
+                          ${hideFromOutlook(`<img src="${escapeAttr(input.imageUrlMobile ?? input.imageUrl)}" width="${input.imageWidthMobile}" alt="${escapeAttr(input.imageAlt)}" class="countdown-mobile" style="width:100%; max-width:${input.imageWidthMobile}px; height:auto; display:none; border-radius:7px 7px 0 0;">`)}
                         </td>
                       </tr>
                       <tr>
@@ -496,7 +644,7 @@ function offerCountdownCard(input: OfferCountdownInput): string {
                           <td align="center" style="padding: 0 6px;">
                             <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="background:#f5f5f5; border:1px solid #e5e5e5; border-radius:6px;">
                               <tr>
-                                <td align="center" style="padding: 10px 18px 8px 18px; font-family:${FONT}; color:${RED}; font-size:34px; line-height:38px; font-weight:800; letter-spacing:-1px;">${String(value).padStart(2, "0")}</td>
+                                <td align="center" style="padding: 10px 18px 8px 18px; font-family:${FONT}; color:${RED}; font-size:34px; mso-line-height-rule:exactly; line-height:38px; font-weight:800; letter-spacing:-1px;">${String(value).padStart(2, "0")}</td>
                               </tr>
                               <tr>
                                 <td align="center" style="padding: 0 12px 10px 12px; font-family:${FONT}; color:#555555; font-size:10px; line-height:14px; letter-spacing:1px; text-transform:uppercase;">${escapeHtml(unit)}</td>
@@ -538,11 +686,13 @@ const RATING_ALT_EN = ["very poor", "poor", "okay", "good", "very good"];
 function ratingRow(kind: string, en: boolean): string {
   const base = getBaseUrl();
   const alts = en ? RATING_ALT_EN : RATING_ALT_DE;
+  // The gaps above the faces and under each face are cell padding and a div
+  // margin, not margins on the table and the image — Word may drop those.
   const cells = alts.map(
     (alt, i) => `
-                          <td align="center" style="padding: 0 6px;">
-                            <a href="${escapeAttr(emailRatingUrl(base, i + 1, kind))}" target="_blank" style="text-decoration:none;"><img src="${escapeAttr(`${base}/email-rating-${i + 1}.png`)}" width="32" height="32" alt="${escapeAttr(alt)}" style="width:32px; height:32px; display:block; border:0; Margin:0 auto 4px;"></a>
-                            <div style="font-family:${FONT}; font-size:11px; line-height:16px; color:#111111;">${i + 1}</div>
+                          <td align="center" style="padding: 16px 6px 0 6px;">
+                            <a href="${escapeAttr(emailRatingUrl(base, i + 1, kind))}" target="_blank" style="text-decoration:none;"><img src="${escapeAttr(`${base}/email-rating-${i + 1}.png`)}" width="32" height="32" alt="${escapeAttr(alt)}" style="width:32px; height:32px; display:block; border:0; Margin:0 auto;"></a>
+                            <div style="margin-top:4px; font-family:${FONT}; font-size:11px; line-height:16px; color:#111111;">${i + 1}</div>
                           </td>`
   ).join("");
   return `
@@ -557,7 +707,7 @@ function ratingRow(kind: string, en: boolean): string {
                           <div style="margin-top:4px; font-family:${FONT}; font-size:11px; line-height:16px; color:#555555;">${
                             en ? "Rate this email with one click." : "Bewerte diese E-Mail mit einem Klick."
                           }</div>
-                          <table role="presentation" cellpadding="0" cellspacing="0" border="0" align="center" style="Margin: 16px auto 0;">
+                          <table role="presentation" cellpadding="0" cellspacing="0" border="0" align="center" style="Margin: 0 auto;">
                             <tr>${cells}
                             </tr>
                           </table>
@@ -610,9 +760,7 @@ function moPromoCard(input: MoPromoBlockInput): string {
                           )}</div>
                         </td>
                         <td width="33%" align="center" valign="middle" class="mobile-stack" style="padding:18px;">
-                          <a href="${escapeAttr(input.ctaUrl)}" target="_blank" style="display:inline-block; border:1px solid #111111; color:#111111; padding:11px 15px; border-radius:3px; font-family:${FONT}; font-size:10px; font-weight:700; text-decoration:none;">${escapeHtml(
-                            input.ctaLabel.toUpperCase()
-                          )}&nbsp;&#8594;</a>
+                          ${moCtaButton(input.ctaUrl, `${escapeHtml(input.ctaLabel.toUpperCase())}&nbsp;&#8594;`)}
                         </td>
                       </tr>
                     </table>
@@ -640,7 +788,7 @@ function moPanel(en: boolean): string {
                           }</div>
                         </td>
                         <td width="35%" align="center" valign="middle" class="mobile-stack" style="padding:18px;">
-                          <a href="${escapeAttr(url)}" target="_blank" style="display:inline-block; border:1px solid #111111; color:#111111; padding:11px 15px; border-radius:3px; font-family:${FONT}; font-size:10px; font-weight:700; text-decoration:none;">${en ? "START A CHAT WITH MO" : "BERATUNG MIT MO STARTEN"}&nbsp;&#8594;</a>
+                          ${moCtaButton(url, `${en ? "START A CHAT WITH MO" : "BERATUNG MIT MO STARTEN"}&nbsp;&#8594;`)}
                         </td>
                       </tr>
                     </table>
@@ -649,14 +797,16 @@ function moPanel(en: boolean): string {
 }
 
 function socialRow(): string {
+  // The 12px gap under the icons is cell padding, not a margin on the table
+  // (Word may drop it and set the icons onto the company block).
   const cells = EMAIL_SOCIAL_LINKS.map(
     (s) => `
-                          <td align="center" valign="middle" style="padding: 0 7px;">
+                          <td align="center" valign="middle" style="padding: 0 7px 12px 7px;">
                             <a href="${escapeAttr(s.url)}" target="_blank" style="text-decoration:none;"><img src="${escapeAttr(s.icon)}" alt="${escapeAttr(s.alt)}" width="20" height="20" border="0" style="width:20px; height:20px; display:block; border:none;"></a>
                           </td>`
   ).join("");
   return `
-                    <table cellspacing="0" cellpadding="0" border="0" align="center" role="presentation" style="Margin: 0 auto 12px;">
+                    <table cellspacing="0" cellpadding="0" border="0" align="center" role="presentation" style="Margin: 0 auto;">
                       <tr>${cells}
                       </tr>
                     </table>`;
@@ -698,18 +848,24 @@ function makeShell(kind: keyof typeof HERO_COPY) {
       : claimHtml;
     // The picture half of the hero: a block link over the background (a
     // stretched transparent spacer keeps it clickable everywhere), the
-    // AI-generated label underneath it in the corner.
+    // AI-generated label underneath it in the corner. Outlook for Windows
+    // does not get the spacer link: it blocks images by default, and the
+    // spacer then shows as a 276×250 placeholder box inside the hero (the
+    // claim still links to the shop). The EU label stays outside that
+    // branch, so Outlook keeps it next to the VML picture.
     const heroPictureHtml = heroLink
-      ? `<a href="${escapeAttr(heroLink)}" target="_blank" style="display:block; text-decoration:none; font-size:0; line-height:0;"><img src="${escapeAttr(spacerUrl())}" width="276" height="250" alt="" style="display:block; width:276px; max-width:100%; height:250px; border:0;"></a>${heroIsAi ? aiImageLabel(en) : ""}`
+      ? `${hideFromOutlook(`<a href="${escapeAttr(heroLink)}" target="_blank" style="display:block; text-decoration:none; font-size:0; line-height:0;"><img src="${escapeAttr(spacerUrl())}" width="276" height="250" alt="" style="display:block; width:276px; max-width:100%; height:250px; border:0;"></a>`)}${heroIsAi ? aiImageLabel(en) : ""}`
       : heroIsAi
         ? aiImageLabel(en)
         : "&nbsp;";
     const heroMobileImg = `<img src="${escapeAttr(heroImageMobile)}" width="640" alt="${heroIsAi ? (en ? "AI-generated image — motion sports" : "KI-generiertes Bild — motion sports") : "motion sports"}" class="hero-mobile-img" style="width:100%; max-width:100%; height:auto; display:none;">`;
 
+    // mso-hide:all keeps the preheader out of Outlook for Windows' body while
+    // it stays in the markup for every inbox's preview line.
     const preheaderHtml = opts.preheader
       ? `
-  <div style="display:none; max-height:0; overflow:hidden; opacity:0; color:transparent; font-size:1px; line-height:1px;">${escapeHtml(opts.preheader)}</div>
-  <div style="display:none; max-height:0; overflow:hidden; opacity:0;">&#847;&#8204;&nbsp;&#847;&#8204;&nbsp;&#847;&#8204;&nbsp;&#847;&#8204;&nbsp;&#847;&#8204;&nbsp;&#847;&#8204;&nbsp;&#847;&#8204;&nbsp;&#847;&#8204;&nbsp;&#847;&#8204;&nbsp;&#847;&#8204;&nbsp;</div>`
+  <div style="display:none; max-height:0; overflow:hidden; opacity:0; color:transparent; font-size:1px; line-height:1px; mso-hide:all;">${escapeHtml(opts.preheader)}</div>
+  <div style="display:none; max-height:0; overflow:hidden; opacity:0; mso-hide:all;">&#847;&#8204;&nbsp;&#847;&#8204;&nbsp;&#847;&#8204;&nbsp;&#847;&#8204;&nbsp;&#847;&#8204;&nbsp;&#847;&#8204;&nbsp;&#847;&#8204;&nbsp;&#847;&#8204;&nbsp;&#847;&#8204;&nbsp;&#847;&#8204;&nbsp;</div>`
       : "";
 
     // The hero button already carries the FIRST CTA, so only any additional
@@ -718,7 +874,7 @@ function makeShell(kind: keyof typeof HERO_COPY) {
     const ctaRows = (opts.ctas ?? [])
       .filter((c) => c.url && c.label)
       .slice(1)
-      .map((c) => sectionRow(redButton(c), { padding: "6px 40px", align: "center" }))
+      .map((c) => sectionRow(redButton(c, false, "", "center"), { padding: "6px 40px", align: "center" }))
       .join("");
 
     const footnoteRow = opts.footnoteHtml
@@ -735,7 +891,7 @@ function makeShell(kind: keyof typeof HERO_COPY) {
       : "";
 
     return `<!DOCTYPE html>
-<html lang="${opts.locale ?? "de"}">
+<html lang="${opts.locale ?? "de"}" ${MSO_HTML_ATTRS}>
   <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -744,7 +900,7 @@ function makeShell(kind: keyof typeof HERO_COPY) {
     <meta name="format-detection" content="telephone=no, date=no, address=no, email=no, url=no">
     <meta name="color-scheme" content="light">
     <meta name="supported-color-schemes" content="light only">
-    <title>${escapeHtml(opts.subject)}</title>
+    <title>${escapeHtml(opts.subject)}</title>${msoHeadHtml(FONT)}
     <style type="text/css">
       /* Progressive enhancement ONLY — every critical style is inline. */
       html, body { Margin: 0 auto !important; padding: 0 !important; width: 100% !important; }
@@ -802,9 +958,10 @@ function makeShell(kind: keyof typeof HERO_COPY) {
               <!-- HEADER: the real brand logo, given the room the original
                    design gives it. No chip nav: the brand asset already carries
                    the "Fitness | Equipment" bar, so a nav row underneath only
-                   duplicated it. -->
+                   duplicated it. font-size:0 on the cell: Word would turn the
+                   whitespace around the image into an extra text line. -->
               <tr>
-                <td align="center" style="padding: 30px 30px 22px 30px;" bgcolor="#ffffff">
+                <td align="center" style="padding: 30px 30px 22px 30px; font-size:0; mso-line-height-rule:exactly; line-height:0;" bgcolor="#ffffff">
                   <a href="https://www.motionsports.de" target="_blank" style="text-decoration:none;">
                     <img src="${escapeAttr(emailLogoUrl())}" width="200" alt="motion sports" class="logo-image" style="width:200px; max-width:70%; height:auto; display:block; Margin:0 auto;">
                   </a>
@@ -815,33 +972,45 @@ function makeShell(kind: keyof typeof HERO_COPY) {
                    fade is baked into the artwork, see HERO_PROMPT_STYLE_TAIL).
                    Bulletproof pattern: background= attribute + inline
                    background shorthand for Gmail/Apple Mail, VML rect for
-                   Outlook desktop, bgcolor fallback when images are blocked.
+                   Outlook for Windows, bgcolor fallback when images are blocked.
+                   The VML fill maps background-size:cover / position center
+                   right (size 1,1 + aspect atleast, origin/position 0.5,0 —
+                   without aspect Word stretches the 3:2 default asset); the
+                   text box grows with its content (mso-fit-shape-to-text) and
+                   the 300px cell inside it keeps the minimum height, so a long
+                   headline or the button is never clipped.
                    On phones the background is dropped and the picture shows
-                   as a normal image UNDER the text (.hero-bg / .hero-mobile-img). -->
+                   as a normal image UNDER the text (.hero-bg / .hero-mobile-img);
+                   Outlook for Windows never gets that row (it ignores @media
+                   and display:none on images and showed the hero twice). -->
               <tr>
                 <td class="hero-bg" align="left" valign="middle" background="${escapeAttr(heroImage)}" bgcolor="#f2f2f2" height="300" style="padding:0; background-color:#f2f2f2; background-image:url('${escapeAttr(heroImage)}'); background-position:center right; background-size:cover; background-repeat:no-repeat;">
                   <!--[if gte mso 9]>
                   <v:rect xmlns:v="urn:schemas-microsoft-com:vml" fill="true" stroke="false" style="width:640px;height:300px;">
-                    <v:fill type="frame" src="${escapeAttr(heroImage)}" color="#f2f2f2" />
-                    <v:textbox inset="0,0,0,0"><![endif]-->
+                    <v:fill type="frame" src="${escapeAttr(heroImage)}" color="#f2f2f2" size="1,1" aspect="atleast" origin="0.5,0" position="0.5,0" />
+                    <v:textbox style="mso-fit-shape-to-text:true" inset="0,0,0,0"><table role="presentation" width="640" cellpadding="0" cellspacing="0" border="0"><tr><td height="300" valign="middle" style="height:300px;"><![endif]-->
                   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;">
                     <tr>
                       <td class="hero-text" width="55%" valign="middle" style="width:55%; padding:36px 20px 36px 40px;">
-                        <div style="font-family:${FONT}; color:${BLUE}; font-size:11px; line-height:16px; font-weight:700; letter-spacing:0.4px; text-transform:uppercase; margin-bottom:12px;">${escapeHtml(copy.kicker(en))}</div>
-                        <div class="hero-title" style="font-family:${FONT}; font-size:40px; line-height:44px; color:#111111; font-weight:800; letter-spacing:-1.5px; margin-bottom:14px;">${headlineHtml}</div>
-                        <div class="hero-sub" style="font-family:${FONT}; font-size:14px; line-height:21px; color:#333333; margin-bottom:${heroCta ? 22 : 0}px; max-width:300px;">${escapeHtml(copy.subline(en))}</div>
+                        <div style="font-family:${FONT}; color:${BLUE}; font-size:11px; mso-line-height-rule:exactly; line-height:16px; font-weight:700; letter-spacing:0.4px; text-transform:uppercase; margin-bottom:12px;">${escapeHtml(copy.kicker(en))}</div>
+                        <div class="hero-title" style="font-family:${FONT}; font-size:40px; mso-line-height-rule:exactly; line-height:44px; color:#111111; font-weight:800; letter-spacing:-1.5px; margin-bottom:14px;">${headlineHtml}</div>
+                        <div class="hero-sub" style="font-family:${FONT}; font-size:14px; mso-line-height-rule:exactly; line-height:21px; color:#333333; margin-bottom:${heroCta ? 22 : 0}px; max-width:300px;">${escapeHtml(copy.subline(en))}</div>
                         ${heroCta ? redButton(heroCta, false, "hero-cta") : ""}
                       </td>
                       <td width="45%" class="hero-spacer" valign="bottom" align="right" style="width:45%; font-size:0; line-height:0; padding:0 12px 10px 0;">${heroPictureHtml}</td>
                     </tr>
                   </table>
-                  <!--[if gte mso 9]></v:textbox></v:rect><![endif]-->
+                  <!--[if gte mso 9]></td></tr></table></v:textbox></v:rect><![endif]-->
                 </td>
               </tr>
               <!-- Mobile-only hero picture: the background is switched off on
                    phones (a 640px-wide crop behind 20px-padded text is
-                   unreadable), so the artwork gets its own full-width row. -->
-              <tr class="hero-mobile-row">
+                   unreadable), so the artwork gets its own full-width row.
+                   The whole row is removed for Outlook for Windows, which
+                   ignores @media and display:none on images: it showed the
+                   artwork a second time with a second EU label (the desktop
+                   label in the hero stays its one label). -->
+              ${hideFromOutlook(`<tr class="hero-mobile-row">
                 <td class="hero-mobile-cell" style="padding:0; font-size:0; line-height:0;">
                   ${
                     heroLink
@@ -853,7 +1022,7 @@ function makeShell(kind: keyof typeof HERO_COPY) {
                       : ""
                   }
                 </td>
-              </tr>
+              </tr>`)}
               <!-- BODY (personal greeting + prose from the composer) -->
               <tr>
                 <td class="content-pad" style="padding: 30px 44px 6px 44px;" bgcolor="#ffffff" valign="top">${greetingHtml(
@@ -909,7 +1078,7 @@ export const performanceDesign: EmailDesignDefinition = {
     shell: makeShell("marketing"),
     sectionBand,
     sectionRow,
-    ctaButton: (cta) => redButton(cta),
+    ctaButton: (cta) => redButton(cta, false, "", "center"),
     productRows,
     productGrid,
     bundleBlock,
