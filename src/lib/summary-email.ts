@@ -265,10 +265,12 @@ export function buildSummaryEmailContent(params: SummaryEmailContentParams): {
   // Intro + AI summary in the padded body; the product sections render as
   // full-width newsletter sections (black band + two-column grid) around the
   // "Zur Kasse" pill; the sign-off closes the card before the footer.
+  // Paragraph gaps are margins (Outlook for Windows ignores padding on <p>);
+  // the summary's line breaks arrive as <br> from renderEmailProseHtml.
   const bodyHtml = en
     ? `
                     <p style="${emailTextStyle()}" align="left">Hello,</p>
-                    <p style="${emailTextStyle()} padding-top: 10px; padding-bottom: 10px;" align="left">thank you for your consultation at <strong>motion sports</strong>. Here is your summary:</p>
+                    <p style="${emailTextStyle()} Margin-top: 10px; Margin-bottom: 10px;" align="left">thank you for your consultation at <strong>motion sports</strong>. Here is your summary:</p>
                     <table cellspacing="0" cellpadding="0" border="0" width="100%" style="min-width: 100%; direction: ltr;" role="presentation">
                       <tr>
                         <th style="mso-line-height-rule: exactly; padding: 16px 20px;" align="left" bgcolor="#eeeeee" valign="top">
@@ -278,7 +280,7 @@ export function buildSummaryEmailContent(params: SummaryEmailContentParams): {
                     </table>`
     : `
                     <p style="${emailTextStyle()}" align="left">Hallo,</p>
-                    <p style="${emailTextStyle()} padding-top: 10px; padding-bottom: 10px;" align="left">vielen Dank f&#252;r deine Beratung bei <strong>motion sports</strong>. Hier ist deine Zusammenfassung:</p>
+                    <p style="${emailTextStyle()} Margin-top: 10px; Margin-bottom: 10px;" align="left">vielen Dank f&#252;r deine Beratung bei <strong>motion sports</strong>. Hier ist deine Zusammenfassung:</p>
                     <table cellspacing="0" cellpadding="0" border="0" width="100%" style="min-width: 100%; direction: ltr;" role="presentation">
                       <tr>
                         <th style="mso-line-height-rule: exactly; padding: 16px 20px;" align="left" bgcolor="#eeeeee" valign="top">
@@ -291,10 +293,10 @@ export function buildSummaryEmailContent(params: SummaryEmailContentParams): {
     en
       ? `
                     <p style="${emailTextStyle()}" align="center">If you have any questions, you can reply to this email at any time.</p>
-                    <p style="${emailTextStyle()} padding-top: 10px;" align="center">Best regards<br>Your motion sports team</p>`
+                    <p style="${emailTextStyle()} Margin-top: 10px;" align="center">Best regards<br>Your motion sports team</p>`
       : `
                     <p style="${emailTextStyle()}" align="center">Bei Fragen kannst du jederzeit auf diese E-Mail antworten.</p>
-                    <p style="${emailTextStyle()} padding-top: 10px;" align="center">Viele Gr&#252;&#223;e<br>Dein motion sports Team</p>`,
+                    <p style="${emailTextStyle()} Margin-top: 10px;" align="center">Viele Gr&#252;&#223;e<br>Dein motion sports Team</p>`,
     { padding: "20px 60px 10px", align: "center" }
   );
 

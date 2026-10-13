@@ -91,10 +91,11 @@ const MESSAGES = {
     de: "Für dieses Konto liegt keine verifizierte E-Mail-Adresse vor.",
     en: "There is no verified email address on file for this account.",
   },
-  // Expired bundle-offer redirect page (GET /api/r/[token]).
+  // Expired bundle-offer redirect page (GET /api/r/[token]). The brand is
+  // spelled lower-case, like the sender name (owner, 13.10.2026).
   offer_expired_title: {
-    de: "Angebot abgelaufen — Motion Sports",
-    en: "Offer expired — Motion Sports",
+    de: "Angebot abgelaufen — motion sports",
+    en: "Offer expired — motion sports",
   },
   offer_expired_heading: {
     de: "Dieses Angebot ist leider abgelaufen",

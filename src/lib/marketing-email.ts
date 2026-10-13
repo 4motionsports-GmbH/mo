@@ -664,15 +664,16 @@ export function renderMarketingEmail(opts: {
   // ship deterministically OUTSIDE the editable prose; the cart button always
   // points at the tracked redirect (linkUrl), never the raw Shopify cart; and
   // the unsubscribe block goes through the template's dedicated footer slot,
-  // which a content edit can never remove.
+  // which a content edit can never remove. The note's gaps are margins:
+  // Outlook for Windows ignores padding on <p>.
   const discountNote = linkUrl
     ? discountCode
-      ? `<p style="${emailMutedTextStyle()} padding-top: 5px; padding-bottom: 10px;" align="center">Dein pers&#246;nlicher Code <strong>${escapeHtml(
+      ? `<p style="${emailMutedTextStyle()} Margin-top: 5px; Margin-bottom: 10px;" align="center">Dein pers&#246;nlicher Code <strong>${escapeHtml(
           discountCode
         )}</strong> ist im Warenkorb bereits hinterlegt${escapeHtml(validityNote)}.</p>`
       : ""
     : discountCode
-      ? `<p style="${emailMutedTextStyle()} padding-top: 5px; padding-bottom: 10px;" align="center">Dein pers&#246;nlicher Code: <strong>${escapeHtml(
+      ? `<p style="${emailMutedTextStyle()} Margin-top: 5px; Margin-bottom: 10px;" align="center">Dein pers&#246;nlicher Code: <strong>${escapeHtml(
           discountCode
         )}</strong>${escapeHtml(validityNote)}.</p>`
       : "";
