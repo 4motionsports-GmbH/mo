@@ -30,10 +30,13 @@ test("formatSender: EMAIL_SENDER_NAME overrides the name; blank falls back", () 
   assert.equal(formatSender("mo@motionsports.de", undefined), "Mo von motion sports <mo@motionsports.de>");
 });
 
-test("formatSender: no address → not configured", () => {
+test("formatSender: no address → not configured; an unparsed address passes through", () => {
   assert.equal(formatSender(undefined), undefined);
   assert.equal(formatSender(""), undefined);
   assert.equal(formatSender("Mo von motion sports"), undefined);
+  // Never stop all mail over a parsing gap: Resend judges the raw value.
+  assert.equal(formatSender("  mo@localhost "), "mo@localhost");
+  assert.equal(formatSender("Mo <mo@motionsports.de"), "Mo <mo@motionsports.de");
 });
 
 test("quoteDisplayName: plain words stay, specials are quoted and escaped", () => {

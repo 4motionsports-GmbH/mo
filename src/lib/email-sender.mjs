@@ -39,14 +39,19 @@ export function quoteDisplayName(name) {
 /**
  * The From header Mo sends with: the code's display name (or the override)
  * in front of the address taken from the env value. undefined when the env
- * value holds no address (mail is then "not configured").
+ * value is empty (mail is then "not configured"). A value that holds an "@"
+ * this parser does not understand is passed through unchanged — Resend
+ * judges it, and a parsing gap here must never stop every mail (fail-soft).
  * @param {unknown} envValue  CONTACT_FROM_EMAIL
  * @param {unknown} [nameOverride]  EMAIL_SENDER_NAME
  * @returns {string | undefined}
  */
 export function formatSender(envValue, nameOverride) {
   const address = mailboxAddress(envValue);
-  if (!address) return undefined;
+  if (!address) {
+    const raw = typeof envValue === "string" ? envValue.trim() : "";
+    return raw.includes("@") ? raw : undefined;
+  }
   const name = typeof nameOverride === "string" && nameOverride.trim() ? nameOverride : MO_SENDER_NAME;
   return `${quoteDisplayName(name)} <${address}>`;
 }
