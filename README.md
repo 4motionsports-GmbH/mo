@@ -107,7 +107,8 @@ every retention window treats `0` as „disabled“, never as „delete everythi
 | `npm run analyze:repurchase` | Repurchase analysis behind the lifecycle segments ([`docs/REPURCHASE_ANALYSIS.md`](docs/REPURCHASE_ANALYSIS.md)). |
 | `npm run convert-catalog`, `npm run index` | One-off catalog conversion and embedding build (the daily cron does this in production). |
 | `npm run hero:gradient`, `npm run hero:compare` | Hero-image tooling. |
-| `npx tsx scripts/preview-summary-email.mjs`, `npx tsx --env-file=.env scripts/send-test-emails.mjs`, `node --env-file=.env.local scripts/list-test-discounts.mjs` | Manual helpers: render the summary e-mail to a file, send test versions of the e-mails via Resend (**sends real mail** — read the header first), list/delete test discount codes. The first two import TypeScript modules with extensionless imports, which plain Node does not resolve — hence `tsx` (not a dependency; `npx` fetches it); the third is plain Node. |
+| `npm run check:email-outlook` | Lints every e-mail design × mail type for Outlook for Windows (the Word engine) and the Gmail size limit — see `docs/EMAIL_DESIGNS.md`. |
+| `npx tsx scripts/preview-summary-email.mjs`, `npx tsx --env-file=.env scripts/send-test-emails.mjs [recipient] [--design performance]`, `node --env-file=.env.local scripts/list-test-discounts.mjs` | Manual helpers: render the summary e-mail to a file, send test versions of every e-mail type in one design via Resend (**sends real mail** — read the header first), list/delete test discount codes. The first two import TypeScript modules with extensionless imports, which plain Node does not resolve — hence `tsx` (not a dependency; `npx` fetches it); the third is plain Node. |
 
 ## Architecture
 
