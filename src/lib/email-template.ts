@@ -25,6 +25,11 @@
 //     animated GIF is the only animation email clients broadly support
 //     (Gmail/Apple Mail play it; Outlook desktop shows the first frame).
 //     Everything else stays static.
+//   - Outlook for Windows renders with Word: it ignores padding on <a>/<p>,
+//     CSS widths on <img>, margin:auto and @media. Fixes for it are
+//     conditional comments, mso-* properties and attributes (email-outlook.mjs),
+//     or margin/padding moves that render identically in a browser — Gmail
+//     and Apple Mail must not change by a pixel.
 
 // DESIGNS: every public helper below is an extension point of the email-design
 // system (src/lib/email-designs/, docs/EMAIL_DESIGNS.md). The async send/
@@ -124,8 +129,9 @@ import { countdownCopy, countdownText, deadlineLabel, remainingParts } from "./o
 import { couponCopy, discountRedeemUrl } from "./discount-coupon.mjs";
 import { parseDiscountScope } from "./discount-scope.mjs";
 import { countdownSecret, signCountdownToken } from "./email-countdown-token.mjs";
-import { COUNTDOWN_MOBILE_WIDTH, COUNTDOWN_WIDTH } from "./email-countdown-image.mjs";
-import { buttonRadiusFor, fontNeedsWebFont, fontStackFor } from "./email-theme.mjs";
+import { COUNTDOWN_HEIGHT, COUNTDOWN_MOBILE_WIDTH, COUNTDOWN_WIDTH } from "./email-countdown-image.mjs";
+import { buttonRadiusFor, fontNeedsWebFont, fontStackFor, msoFontStackFor } from "./email-theme.mjs";
+import { MSO_HTML_ATTRS, msoHeadHtml, msoPaddingAlt } from "./email-outlook.mjs";
 import type { Locale } from "./locale";
 export { escapeHtml, escapeAttr };
 
@@ -226,6 +232,9 @@ export const EMAIL_SOCIAL_LINKS: ReadonlyArray<{ alt: string; icon: string; url:
 
 export const EMAIL_IMPRINT_URL = "https://motionsports.de/pages/impressum";
 
+/** The classic card's content width: the 600px card minus 2 × 60px row padding. */
+const CLASSIC_CONTENT_WIDTH = 480;
+
 /**
  * The signature newsletter element: a FULL-WIDTH black band with white 20px
  * text, used to separate sections ("Deine Auswahl", "Bestseller", …). Returns
@@ -265,6 +274,10 @@ export function renderSectionRow(
                 </tr>`;
 }
 
+/** The CTA anchor's padding and border width (renderCtaButton). */
+const CTA_PADDING = "14px 28px";
+const CTA_BORDER_PX = 3;
+
 /**
  * "Bulletproof" pill button in the newsletter style: full-width #008ccb pill
  * (border-radius 200px), bold white 12px label, generous padding. Returns a
@@ -275,11 +288,13 @@ export function renderCtaButton(cta: EmailCta): string {
   if (override) return override(cta);
   const accent = emailAccentColor();
   const radius = buttonRadiusFor(activeEmailTheme().buttonShape);
+  // Outlook/Word drops the anchor's padding, so the bgcolor cell carries it
+  // there (mso-padding-alt = padding + the anchor's border); browsers ignore it.
   return `
                     <table cellspacing="0" cellpadding="0" border="0" width="100%" role="presentation" style="direction: ltr; border-spacing: 0 !important; border-collapse: collapse !important;">
                       <tr>
-                        <td align="center" bgcolor="${accent}" style="mso-line-height-rule: exactly; border-radius: ${radius};" valign="top">
-                          <a href="${escapeAttr(cta.url)}" target="_blank" style="font-size: 12px; color: #ffffff; text-decoration: none; border-radius: ${radius}; background-color: ${accent}; display: block; min-width: 80px; font-family: ${emailFontFamily()}; font-weight: 400; font-style: normal; text-align: center; text-transform: uppercase; letter-spacing: 0.5px; word-break: break-word; padding: 14px 28px; border: 3px solid ${accent};"><strong>${escapeHtml(cta.label)}</strong></a>
+                        <td align="center" bgcolor="${accent}" style="mso-line-height-rule: exactly; mso-padding-alt: ${msoPaddingAlt(CTA_PADDING, CTA_BORDER_PX)}; border-radius: ${radius};" valign="top">
+                          <a href="${escapeAttr(cta.url)}" target="_blank" style="font-size: 12px; color: #ffffff; text-decoration: none; border-radius: ${radius}; background-color: ${accent}; display: block; min-width: 80px; font-family: ${emailFontFamily()}; font-weight: 400; font-style: normal; text-align: center; text-transform: uppercase; letter-spacing: 0.5px; word-break: break-word; padding: ${CTA_PADDING}; border: ${CTA_BORDER_PX}px solid ${accent}; mso-padding-alt: 0;"><strong>${escapeHtml(cta.label)}</strong></a>
                         </td>
                       </tr>
                     </table>`;
@@ -295,9 +310,11 @@ export function renderCtaButton(cta: EmailCta): string {
 export function renderMoPromoBlock(input: MoPromoBlockInput): string {
   const override = activeEmailDesignRenderers()?.moPromoBlock;
   if (override) return override(input);
+  // The 16px gap above the orb is row padding, not a table margin: Outlook/Word
+  // may drop margins on tables, it never drops cell padding.
   return renderSectionRow(
     `
-                                  <table width="100%" cellspacing="0" cellpadding="0" border="0" role="presentation" style="min-width: 100%; direction: ltr; Margin-top: 16px;">
+                                  <table width="100%" cellspacing="0" cellpadding="0" border="0" role="presentation" style="min-width: 100%; direction: ltr;">
                                     <tr>
                                       <td valign="middle" width="68" style="mso-line-height-rule: exactly; padding-right: 12px;">
                                         <img src="${escapeAttr(emailMoIconUrl())}" alt="Mo" width="56" height="56" border="0" style="width: 56px; height: 56px; display: block;">
@@ -309,7 +326,7 @@ export function renderMoPromoBlock(input: MoPromoBlockInput): string {
                                       </td>
                                     </tr>
                                   </table>`,
-    { padding: "10px 60px" }
+    { padding: "26px 60px 10px" }
   );
 }
 
@@ -341,14 +358,21 @@ export function renderOfferCountdown(input: {
   };
   const override = activeEmailDesignRenderers()?.offerCountdown;
   if (override) return override(built);
+  // Outlook/Word sizes an image by its width/height attributes only (CSS width
+  // and max-width are ignored), so they carry the content width — the 564px
+  // image would push the card wider. Browsers keep following the inline CSS.
+  // The 8px gap below it is the caption's margin: Word may drop an img margin.
+  const attrWidth = Math.min(CLASSIC_CONTENT_WIDTH, built.imageWidth);
+  const attrHeight = Math.round((attrWidth * COUNTDOWN_HEIGHT) / COUNTDOWN_WIDTH);
   const image = built.imageUrl
     ? `
-                    <img src="${escapeAttr(built.imageUrl)}" width="${built.imageWidth}" alt="${escapeAttr(built.imageAlt)}" style="width: 100%; max-width: ${built.imageWidth}px; height: auto; display: block; border-radius: 7px; margin: 0 auto 8px;">`
+                    <img src="${escapeAttr(built.imageUrl)}" width="${attrWidth}" height="${attrHeight}" alt="${escapeAttr(built.imageAlt)}" style="width: 100%; max-width: ${built.imageWidth}px; height: auto; display: block; border-radius: 7px; margin: 0 auto;">`
     : "";
+  const captionGap = built.imageUrl ? " Margin-top: 8px;" : "";
   return renderSectionRow(
     image +
       `
-                    <p style="${emailMutedTextStyle()} font-size: 13px;" align="center"><strong>${escapeHtml(
+                    <p style="${emailMutedTextStyle()} font-size: 13px;${captionGap}" align="center"><strong>${escapeHtml(
                       built.copy.heading
                     )} ${built.days} ${escapeHtml(built.copy.days)}${
                       built.hours > 0 || built.days === 0 ? ` ${built.hours} ${escapeHtml(built.copy.hours)}` : ""
@@ -395,7 +419,7 @@ export function renderDiscountCoupon(input: {
                           <p style="font-family: ${emailFontFamily()}; font-size: 24px; line-height: 30px; font-weight: 700; letter-spacing: 2px; color: #111111; Margin: 4px 0 6px;" align="center">${escapeHtml(built.code)}</p>
                           <p style="${emailTextStyle()} font-weight: 700;" align="center">${escapeHtml(built.copy.benefit)}</p>
                           <p style="${emailMutedTextStyle()}" align="center">${escapeHtml(built.copy.terms)}</p>
-                          <p style="${emailTextStyle()} padding-top: 8px;" align="center"><a href="${escapeAttr(built.redeemUrl)}" target="_blank" style="${emailLinkStyle()} font-weight: 700;">${escapeHtml(built.copy.cta)} &#8594;</a></p>
+                          <p style="${emailTextStyle()} Margin-top: 8px;" align="center"><a href="${escapeAttr(built.redeemUrl)}" target="_blank" style="${emailLinkStyle()} font-weight: 700;">${escapeHtml(built.copy.cta)} &#8594;</a></p>
                         </td>
                       </tr>
                     </table>`,
@@ -419,14 +443,16 @@ function countdownImageUrl(
 }
 
 function renderSocialRow(): string {
+  // The 12px gap to the company block is cell padding, not a table margin:
+  // Outlook/Word may drop margins on tables, it never drops cell padding.
   const cells = EMAIL_SOCIAL_LINKS.map(
     (s) => `
-                          <td align="center" valign="middle" style="mso-line-height-rule: exactly; padding: 0 6px;">
+                          <td align="center" valign="middle" style="mso-line-height-rule: exactly; padding: 0 6px 12px 6px;">
                             <a href="${escapeAttr(s.url)}" target="_blank" style="text-decoration: none;"><img src="${escapeAttr(s.icon)}" alt="${escapeAttr(s.alt)}" width="20" height="20" border="0" style="width: 20px; height: 20px; display: block; border: none; outline: none;"></a>
                           </td>`
   ).join("");
   return `
-                    <table cellspacing="0" cellpadding="0" border="0" align="center" role="presentation" style="direction: ltr; Margin: 0 auto 12px;">
+                    <table cellspacing="0" cellpadding="0" border="0" align="center" role="presentation" style="direction: ltr; Margin: 0 auto;">
                       <tr>${cells}
                       </tr>
                     </table>`;
@@ -451,10 +477,8 @@ export function renderBrandedEmail(opts: BrandedEmailOptions): string {
 
   // The Montserrat web-font <link>/@import is emitted only when the theme's
   // stack actually uses it; system stacks (Arial, Georgia, …) need no request.
-  // The MSO fallback pins Outlook desktop to the stack's web-safe fonts.
-  const msoFallbackStack = fontNeedsWebFont(theme.fontFamily)
-    ? "Verdana, Geneva, sans-serif"
-    : fontStackFor(theme.fontFamily);
+  // Outlook desktop gets its own head block (msoHeadHtml): 96 DPI, no table
+  // spacing, and a stack whose first font Windows has (msoFontStackFor).
   const webFontHead = fontNeedsWebFont(theme.fontFamily)
     ? `
     <!--[if !mso]><!-->
@@ -503,7 +527,7 @@ export function renderBrandedEmail(opts: BrandedEmailOptions): string {
     : "";
 
   return `<!DOCTYPE html>
-<html lang="${locale}">
+<html lang="${locale}" ${MSO_HTML_ATTRS}>
   <head>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta http-equiv="X-UA-Compatible" content="IE=edge">
@@ -512,12 +536,7 @@ export function renderBrandedEmail(opts: BrandedEmailOptions): string {
     <meta name="format-detection" content="telephone=no, date=no, address=no, email=no, url=no">
     <meta name="color-scheme" content="light">
     <meta name="supported-color-schemes" content="light only">
-    <title>${escapeHtml(opts.subject)}</title>
-    <!--[if mso]>
-    <style>
-      * { font-family: ${msoFallbackStack} !important; }
-    </style>
-    <![endif]-->${webFontHead}
+    <title>${escapeHtml(opts.subject)}</title>${msoHeadHtml(msoFontStackFor(theme.fontFamily))}${webFontHead}
     <style type="text/css">
       /* Progressive enhancement ONLY — every critical style is inline. */
       html, body { Margin: 0 auto !important; padding: 0 !important; width: 100% !important; }

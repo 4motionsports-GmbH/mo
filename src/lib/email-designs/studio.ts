@@ -32,6 +32,9 @@ export const studioDesign: EmailDesignDefinition = {
   renderers: {
     // Quiet editorial kicker instead of the classic full-width black band:
     // small uppercase letter-spaced title over a thin rule, on the white card.
+    // The rule cell spells out a 2px line height with the exact rule: Outlook/
+    // Word ignores font-size 0 and treats line-height as a minimum, so it would
+    // grow the 2px rule into a black block one text line high.
     sectionBand: (title: string) => `
                 <tr>
                   <td class="content-pad" align="center" bgcolor="#ffffff" style="mso-line-height-rule: exactly; padding: 28px 60px 6px;">
@@ -40,9 +43,9 @@ export const studioDesign: EmailDesignDefinition = {
                 </tr>
                 <tr>
                   <td align="center" bgcolor="#ffffff" style="mso-line-height-rule: exactly; padding: 0 60px 4px;">
-                    <table cellspacing="0" cellpadding="0" border="0" role="presentation" style="direction: ltr; border-spacing: 0 !important; border-collapse: collapse !important;">
+                    <table cellspacing="0" cellpadding="0" border="0" align="center" role="presentation" style="direction: ltr; border-spacing: 0 !important; border-collapse: collapse !important;">
                       <tr>
-                        <td width="48" height="2" bgcolor="#111111" style="font-size: 0; line-height: 0; width: 48px; height: 2px;">&nbsp;</td>
+                        <td width="48" height="2" bgcolor="#111111" style="font-size: 2px; line-height: 2px; mso-line-height-rule: exactly; width: 48px; height: 2px;">&nbsp;</td>
                       </tr>
                     </table>
                   </td>

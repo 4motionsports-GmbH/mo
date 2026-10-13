@@ -20,6 +20,7 @@ import {
   EMAIL_SALE_STRIKE_COLOR,
 } from "./email-template";
 import { activeEmailDesignRenderers } from "./email-design-context";
+import { msoPaddingAlt } from "./email-outlook.mjs";
 import type { Product } from "./types";
 import { loadProductCatalog } from "./catalog-store";
 import { productNameLookup } from "./email-prose.mjs";
@@ -167,23 +168,30 @@ export function renderEmailProductGrid(items: EmailProductGridItem[]): string {
   const override = activeEmailDesignRenderers()?.productGrid;
   if (override) return override(items);
 
+  // Outlook can't do inline-block wrapping — break the MSO ghost table into
+  // explicit two-cell rows of fixed halves (same conditional pattern as the
+  // newsletter). Without cellpadding/cellspacing/border Word adds its own
+  // spacing; an odd last tile spans both columns so it stays centred as it
+  // does in every other client.
+  const cell = (i: number) =>
+    i === items.length - 1 && i % 2 === 0
+      ? `<td colspan="2" align="center" valign="top">`
+      : `<td width="50%" valign="top">`;
   const tiles = items
     .map((item, i) => {
-      // Outlook can't do inline-block wrapping — break the MSO table into
-      // explicit two-cell rows (same conditional pattern as the newsletter).
       const msoSeparator =
         i === 0
           ? ""
           : i % 2 === 0
-            ? `<!--[if mso]></td></tr><tr><td style="vertical-align: top;"><![endif]-->`
-            : `<!--[if mso]></td><td style="vertical-align: top;"><![endif]-->`;
+            ? `<!--[if mso]></td></tr><tr>${cell(i)}<![endif]-->`
+            : `<!--[if mso]></td>${cell(i)}<![endif]-->`;
       return `${msoSeparator}${renderTile(item)}`;
     })
     .join("");
 
   return `
                     <div style="font-size: 0; text-align: center; direction: ltr;">
-                      <!--[if mso]><table role="presentation" width="100%" style="text-align: center;"><tr><td style="vertical-align: top;"><![endif]-->
+                      <!--[if mso]><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>${cell(0)}<![endif]-->
                       ${tiles}
                       <!--[if mso]></td></tr></table><![endif]-->
                     </div>`;
@@ -221,20 +229,29 @@ const rowDescStyle = () =>
   `mso-line-height-rule: exactly; direction: ltr; font-family: ${emailFontFamily()}; ` +
   `font-size: 13px; line-height: 1.6; color: #000000; font-weight: 400; Margin: 0; padding: 0;`;
 
+/** The product button anchor's padding and border width (rowCtaButton). */
+const ROW_CTA_PADDING = "8px 18px";
+const ROW_CTA_BORDER_PX = 2;
+
 /** Small accent pill linking to the product page (right column, under the
  * description). Same visual language as the shell's bulletproof CTA, scaled
  * down so the cart button below stays the email's primary action. */
 function rowCtaButton(url: string, label: string): string {
   const accent = emailAccentColor();
   const radius = emailButtonRadius();
+  // Outlook/Word: the 12px gap above is a cell's padding (Word may drop a
+  // table margin), and the bgcolor cell carries the anchor's padding + border
+  // as mso-padding-alt (Word ignores padding on <a>). Browsers render the same.
   return `
-                          <table cellspacing="0" cellpadding="0" border="0" role="presentation" style="direction: ltr; border-spacing: 0 !important; border-collapse: collapse !important; Margin-top: 12px;">
+                          <table cellspacing="0" cellpadding="0" border="0" role="presentation"><tr><td style="mso-line-height-rule: exactly; padding: 12px 0 0;">
+                          <table cellspacing="0" cellpadding="0" border="0" role="presentation" style="direction: ltr; border-spacing: 0 !important; border-collapse: collapse !important;">
                             <tr>
-                              <td align="center" bgcolor="${accent}" style="mso-line-height-rule: exactly; border-radius: ${radius};" valign="top">
-                                <a href="${escapeAttr(url)}" target="_blank" style="font-size: 11px; color: #ffffff; text-decoration: none; border-radius: ${radius}; background-color: ${accent}; display: block; font-family: ${emailFontFamily()}; font-weight: 700; font-style: normal; text-align: center; text-transform: uppercase; letter-spacing: 0.5px; padding: 8px 18px; border: 2px solid ${accent};">${escapeHtml(label)}</a>
+                              <td align="center" bgcolor="${accent}" style="mso-line-height-rule: exactly; mso-padding-alt: ${msoPaddingAlt(ROW_CTA_PADDING, ROW_CTA_BORDER_PX)}; border-radius: ${radius};" valign="top">
+                                <a href="${escapeAttr(url)}" target="_blank" style="font-size: 11px; color: #ffffff; text-decoration: none; border-radius: ${radius}; background-color: ${accent}; display: block; font-family: ${emailFontFamily()}; font-weight: 700; font-style: normal; text-align: center; text-transform: uppercase; letter-spacing: 0.5px; padding: ${ROW_CTA_PADDING}; border: ${ROW_CTA_BORDER_PX}px solid ${accent}; mso-padding-alt: 0;">${escapeHtml(label)}</a>
                               </td>
                             </tr>
-                          </table>`;
+                          </table>
+                          </td></tr></table>`;
 }
 
 function renderProductRow(item: EmailProductRowItem, isFirst: boolean): string {
@@ -268,12 +285,14 @@ function renderProductRow(item: EmailProductRowItem, isFirst: boolean): string {
   const cta = href ? rowCtaButton(href, item.ctaLabel?.trim() || "Zum Produkt") : "";
 
   // Divider line ABOVE every row except the first (Atletica-style separators).
+  // Word reads line-height 0 as "at least one text line" — the exact rule and
+  // a 1px alt line-height keep the cell under the border 1px high there.
   const divider = isFirst
     ? ""
     : `
                       <tr>
                         <td colspan="2" style="mso-line-height-rule: exactly; padding: 18px 0 0;">
-                          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-top: 1px solid #e0e0e0; border-spacing: 0 !important; border-collapse: collapse !important;"><tr><td style="font-size: 0; line-height: 0;">&nbsp;</td></tr></table>
+                          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-top: 1px solid #e0e0e0; border-spacing: 0 !important; border-collapse: collapse !important;"><tr><td style="font-size: 0; line-height: 0; mso-line-height-rule: exactly; mso-line-height-alt: 1px;">&nbsp;</td></tr></table>
                         </td>
                       </tr>`;
 

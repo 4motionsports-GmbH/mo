@@ -146,6 +146,8 @@ function renderClassicBundleBlock(input: BundleOfferBlockInput, c: BundleBlockCo
   const accent = emailAccentColor();
   const tint = tintHex(accent, 0.08);
   const font = emailFontFamily();
+  // Gaps between paragraphs are margins (Margin-top after the reset): Outlook/
+  // Word ignores padding on <p>, and inside a cell browsers render both alike.
   const p = `mso-line-height-rule: exactly; direction: ltr; font-family: ${font}; Margin: 0; padding: 0;`;
 
   // EYECATCHER — a pale band in the accent tint: kicker, headline, tagline on
@@ -154,12 +156,12 @@ function renderClassicBundleBlock(input: BundleOfferBlockInput, c: BundleBlockCo
     c.eyecatcher === "saving"
       ? `<p style="${p} font-size: 36px; line-height: 40px; font-weight: 700; color: #ffffff; white-space: nowrap;" align="center"><strong>${escapeHtml(c.eyecatcherCopy.value)}</strong></p>` +
         (c.eyecatcherCopy.note
-          ? `<p style="${p} font-size: 12px; line-height: 17px; font-weight: 700; color: #ffffff; padding-top: 4px; white-space: nowrap;" align="center"><strong>${escapeHtml(c.eyecatcherCopy.note)}</strong></p>`
+          ? `<p style="${p} font-size: 12px; line-height: 17px; font-weight: 700; color: #ffffff; Margin-top: 4px; white-space: nowrap;" align="center"><strong>${escapeHtml(c.eyecatcherCopy.note)}</strong></p>`
           : "")
       : (c.eyecatcherCopy.label
           ? `<p style="${p} font-size: 11px; line-height: 15px; letter-spacing: 1px; text-transform: uppercase; color: #ffffff;" align="center">${escapeHtml(c.eyecatcherCopy.label)}</p>`
           : "") +
-        `<p style="${p} font-size: 24px; line-height: 30px; font-weight: 700; color: #ffffff; padding-top: 2px; white-space: nowrap;" align="center"><strong>${escapeHtml(c.eyecatcherCopy.value)}</strong></p>`;
+        `<p style="${p} font-size: 24px; line-height: 30px; font-weight: 700; color: #ffffff; Margin-top: 2px; white-space: nowrap;" align="center"><strong>${escapeHtml(c.eyecatcherCopy.value)}</strong></p>`;
   const badge = `
                           <table role="presentation" cellpadding="0" cellspacing="0" border="0" align="right" class="set-badge" style="border-collapse: separate !important; border-spacing: 0;">
                             <tr>
@@ -174,8 +176,8 @@ function renderClassicBundleBlock(input: BundleOfferBlockInput, c: BundleBlockCo
                             <tr>
                               <td valign="middle" class="set-eye-text" style="mso-line-height-rule: exactly; padding-right: 14px;">
                                 <p style="${p} font-size: 11px; line-height: 15px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase; color: ${accent};" align="left">${escapeHtml(c.labels.deal)}</p>
-                                <p style="${p} font-size: 20px; line-height: 26px; font-weight: 700; color: #000000; padding-top: 6px;" align="left"><strong>${escapeHtml(c.headline)}</strong></p>
-                                <p style="${p} font-size: 13px; line-height: 19px; color: #333333; padding-top: 4px;" align="left">${escapeHtml(c.tagline)}</p>
+                                <p style="${p} font-size: 20px; line-height: 26px; font-weight: 700; color: #000000; Margin-top: 6px;" align="left"><strong>${escapeHtml(c.headline)}</strong></p>
+                                <p style="${p} font-size: 13px; line-height: 19px; color: #333333; Margin-top: 4px;" align="left">${escapeHtml(c.tagline)}</p>
                               </td>
                               <td valign="middle" align="right" width="170" class="set-eye-badge" style="mso-line-height-rule: exactly; width: 170px;">${badge}
                               </td>
@@ -193,23 +195,26 @@ function renderClassicBundleBlock(input: BundleOfferBlockInput, c: BundleBlockCo
         ? `<img src="${escapeAttr(item.imageUrl)}" alt="${escapeAttr(item.name)}" width="${CLASSIC_ITEM_IMAGE}" height="${CLASSIC_ITEM_IMAGE}" border="0" class="set-item-img" style="width: ${CLASSIC_ITEM_IMAGE}px; height: ${CLASSIC_ITEM_IMAGE}px; max-width: 100%; display: block; border: none; outline: none; object-fit: contain; background-color: #ffffff;">`
         : "&nbsp;";
       const description = item.description
-        ? `<p style="${p} font-size: 12px; line-height: 17px; color: #555555; padding-top: 4px;" align="left">${escapeHtml(item.description)}</p>`
+        ? `<p style="${p} font-size: 12px; line-height: 17px; color: #555555; Margin-top: 4px;" align="left">${escapeHtml(item.description)}</p>`
         : "";
       const price = item.unitPriceLabel
         ? `<p style="${p} font-size: 12px; line-height: 17px; color: #757575; white-space: nowrap;" align="right">${escapeHtml(item.unitPriceLabel)}</p>`
         : "&nbsp;";
       // Text and price share an inner table so phones can stack the price
       // under the name while the picture stays on the left.
+      // Outlook/Word gives every cell of a row the largest vertical padding:
+      // the outer text cell inherits the picture cell's 14px there, so the
+      // inner cells drop theirs (mso-padding-alt) — same geometry as browsers.
       return `
                             <tr>
                               <td width="${CLASSIC_ITEM_IMAGE + 14}" valign="middle" class="set-item-img-cell" style="mso-line-height-rule: exactly; width: ${CLASSIC_ITEM_IMAGE + 14}px; padding: 14px 14px 14px 0; ${divider}">${image}</td>
                               <td valign="middle" style="mso-line-height-rule: exactly; padding: 0; ${divider}">
                                 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width: 100%;">
                                   <tr>
-                                    <td valign="middle" class="set-item-text" style="mso-line-height-rule: exactly; padding: 14px 10px 14px 0;">
+                                    <td valign="middle" class="set-item-text" style="mso-line-height-rule: exactly; padding: 14px 10px 14px 0; mso-padding-alt: 0 10px 0 0;">
                                       <p style="${p} font-size: 14px; line-height: 19px; font-weight: 700; color: #000000;" align="left"><span style="color: ${accent};">${item.quantity}&times;</span>&nbsp; ${escapeHtml(item.name)}</p>${description}
                                     </td>
-                                    <td width="92" valign="middle" align="right" class="set-item-price" style="mso-line-height-rule: exactly; width: 92px; padding: 14px 0;">${price}</td>
+                                    <td width="92" valign="middle" align="right" class="set-item-price" style="mso-line-height-rule: exactly; width: 92px; padding: 14px 0; mso-padding-alt: 0;">${price}</td>
                                   </tr>
                                 </table>
                               </td>
@@ -225,7 +230,9 @@ function renderClassicBundleBlock(input: BundleOfferBlockInput, c: BundleBlockCo
                       </tr>`;
 
   // PRICE SUMMARY — Einzelkauf struck through ONLY when genuine, the set price
-  // big and bold — and the one CTA in the theme's button style.
+  // big and bold — and the one CTA in the theme's button style. The 3px that
+  // lifts the struck price is a paragraph margin, not cell padding: Outlook/
+  // Word would copy a cell's bottom padding to the set-price cell as well.
   const label = `${p} font-size: 11px; line-height: 15px; letter-spacing: 1px; text-transform: uppercase; color: #757575;`;
   const summary = `
                       <tr>
@@ -234,9 +241,9 @@ function renderClassicBundleBlock(input: BundleOfferBlockInput, c: BundleBlockCo
                             <tr>${
                               c.stattLabel
                                 ? `
-                              <td valign="bottom" style="mso-line-height-rule: exactly; padding: 0 22px 3px 0;">
+                              <td valign="bottom" style="mso-line-height-rule: exactly; padding: 0 22px 0 0;">
                                 <p style="${label}" align="left">${escapeHtml(c.labels.separately)}</p>
-                                <p style="${p} font-size: 16px; line-height: 22px; color: ${EMAIL_SALE_STRIKE_COLOR}; text-decoration: line-through; white-space: nowrap;" align="left">${escapeHtml(c.stattLabel)}</p>
+                                <p style="${p} font-size: 16px; line-height: 22px; color: ${EMAIL_SALE_STRIKE_COLOR}; text-decoration: line-through; white-space: nowrap; Margin-bottom: 3px;" align="left">${escapeHtml(c.stattLabel)}</p>
                               </td>`
                                 : ""
                             }

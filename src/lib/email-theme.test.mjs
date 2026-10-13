@@ -12,6 +12,7 @@ import {
   buttonRadiusFor,
   fontNeedsWebFont,
   fontStackFor,
+  msoFontStackFor,
   normalizeTemplateDescription,
   normalizeTemplateName,
   parseEmailButtonShape,
@@ -61,6 +62,26 @@ test("font keys parse and resolve to stacks", () => {
   assert.equal(fontStackFor("nonsense"), fontStackFor("montserrat"));
   assert.equal(fontNeedsWebFont("montserrat"), true);
   assert.equal(fontNeedsWebFont("arial"), false);
+});
+
+test("msoFontStackFor: every key starts with a font Windows has", () => {
+  // Outlook desktop (Word) uses the first family literally — a web font or a
+  // Mac-only family there means Times New Roman.
+  const WINDOWS_SAFE = new Set(["Verdana", "Arial", "Georgia", "'Trebuchet MS'"]);
+  for (const key of EMAIL_FONT_KEYS) {
+    const first = msoFontStackFor(key).split(",")[0].trim();
+    assert.ok(WINDOWS_SAFE.has(first), `${key}: ${first}`);
+  }
+  assert.equal(msoFontStackFor("montserrat"), "Verdana, Geneva, sans-serif");
+  assert.equal(msoFontStackFor("helvetica"), "Arial, Helvetica, sans-serif");
+  assert.equal(msoFontStackFor("georgia"), "Georgia, 'Times New Roman', serif");
+  assert.equal(msoFontStackFor("trebuchet"), "'Trebuchet MS', Tahoma, sans-serif");
+  // Unknown keys fall back like fontStackFor does: to the brand font's stack.
+  assert.equal(msoFontStackFor("nonsense"), msoFontStackFor("montserrat"));
+  // A system stack that is already Windows-safe is kept as it is.
+  for (const key of ["verdana", "arial", "georgia", "trebuchet"]) {
+    assert.equal(msoFontStackFor(key), fontStackFor(key));
+  }
 });
 
 test("button shapes parse and resolve to radii", () => {
