@@ -69,7 +69,7 @@ import type { EmailProductGridItem, EmailProductRowItem } from "../email-product
 import type { BundleOfferBlockInput } from "../bundle-email";
 import { defaultHeroImageUrl } from "../email-hero";
 import { campaignMoDeeplinkUrl } from "../campaign-flags.mjs";
-import { SHOP_URL } from "../discount-coupon.mjs";
+import { SHOP_URL, couponCodeType } from "../discount-coupon.mjs";
 import { COUNTDOWN_HEIGHT, COUNTDOWN_WIDTH } from "../email-countdown-image.mjs";
 import {
   MSO_HTML_ATTRS,
@@ -574,6 +574,9 @@ function bundleBlock(input: BundleOfferBlockInput, c: BundleBlockComputed): stri
  */
 function couponCard(input: DiscountCouponInput): string {
   const label = `font-family:${FONT}; color:#555555; font-size:11px; line-height:16px;`;
+  // Real codes (11–12 characters) broke mid-code at 24 px in the ~165 px
+  // ticket on desktop — the size follows the code's length (tested).
+  const codeType = couponCodeType(input.code);
   return `
                 <tr>
                   <td class="content-pad" style="padding: 8px 38px 16px 38px;" bgcolor="#ffffff">
@@ -584,7 +587,7 @@ function couponCard(input: DiscountCouponInput): string {
                             <tr>
                               <td align="center" style="padding:16px 12px 14px 12px;">
                                 <div style="font-family:${FONT}; color:${BLUE}; font-size:10px; line-height:14px; font-weight:700; letter-spacing:1px; text-transform:uppercase; margin-bottom:6px;">${escapeHtml(input.copy.kicker)}</div>
-                                <a href="${escapeAttr(input.redeemUrl)}" target="_blank" style="display:block; font-family:${FONT}; color:#111111; font-size:24px; line-height:30px; font-weight:800; letter-spacing:2px; text-decoration:none; word-break:break-all;">${escapeHtml(input.code)}</a>
+                                <a href="${escapeAttr(input.redeemUrl)}" target="_blank" style="display:block; font-family:${FONT}; color:#111111; font-size:${codeType.fontSize}px; line-height:${codeType.lineHeight}px; mso-line-height-rule:exactly; font-weight:800; letter-spacing:${codeType.letterSpacing}px; text-decoration:none; word-break:break-all;">${escapeHtml(input.code)}</a>
                               </td>
                             </tr>
                           </table>

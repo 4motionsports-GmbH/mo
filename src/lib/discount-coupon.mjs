@@ -56,3 +56,20 @@ export function couponText(language, { code, percent = null, expiresLabel = null
   const c = couponCopy(language, { percent, expiresLabel, scope });
   return `${c.kicker}: ${code} — ${c.benefit}. ${c.terms}.\n${c.cta}: ${discountRedeemUrl(code)}`;
 }
+
+/**
+ * Type size of the code in a NARROW coupon ticket (design Performance: about
+ * 165 px inside the dashed frame on desktop). Real codes are 11–12 characters
+ * („MK-“ / „MS5-“ + 8) and broke mid-code at 24 px with 2 px tracking
+ * („MK-WXYZ8K“ / „MN“, Gmail and Apple Mail desktop alike — 13.10.2026), so a
+ * longer code gets a smaller size. Measured for Arial bold capitals and digits
+ * (~0.67 em each): ≤ 8 characters 24 px, ≤ 10 characters 20 px, longer 18 px.
+ * @param {string | null | undefined} code
+ * @returns {{ fontSize: number, lineHeight: number, letterSpacing: number }}
+ */
+export function couponCodeType(code) {
+  const length = String(code ?? "").trim().length;
+  if (length <= 8) return { fontSize: 24, lineHeight: 30, letterSpacing: 2 };
+  if (length <= 10) return { fontSize: 20, lineHeight: 26, letterSpacing: 1.5 };
+  return { fontSize: 18, lineHeight: 24, letterSpacing: 1 };
+}
