@@ -7,6 +7,7 @@
 
 import { senderAddress } from "./email";
 import { generateMessageId, sanitizeDomain } from "./email-inbound-core.mjs";
+import { replyToFor } from "./email-sender.mjs";
 
 /**
  * The address Resend Inbound receives replies on, e.g.
@@ -31,7 +32,10 @@ function outboundMessageIdDomain(): string {
 export interface OutboundThreading {
   /** The Message-ID we set on the outbound mail AND store on the 'sent' row. */
   messageId: string;
-  /** Reply-To pointing at the inbound address — undefined when not configured. */
+  /**
+   * Reply-To pointing at the inbound address — undefined when not configured
+   * or when it is the From address itself (email-sender.mjs replyToFor).
+   */
   replyTo: string | undefined;
 }
 
@@ -40,11 +44,12 @@ export interface OutboundThreading {
  * freshly-minted Message-ID plus the inbound Reply-To. The send site passes
  * `messageId` to sendEmail (so it ships on the wire) AND to recordSentMessage
  * (so the stored row's message_id matches what went out, and the eventual reply
- * threads back). Reply-To is included only when an inbound address is set.
+ * threads back). Reply-To is included only when an inbound address is set
+ * and differs from the From address.
  */
 export function outboundThreading(): OutboundThreading {
   return {
     messageId: generateMessageId(outboundMessageIdDomain()),
-    replyTo: inboundEmailAddress(),
+    replyTo: replyToFor(inboundEmailAddress(), senderAddress()),
   };
 }

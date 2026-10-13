@@ -8,10 +8,13 @@
 // fall back to a local-dev log and respond honestly.
 //
 // The sender is the client's verified Resend sender (CONTACT_FROM_EMAIL),
-// reused from the contact form so the whole backend speaks with one voice.
+// reused from the contact form so the whole backend speaks with one voice. The
+// env value only supplies the ADDRESS; the display name „Mo von motion
+// sports“ comes from the code (email-sender.mjs; EMAIL_SENDER_NAME overrides).
 
 import { Resend } from "resend";
 import { reportError } from "./observability";
+import { formatSender } from "./email-sender.mjs";
 
 export interface SendEmailInput {
   to: string;
@@ -54,9 +57,14 @@ export function isEmailConfigured(): boolean {
   return Boolean(process.env.RESEND_API_KEY && senderAddress());
 }
 
-/** The verified Resend sender, e.g. "motion sports <kontakt@motionsports.de>". */
+/**
+ * The From header: „Mo von motion sports <address>“ — the address from
+ * CONTACT_FROM_EMAIL (a verified Resend sender; a display name in it is
+ * ignored), the name from the code or EMAIL_SENDER_NAME. undefined when no
+ * address is configured.
+ */
 export function senderAddress(): string | undefined {
-  return process.env.CONTACT_FROM_EMAIL || undefined;
+  return formatSender(process.env.CONTACT_FROM_EMAIL, process.env.EMAIL_SENDER_NAME);
 }
 
 /**

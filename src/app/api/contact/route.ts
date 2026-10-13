@@ -7,6 +7,7 @@ import { resolveLocale } from "@/lib/locale";
 import { apiMessage } from "@/lib/api-messages.mjs";
 import { recordKpiEvent, KPI_CONTACT_FORM_SUBMITTED } from "@/lib/kpi-events";
 import { storeContactRequest } from "@/lib/inbox-mail";
+import { senderAddress } from "@/lib/email";
 
 export const maxDuration = 10;
 
@@ -166,7 +167,8 @@ export async function POST(req: Request) {
 
     const apiKey = process.env.RESEND_API_KEY;
     const to = process.env.CONTACT_TO_EMAIL;
-    const from = process.env.CONTACT_FROM_EMAIL;
+    // The same From as every other mail („Mo von motion sports <…>“).
+    const from = senderAddress();
 
     if (!apiKey || !to || !from) {
       // Local-dev fallback: keep working without a Resend key configured. Do NOT
