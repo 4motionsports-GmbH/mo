@@ -8,7 +8,9 @@
 //   2. FETCH the full message by data.email_id (body/headers/attachments are
 //      deliberately kept out of the webhook body) via emails.receiving.get.
 //   3. MAP the sender to a customer (normalise from → customers.email). Known →
-//      customer_id; unknown → NULL (the unmatched-inbound queue).
+//      customer_id; unknown → NULL (the unmatched-inbound queue). Mo's OWN
+//      address (a forward instead of a redirect) → NULL without a lookup,
+//      reported with phase 'own-address'.
 //   4. INSERT a direction='received' row, dedup'd on Message-ID.
 //   5. A known customer's mail opens (or joins) their Eingang item
 //      „E-Mail beantworten“ (lib/inbox-mail.ts) — fail-soft.
@@ -21,7 +23,9 @@ import { NextResponse } from "next/server";
 import { Resend } from "resend";
 import { getCustomerByEmail } from "@/lib/customer-store";
 import { insertReceivedMessage } from "@/lib/email-messages-store";
-import { inboundWebhookSecret } from "@/lib/email-inbound";
+import { inboundEmailAddress, inboundWebhookSecret } from "@/lib/email-inbound";
+import { senderAddress } from "@/lib/email";
+import { isOwnAddress } from "@/lib/email-sender.mjs";
 import { verifyResendWebhook } from "@/lib/email-webhook.mjs";
 import { applyResendDeliveryEvent } from "@/lib/email-delivery-events";
 import { normalizeInboundMessage } from "@/lib/email-inbound-core.mjs";
@@ -95,9 +99,17 @@ export async function POST(req: Request) {
     const normalized = normalizeInboundMessage(full, data);
 
     // (3) Map sender → customer. Known address attaches; unknown ⇒ NULL (the
-    // unmatched-inbound queue surfaced in the admin triage list).
+    // unmatched-inbound queue surfaced in the admin triage list). A mail From
+    // one of Mo's OWN addresses is never a customer: it means the corporate
+    // mail server FORWARDS mo@… (new message, From = Mo) instead of
+    // redirecting it unchanged — it stays unmatched and is reported below.
+    const fromOwnAddress = isOwnAddress(normalized.fromAddress, [
+      senderAddress(),
+      inboundEmailAddress(),
+      process.env.CONTACT_TO_EMAIL,
+    ]);
     let customerId: number | null = null;
-    if (normalized.fromAddress) {
+    if (normalized.fromAddress && !fromOwnAddress) {
       const customer = await getCustomerByEmail(normalized.fromAddress);
       customerId = customer?.id ?? null;
     }
@@ -124,6 +136,15 @@ export async function POST(req: Request) {
       // A real DB failure: 500 so Resend retries (the dedup index makes the
       // retry safe — a row that did land won't be duplicated).
       return NextResponse.json({ ok: false, error: "Store failed" }, { status: 500 });
+    }
+    if (result.inserted && fromOwnAddress) {
+      // Once per stored mail (a Resend retry of the same mail is a duplicate
+      // and stays quiet), so a misconfigured forward shows up in monitoring.
+      // No address in the message — the log sink is processor-visible.
+      reportError(new Error("Inbound mail from Mo's own address: forwarded instead of redirected?"), {
+        route: "api/inbound/resend",
+        phase: "own-address",
+      });
     }
     if (result.inserted && customerId != null) {
       await noteInboundMail({

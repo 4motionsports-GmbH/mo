@@ -322,8 +322,8 @@ function Composer({
           {isReply ? "Antwort an " : "Neue E-Mail an "}
           {customerEmail}
           <InfoTip>
-            Wird über den zentralen Versandweg gesendet (Absender: motion sports). Antworten des
-            Kunden landen wieder hier im Verlauf.
+            Wird über den zentralen Versandweg gesendet (Absender: Mo von motion sports). Antworten
+            des Kunden landen wieder hier im Verlauf.
           </InfoTip>
         </span>
         <IconButton label="Schließen" size="icon-sm" onClick={onClose} disabled={busy}>

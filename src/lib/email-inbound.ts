@@ -1,19 +1,31 @@
 // Inbound-email configuration + the outbound threading seam.
 //
-// The inbound address is read from ENV (currently a TEST address) and NEVER
-// hardcoded, so the production swap is env-only. It is the `Reply-To` we stamp
-// on outbound mail so a customer's reply routes to Resend Inbound and threads
-// back onto the originating row (see /api/inbound/resend + the mirror-writes).
+// The inbound address (INBOUND_EMAIL_ADDRESS) is read from ENV and NEVER
+// hardcoded, so switching it is env-only. A customer's reply must end up at
+// Resend Inbound (the webhook /api/inbound/resend) with its headers intact, so
+// it threads back onto the originating row by In-Reply-To / References. Two
+// setups work:
+//   - the Resend receiving address on a dedicated subdomain (MX at Resend),
+//     e.g. hello@reply.motionsports.de — stamped as the Reply-To;
+//   - the public address, e.g. mo@motionsports.de, when the corporate mail
+//     server REDIRECTS it unchanged to that receiving address (a redirect keeps
+//     From and the threading headers; a „Weiterleitung“/forward does not and
+//     arrives From Mo itself — the webhook then reports phase 'own-address').
+//     When it equals the From address, no Reply-To is set (replyToFor).
+// Never move the root domain's MX to Resend: Resend receiving takes ALL mail
+// of the domain, the corporate mailboxes included.
 
 import { senderAddress } from "./email";
 import { generateMessageId, sanitizeDomain } from "./email-inbound-core.mjs";
 import { replyToFor } from "./email-sender.mjs";
 
 /**
- * The address Resend Inbound receives replies on, e.g.
- * `bot@chat.motionsports.de` (a DEDICATED inbound subdomain — never the
- * corporate MX). Read from ENV; undefined when inbound isn't configured yet, in
- * which case outbound mail simply omits the Reply-To (no behaviour change).
+ * Where customer replies go: the Resend receiving address on a dedicated
+ * subdomain (`hello@reply.motionsports.de`), or the public address
+ * (`mo@motionsports.de`) that the corporate mail server redirects unchanged to
+ * it. Read from ENV; undefined when inbound isn't configured yet. Outbound mail
+ * carries it as Reply-To unless it is unset or equal to the From address
+ * (email-sender.mjs replyToFor).
  */
 export function inboundEmailAddress(): string | undefined {
   return process.env.INBOUND_EMAIL_ADDRESS?.trim() || undefined;

@@ -66,3 +66,20 @@ export function replyToFor(inboundAddress, fromValue) {
   if (from && from.toLowerCase() === inbound.toLowerCase()) return undefined;
   return inbound;
 }
+
+/**
+ * Whether a mailbox value is one of Mo's OWN addresses (the From, the inbound
+ * address, the team inbox). A received mail from one of them is not a
+ * customer writing: when the corporate mail server FORWARDS mo@… to the
+ * receiving address instead of redirecting it, every mail arrives From Mo
+ * itself — matching or creating a Kunde for it would be wrong. Case-insensitive,
+ * display names allowed on both sides; empty or undefined entries are ignored.
+ * @param {unknown} address  e.g. the received mail's From header
+ * @param {ReadonlyArray<unknown>} ownAddresses  senderAddress(), inboundEmailAddress(), CONTACT_TO_EMAIL …
+ * @returns {boolean}
+ */
+export function isOwnAddress(address, ownAddresses) {
+  const candidate = mailboxAddress(address).toLowerCase();
+  if (!candidate || !Array.isArray(ownAddresses)) return false;
+  return ownAddresses.some((own) => mailboxAddress(own).toLowerCase() === candidate);
+}

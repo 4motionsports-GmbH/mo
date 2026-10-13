@@ -13,6 +13,9 @@ import { guardAdminPost, adminJson, adminJsonError } from "@/lib/admin-api";
 import { findOrCreateProspect } from "@/lib/customer-store";
 import { assignInboundToCustomer, getMessageHeaders } from "@/lib/email-messages-store";
 import { extractEmailAddress } from "@/lib/email-inbound-core.mjs";
+import { senderAddress } from "@/lib/email";
+import { inboundEmailAddress } from "@/lib/email-inbound";
+import { isOwnAddress } from "@/lib/email-sender.mjs";
 import { noteInboundMail } from "@/lib/inbox-mail";
 import { recordAdminAccess } from "@/lib/admin-access-log";
 import { reportError } from "@/lib/observability";
@@ -35,6 +38,16 @@ export async function POST(req: Request) {
       return adminJsonError("conflict", "Diese Nachricht ist bereits einem Kunden zugeordnet.", 409);
     }
     const email = extractEmailAddress(headers.fromAddress) || headers.fromAddress;
+    // A mail From Mo's own address was FORWARDED by the corporate mail server
+    // (new message, From = Mo) instead of redirected unchanged — a Kunde with
+    // Mo's address would only collect self-correspondence.
+    if (isOwnAddress(email, [senderAddress(), inboundEmailAddress(), process.env.CONTACT_TO_EMAIL])) {
+      return adminJsonError(
+        "own_address",
+        "Das ist Mos eigene Adresse — das Weiterleiten im Mail-Postfach muss als Umleitung eingerichtet sein, nicht als Weiterleitung.",
+        400
+      );
+    }
     const customerId = await findOrCreateProspect({ email });
     if (customerId == null) return adminJsonError("bad_request", "Die Absenderadresse ist ungültig.", 400);
 
