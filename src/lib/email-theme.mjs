@@ -110,6 +110,30 @@ export function fontNeedsWebFont(key) {
   return (choice ?? EMAIL_FONT_CHOICES.montserrat).webFont;
 }
 
+// Outlook for Windows (Word) takes the FIRST family of a stack literally: a
+// web font (Montserrat) or a Mac-only family ('Helvetica Neue') makes it fall
+// back to Times New Roman instead of trying the next one. Each key therefore
+// gets a stack that starts with a font every Windows machine has; the shell
+// forces it on Outlook only (msoHeadHtml), the inline stacks stay as they are.
+const MSO_FONT_STACKS = /** @type {Record<EmailFontKey, string>} */ ({
+  montserrat: "Verdana, Geneva, sans-serif",
+  verdana: "Verdana, Geneva, sans-serif",
+  arial: "Arial, Helvetica, sans-serif",
+  helvetica: "Arial, Helvetica, sans-serif",
+  georgia: "Georgia, 'Times New Roman', serif",
+  trebuchet: "'Trebuchet MS', Tahoma, sans-serif",
+});
+
+/**
+ * The Windows-safe font stack Outlook desktop is pinned to for a font key
+ * (unknown keys → the brand font's fallback, Verdana).
+ * @param {string} key
+ * @returns {string}
+ */
+export function msoFontStackFor(key) {
+  return MSO_FONT_STACKS[/** @type {EmailFontKey} */ (key)] ?? MSO_FONT_STACKS.montserrat;
+}
+
 // ── Button shapes ────────────────────────────────────────────────────────────
 
 export const EMAIL_BUTTON_SHAPES = /** @type {EmailButtonShape[]} */ ([

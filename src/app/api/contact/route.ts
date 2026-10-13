@@ -7,6 +7,8 @@ import { resolveLocale } from "@/lib/locale";
 import { apiMessage } from "@/lib/api-messages.mjs";
 import { recordKpiEvent, KPI_CONTACT_FORM_SUBMITTED } from "@/lib/kpi-events";
 import { storeContactRequest } from "@/lib/inbox-mail";
+import { senderAddress } from "@/lib/email";
+import { forOutlook } from "@/lib/email-outlook.mjs";
 
 export const maxDuration = 10;
 
@@ -76,7 +78,14 @@ function renderBody(p: ContactPayload): { text: string; html: string } {
         `<tr><td style="padding:4px 12px 4px 0;color:#666;vertical-align:top">${escapeHtml(k)}</td><td style="padding:4px 0">${escapeHtml(v)}</td></tr>`
     )
     .join("");
-  const html = `<style>@import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@400;700&display=swap');</style>
+  // Outlook for Windows (Word) never sees the web-font import and gets Arial:
+  // with Montserrat first in the stack it would fall back to Times New Roman
+  // (and Courier New for the <pre>, whose line breaks Word keeps natively).
+  const fonts = forOutlook(
+    `<style>div, td, h3, pre { font-family: Arial, Helvetica, sans-serif !important; }</style>`,
+    `<style>@import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@400;700&display=swap');</style>`
+  );
+  const html = `${fonts}
 <div style="font-family:'Montserrat',system-ui,sans-serif;font-size:14px;line-height:1.5">
 <table style="border-collapse:collapse">${rows}</table>
 <h3 style="margin:24px 0 8px 0;font-size:14px">Nachricht</h3>
@@ -166,7 +175,8 @@ export async function POST(req: Request) {
 
     const apiKey = process.env.RESEND_API_KEY;
     const to = process.env.CONTACT_TO_EMAIL;
-    const from = process.env.CONTACT_FROM_EMAIL;
+    // The same From as every other mail („Mo von motion sports <…>“).
+    const from = senderAddress();
 
     if (!apiKey || !to || !from) {
       // Local-dev fallback: keep working without a Resend key configured. Do NOT

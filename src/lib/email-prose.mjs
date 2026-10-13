@@ -44,8 +44,14 @@ const TRAILING_PUNCT_RE = /[.,;:!?…]+$/;
 
 // Markdown bold: **text** on one line (first inner char must not be another
 // asterisk so "****" never matches). Models emit this despite the plain-text
-// instruction — without this pass the asterisks render literally.
-const BOLD_RE = /\*\*([^\n*][^\n]*?)\*\*/g;
+// instruction — without this pass the asterisks render literally. A lone CR
+// counts as a line break too (see NEWLINE_RE).
+const BOLD_RE = /\*\*([^\r\n*][^\r\n]*?)\*\*/g;
+
+// Every line-break spelling (CRLF, CR, LF). Outlook for Windows (Word) does
+// not support white-space:pre-wrap and collapses raw newlines into spaces, so
+// mail HTML carries its line breaks as <br>.
+const NEWLINE_RE = /\r\n?|\n/g;
 
 function escapeHtml(s) {
   return s
@@ -77,8 +83,12 @@ export function emailLinkHtml(url, label, linkStyle = DEFAULT_LINK_STYLE) {
 
 /**
  * Render prose to email-body HTML: escape everything, turn markdown links and
- * bare URLs into styled <a> tags. The result is meant for a container with
- * `white-space: pre-wrap` (line breaks are preserved by the container).
+ * bare URLs into styled <a> tags, and every line break into <br>. Outlook for
+ * Windows (Word) ignores `white-space: pre-wrap` and would run greeting,
+ * paragraphs and sign-off together; a <br> renders exactly like the newline
+ * it replaces in every other client. Callers keep `white-space: pre-wrap` on
+ * the container so runs of spaces survive there. No raw newline is left in
+ * the result.
  *
  * @param {string} body
  * @param {object} [opts]
@@ -88,7 +98,8 @@ export function emailLinkHtml(url, label, linkStyle = DEFAULT_LINK_STYLE) {
  * @returns {string} HTML string (no wrapping element).
  */
 export function renderEmailProseHtml(body, opts = {}) {
-  const linkStyle = opts.linkStyle ?? DEFAULT_LINK_STYLE;
+  // No newline may sit in an attribute: pass 4 would put a <br> inside it.
+  const linkStyle = (opts.linkStyle ?? DEFAULT_LINK_STYLE).replace(NEWLINE_RE, " ");
   const labelForUrl = opts.labelForUrl ?? (() => null);
 
   // Pass 1 — split on explicit links (markdown AND literal HTML anchors) so
@@ -99,7 +110,9 @@ export function renderEmailProseHtml(body, opts = {}) {
     matches.push({ index: m.index, length: m[0].length, url: m[2], label: m[1].trim() });
   }
   for (const m of body.matchAll(HTML_ANCHOR_RE)) {
-    const url = m[1] ?? m[2];
+    // A quoted href may span lines; URL parsing drops tabs and newlines
+    // anyway, and pass 4 must never put a <br> inside an attribute.
+    const url = (m[1] ?? m[2]).replace(/[\t\r\n]/g, "");
     matches.push({ index: m.index, length: m[0].length, url, label: stripTags(m[3]).trim() });
   }
   matches.sort((a, b) => a.index - b.index);
@@ -138,7 +151,21 @@ export function renderEmailProseHtml(body, opts = {}) {
   // Pass 3 — markdown bold. Runs on the assembled HTML: everything is already
   // escaped (or a link we built ourselves), so wrapping a span in <strong> is
   // safe, and a bolded link label ("**[Name](url)**") works too.
-  return html.replace(BOLD_RE, "<strong>$1</strong>");
+  // Pass 4 — line breaks to <br>. AFTER the bold pass, whose pattern stops at
+  // a line break: "**a\nb**" must not become a bold span across a <br>.
+  return html.replace(BOLD_RE, "<strong>$1</strong>").replace(NEWLINE_RE, "<br>");
+}
+
+/**
+ * Plain text (an operator's typed reply) → mail HTML: everything escaped and
+ * every line break a <br> — Outlook for Windows (Word) ignores
+ * `white-space: pre-wrap` and would collapse the reply into one paragraph.
+ * No links, no markdown: the text shows exactly as typed.
+ * @param {string} text
+ * @returns {string} HTML string (no wrapping element).
+ */
+export function plainTextEmailHtml(text) {
+  return escapeHtml(String(text ?? "")).replace(NEWLINE_RE, "<br>");
 }
 
 /**

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { SHOP_URL, couponCopy, couponText, discountRedeemUrl } from "./discount-coupon.mjs";
+import { SHOP_URL, couponCodeType, couponCopy, couponText, discountRedeemUrl } from "./discount-coupon.mjs";
 
 test("discountRedeemUrl is Shopify's /discount/<code> link on the shop", () => {
   assert.equal(discountRedeemUrl("MK-ABC123"), "https://motionsports.de/discount/MK-ABC123");
@@ -36,4 +36,13 @@ test("couponText carries code, value, terms and the redeem link", () => {
     t,
     "Dein persönlicher Code: MK-ABC123 — 5 % auf deine gesamte Bestellung. Einmalig einlösbar · gültig bis 21.09.2026.\nCode einlösen: https://motionsports.de/discount/MK-ABC123"
   );
+});
+
+test("couponCodeType: real 11–12 character codes get a size that fits the narrow ticket", () => {
+  assert.deepEqual(couponCodeType("WELCOME5"), { fontSize: 24, lineHeight: 30, letterSpacing: 2 });
+  assert.deepEqual(couponCodeType("MK-TEST123"), { fontSize: 20, lineHeight: 26, letterSpacing: 1.5 });
+  assert.deepEqual(couponCodeType("MK-WXYZ8KMN"), { fontSize: 18, lineHeight: 24, letterSpacing: 1 });
+  assert.deepEqual(couponCodeType("MS5-WXYZ8KMN"), { fontSize: 18, lineHeight: 24, letterSpacing: 1 });
+  assert.deepEqual(couponCodeType("  ABC  "), { fontSize: 24, lineHeight: 30, letterSpacing: 2 });
+  assert.deepEqual(couponCodeType(null), { fontSize: 24, lineHeight: 30, letterSpacing: 2 });
 });

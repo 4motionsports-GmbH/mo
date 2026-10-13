@@ -6,6 +6,7 @@ import {
   emailLinkHtml,
   renderEmailProseHtml,
   emailProseToText,
+  plainTextEmailHtml,
   productNameLookup,
 } from "./email-prose.mjs";
 
@@ -128,9 +129,66 @@ test("custom linkStyle is applied", () => {
   assert.match(html, /style="color: #123456;"/);
 });
 
-test("plain prose without URLs is just escaped text", () => {
+test("plain prose without URLs is escaped text with <br> line breaks", () => {
   const html = renderEmailProseHtml("Hallo Max,\n\nwie läuft's?");
-  assert.equal(html, "Hallo Max,\n\nwie läuft's?".replaceAll("'", "&#39;"));
+  assert.equal(html, "Hallo Max,<br><br>wie läuft&#39;s?");
+});
+
+// ---------------------------------------------------------------------------
+// renderEmailProseHtml — line breaks (Outlook for Windows ignores pre-wrap)
+// ---------------------------------------------------------------------------
+
+test("every line-break spelling becomes exactly one <br>", () => {
+  assert.equal(renderEmailProseHtml("a\r\nb\rc\nd"), "a<br>b<br>c<br>d");
+  assert.equal(renderEmailProseHtml("a\r\n\r\nb"), "a<br><br>b");
+  // Runs of spaces are left to the container's white-space:pre-wrap.
+  assert.equal(renderEmailProseHtml("-  zwei  Leerzeichen\n  eingerückt"), "-  zwei  Leerzeichen<br>  eingerückt");
+});
+
+test("no raw newline survives anywhere in the HTML (text, links, bold, attributes)", () => {
+  const bodies = [
+    "Hallo,\n\nzeile\r\nzwei\rdrei\n",
+    "\n\n**Fett:**\n- [Bank](https://a.example/bank)\n- https://a.example/x.\n\nGruß\r\nMo\n",
+    '<a href="https://a.example/x\n/y">zwei\nZeilen</a>\nund <a href=\'https://a.example/z\'>Z</a>',
+    "**a\nb** und **[Name](https://a.example/n)**\n",
+  ];
+  for (const body of bodies) {
+    const html = renderEmailProseHtml(body, { linkStyle: "color: #123456;\ntext-decoration: underline;" });
+    assert.doesNotMatch(html, /[\r\n]/, JSON.stringify(body));
+  }
+  const anchor = renderEmailProseHtml('<a href="https://a.example/x\n/y">zwei\nZeilen</a>');
+  // The href loses the newline (URL parsing drops it anyway) — never a <br>.
+  assert.match(anchor, /<a href="https:\/\/a\.example\/x\/y"/);
+  assert.match(anchor, />zwei<br>Zeilen<\/a>/);
+});
+
+test("a bold span never crosses a <br>", () => {
+  for (const body of ["**a\nb**", "**a\r\nb**", "**a\rb**", "x **a\n\nb** y"]) {
+    const html = renderEmailProseHtml(body);
+    assert.doesNotMatch(html, /<strong>/, JSON.stringify(body));
+    assert.match(html, /\*\*a<br>/);
+  }
+  const html = renderEmailProseHtml("**Eins:**\n**Zwei:** Text\n**Drei**");
+  assert.equal(html, "<strong>Eins:</strong><br><strong>Zwei:</strong> Text<br><strong>Drei</strong>");
+  assert.doesNotMatch(html, /<strong>(?:(?!<\/strong>).)*<br>/);
+});
+
+// ---------------------------------------------------------------------------
+// plainTextEmailHtml — the operator's typed reply
+// ---------------------------------------------------------------------------
+
+test("plainTextEmailHtml escapes everything and turns line breaks into <br>", () => {
+  assert.equal(
+    plainTextEmailHtml(`Hallo "Max",\r\n\r\n<b>fett</b> & it's\nGruß\rMo`),
+    "Hallo &quot;Max&quot;,<br><br>&lt;b&gt;fett&lt;/b&gt; &amp; it&#39;s<br>Gruß<br>Mo"
+  );
+});
+
+test("plainTextEmailHtml keeps links, markdown and spaces as typed and leaves no newline", () => {
+  const html = plainTextEmailHtml("\n  **nicht fett** [x](https://a.example) https://a.example/y\n\n\n");
+  assert.equal(html, "<br>  **nicht fett** [x](https://a.example) https://a.example/y<br><br><br>");
+  assert.doesNotMatch(html, /<a |<strong>|[\r\n]/);
+  assert.equal(plainTextEmailHtml(""), "");
 });
 
 // ---------------------------------------------------------------------------

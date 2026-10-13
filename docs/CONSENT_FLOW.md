@@ -370,7 +370,8 @@ the conversation:
 The cart permalink uses the **selected** set when the user made a clear choice and falls back to the
 **discussed** set only when there is no selection (`chooseCartProductIds`, `src/lib/cart.ts`).
 Sold-out products are always excluded from the cart link. The summary mail lists the cart's products,
-then the other discussed products under „Vielleicht auch interessant:“ (`summary-products.mjs`). The
+then the other discussed products under „Vielleicht auch interessant:“ (`summary-products.mjs`; each
+product once, at most 12 — more cards pushed a long consultation over Gmail's 102-KB clip). The
 capture request carries no product list.
 
 ## Surfaces

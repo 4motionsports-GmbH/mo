@@ -12,7 +12,7 @@ who owns the Shopify app · **L** = the lawyer · **FE** = the frontend agent (t
 widget).
 Mo's admin is German; English translations are in brackets.
 
-Last updated: 2026-10-12 (sets, offers and Kontakthäufigkeit live after M's CLI deploy and migration `0078` — old open item 12 moved to Done; the Performance set block's „Zur Kasse“ is solid black with white text); before: 2026-10-11 night (counsel approved dossier § 22 and M said yes to O-1…O-9: copy v6 with the voucher hint, Mo's voucher rule and the confirmation-page note built behind switches (off); Shopify Messaging cannot send personal 30-day codes, so the issuer is open again — new open list 1–6: issuer decision, Shopify preparation, counsel's one-line OK on the final texts, theme texts, the switch-on, the live test); before: 2026-10-11 evening (M's third round: webhooks arrive again; 10f = 0 old-link cases; the welcome code's settings read; test case 8 passed — a chat DOI confirmation fires Shopify Messaging's 5 % welcome mail within a minute; open items 1–2 done, item 3 down to two steps; dossier § 22.1 updated); before: 2026-10-11 afternoon (M's second round: all 13 webhook subscriptions were missing — created, one tag check left; welcome code issued by Shopify Messaging, one shared code; open items 1–3 updated, dossier § 22.1 with the facts); before: 2026-10-11 (M's outputs of `verify:live` / `check:welcome` read: Shopify webhooks down since 05.10. ~16:45 — new open item 1, warnings on the KPI page, in Einstellungen and the Eingang, nightly alert (PR #235); welcome-code candidate: one shared code used by 150 customers, `check:welcome` now prints its settings; old-link check now `verify:live` 10f — the SQL item is gone; the live check of 09.10. done; open list rewritten with copy-paste commands, new C.32); before: 2026-10-08 evening (opt-in reward round of 08.10. built in PR #234 — no migration, no new switch, no widget change: DOI only once, C.29 fixed (Done), `npm run check:welcome`, `verify:live` section 10, KPI blocks of the voucher test, dossier § 22; new open list items 1–5 for M at the top (the old items 1–7 are now 6–12), new C.31); before: 2026-10-08 (the 504 of the Komplettanalyse fixed and pushed to main — Done; open list item 3 (now 8) updated: a stopped report continues when opened); before: 2026-10-06 late evening (three reworks on the branch, live with the next deploy together with the Verbesserung rework: Kunden profile card, KPI screen, Komplettanalyse as a decision report on the new AI tier `strategist` — Done; one migration `0077` for M; new open list item 3 „Neue Auswertungen prüfen“, new C.30; C.26 OI3 B4 needs the next free migration number); before: 2026-10-06 evening (four C tracks built, no migration, no new switch: consent — owner decision: no ask for a blocked address, OI1 F3; retention gaps + `db:reset`; admin texts and copy; attribution §9.1/§9.2/§4.9 — C.26, C.27; new C.28/C.29; Performance mail design on main `599e2e1`; open list item 1 = re-test after M's popup test of 06.10.); before: 2026-10-06 afternoon (widget checks evaluated: page context live and in use, both switches on since 05.10.; consent-popup check open); before: 2026-10-06 (widget `bc7fb5d` live, C.22 done); before: 2026-10-05 evening (all C items of 05.10. built; open list for M at the top; 5.2 + 5.4
+Last updated: 2026-10-13 (sender name „Mo von motion sports“ from the code; mails rebuilt for classic Outlook for Windows — open items 12 (Outlook check, 1.13) and 13 (optional: mo@motionsports.de, 1.12)); before: 2026-10-12 (sets, offers and Kontakthäufigkeit live after M's CLI deploy and migration `0078` — old open item 12 moved to Done; the Performance set block's „Zur Kasse“ is solid black with white text); before: 2026-10-11 night (counsel approved dossier § 22 and M said yes to O-1…O-9: copy v6 with the voucher hint, Mo's voucher rule and the confirmation-page note built behind switches (off); Shopify Messaging cannot send personal 30-day codes, so the issuer is open again — new open list 1–6: issuer decision, Shopify preparation, counsel's one-line OK on the final texts, theme texts, the switch-on, the live test); before: 2026-10-11 evening (M's third round: webhooks arrive again; 10f = 0 old-link cases; the welcome code's settings read; test case 8 passed — a chat DOI confirmation fires Shopify Messaging's 5 % welcome mail within a minute; open items 1–2 done, item 3 down to two steps; dossier § 22.1 updated); before: 2026-10-11 afternoon (M's second round: all 13 webhook subscriptions were missing — created, one tag check left; welcome code issued by Shopify Messaging, one shared code; open items 1–3 updated, dossier § 22.1 with the facts); before: 2026-10-11 (M's outputs of `verify:live` / `check:welcome` read: Shopify webhooks down since 05.10. ~16:45 — new open item 1, warnings on the KPI page, in Einstellungen and the Eingang, nightly alert (PR #235); welcome-code candidate: one shared code used by 150 customers, `check:welcome` now prints its settings; old-link check now `verify:live` 10f — the SQL item is gone; the live check of 09.10. done; open list rewritten with copy-paste commands, new C.32); before: 2026-10-08 evening (opt-in reward round of 08.10. built in PR #234 — no migration, no new switch, no widget change: DOI only once, C.29 fixed (Done), `npm run check:welcome`, `verify:live` section 10, KPI blocks of the voucher test, dossier § 22; new open list items 1–5 for M at the top (the old items 1–7 are now 6–12), new C.31); before: 2026-10-08 (the 504 of the Komplettanalyse fixed and pushed to main — Done; open list item 3 (now 8) updated: a stopped report continues when opened); before: 2026-10-06 late evening (three reworks on the branch, live with the next deploy together with the Verbesserung rework: Kunden profile card, KPI screen, Komplettanalyse as a decision report on the new AI tier `strategist` — Done; one migration `0077` for M; new open list item 3 „Neue Auswertungen prüfen“, new C.30; C.26 OI3 B4 needs the next free migration number); before: 2026-10-06 evening (four C tracks built, no migration, no new switch: consent — owner decision: no ask for a blocked address, OI1 F3; retention gaps + `db:reset`; admin texts and copy; attribution §9.1/§9.2/§4.9 — C.26, C.27; new C.28/C.29; Performance mail design on main `599e2e1`; open list item 1 = re-test after M's popup test of 06.10.); before: 2026-10-06 afternoon (widget checks evaluated: page context live and in use, both switches on since 05.10.; consent-popup check open); before: 2026-10-06 (widget `bc7fb5d` live, C.22 done); before: 2026-10-05 evening (all C items of 05.10. built; open list for M at the top; 5.2 + 5.4
 done by M alone on 05.10. (Dev Dashboard + Shopify CLI); C.26 = the open follow-ups of the archived plans;
 doc paths follow the new layout — widget docs in `docs/frontend/`, history in `docs/archive/`).
 
@@ -162,6 +162,14 @@ lawyer ready to send, the Shopify steps and the frontend prompt: [`WELCOME_VOUCH
    recognition and purchase attribution — and, before the switch-on (item 5), the welcome voucher and
    the actual mail provider instead of the old MailChimp mentions (OPTIN_REWARD owner to-do 5; with
    issuer (1): Mo sends the welcome mail).
+12. **Outlook check after the next deploy (15 min).** Mo's mails were rebuilt for classic Outlook
+   for Windows (13.10.: hero and countdown no longer twice, real buttons, paragraphs kept) — Gmail
+   and Apple Mail are unchanged except one thing: in the Performance coupon, long discount codes
+   are a little smaller so they no longer break mid-code. Put every mail type into a real Outlook
+   inbox, one design at a time, and look at it with pictures downloaded: **1.13**.
+13. **Optional, when you want: Mo sends and receives as `mo@motionsports.de` (~1.5–2 h hands-on in
+   two sessions, plus DNS waiting).** Step by step with tests and rollback: **1.12**. The sender
+   name „Mo von motion sports“ needs nothing from you — it comes from the code since 13.10.
 
 ## Done
 
@@ -276,6 +284,92 @@ lawyer ready to send, the Shopify steps and the frontend prompt: [`WELCOME_VOUCH
       `read_inventory` (#199), counts duplicates and can `--dedupe` (#200).
 
 ## 1 · Now
+
+- [ ] **1.12 Mo sends and receives as `mo@motionsports.de`** — M (C helps) — optional, ~1.5–2 h
+  hands-on in two sessions plus waiting for DNS (15 min to a few hours). Today Mo sends from
+  `hello@mo.motionsports.de` and receives replies on `hello@reply.motionsports.de` (1.5). No code
+  change is needed — both addresses are Vercel settings (`CONTACT_FROM_EMAIL`,
+  `INBOUND_EMAIL_ADDRESS`); the code already leaves out the Reply-To when both are the same
+  address. **Why not „just receive on the main domain in Resend“:** receiving needs Resend's MX
+  record on the domain, and the MX of `motionsports.de` delivers ALL company mail (info@,
+  vertrieb@ …) — moving it would send every company mail to Resend. So `mo@motionsports.de` is
+  created at the company's mail provider and **redirected** there to `hello@reply.motionsports.de`,
+  which stays the Resend receiving address.
+  - **Step 1 — Resend: send from the main domain (20–30 min + waiting).** Resend → Domains → Add
+    domain `motionsports.de`, region **EU (Ireland)**, receiving **off**. At the DNS host of
+    motionsports.de (where the `reply` MX was added) create exactly the three records Resend shows:
+    TXT `resend._domainkey`, MX `send` (priority 10), TXT `send`. **Do not touch** the root MX, the
+    root SPF or an existing `_dmarc` record. If Resend says `send` is already taken by another
+    tool, choose a custom return path (Advanced, e.g. `mo-bounce`). No `_dmarc` record yet? Add TXT
+    `_dmarc` = `v=DMARC1; p=none; rua=mailto:YOUR-POSTMASTER-ADDRESS`. In the new domain's settings
+    switch open and click tracking **off**, like on `mo.motionsports.de` (Mo counts its own clicks).
+    Done when Resend shows the domain „Verified“.
+  - **Step 2 — the address `mo@motionsports.de` at the company's mail provider, as a REDIRECT
+    (15–30 min + up to 1 h until active).** It must be a redirect („Umleitung“) that passes the
+    mail on unchanged — **not** a „Weiterleiten“ that sends it on from mo@ (then every mail would
+    arrive as „from mo@motionsports.de“ and Mo could not tell which customer wrote; Mo now refuses to
+    create a customer for its own address and logs the case).
+    - **Microsoft 365:** Admin center → Teams & groups → Shared mailboxes → add „Mo“,
+      `mo@motionsports.de` (no licence). Defender portal → Email & collaboration → Policies →
+      Anti-spam → Create policy → **Outbound**, name „Mo Weiterleitung“, users:
+      `mo@motionsports.de`, „Automatic forwarding rules“ = **On** (Microsoft blocks external
+      forwarding by default — without this every mail bounces with 5.7.520). Exchange admin
+      center → Recipients → Mailboxes → mo@ → Mail flow settings → Email forwarding → forward to
+      the external address `hello@reply.motionsports.de` („keep a copy“ optional — answer only in
+      Mo). Make sure no disclaimer or „[EXTERN]“ rule applies to mo@ (it would break the
+      signature check of redirected mail).
+    - **Google Workspace:** create mo@ as a user or an alias. Admin console → Apps → Google
+      Workspace → Gmail → Routing → Add rule: inbound + internal-receiving, envelope recipient
+      `mo@motionsports.de`, action „Change envelope recipient“ → `hello@reply.motionsports.de`.
+      **No Google Group** (groups rewrite the sender).
+    - **IONOS / Strato / other hosts:** `mo@motionsports.de` as a pure forwarding address
+      („Weiterleitung“ / „Umleitung“ in the host's admin, server-side) to
+      `hello@reply.motionsports.de` — never a webmail „forward with comment“.
+  - **Step 3 — Vercel, stage 1: send from mo@ (5 min).** Vercel → Settings → Environment
+    Variables (Production): `CONTACT_FROM_EMAIL` = `mo@motionsports.de` (the address only — the
+    name „Mo von motion sports“ is added by the code). Leave `INBOUND_EMAIL_ADDRESS` =
+    `hello@reply.motionsports.de`. Keep `CONTACT_TO_EMAIL` the team mailbox (never mo@). Redeploy.
+    Einstellungen → Versand shows the sender „Mo von motion sports <mo@motionsports.de>“.
+  - **Step 4 — tests of stage 1 (30 min).** (a) Send yourself every mail type:
+    `npx tsx --env-file=.env scripts/send-test-emails.mjs YOUR-ADDRESS` locally with the new
+    `CONTACT_FROM_EMAIL` in `.env`. They arrive in Gmail and Outlook from „Mo von motion sports
+    <mo@motionsports.de>“, not in spam; Gmail → „Original anzeigen“: DKIM, SPF and DMARC „PASS“.
+    (The script's mails are not stored in Mo and carry no Reply-To — use them for the sender,
+    the looks and the spam check only, not for (d).) (b) From a private address that is a Kunde
+    in Mo, write a NEW mail to `mo@motionsports.de`: within ~1 minute it is in Resend → Receiving
+    and Mo's Eingang opens „E-Mail beantworten“ for that customer. (c) The same from an unknown
+    address: Eingang → „E-Mails nicht zugeordnet“ shows the SENDER's address (if it shows
+    `mo@motionsports.de`, step 2 is a forward, not a redirect — fix it there). (d) Kunden → that
+    test customer (your private address) → Korrespondenz → „Neue E-Mail“, send it, and answer it
+    from your private mailbox: the answer lands in the same thread in Korrespondenz (in stage 1,
+    Gmail → „Original anzeigen“ of Mo's mail shows „Reply-To: hello@reply.motionsports.de“).
+    (e) Submit the shop's contact form once: the team mail arrives in the team mailbox, not in
+    spam.
+  - **Step 5 — Vercel, stage 2: replies to mo@ too (5 min, after 1–2 days of stage 1).**
+    `INBOUND_EMAIL_ADDRESS` = `mo@motionsports.de` → Redeploy. Mo then sends no separate Reply-To —
+    the customer's „Antworten“ goes to mo@, the redirect brings it to Mo. Repeat test (d): Mo's
+    new mail shows no Reply-To line, and the answer still lands in the thread.
+    Keep `reply.motionsports.de` verified in Resend for good: it is the redirect target, and
+    replies to mails sent before the switch still go there.
+  - **Rollback:** set both Vercel values back (`hello@mo.motionsports.de`,
+    `hello@reply.motionsports.de`) and redeploy; leave the redirect and the DNS records in place.
+  - Note: the company domain now shares its reputation with Mo's mail — complaints or bounces of
+    campaigns count for info@ and vertrieb@ too. At today's volume fine; watch Resend's metrics.
+  - Done when stage 2 runs and tests (a)–(e) passed.
+
+- [ ] **1.13 Outlook check after the deploy of 13.10.** — M — 15 min. The mails were rebuilt for
+  classic Outlook for Windows (the desktop app that renders with Word): the phone versions of the
+  hero picture and the countdown no longer show a second time, buttons are real buttons, the
+  paragraphs of the text stay paragraphs, no Times New Roman. Nothing else changes in Gmail or
+  Apple Mail, except the Performance coupon: long codes are a little smaller so they fit on one
+  line. Send every mail type of one design to an address you read in Outlook:
+  `npx tsx --env-file=.env scripts/send-test-emails.mjs YOUR-ADDRESS --design performance` (then
+  `--design classic` / `--design studio` if you use them). In Outlook click „Bilder herunterladen“
+  (Outlook blocks pictures from new senders — without that every picture is an empty box) and
+  check: one hero, one countdown, buttons with colour and size, product pictures shown — the third
+  product in the item mails, the summary and the campaign set is a WebP picture (about 40 % of the
+  catalogue): if it shows an empty box with pictures downloaded, tell C — and paragraphs separated.
+  Tell C what still looks wrong (a screenshot is best).
 
 - [x] **1.6 Security fix: a typed e-mail must never count as a sign-in** — done 03.10.:
   `0071` run; exposure check: **never exploitable** — no session was ever linked by a typed
