@@ -110,6 +110,45 @@ back to the classic implementation.
 - **Keys are final**: never rework the key or the look of a shipped design — new design, new key.
   (Bug fixes that make a design more faithful to itself are fine.)
 - **Fail-soft**: renderers must not throw; better to leave a block out than to break a send.
+- **Outlook for Windows** (below): every design passes `npm run check:email-outlook`.
+
+## Outlook for Windows (the Word engine)
+
+Classic Outlook for Windows (2016–2021 and Microsoft 365) draws mail with Word, not a browser.
+Outlook for Mac, the new Outlook for Windows, Outlook on the web, Gmail and Apple Mail are
+browsers and never see any of the following — every Outlook fix is a conditional comment, an
+`mso-*` property or an attribute, so their rendering stays byte-for-byte the same (owner,
+13.10.2026: in Outlook the hero and the countdown showed twice, buttons collapsed to text, the
+text lost its paragraphs). The shared patterns live in `src/lib/email-outlook.mjs` (tested):
+
+- **Head:** `<html … ${MSO_HTML_ATTRS}>` and `msoHeadHtml(stack)` after `<title>` — the VML /
+  Office namespaces, 96 DPI (without it Outlook at 125/150 % Windows scaling stretches CSS px but
+  not width attributes), no table spacing, and one web-safe font for everything (Word takes the
+  first family literally: a web font or „Helvetica Neue“ falls back to Times;
+  `msoFontStackFor(theme.fontFamily)` in `email-theme.mjs`).
+- **Phone-only content** (the hero picture row, the 350-px countdown) is wrapped in
+  `hideFromOutlook()` — Word ignores `display:none` on images and every `@media` query. Preheaders
+  stay in the DOM with `mso-hide:all`.
+- **Buttons:** Word applies padding, background and border only to table cells. A button whose
+  `<a>` sits alone in a `bgcolor` cell gets `mso-padding-alt` on the cell (`msoPaddingAlt(padding,
+  border)`); any other button gets an Outlook twin: `forOutlook(msoButton({...}), originalAnchor)`
+  — same URL, same label, square corners. No VML buttons (labels are dynamic).
+- **Text:** no padding on `<p>` or `<span>` (use `Margin`), no raw newlines under
+  `white-space:pre-wrap` (`renderEmailProseHtml` / `plainTextEmailHtml` emit `<br>`),
+  `mso-line-height-rule:exactly` where a line height is tighter than the font. Small coloured
+  rules are `msoRule()` twins (Word ignores a div's width and height).
+- **Images:** every `<img>` has a numeric `width` attribute no wider than the content area —
+  Word sizes images by the attribute and ignores `width:100%` / `max-width`.
+- **Hero background:** VML `v:rect` + `v:fill type="frame"` with `aspect="atleast"` (cover) and
+  `v:textbox style="mso-fit-shape-to-text:true"`.
+- **Check:** `npm run check:email-outlook` renders every design × mail type (and the 1:1 reply
+  mail) through the production renderers and runs `lintOutlookHtml` — 0 findings and under the
+  90-KB budget (Gmail clips at 102 KB, which would hide the unsubscribe footer). It also lists
+  WebP/AVIF product pictures (older Outlook builds cannot show WebP).
+- **Real Outlook:** `npx tsx --env-file=.env scripts/send-test-emails.mjs ADDRESS --design
+  performance` puts every mail type of a design into a real inbox (ROLLOUT_TODO 1.13). Outlook
+  blocks pictures of unknown senders until „Bilder herunterladen“; animated GIFs show their first
+  frame (the countdown is still right: it is rendered on open).
 
 ## Offer countdown, set card and coupon
 
@@ -458,6 +497,8 @@ documented in `.env.example`. The prompt once given for the default image is in
 | `src/lib/bundle-email.ts` / `bundle-email-core.mjs` | The set card (classic implementation, `bundleEmailComponents`) and its model + text part (`bundleBlockModel`, `bundleBlockText`), tested |
 | `src/lib/email-template.ts` | Classic shell + public render helpers (override detection), `renderOfferCountdown`, `renderDiscountCoupon` |
 | `src/lib/email-products.ts` | Classic product grid/rows (override detection) |
+| `src/lib/email-outlook.mjs` + `scripts/check-email-outlook.mjs` | Outlook-for-Windows patterns (head block, `hideFromOutlook`, `msoButton` twins, `msoRule`) and `lintOutlookHtml`, tested; `npm run check:email-outlook` lints every design × mail type |
+| `src/lib/email-sender.mjs` | The From header („Mo von motion sports <address>“), Reply-To rule and Mo's own addresses, tested |
 | `src/app/admin/einstellungen/EmailSettingsWorkspace.tsx` | Design library + assignment (admin screen „Einstellungen“, `DesignPreviewDialog.tsx` for the preview) |
 | `scripts/build-countdown-sprite.mjs`, `scripts/hero-gradient.mjs`, `scripts/hero-quality-compare.mjs` | Countdown glyphs (run manually, commit the output), `npm run hero:gradient`, `npm run hero:compare` |
 | `migrations/0049_email_design_selections.sql` | Selection table |
