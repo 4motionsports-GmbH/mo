@@ -506,22 +506,23 @@ function bundleBlock(input: BundleOfferBlockInput, c: BundleBlockComputed): stri
       const price = item.unitPriceLabel
         ? `<div style="font-family:${FONT}; font-size:12px; line-height:16px; color:#777777; white-space:nowrap;">${escapeHtml(item.unitPriceLabel)}</div>`
         : "&nbsp;";
-      // mso-padding-alt on the image cell: Word gives every cell of a row the
-      // largest vertical padding, so the image cell's 14px would be added to
-      // the text cells' own 14px (a row ~28px taller). With 0 in Word the
-      // nested text cells alone set the row height there.
+      // Word gives every cell of a row the largest vertical padding: the
+      // image cell's 14px is shared with the outer text cell there, so the
+      // NESTED text and price cells drop theirs in Word (mso-padding-alt) —
+      // otherwise Word adds 14px twice. The geometry then matches browsers
+      // for any text height, as in the classic set card (bundle-email.ts).
       return `
                             <tr>
-                              <td width="${SET_ITEM_IMAGE + 16}" valign="middle" class="set-item-img-cell" style="width:${SET_ITEM_IMAGE + 16}px; padding:14px 16px 14px 0; mso-padding-alt:0 16px 0 0; ${divider}">${image}</td>
+                              <td width="${SET_ITEM_IMAGE + 16}" valign="middle" class="set-item-img-cell" style="width:${SET_ITEM_IMAGE + 16}px; padding:14px 16px 14px 0; ${divider}">${image}</td>
                               <td valign="middle" style="padding:0; ${divider}">
                                 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%;">
                                   <tr>
-                                    <td valign="middle" class="set-item-text" style="padding:14px 12px 14px 0;">
+                                    <td valign="middle" class="set-item-text" style="padding:14px 12px 14px 0; mso-padding-alt:0 12px 0 0;">
                                       <div style="font-family:${FONT}; font-size:15px; line-height:20px; font-weight:700; color:#111111;"><span style="color:${BLUE}; font-weight:800;">${item.quantity}&times;</span>&nbsp; ${escapeHtml(item.name)}</div>
                                       ${blueRule(8)}
                                       ${description}
                                     </td>
-                                    <td width="96" valign="middle" align="right" class="set-item-price" style="width:96px; padding:14px 0;">${price}</td>
+                                    <td width="96" valign="middle" align="right" class="set-item-price" style="width:96px; padding:14px 0; mso-padding-alt:0;">${price}</td>
                                   </tr>
                                 </table>
                               </td>
@@ -962,11 +963,13 @@ function makeShell(kind: keyof typeof HERO_COPY) {
                    design gives it. No chip nav: the brand asset already carries
                    the "Fitness | Equipment" bar, so a nav row underneath only
                    duplicated it. font-size:0 on the cell: Word would turn the
-                   whitespace around the image into an extra text line. -->
+                   whitespace around the image into an extra text line; the image
+                   keeps its own size so its alt text still shows when
+                   pictures are blocked. -->
               <tr>
                 <td align="center" style="padding: 30px 30px 22px 30px; font-size:0; mso-line-height-rule:exactly; line-height:0;" bgcolor="#ffffff">
                   <a href="https://www.motionsports.de" target="_blank" style="text-decoration:none;">
-                    <img src="${escapeAttr(emailLogoUrl())}" width="200" alt="motion sports" class="logo-image" style="width:200px; max-width:70%; height:auto; display:block; Margin:0 auto;">
+                    <img src="${escapeAttr(emailLogoUrl())}" width="200" alt="motion sports" class="logo-image" style="width:200px; max-width:70%; height:auto; display:block; Margin:0 auto; font-size:16px; line-height:normal;">
                   </a>
                 </td>
               </tr>

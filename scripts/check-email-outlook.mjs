@@ -58,6 +58,9 @@ const { listEmailDesignMeta, resolveEmailDesignForKind } = require("../src/lib/e
 const { renderCorrespondenceEmail } = require("../src/lib/correspondence-email.ts");
 const { loadProductCatalog } = require("../src/lib/catalog-store.ts");
 const { firstProductImageUrl } = require("../src/lib/email-products.ts");
+const { buildSummaryEmailContent } = require("../src/lib/summary-email.ts");
+const { withEmailDesign, withEmailRenderData } = require("../src/lib/email-design-context.ts");
+const { SUMMARY_MAX_ALTERNATIVES } = require("../src/lib/summary-products.mjs");
 
 /** The widest image each layout has room for — Word sizes an <img> by its width attribute. */
 const MAX_IMAGE_WIDTH = { performance: 564 };
@@ -92,6 +95,33 @@ mails.push({
   html: renderCorrespondenceEmail(CORRESPONDENCE_SAMPLE).html,
   maxImageWidth: DEFAULT_MAX_IMAGE_WIDTH,
 });
+
+// The worst case for Gmail's 102-KB clip: the summary with the most product
+// cards it can carry — three chosen products plus SUMMARY_MAX_ALTERNATIVES
+// alternatives (summary-products.mjs) and a long cart link — in every design.
+{
+  const withImage = (await loadProductCatalog()).filter((p) => firstProductImageUrl(p));
+  const chosenProducts = withImage.slice(0, 3);
+  const alternatives = withImage.slice(3, 3 + SUMMARY_MAX_ALTERNATIVES);
+  const cartUrl = `https://www.motionsports.de/cart/${chosenProducts.map((_, i) => `4${String(i).padStart(13, "7")}:1`).join(",")}?utm_source=mo&utm_medium=email&utm_campaign=summary`;
+  const summary =
+    "Du suchst eine kompakte Ausstattung für dein Heimstudio mit Fokus auf Krafttraining auf begrenzter Fläche.\n\n" +
+    "Wir haben passende Hantelscheiben, eine Bank und ergänzendes Zubehör besprochen — leise, platzsparend und **schnell aufgebaut**.";
+  for (const meta of listEmailDesignMeta().filter((m) => m.supportedKinds.includes("summary"))) {
+    const name = `${meta.key}-summary-${3 + alternatives.length}-products`;
+    try {
+      const { html } = withEmailDesign(resolveEmailDesignForKind(meta.key, "summary"), () =>
+        withEmailRenderData({ recipientFirstName: "Anna-Sophie" }, () =>
+          buildSummaryEmailContent({ summary, chosenProducts, alternatives, cartUrl })
+        )
+      );
+      mails.push({ name, html, maxImageWidth: MAX_IMAGE_WIDTH[meta.key] ?? DEFAULT_MAX_IMAGE_WIDTH });
+    } catch (err) {
+      console.error(`✗ ${name}: render failed —`, err);
+      process.exitCode = 1;
+    }
+  }
+}
 
 const isModernImage = (url) => /\.(?:webp|avif)(?:[?#]|$)/i.test(url);
 

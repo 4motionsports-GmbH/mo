@@ -90,6 +90,12 @@ if (withImages.length < 7) {
   console.error("Catalog has too few products with images for a representative test.");
   process.exit(1);
 }
+// One WebP picture at position 3 (summary alternatives, both item mails and
+// the campaign set): about 40 % of the catalogue's pictures are WebP, which
+// older Outlook builds cannot show — the real-inbox check must include one.
+const isWebp = (p) => /\.webp(?:[?#]|$)/i.test(p.images.find((u) => u.startsWith("https://")) ?? "");
+const webpAt = withImages.findIndex(isWebp);
+if (webpAt > 6) withImages.splice(2, 0, ...withImages.splice(webpAt, 1));
 
 // Inert links: the unsubscribe/confirm pages will show their "invalid link"
 // screens if clicked — nothing can be (un)subscribed by accident.

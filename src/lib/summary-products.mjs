@@ -10,6 +10,14 @@
 // (same pattern as shopify-cart-url.mjs, imported by lib/cart.ts).
 
 /**
+ * At most this many „Vielleicht auch interessant“ cards. A long consultation
+ * can touch 20+ products, and every card is ~3 KB of mail: past ~20 the
+ * summary went over Gmail's 102-KB limit, which clips the mail and hides the
+ * company / Impressum footer (13.10.2026). The first-discussed ones stay.
+ */
+export const SUMMARY_MAX_ALTERNATIVES = 12;
+
+/**
  * Split discussed products into the chosen set (already in the cart link) and
  * the alternatives shown below the checkout button.
  *
@@ -18,11 +26,22 @@
  *   (cart.resolvedProductIds). Sold-out/unresolved ids are already excluded
  *   upstream by buildPrefilledCartUrl, so nothing here re-checks availability.
  * @param {P[]} discussedProducts  All discussed (recommended) products.
- * @returns {{ alternatives: P[] }} discussed minus chosen, original order
- *   preserved. Guarantees chosen ∩ alternatives = ∅.
+ * @returns {{ alternatives: P[] }} discussed minus chosen, each product once,
+ *   original order preserved, at most SUMMARY_MAX_ALTERNATIVES. Guarantees
+ *   chosen ∩ alternatives = ∅.
  */
 export function partitionSummaryProducts(chosenIds, discussedProducts) {
   const chosen = new Set(chosenIds);
-  const alternatives = discussedProducts.filter((p) => !chosen.has(p.id));
+  const seen = new Set();
+  const alternatives = [];
+  for (const p of discussedProducts) {
+    // The same product can arrive twice (its plain ref and a variant ref map
+    // to one Product) — one card each.
+    if (chosen.has(p.id) || seen.has(p.id)) continue;
+    seen.add(p.id);
+    alternatives.push(p);
+    if (alternatives.length === SUMMARY_MAX_ALTERNATIVES) break;
+  }
   return { alternatives };
 }
+

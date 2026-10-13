@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { partitionSummaryProducts } from "./summary-products.mjs";
+import { SUMMARY_MAX_ALTERNATIVES, partitionSummaryProducts } from "./summary-products.mjs";
 
 const P = (id) => ({ id });
 
@@ -59,5 +59,25 @@ test("original discussed order is preserved", () => {
   assert.deepEqual(
     alternatives.map((p) => p.id),
     ["d", "b", "a"]
+  );
+});
+
+test("at most SUMMARY_MAX_ALTERNATIVES alternatives, first-discussed first (Gmail's 102-KB clip)", () => {
+  assert.equal(SUMMARY_MAX_ALTERNATIVES, 12);
+  const discussed = Array.from({ length: 20 }, (_, i) => P(`p${i}`));
+  const { alternatives } = partitionSummaryProducts(["p1", "p3"], discussed);
+  assert.equal(alternatives.length, 12);
+  assert.deepEqual(
+    alternatives.map((p) => p.id),
+    ["p0", "p2", "p4", "p5", "p6", "p7", "p8", "p9", "p10", "p11", "p12", "p13"]
+  );
+});
+
+test("a product discussed twice (plain and variant ref) is one card", () => {
+  const discussed = [P("a"), P("b"), P("a"), P("c")];
+  const { alternatives } = partitionSummaryProducts([], discussed);
+  assert.deepEqual(
+    alternatives.map((p) => p.id),
+    ["a", "b", "c"]
   );
 });

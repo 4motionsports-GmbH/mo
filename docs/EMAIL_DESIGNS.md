@@ -116,10 +116,12 @@ back to the classic implementation.
 
 Classic Outlook for Windows (2016–2021 and Microsoft 365) draws mail with Word, not a browser.
 Outlook for Mac, the new Outlook for Windows, Outlook on the web, Gmail and Apple Mail are
-browsers and never see any of the following — every Outlook fix is a conditional comment, an
-`mso-*` property or an attribute, so their rendering stays byte-for-byte the same (owner,
-13.10.2026: in Outlook the hero and the countdown showed twice, buttons collapsed to text, the
-text lost its paragraphs). The shared patterns live in `src/lib/email-outlook.mjs` (tested):
+browsers and never see any of the following — the Outlook fixes are conditional comments, `mso-*`
+properties, attributes, or markup browsers draw the same way (paragraph gaps as `Margin`, `<br>`
+instead of raw newlines), so their rendering stays pixel-identical (owner, 13.10.2026: in Outlook
+the hero and the countdown showed twice, buttons collapsed to text, the text lost its paragraphs;
+verified with 0 px difference across every design × mail type at 680 and 375 px — the one
+deliberate change visible everywhere is the coupon code size, below). The shared patterns live in `src/lib/email-outlook.mjs` (tested):
 
 - **Head:** `<html … ${MSO_HTML_ATTRS}>` and `msoHeadHtml(stack)` after `<title>` — the VML /
   Office namespaces, 96 DPI (without it Outlook at 125/150 % Windows scaling stretches CSS px but
@@ -245,7 +247,10 @@ headline (`bundleHeadline`), one line per item („- 2× Name — je 239,00 €�
 **Discount-code coupon.** Item mails with a code show it as a card of its own between the product
 rows and the countdown (`renderDiscountCoupon` in `email-template.ts`, renderer hook
 `discountCoupon`; wording and link in `discount-coupon.mjs`, tested); a set mail never carries one.
-The code large and bold on a dashed blue „ticket“, next to it the value („5 % auf deine gesamte
+The code large and bold on a dashed blue „ticket“ (its size follows the code's length so the
+11–12-character `MK-`/`MS5-` codes fit the ~165-px ticket on one line: `couponCodeType` in
+`discount-coupon.mjs`, tested — up to 8 characters 24 px, up to 10 20 px, longer 18 px; before
+13.10.2026 real codes broke mid-code at 24 px in every client), next to it the value („5 % auf deine gesamte
 Bestellung“ — or „… auf die empfohlenen Produkte aus dieser E-Mail“, depending on the draft's
 discount scope, `discount-scope.mjs`; the old scope „Set“ is history and only reads back on old
 sends), the terms („Einmalig einlösbar · gültig bis …“) and the black
