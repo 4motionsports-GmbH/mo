@@ -185,11 +185,22 @@ test("the preview signature moves with everything the render depends on", () => 
     { bundle: { id: 7, bundlePrice: "99.00", expiresAt: null } },
     { heroUrl: "https://blob/hero.jpg" },
     { heroHeadline: "Mehr\nFokus" },
+    { campaignHero: "/api/email-hero-image/campaign-default-7-1760000000000-abc.jpg" },
     { draftUpdatedAt: "2026-09-14T11:00:00.000Z" },
     { previewVersion: 1 },
   ]) {
     assert.notEqual(previewSignature({ ...base, ...patch }), sig, JSON.stringify(patch));
   }
+  // The Kampagnenbild (passed in by the desk, not on the draft row): absent
+  // and null are the same picture; a new upload (new file name) re-renders,
+  // and so does removing it again.
+  assert.equal(previewSignature({ ...base, campaignHero: null }), sig);
+  const withCampaignHero = { ...base, campaignHero: "/api/email-hero-image/campaign-default-7-1760000000000-abc.jpg" };
+  assert.notEqual(
+    previewSignature({ ...withCampaignHero, campaignHero: "/api/email-hero-image/campaign-default-7-1760000000001-def.jpg" }),
+    previewSignature(withCampaignHero)
+  );
+  assert.equal(previewSignature({ ...withCampaignHero, campaignHero: undefined }), sig);
   // A bundle's price or expiry change re-renders too (the offer block shows both).
   const withSet = { ...base, bundle: { id: 7, bundlePrice: "99.00", expiresAt: null } };
   assert.notEqual(previewSignature({ ...withSet, bundle: { ...withSet.bundle, bundlePrice: "89.00" } }), previewSignature(withSet));

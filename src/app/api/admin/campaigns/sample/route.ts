@@ -68,6 +68,7 @@ const DEFAULT_CONFIG: CampaignSampleConfig = {
   moPromo: true,
   ctaKind: "mo_chat",
   ctaUrl: null,
+  heroImage: null,
 };
 
 function pickConfig(c: Campaign | null): CampaignSampleConfig {
@@ -85,6 +86,7 @@ function pickConfig(c: Campaign | null): CampaignSampleConfig {
     moPromo: c.moPromo,
     ctaKind: c.ctaKind,
     ctaUrl: c.ctaUrl,
+    heroImage: c.heroImage,
   };
 }
 

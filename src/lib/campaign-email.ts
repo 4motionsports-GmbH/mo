@@ -65,6 +65,8 @@ import { outboundThreading } from "./email-inbound";
 import { withEmailDesign, withEmailRenderData } from "./email-design-context";
 import { getEmailDesignForKey } from "./email-design-store";
 import { getEmailHeroRenderData } from "./email-hero-store";
+import { resolveCampaignHero, heroVariantForSnapshot } from "./campaign-hero.mjs";
+import { emailDesignHasHero } from "./email-designs/registry";
 import {
   renderBrandedEmail,
   renderMoPromoBlock,
@@ -434,18 +436,23 @@ export async function approveAndSendCampaign(contactId: number): Promise<Campaig
 
       // Render inside the design selected for this email type (admin
       // Einstellungen); null → classic built-ins. Fail-soft, never blocks.
-      // The per-contact hero image (email-hero.ts) rides along for hero designs.
       // The campaign's own design (design_key) wins over the selection.
       const emailDesign = await getEmailDesignForKey(campaign.designKey, "campaign");
-      // hero_mode 'none': no per-contact AI hero rides along, even if one exists.
-      const hero =
-        campaign.heroMode === "none"
-          ? { heroImageUrl: null, heroImageMobileUrl: null, heroHeadline: null }
-          : await getEmailHeroRenderData("campaign", contactId);
+      // The hero for hero designs, resolved ONCE as a pair (campaign-hero.mjs):
+      // the per-contact AI hero (email-hero.ts) → the campaign's Kampagnenbild
+      // → the design's default. hero_mode 'none': no per-contact AI hero rides
+      // along, even if one exists — the Kampagnenbild still does.
+      const draftHero = campaign.heroMode === "none" ? null : await getEmailHeroRenderData("campaign", contactId);
+      const hero = resolveCampaignHero({
+        heroMode: campaign.heroMode,
+        draft: draftHero,
+        campaignHero: campaign.heroImage,
+        baseUrl: getBaseUrl(),
+      });
       let bundleOfferId: number | null = null;
       const { text, html } = await withEmailDesign(emailDesign, () =>
         withEmailRenderData(
-          { ...hero, recipientFirstName: contact.firstName?.trim() || null },
+          { ...hero.render, recipientFirstName: contact.firstName?.trim() || null },
           async () => {
             // SET MAIL or ITEM MAIL (offer-mode.mjs). The set block is built
             // from the row the gates checked, HERE inside withEmailDesign (the
@@ -529,10 +536,16 @@ export async function approveAndSendCampaign(contactId: number): Promise<Campaig
           segment: draft.segment,
           // Send-time snapshot (migration 0054): what this mail looked like, so
           // the KPI tab can compare hero variants and designs after the fact.
+          // The shared Kampagnenbild is never recorded here (snapshotImageUrl
+          // is null for it): erasing one person deletes their rows' hero files.
           designKey: emailDesign?.key ?? "classic",
-          heroVariant: hero.heroImageUrl ? "ai" : emailDesign ? "default" : "none",
-          heroImageUrl: hero.heroImageUrl,
-          heroHeadline: hero.heroHeadline,
+          heroVariant: heroVariantForSnapshot({
+            source: hero.source,
+            designHasHero: emailDesignHasHero(emailDesign?.key),
+            hasDesign: Boolean(emailDesign),
+          }),
+          heroImageUrl: hero.snapshotImageUrl,
+          heroHeadline: hero.render.heroHeadline,
           textMode: draft.textMode ?? null,
           language: contact.language,
           discountPercent: draft.discountPercent,
@@ -763,14 +776,18 @@ export async function renderCampaignEmailPreview(
   // what ships.
   const campaign = await getCampaignForContact(contactId);
   const emailDesign = await getEmailDesignForKey(campaign?.designKey ?? null, "campaign");
-  const hero =
-    campaign?.heroMode === "none"
-      ? { heroImageUrl: null, heroImageMobileUrl: null, heroHeadline: null }
-      : await getEmailHeroRenderData("campaign", contactId);
+  // Same hero precedence as the send path (resolveCampaignHero).
+  const draftHero = campaign?.heroMode === "none" ? null : await getEmailHeroRenderData("campaign", contactId);
+  const hero = resolveCampaignHero({
+    heroMode: campaign?.heroMode ?? null,
+    draft: draftHero,
+    campaignHero: campaign?.heroImage ?? null,
+    baseUrl: getBaseUrl(),
+  });
   const activeBundle = await getActiveBundleForCampaignContact(contactId);
   const { html } = await withEmailDesign(emailDesign, () =>
     withEmailRenderData(
-      { ...hero, recipientFirstName: contact.firstName?.trim() || null },
+      { ...hero.render, recipientFirstName: contact.firstName?.trim() || null },
       async () => {
         // Set mail or item mail, decided exactly like the send path.
         const bundle = await buildBundleBlock(activeBundle, contact.language, draft.productHighlights);
@@ -806,13 +823,14 @@ export async function renderCampaignEmailPreview(
 /**
  * Render a „Prüfen & testen“ sample (campaign-sample.ts) — a draft that has
  * no recipient row. Same design and composition as
- * renderCampaignEmailPreview, with the placeholder code, the design's own
- * title image (per-person AI images and sets come only on the desk) and
- * INERT unsubscribe/erasure links: the sample is shown to the operator and
- * never delivered, so it must not carry a working link for a real customer.
+ * renderCampaignEmailPreview, with the placeholder code, the campaign's
+ * Kampagnenbild or else the design's own title image (per-person AI images
+ * and sets come only on the desk) and INERT unsubscribe/erasure links: the
+ * sample is shown to the operator and never delivered, so it must not carry
+ * a working link for a real customer.
  */
 export async function renderCampaignSample(input: {
-  campaign: Pick<Campaign, "designKey" | "moPromo" | "ctaKind" | "ctaUrl">;
+  campaign: Pick<Campaign, "designKey" | "moPromo" | "ctaKind" | "ctaUrl" | "heroImage">;
   language: "de" | "en";
   firstName: string | null;
   subject: string;
@@ -826,14 +844,16 @@ export async function renderCampaignSample(input: {
   const { campaign, language } = input;
   const emailDesign = await getEmailDesignForKey(campaign.designKey ?? null, "campaign");
   const hasDiscount = input.discountPercent > 0;
+  // No draft, so no per-person hero: the Kampagnenbild, else the default.
+  const hero = resolveCampaignHero({
+    heroMode: "default",
+    draft: null,
+    campaignHero: campaign.heroImage ?? null,
+    baseUrl: getBaseUrl(),
+  });
   const { html } = await withEmailDesign(emailDesign, () =>
     withEmailRenderData(
-      {
-        heroImageUrl: null,
-        heroImageMobileUrl: null,
-        heroHeadline: null,
-        recipientFirstName: input.firstName?.trim() || null,
-      },
+      { ...hero.render, recipientFirstName: input.firstName?.trim() || null },
       async () =>
         renderCampaignEmail({
           subject: input.subject,

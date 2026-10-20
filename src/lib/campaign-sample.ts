@@ -31,7 +31,10 @@ import { sampleConfigFingerprint } from "./campaign-sample-core.mjs";
 import { reportError } from "./observability";
 
 /** The campaign settings a sample is generated with — the saved campaign,
- * overlaid with the editor's unsaved values. */
+ * overlaid with the editor's unsaved values. `heroImage` (the Kampagnenbild)
+ * only changes the rendered picture, so it is deliberately NOT one of the
+ * fingerprinted SAMPLE_CONFIG_FIELDS: a new picture never makes a paid AI
+ * sample stale. */
 export type CampaignSampleConfig = Pick<
   Campaign,
   | "name"
@@ -46,6 +49,7 @@ export type CampaignSampleConfig = Pick<
   | "moPromo"
   | "ctaKind"
   | "ctaUrl"
+  | "heroImage"
 >;
 
 export interface CampaignSample {
