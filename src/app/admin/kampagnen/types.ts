@@ -24,6 +24,24 @@ export type AudienceSpecProps = {
   excludeCampaignIds?: number[];
 };
 
+/**
+ * The „Kampagnenbild“ (campaigns.hero_image, 0079) — same shape as
+ * CampaignHeroImage in lib/campaigns-store.ts: FILE NAMES under email-heroes/
+ * (preview URLs via campaign-hero.mjs campaignHeroUrls(value, "")), the
+ * operator's AI statement and display metadata. Staged by the upload route,
+ * committed by „Speichern“.
+ */
+export interface CampaignHeroImageProps {
+  v: 1;
+  file: string;
+  mobileFile: string;
+  ai: boolean;
+  name: string | null;
+  width: number | null;
+  height: number | null;
+  uploadedAt: string | null;
+}
+
 export interface CampaignStatsProps {
   recipients: number;
   pending: number;
@@ -61,6 +79,8 @@ export interface CampaignCardProps {
   discountValidUntil: string | null;
   designKey: string | null;
   heroMode: "none" | "default" | "ai_ab" | "ai_all";
+  /** The Kampagnenbild, or null (the design's default picture). */
+  heroImage: CampaignHeroImageProps | null;
   textMode: "detailed" | "compact" | "minimal" | null;
   moPromo: boolean;
   ctaKind: "mo_chat" | "shop";
@@ -71,8 +91,23 @@ export interface CampaignCardProps {
   stats: CampaignStatsProps;
 }
 
+/** One email design as the editor needs it; `hasHero` = it shows a Titelbild
+ *  (registry emailDesignHasHero — today only „Performance“). */
+export interface CampaignDesignOption {
+  key: string;
+  name: string;
+  hasHero: boolean;
+}
+
 export interface CampaignEditorOptions {
-  designs: Array<{ key: string; name: string }>;
+  /** Designs a campaign can pick (non-classic, campaign-capable). */
+  designs: CampaignDesignOption[];
+  /** The design chosen in Einstellungen for campaigns — what „Wie in
+   *  Einstellungen“ (designKey null) renders. */
+  settingsDesign: CampaignDesignOption;
+  /** Kampagnenbild upload: BLOB_READ_WRITE_TOKEN set; the design's default
+   *  picture, shown while a campaign has none. */
+  heroUpload: { configured: boolean; defaultUrl: string };
   personas: Array<{ key: string; label: string }>;
   categories: string[];
   maxDiscountPercent: number;

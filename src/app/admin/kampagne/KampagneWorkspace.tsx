@@ -101,7 +101,8 @@ export function KampagneWorkspace(props: CampaignDeskProps) {
   const subjectRef = React.useRef<HTMLInputElement>(null);
 
   // Warm the renderer for the card the operator opens next.
-  usePrefetchPreview(a.nextItem, view === "pruefen");
+  const campaignHeroUrl = props.campaign.heroImage?.desktopUrl ?? null;
+  usePrefetchPreview(a.nextItem, view === "pruefen", campaignHeroUrl);
 
   // ---- keyboard shortcuts (capture phase: the desk owns `/` here) ----------
   const { next, prev, send, skip, regenerate, previewItem, copy, setEditMode, setFocusMode, setView } = a;
@@ -321,6 +322,7 @@ export function KampagneWorkspace(props: CampaignDeskProps) {
                 subjectRef={subjectRef}
                 onShortcuts={() => setShortcutsOpen(true)}
                 onHistory={() => setHistoryOpen(true)}
+                campaignHero={campaignHeroUrl}
               />
             ) : (
               emptyQueue
@@ -337,6 +339,7 @@ export function KampagneWorkspace(props: CampaignDeskProps) {
               heroDesignActive={heroDesignActive}
               heroDesignName={heroDesignName}
               heroGenerationConfigured={heroGenerationConfigured}
+              campaignHero={props.campaign.heroImage}
               minSendIntervalDays={minSendIntervalDays}
               onFocusSubject={focusSubject}
               onHistory={() => setHistoryOpen(true)}

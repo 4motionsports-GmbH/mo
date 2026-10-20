@@ -188,6 +188,7 @@ test("the preview signature moves with everything the render depends on", () => 
     { campaignHero: "/api/email-hero-image/campaign-default-7-1760000000000-abc.jpg" },
     { draftUpdatedAt: "2026-09-14T11:00:00.000Z" },
     { previewVersion: 1 },
+    { campaignHero: "/api/email-hero-image/campaign-default-4-1760000000000-abc.jpg" },
   ]) {
     assert.notEqual(previewSignature({ ...base, ...patch }), sig, JSON.stringify(patch));
   }
@@ -204,6 +205,11 @@ test("the preview signature moves with everything the render depends on", () => 
   // A bundle's price or expiry change re-renders too (the offer block shows both).
   const withSet = { ...base, bundle: { id: 7, bundlePrice: "99.00", expiresAt: null } };
   assert.notEqual(previewSignature({ ...withSet, bundle: { ...withSet.bundle, bundlePrice: "89.00" } }), previewSignature(withSet));
+  // The Kampagnenbild: absent and null are the same; a replaced picture re-renders.
+  assert.equal(previewSignature({ ...base, campaignHero: null }), sig);
+  const a = previewSignature({ ...base, campaignHero: "/api/email-hero-image/campaign-default-4-1760000000000-a.jpg" });
+  const b = previewSignature({ ...base, campaignHero: "/api/email-hero-image/campaign-default-4-1760000000001-b.jpg" });
+  assert.notEqual(a, b);
 });
 
 test("offerValidity: the earlier of code and set expiry, in three states", () => {

@@ -51,9 +51,15 @@ import {
 } from "@/lib/campaign-flags.mjs";
 import { parseDeskView, parseQueueFilter } from "@/lib/campaign-desk-core.mjs";
 import { bundleItemLabel, bundleItemList } from "@/lib/bundle-offer-core.mjs";
-import { getCachedEmailDesignForKind, getEmailDesignForKey } from "@/lib/email-design-store";
-import { designSupportsKind, emailDesignHasHero, listEmailDesignMeta } from "@/lib/email-designs/registry";
-import { isHeroGenerationConfigured } from "@/lib/email-hero";
+import { getCachedEmailDesignForKind, getEmailDesignForKey, listEmailDesignSelections } from "@/lib/email-design-store";
+import {
+  CLASSIC_EMAIL_DESIGN_KEY,
+  designSupportsKind,
+  emailDesignHasHero,
+  listEmailDesignMeta,
+} from "@/lib/email-designs/registry";
+import { defaultHeroImageUrl, isHeroGenerationConfigured, isHeroUploadConfigured } from "@/lib/email-hero";
+import { campaignHeroUrls } from "@/lib/campaign-hero.mjs";
 import { isShopifyConfigured } from "@/lib/shopify";
 import { countRecentMarketingMails, getContactFrequencySettings } from "@/lib/admin-settings-store";
 import { contactFrequencyEnabled } from "@/lib/contact-frequency.mjs";
@@ -94,6 +100,7 @@ function cardProps(c: CampaignWithStats, all: CampaignWithStats[]): CampaignCard
     discountValidUntil: c.discountValidUntil,
     designKey: c.designKey,
     heroMode: c.heroMode,
+    heroImage: c.heroImage,
     textMode: c.textMode,
     moPromo: c.moPromo,
     ctaKind: c.ctaKind,
@@ -126,13 +133,20 @@ async function Overview({
   presetAudience?: Record<string, unknown> | null;
   notFound?: boolean;
 }) {
-  const [catalog, costs] = await Promise.all([
+  const [catalog, costs, designSelections] = await Promise.all([
     loadProductCatalog().catch(() => []),
     estimateCampaignCosts(),
+    listEmailDesignSelections(),
   ]);
   const categories = [...new Set(catalog.map((p) => p.category).filter((c): c is string => Boolean(c)))].sort((a, b) =>
     a.localeCompare(b, "de")
   );
+  const designMeta = listEmailDesignMeta();
+  const designOption = (key: string) => ({
+    key,
+    name: designMeta.find((d) => d.key === key)?.name ?? key,
+    hasHero: emailDesignHasHero(key),
+  });
   return (
     <CampaignsOverview
       campaigns={campaigns.map((c) => cardProps(c, campaigns))}
@@ -141,9 +155,12 @@ async function Overview({
       notFound={notFound}
       sendsApproved={isCampaignSendsApproved()}
       options={{
-        designs: listEmailDesignMeta()
+        designs: designMeta
           .filter((d) => !d.isDefault && designSupportsKind(d.key, "campaign"))
-          .map((d) => ({ key: d.key, name: d.name })),
+          .map((d) => designOption(d.key)),
+        // „Wie in Einstellungen“: the design selected for campaigns (none = classic).
+        settingsDesign: designOption(designSelections["campaign"] ?? CLASSIC_EMAIL_DESIGN_KEY),
+        heroUpload: { configured: isHeroUploadConfigured(), defaultUrl: defaultHeroImageUrl() },
         personas: Object.values(ARCHETYPE_META).map((m) => ({ key: m.id, label: m.label })),
         categories,
         maxDiscountPercent: DISCOUNT_PERCENT_MAX,
@@ -308,6 +325,14 @@ export async function KampagneTab({
     };
   });
 
+  // The Kampagnenbild as relative preview URLs (the desk's Hero block and the
+  // preview cache key); null = the design's default picture.
+  const heroUrls = campaignHeroUrls(campaign.heroImage, "");
+  const campaignHero =
+    heroUrls && campaign.heroImage
+      ? { desktopUrl: heroUrls.desktop, mobileUrl: heroUrls.mobile, ai: campaign.heroImage.ai }
+      : null;
+
   const countsProps = counts ?? {
     pending: 0,
     pendingSendable: 0,
@@ -339,6 +364,7 @@ export async function KampagneTab({
         discountScope: campaign.discountScope,
         textMode: campaign.textMode,
         heroMode: campaign.heroMode,
+        heroImage: campaignHero,
         dailyTarget: campaign.dailyTarget,
         audienceText: audienceText(campaign, campaigns),
         startsAt: campaign.startsAt,

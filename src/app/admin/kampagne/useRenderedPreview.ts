@@ -5,7 +5,8 @@
 // preview correctly). A small module-level cache of blob URLs keyed by the
 // card's preview SIGNATURE — everything the render depends on: prose, Rabatt,
 // Empfehlungen, Set, Hero, language, the draft's last write (campaign-desk-
-// core.mjs) — means a card the operator returns to renders instantly, every
+// core.mjs; plus the campaign's Kampagnenbild, which is no draft field) —
+// means a card the operator returns to renders instantly, every
 // change to the draft re-renders it at once (a new KI-Hero, a swapped
 // product, an attached Set — no browser reload), and the NEXT card in the
 // rail is prefetched while the current one is read — the 15-second path
@@ -22,8 +23,10 @@ const EDIT_DEBOUNCE_MS = 600;
 const cache = new Map<string, string>();
 const inflight = new Map<string, Promise<string>>();
 
-function cacheKey(item: CampaignQueueItemProps): string {
-  return `${item.contactId} ${previewSignature(item)}`;
+/** `campaignHero` = the Kampagnenbild URL (or null): part of the key, so a
+ *  picture changed in the editor never shows the cached old render. */
+function cacheKey(item: CampaignQueueItemProps, campaignHero: string | null): string {
+  return `${item.contactId} ${previewSignature({ ...item, campaignHero })}`;
 }
 
 function remember(key: string, url: string): void {
@@ -43,8 +46,8 @@ function remember(key: string, url: string): void {
 }
 
 /** Render (or reuse) the preview of one draft; resolves to a blob URL. */
-export function renderPreview(item: CampaignQueueItemProps): Promise<string> {
-  const key = cacheKey(item);
+export function renderPreview(item: CampaignQueueItemProps, campaignHero: string | null = null): Promise<string> {
+  const key = cacheKey(item, campaignHero);
   const cached = cache.get(key);
   if (cached) return Promise.resolve(cached);
   const pending = inflight.get(key);
@@ -101,7 +104,8 @@ export interface RenderedPreview {
  */
 export function useRenderedPreview(
   item: CampaignQueueItemProps | null,
-  enabled = true
+  enabled = true,
+  campaignHero: string | null = null
 ): RenderedPreview {
   const [url, setUrl] = React.useState<string | null>(null);
   const [loading, setLoading] = React.useState(false);
@@ -117,7 +121,7 @@ export function useRenderedPreview(
       setError(null);
       return;
     }
-    const key = cacheKey(item);
+    const key = cacheKey(item, campaignHero);
     const text = `${item.subject}\n${item.body}`;
     const cached = cache.get(key);
     const sameCard = lastIdRef.current === item.contactId;
@@ -136,7 +140,7 @@ export function useRenderedPreview(
     setError(null);
     const handle = setTimeout(
       () => {
-        renderPreview(item)
+        renderPreview(item, campaignHero)
           .then((next) => {
             if (cancelled) return;
             setUrl(next);
@@ -154,22 +158,26 @@ export function useRenderedPreview(
       cancelled = true;
       clearTimeout(handle);
     };
-  }, [enabled, item, attempt]);
+  }, [enabled, item, attempt, campaignHero]);
 
   const retry = React.useCallback(() => setAttempt((a) => a + 1), []);
   return { url, loading, error, retry };
 }
 
 /** Warm the cache for the card the operator will most likely open next. */
-export function usePrefetchPreview(item: CampaignQueueItemProps | null, enabled = true): void {
+export function usePrefetchPreview(
+  item: CampaignQueueItemProps | null,
+  enabled = true,
+  campaignHero: string | null = null
+): void {
   React.useEffect(() => {
     if (!enabled || item === null) return;
-    if (cache.has(cacheKey(item))) return;
+    if (cache.has(cacheKey(item, campaignHero))) return;
     const handle = setTimeout(() => {
-      renderPreview(item).catch(() => {
+      renderPreview(item, campaignHero).catch(() => {
         /* best-effort warm-up */
       });
     }, 300);
     return () => clearTimeout(handle);
-  }, [enabled, item]);
+  }, [enabled, item, campaignHero]);
 }

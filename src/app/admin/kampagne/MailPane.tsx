@@ -154,6 +154,7 @@ export function MailPane({
   subjectRef,
   onShortcuts,
   onHistory,
+  campaignHero = null,
 }: {
   item: CampaignQueueItemProps;
   position: number;
@@ -164,13 +165,15 @@ export function MailPane({
   subjectRef: React.RefObject<HTMLInputElement | null>;
   onShortcuts: () => void;
   onHistory: () => void;
+  /** The Kampagnenbild URL (preview cache key — a changed picture re-renders). */
+  campaignHero?: string | null;
 }) {
   const { editMode, currentBusy, sendBlocked, optInBlocked, copiedId, emailViewBusy, currentChecks, currentVerdict } =
     actions;
   const busy = currentBusy;
   const wide = useMediaQuery("(min-width: 1600px)", false);
   const showPreview = !editMode || wide;
-  const preview = useRenderedPreview(item, showPreview);
+  const preview = useRenderedPreview(item, showPreview, campaignHero);
   const bodyRef = React.useRef<HTMLTextAreaElement>(null);
 
   React.useEffect(() => {
