@@ -33,7 +33,7 @@
 import { del } from "@vercel/blob";
 import { getSql, type Sql } from "./db";
 import { normalizeEmail } from "./email-capture-store";
-import { heroBlobPathnameFromUrl } from "./email-hero-blob.mjs";
+import { erasableHeroPathnames } from "./email-hero-blob.mjs";
 import { reportError } from "./observability";
 import { enqueueShopifyErasure, runOutboxInline } from "./shopify-outbox";
 
@@ -171,14 +171,10 @@ export async function erasePerson(
       SELECT hero_image_url, NULL FROM campaign_sends
        WHERE contact_id = ANY(${contactIds}::bigint[]) OR email = ANY(${emailList}::text[])
     `) as Array<Record<string, unknown>>;
-    const heroPaths = [
-      ...new Set(
-        heroRows
-          .flatMap((r) => [r.a, r.b])
-          .map((u) => heroBlobPathnameFromUrl(u))
-          .filter((p): p is string => Boolean(p))
-      ),
-    ];
+    // Our hero files only, deduplicated — never a campaign's shared
+    // „Kampagnenbild“ (campaign-default-…), which every other mail of the
+    // campaign still shows.
+    const heroPaths = erasableHeroPathnames(heroRows.flatMap((r) => [r.a, r.b]));
 
     // ── 2. Delete / anonymise, all-or-nothing ───────────────────────────────
     const reportMarker = JSON.stringify([{ customerId: cid }]);

@@ -8,9 +8,16 @@
 //     in principle ride it. We require Content-Type: application/json, which the
 //     browser cannot send cross-origin without a CORS preflight the admin origin
 //     would reject — so only same-origin fetch() calls get through.
+//   - A route that takes a raw binary body (the Kampagnenbild upload) passes
+//     `accept` with its exact media types instead (image/jpeg, image/png,
+//     image/webp). None of them is CORS-safelisted either, so the same preflight
+//     protection holds; text/plain, multipart/form-data and form-urlencoded —
+//     the types a cross-site form or a no-preflight fetch can send — are refused
+//     even if a caller lists one. The rule is admin-content-type.mjs (tested).
 
 import { cookies } from "next/headers";
 import { ADMIN_COOKIE_NAME, verifyAdminSessionToken } from "./admin-auth";
+import { isAcceptedAdminContentType } from "./admin-content-type.mjs";
 import { neutralizeRecipientLinks } from "./email-preview-links.mjs";
 
 function jsonError(code: string, message: string, status: number): Response {
@@ -23,12 +30,22 @@ function jsonError(code: string, message: string, status: number): Response {
 /**
  * Guard a state-changing admin POST. Returns a Response to short-circuit with
  * (401 / 415), or null when the request is an authenticated, same-origin JSON
- * call and the handler may proceed.
+ * call and the handler may proceed. `accept` replaces the JSON rule with an
+ * exact list of (non-safelisted) media types — for a raw binary body.
  */
-export async function guardAdminPost(req: Request): Promise<Response | null> {
+export async function guardAdminPost(
+  req: Request,
+  opts: { accept?: readonly string[] } = {}
+): Promise<Response | null> {
   const contentType = req.headers.get("content-type") ?? "";
-  if (!contentType.toLowerCase().includes("application/json")) {
-    return jsonError("unsupported_media_type", "Expected application/json", 415);
+  if (!isAcceptedAdminContentType(contentType, opts.accept)) {
+    return opts.accept
+      ? jsonError(
+          "unsupported_media_type",
+          `Dateityp nicht unterstützt (erwartet: ${opts.accept.join(", ")}).`,
+          415
+        )
+      : jsonError("unsupported_media_type", "Expected application/json", 415);
   }
   const token = (await cookies()).get(ADMIN_COOKIE_NAME)?.value;
   if (!(await verifyAdminSessionToken(token))) {

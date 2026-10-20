@@ -22,6 +22,32 @@ test("the fingerprint changes with the draft, the language or what the campaign 
   assert.notEqual(approvalFingerprint({ ...base, campaign: { ...campaign, discountValidUntil: "2026-11-30" } }), fp);
 });
 
+test("the Kampagnenbild joins the fingerprint only when set — stored approvals stay valid", () => {
+  const campaign = { designKey: "classic", heroMode: "default", ctaKind: "shop", ctaUrl: null, moPromo: false, discountValidUntil: null };
+  const base = { draftUpdatedAt: "2026-10-03T10:00:00.000Z", language: "de", campaign };
+  // Pinned: the exact string every approval before 0079 stored. If this
+  // changes, every approved mail is held after the deploy.
+  const legacy = '["2026-10-03T10:00:00.000Z","de","classic","default","shop","",false,""]';
+  assert.equal(approvalFingerprint(base), legacy);
+  assert.equal(approvalFingerprint({ ...base, campaign: { ...campaign, heroImage: null } }), legacy);
+  assert.equal(approvalFingerprint({ ...base, campaign: { ...campaign, heroImage: undefined } }), legacy);
+
+  const hero = { v: 1, file: "campaign-default-3-1729000000000-a.jpg", mobileFile: "campaign-default-3-1729000000000-mobile-b.jpg", ai: false };
+  const withHero = approvalFingerprint({ ...base, campaign: { ...campaign, heroImage: hero } });
+  assert.equal(
+    withHero,
+    '["2026-10-03T10:00:00.000Z","de","classic","default","shop","",false,"","hero:campaign-default-3-1729000000000-a.jpg:0"]'
+  );
+  // A new picture, or flipping the AI statement, holds the mail for a new review.
+  const otherFile = approvalFingerprint({ ...base, campaign: { ...campaign, heroImage: { ...hero, file: "campaign-default-3-1729000000001-c.jpg" } } });
+  const flipped = approvalFingerprint({ ...base, campaign: { ...campaign, heroImage: { ...hero, ai: true } } });
+  assert.notEqual(otherFile, withHero);
+  assert.notEqual(flipped, withHero);
+  assert.notEqual(withHero, legacy);
+  // Display-only fields do not matter.
+  assert.equal(approvalFingerprint({ ...base, campaign: { ...campaign, heroImage: { ...hero, name: "neu.jpg" } } }), withHero);
+});
+
 test("release blockers: a placeholder code without discount, an expired set", () => {
   const now = Date.parse("2026-10-03T12:00:00Z");
   assert.deepEqual(releaseBlockers({ body: "Hallo", discountPercent: 0, now }), []);

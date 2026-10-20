@@ -9,6 +9,7 @@ import {
   isCampaignLive,
   campaignDiscountExpiry,
   planAutoPrepare,
+  HERO_MODE_LABELS,
 } from "./campaign-def.mjs";
 
 test("status transitions follow the lifecycle; Einzelansprache never changes", () => {
@@ -64,6 +65,46 @@ test("patch validation only looks at the fields present", () => {
   const r = validateCampaignInput({ priority: 20 });
   assert.equal(r.ok, true);
   assert.deepEqual(r.value, { priority: 20 });
+});
+
+test("Kampagnenbild: null removes it, a valid upload passes clean, anything else is refused", () => {
+  const hero = {
+    v: 1,
+    file: "campaign-default-new-1729000000000-AbC123.jpg",
+    mobileFile: "campaign-default-new-1729000000000-mobile-XyZ789.jpg",
+    ai: true,
+    name: "kampagne.png",
+    width: 3000,
+    height: 2000,
+    uploadedAt: "2026-10-20T08:00:00.000Z",
+  };
+  assert.deepEqual(validateCampaignInput({ heroImage: null }), { ok: true, value: { heroImage: null }, errors: {} });
+  const ok = validateCampaignInput({ heroImage: { ...hero, extra: "x" } }, { create: false });
+  assert.equal(ok.ok, true);
+  assert.deepEqual(ok.value.heroImage, hero, "unknown keys dropped");
+  // Also on create, next to the other fields.
+  const created = validateCampaignInput({ name: "Herbst", kind: "aktion", heroImage: hero }, { create: true });
+  assert.equal(created.ok, true, JSON.stringify(created.errors));
+  assert.deepEqual(created.value.heroImage, hero);
+  for (const bad of [
+    { ...hero, file: "https://evil.example/hero.jpg" },
+    { ...hero, ai: undefined },
+    { ...hero, mobileFile: "campaign-55-1729000000000-mobile.jpg" },
+    "campaign-default-new-1729000000000.jpg",
+  ]) {
+    const r = validateCampaignInput({ heroImage: bad });
+    assert.equal(r.ok, false, JSON.stringify(bad));
+    assert.equal(r.errors.heroImage, "Kampagnenbild ungültig — bitte erneut hochladen.");
+    assert.equal("heroImage" in r.value, false);
+  }
+  // Absent → untouched (a patch without the field keeps the stored picture).
+  assert.equal("heroImage" in validateCampaignInput({ priority: 5 }).value, false);
+});
+
+test("hero-mode labels say what the mode decides: the AI picture", () => {
+  assert.equal(HERO_MODE_LABELS.none, "Kein KI-Titelbild");
+  assert.equal(HERO_MODE_LABELS.default, "Standard-Titelbild");
+  assert.deepEqual(Object.keys(HERO_MODE_LABELS), ["none", "default", "ai_ab", "ai_all"]);
 });
 
 test("phase: geplant, läuft, abgelaufen", () => {

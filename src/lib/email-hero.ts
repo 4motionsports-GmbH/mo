@@ -117,6 +117,12 @@ export function isHeroGenerationConfigured(): boolean {
   return Boolean(process.env.OPENAI_API_KEY) && Boolean(process.env.BLOB_READ_WRITE_TOKEN);
 }
 
+/** The Kampagnenbild upload (lib/campaign-hero-upload.ts) needs only the blob
+ *  store — no image model. */
+export function isHeroUploadConfigured(): boolean {
+  return Boolean(process.env.BLOB_READ_WRITE_TOKEN);
+}
+
 interface HeroContext {
   /** What the mail offers: "set" = the attached set's products are the
    *  hero's products; "items" = the recommendations. */

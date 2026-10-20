@@ -3,6 +3,7 @@
 // defaults. The I/O lives in lib/campaigns-store.ts. docs/CAMPAIGNS.md §2.
 
 import { normalizeAudienceSpec } from "./audience-spec.mjs";
+import { normalizeCampaignHeroImage } from "./campaign-hero.mjs";
 
 export const CAMPAIGN_KINDS = /** @type {const} */ (["laufend", "aktion", "einzel"]);
 export const CAMPAIGN_STATUSES = /** @type {const} */ (["entwurf", "aktiv", "pausiert", "beendet", "archiviert"]);
@@ -24,9 +25,11 @@ export const CAMPAIGN_STATUS_LABELS = {
   archiviert: "Archiviert",
 };
 
+// The mode decides about the AI hero only: under every mode Performance shows
+// a picture — the Kampagnenbild (campaign-hero.mjs) or the design's default.
 export const HERO_MODE_LABELS = {
-  none: "Kein Titelbild",
-  default: "Standard-Titelbild des Designs",
+  none: "Kein KI-Titelbild",
+  default: "Standard-Titelbild",
   ai_ab: "KI-Titelbild für einen Teil (A/B)",
   ai_all: "KI-Titelbild für alle",
 };
@@ -179,6 +182,16 @@ export function validateCampaignInput(raw, opts = {}) {
   if (has("heroMode")) {
     if (HERO_MODES.includes(/** @type {any} */ (r.heroMode))) value.heroMode = r.heroMode;
     else errors.heroMode = "Titelbild-Modus wählen.";
+  }
+  if (has("heroImage")) {
+    // The staged upload's value object (POST /api/admin/campaigns/hero-image);
+    // only our own campaign-default-… files pass — never a foreign URL.
+    if (r.heroImage == null) value.heroImage = null;
+    else {
+      const h = normalizeCampaignHeroImage(r.heroImage);
+      if (h) value.heroImage = h;
+      else errors.heroImage = "Kampagnenbild ungültig — bitte erneut hochladen.";
+    }
   }
   if (has("textMode")) {
     if (r.textMode == null || r.textMode === "") value.textMode = null;

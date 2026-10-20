@@ -1424,12 +1424,15 @@ export interface RecordCampaignSendInput {
   /**
    * Send-time snapshot of what the mail looked like (migration 0054) — the
    * design that rendered it, whether it carried a per-contact AI hero
-   * ('ai'), a hero design's default asset ('default') or no hero ('none'),
-   * the hero image/headline, text mode, language, discount and the attached
-   * set. Stamped here because the draft row is overwritten on regenerate.
+   * ('ai'), the campaign's uploaded Kampagnenbild ('campaign', 0079), a hero
+   * design's default asset ('default') or no hero ('none'), the hero
+   * image/headline (the image URL only for 'ai' — the shared Kampagnenbild is
+   * never copied into a per-person row), text mode, language, discount and
+   * the attached set. Stamped here because the draft row is overwritten on
+   * regenerate.
    */
   designKey?: string | null;
-  heroVariant?: "ai" | "default" | "none" | null;
+  heroVariant?: "ai" | "default" | "campaign" | "none" | null;
   heroImageUrl?: string | null;
   heroHeadline?: string | null;
   textMode?: string | null;

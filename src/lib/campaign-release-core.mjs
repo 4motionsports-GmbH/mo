@@ -14,13 +14,19 @@ export const MAX_RELEASE_AHEAD_DAYS = 30;
  * campaign fields that change what the mail looks like (design, hero, CTA, Mo
  * promo, code validity). Any of them changing after the approval holds the mail
  * for a new review; pausing and resuming a campaign does not.
+ *
+ * The Kampagnenbild (0079) is appended ONLY when one is set, so every
+ * fingerprint stored before it existed stays byte-identical (no mass hold
+ * after the deploy); a new picture or a changed AI statement after the
+ * approval holds the mail.
  * @param {{ draftUpdatedAt: string | null, language: string | null,
  *   campaign: { designKey?: string | null, heroMode?: string | null, ctaKind?: string | null,
- *     ctaUrl?: string | null, moPromo?: boolean | null, discountValidUntil?: string | null } }} v
+ *     ctaUrl?: string | null, moPromo?: boolean | null, discountValidUntil?: string | null,
+ *     heroImage?: { file?: string | null, ai?: boolean | null } | null } }} v
  */
 export function approvalFingerprint(v) {
   const c = v.campaign ?? {};
-  return JSON.stringify([
+  const parts = [
     v.draftUpdatedAt ?? "",
     v.language ?? "",
     c.designKey ?? "",
@@ -29,7 +35,9 @@ export function approvalFingerprint(v) {
     c.ctaUrl ?? "",
     c.moPromo === true,
     c.discountValidUntil ?? "",
-  ]);
+  ];
+  if (c.heroImage?.file) parts.push(`hero:${c.heroImage.file}:${c.heroImage.ai ? 1 : 0}`);
+  return JSON.stringify(parts);
 }
 
 /**
