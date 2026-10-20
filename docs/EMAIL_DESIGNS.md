@@ -269,13 +269,13 @@ variants keep their hero button (`heroCta` per variant).
 
 ## Hero images (design „Performance“)
 
-The Performance design opens with a large lifestyle picture. Two sources:
+The Performance design opens with a large lifestyle picture. Three sources:
 
 1. **Default image** — `public/email-hero-default.jpg` (**landscape 1536×1024**, override with
-   `EMAIL_HERO_DEFAULT_URL`). Used by summary/DOI always and by marketing/campaign without an
-   individual picture. It is AI-generated too (see the labelling below). To prepare a replacement,
-   apply the legibility gradient with `npm run hero:gradient -- <input> <output.png>`
-   (`scripts/hero-gradient.mjs`).
+   `EMAIL_HERO_DEFAULT_URL`). Used by summary/DOI always, by marketing mails without an individual
+   picture and by campaign mails with neither an individual picture nor a Kampagnenbild (3.). It is
+   AI-generated too (see the labelling below). To prepare a replacement, apply the legibility
+   gradient with `npm run hero:gradient -- <input> <output.png>` (`scripts/hero-gradient.mjs`).
 
 2. **Individual picture + headline per e-mail** (marketing + campaign only — the two types with a
    human review): in Kunden → Marketing ([`HeroImagePanel.tsx`](../src/app/admin/HeroImagePanel.tsx))
@@ -291,6 +291,11 @@ The Performance design opens with a large lifestyle picture. Two sources:
    headline = the design's default line per e-mail type. On the Kampagne desk the campaign's
    `hero_mode` decides who gets a KI-Hero ([`CAMPAIGNS.md`](./CAMPAIGNS.md) §4, „KPIs and the hero
    A/B test“).
+
+3. **Kampagnenbild** (campaign mails only, migration `0079`) — a campaign's own picture, uploaded by
+   the operator in the campaign editor; it replaces the default image in every mail of that campaign
+   that has no individual picture. Precedence, upload, processing and label rule: „Kampagnenbild“
+   below.
 
 ### Model, format, variants, cost
 
@@ -436,6 +441,85 @@ prompt stored before a tail change gets the current tail while the operator's ow
 kept. The marker is always the newest rule, so a tail update replaces every older stored prompt
 automatically.
 
+### Kampagnenbild — the campaign's own picture (migration `0079`)
+
+One picture per campaign (`campaigns.hero_image`, NULL = none), uploaded in the campaign editor:
+Gestaltung → „Kampagnenbild“, in „Neue Kampagne“ and „Bearbeiten“, for every kind — Lebenszyklus and
+the Einzelansprache too (the screen: [`ADMIN_DASHBOARD.md`](./ADMIN_DASHBOARD.md) §3.2; the campaign
+side — hero modes, samples, approval: [`CAMPAIGNS.md`](./CAMPAIGNS.md) §2.2). Only a design with a hero
+shows it (`emailDesignHasHero` — today Performance); under Classic or Studio it stays stored and the
+editor says so.
+
+**Precedence** (`resolveCampaignHero`, [`campaign-hero.mjs`](../src/lib/campaign-hero.mjs), tested) —
+the one rule of the send path (`approveAndSendCampaign`), the desk preview
+(`renderCampaignEmailPreview`) and the editor's sample mails (`renderCampaignSample`):
+
+1. the per-draft KI-Hero (desk „Erzeugen“, source 2. above) — ignored under `hero_mode` `none`;
+2. the Kampagnenbild — under **every** `hero_mode`, `none` included: Performance always shows a
+   picture, so „Kein KI-Titelbild“ drops only the AI picture;
+3. the design's default image.
+
+Desktop file and phone crop always come from the same source (a KI-Hero from before `0053` without a
+phone crop uses its own desktop file on the phone, never the Kampagnenbild's crop). The headline is
+the draft's whatever the picture (none under `none`). A KI-Hero or headline left on a draft — a reused
+Testkontakt, say — still wins over the Kampagnenbild. Marketing mails from Kunden → Marketing, the
+design preview in Einstellungen and the other mail types never use it.
+
+**Upload — staged.** `POST /api/admin/campaigns/hero-image` ([`ADMIN_DASHBOARD.md`](./ADMIN_DASHBOARD.md)
+§11) checks and processes the picture, stores the two files and returns the value; it writes nothing
+to the database. The editor keeps the value in its form and „Speichern“ commits it with the rest of
+the campaign (validated again: `validateCampaignInput` → `normalizeCampaignHeroImage`). So a new
+campaign gets its picture before it has an id, and „Entfernen“ is just NULL on save. The browser
+checks the file first with the same rules ([`email-hero-upload-client.mjs`](../src/lib/email-hero-upload-client.mjs)
+over [`email-hero-upload.mjs`](../src/lib/email-hero-upload.mjs), both tested;
+[`prepare-hero-upload.ts`](../src/app/admin/lib/prepare-hero-upload.ts)): decoded with its EXIF
+orientation, a picture that is too small fails without a round trip, and one above 2.5 MB or with a
+side longer than 3,072 px is re-encoded as JPEG on white — scaled down to a 3,072-px long side where
+needed, but never below a 1,536-px wide hero crop — at quality 0.92, then 0.85 and 0.75 until it is
+at most 4 MB: Vercel refuses request bodies over 4.5 MB before the route runs. The server checks everything again from the sniffed bytes; the declared
+type is ignored.
+
+| Rule (`email-hero-upload.mjs`) | Value |
+|---|---|
+| Formats | JPEG, PNG, WebP by the sniffed format; SVG, GIF, TIFF, HEIF/AVIF and animated pictures are refused. iPhone HEIC: the file picker's `accept` makes iOS convert to JPEG; otherwise the message asks to export as JPG |
+| File size | at most 4 MB per request — after the browser's downscale |
+| Pixels | at most 40 MP (width × height after orientation, read from the header; sharp's `limitInputPixels` as the backstop) |
+| Minimum | 1280×600 after the crop (2× the 640×300 desktop hero) |
+| Warnings (the upload still succeeds) | crop narrower than 1536 px → „Kleiner als 1536 × 720 px — wird leicht hochskaliert …“; ratio more than 10 % off 2.13:1 → „Seitenverhältnis weicht ab — auf 2,1 : 1 zugeschnitten, Vorschau prüfen.“ |
+
+**Processing** (`buildUploadedHeroVariants`, `email-hero-variants.mjs`, tested; never throws — an
+unreadable file is the German `unreadable` message): EXIF orientation applied → cropped to the hero's
+2.13:1 (`heroAspectCrop`: a tall picture keeps its full width and a vertically centred band, a wide
+one its full height and the right-hand part) → scaled to exactly **1536×720** → transparency flattened
+onto white, CMYK / wide gamut converted to sRGB → the **desktop file** with the legibility gradient
+(as for a KI-Hero) and the **phone crop** from 40 % of the width (922×720) without gradient → both
+JPEG quality 88 (mozjpeg). Metadata is stripped: the lossless master in between drops every input
+tag, so no camera EXIF or GPS leaves the server. The machine-readable AI marking is written **only**
+when the operator declared the picture AI-generated.
+
+**Label rule.** Before the upload the operator must state the **Bildherkunft** — „Foto oder eigene
+Grafik“ or „KI-generiert (EU-Hinweis in der Mail)“; there is no default, and the route refuses an
+upload without it (400 `origin_required`). A picture declared AI-generated carries the EU label and
+the marking like a KI-Hero; an **uploaded photo shows no label** (`heroIsAiGenerated: false` in the
+render data). Changing the statement means uploading again, so file and label never disagree.
+
+**Storage.** Two files per upload in the private Blob store,
+`email-heroes/campaign-default-<campaign id | new>-<stamp>[-mobile]-<random>.jpg` (one millisecond
+stamp for the pair; `new` before the first save), delivered like every hero through
+`/api/email-hero-image/<file>` (below). `campaigns.hero_image` (JSONB) holds
+`{ v, file, mobileFile, ai, name, width, height, uploadedAt }` — **file names, never URLs**: the URL is
+built at render time from `getBaseUrl()` (`campaignHeroUrls`), and a save accepts only paired
+`campaign-default-…` names that pass the image route's validation, so a forged payload can never point
+a mail at a foreign host or another blob (an invalid stored value reads as NULL — the default image).
+**Files are never deleted**: replacing or removing the picture only changes the column, because sent
+mails keep their URLs (immutable cache) — every upload gets a new name. An unsaved or replaced upload
+stays behind as an orphan of roughly 150–300 KB (accepted; no sweep). The send record never copies
+the Kampagnenbild's URL (`campaign_sends.hero_image_url` stays NULL, `hero_variant = 'campaign'`), and
+the erasure skips `campaign-default-…` files (`erasableHeroPathnames`), so deleting one recipient never
+breaks the picture in the campaign's other mails. Needs only `BLOB_READ_WRITE_TOKEN` (no image model);
+without it the editor shows the field disabled with „Bild-Upload nicht eingerichtet
+(BLOB_READ_WRITE_TOKEN fehlt).“ and the route answers 503 `not_configured`.
+
 ### Labelling „KI-generiertes Bild“ (EU AI Act)
 
 The heroes are photorealistic scenes showing real products in plausible rooms — under Art. 50(4)
@@ -451,11 +535,12 @@ the yardstick. As built:
 | Text, not just a symbol | The artwork reads „AI GENERATED“; the label is an `<img>` with `alt`/`title` „KI-generiertes Bild“ / „AI-generated image“ — deliberately no separate text pill (`aiImageLabel` in `performance.ts`) |
 | Recipient's language | `alt`/`title` DE/EN by the recipient's language |
 | Accessible | Screen readers and clients with blocked images get the statement from the `alt` text; the `alt` text of the phone picture names it too |
-| Machine-readable marking | Every stored file (desktop, phone, master) carries XMP `Iptc4xmpExt:DigitalSourceType = trainedAlgorithmicMedia`, `dc:description`, `xmp:CreatorTool` (the model) and EXIF `ImageDescription`/`Software` (`email-hero-marking.mjs`, tested) — the image model's provenance data does not survive re-encoding, so the industry-standard IPTC marking is written here |
-| Which heroes | **Every** hero of the Performance design: the AI-generated per-send heroes (`gpt-image-2`, fallback `gpt-image-1.5`) always, the default image through the constant `DEFAULT_HERO_IS_AI_GENERATED` in `performance.ts` (`true`, since the default image is AI-generated too; set it to `false` only if it is ever replaced by a real photograph). The operator does nothing; the label cannot be switched off in the workspace. |
+| Machine-readable marking | Every stored file of a KI-Hero (desktop, phone, master) carries XMP `Iptc4xmpExt:DigitalSourceType = trainedAlgorithmicMedia`, `dc:description`, `xmp:CreatorTool` (the model) and EXIF `ImageDescription`/`Software` (`email-hero-marking.mjs`, tested) — the image model's provenance data does not survive re-encoding, so the industry-standard IPTC marking is written here. An uploaded Kampagnenbild gets the same marking (tool „generative AI (hochgeladen)“) only when it was declared AI-generated; an uploaded photo carries no metadata at all |
+| Which heroes | Every AI picture of the Performance design: the AI-generated per-send heroes (`gpt-image-2`, fallback `gpt-image-1.5`) always, the default image through the constant `DEFAULT_HERO_IS_AI_GENERATED` in `performance.ts` (`true`, since the default image is AI-generated too; set it to `false` only if it is ever replaced by a real photograph), a Kampagnenbild by the operator's Bildherkunft at upload (declared AI → label, photo → none). The rule (`heroAiLabel`, `campaign-hero.mjs`, tested): with a picture in the render data the label shows unless that picture was explicitly declared not AI — it fails toward the label; without one the default image's constant decides. For a KI-Hero and the default image the operator does nothing; the label cannot be switched off in the workspace. |
 
 Open is only what code cannot do: the review by the shop or its legal counsel of whether other AI
-pictures outside the hero pipeline (e.g. inserted by hand) are labelled as well.
+pictures outside the hero pipeline (e.g. inserted by hand) are labelled as well — and whether the
+Bildherkunft an operator states for an uploaded Kampagnenbild is true (the code trusts it).
 
 ### Storage and configuration
 
@@ -467,8 +552,9 @@ from the mailbox). The route can reach only files under `email-heroes/` — `par
 boundary that keeps the private catalogue blobs unreachable. It is served with
 `Cache-Control: public, max-age=31536000, immutable` (file names carry a random suffix).
 
-Needs `OPENAI_API_KEY` + `BLOB_READ_WRITE_TOKEN`. Everything is fail-soft: without configuration or
-a picture the default image always renders, never a broken send. All `EMAIL_HERO_*` variables are
+Generation needs `OPENAI_API_KEY` + `BLOB_READ_WRITE_TOKEN`; the Kampagnenbild upload only
+`BLOB_READ_WRITE_TOKEN`. Everything is fail-soft: without configuration or a picture the default image
+always renders, never a broken send. All `EMAIL_HERO_*` variables are
 documented in `.env.example`. The prompt once given for the default image is in
 [`archive/EMAIL_DESIGNS_HISTORY_2026-10.md`](./archive/EMAIL_DESIGNS_HISTORY_2026-10.md).
 
@@ -480,14 +566,19 @@ documented in `.env.example`. The prompt once given for the default image is in
 | `src/lib/email-designs/studio.ts` | Example design (the reference to copy) |
 | `src/lib/email-designs/performance.ts` | Image-first conversion design (full shell + hero, EU label) |
 | `src/lib/email-hero-gradient.mjs` | Deterministic legibility gradient over the left part of the picture (sharp), tested |
-| `src/lib/email-hero-variants.mjs` | Model attempt chain, hero format, desktop and phone variant (sharp, JPEG), tested |
+| `src/lib/email-hero-variants.mjs` | Model attempt chain, desktop and phone variant (sharp, JPEG) of a render (`buildHeroVariants`) and of an uploaded Kampagnenbild (`buildUploadedHeroVariants`), tested |
+| `src/lib/email-hero-geometry.mjs` | The hero format (1536×720) and its two crops (`heroAspectCrop`, `heroMobileCrop`) — sharp-free so the browser can use them; re-exported by `email-hero-variants.mjs`, tested through its tests |
+| `src/lib/email-hero-upload.mjs` + `email-hero-upload-client.mjs` | Upload rules of the Kampagnenbild (formats, size, pixel cap, minimum, warnings, German messages, Bildherkunft) and the browser's downscale plan — pure, shared by browser and server, tested |
+| `src/lib/campaign-hero.mjs` | Kampagnenbild: the stored value (`normalizeCampaignHeroImage`), its URLs, the precedence (`resolveCampaignHero`), the send snapshot (`heroVariantForSnapshot`) and the label rule (`heroAiLabel`) — pure, tested |
+| `src/lib/campaign-hero-upload.ts` + `api/admin/campaigns/hero-image` | Kampagnenbild upload: process and store both files in the Blob store, return the staged value (nothing written to the database) |
+| `src/app/admin/kampagnen/CampaignHeroField.tsx` + `src/app/admin/lib/prepare-hero-upload.ts` | The editor field „Kampagnenbild“ (Bildherkunft, drop zone `ui/file-drop-zone.tsx`, processed previews) and the browser step (decode, check, downscale) |
 | `src/lib/email-hero-references.mjs` | Product reference photos: selection, prompt block, load/scale, tested |
 | `src/lib/email-hero-qa.mjs` | Automatic picture check (vision model), verdict and re-render choice, tested |
 | `src/lib/email-hero-marking.mjs` | Machine-readable AI marking (IPTC/XMP + EXIF) in every hero file, tested |
 | `src/lib/email-countdown-image.mjs` + `api/email-countdown` | Live countdown GIF (ticks every minute for an hour) from pre-rendered glyphs, signed token (`email-countdown-token.mjs`), tested |
 | `src/lib/offer-countdown.mjs` | The earlier deadline and the countdown line, tested |
 | `src/lib/discount-coupon.mjs` | Coupon wording and the `/discount/<code>` link, tested |
-| `src/lib/email-hero-blob.mjs` + `api/email-hero-image` | Private Blob write and public delivery of the hero pictures (with path validation) |
+| `src/lib/email-hero-blob.mjs` + `api/email-hero-image` | Private Blob write and public delivery of the hero pictures (with path validation); `erasableHeroPathnames` — what the erasure may delete (never a `campaign-default-…` file), tested |
 | `src/lib/email-hero-context.mjs` | What the AI learns about the person (purchase history, profile, products, season), the scene instruction and style tail — pure, tested |
 | `src/lib/email-hero.ts` / `email-hero-store.ts` | Hero prompt proposal, picture generation (`gpt-image-2` chain + Blob), storage on the draft |
 | `src/app/api/admin/email-hero/` | Routes: state, `suggest`, `generate`, `headline`, `remove` |
@@ -507,3 +598,4 @@ documented in `.env.example`. The prompt once given for the default image is in
 | `src/app/admin/einstellungen/EmailSettingsWorkspace.tsx` | Design library + assignment (admin screen „Einstellungen“, `DesignPreviewDialog.tsx` for the preview) |
 | `scripts/build-countdown-sprite.mjs`, `scripts/hero-gradient.mjs`, `scripts/hero-quality-compare.mjs` | Countdown glyphs (run manually, commit the output), `npm run hero:gradient`, `npm run hero:compare` |
 | `migrations/0049_email_design_selections.sql` | Selection table |
+| `migrations/0079_campaign_hero_image.sql` | `campaigns.hero_image` (the Kampagnenbild) + `campaign_sends.hero_variant` value `campaign` |

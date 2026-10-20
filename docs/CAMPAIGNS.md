@@ -141,13 +141,24 @@ again on the server (`validateCampaignInput`):
 | Briefing | `brief`, max 4,000 chars — Anlass, Ziel, Ton, Muss rein, Bitte nicht. The drafter reads it for every mail of the campaign (§4). „Briefing vorschlagen“ drafts one from name, kind, end date, discount and notes. |
 | Zielgruppe | The audience spec (`audience`, below), Fest/Dynamisch (`audience_mode`), „Erneut aufnehmen nach“ (`reentry_days`, `laufend` only, 14–3,650 days, empty = never), live count. Hidden for the Einzelansprache. |
 | Angebot | Rabatt (`discount_percent`, 0–`DISCOUNT_PERCENT_MAX`), Gilt für (`discount_scope`: all / recommendations — `set` is history, refused for new values), Codes gültig bis (`discount_valid_until`) — the starting values for Vorbereiten; each draft can still change them. A recipient with a set attached is drafted without a code whatever the default says (set XOR items, §4) |
-| Gestaltung | Design (`design_key`; empty = the design selected for campaign mails in Einstellungen), Titelbild (`hero_mode`: `none` / `default` / `ai_ab` / `ai_all`), Textlänge (`text_mode`), Button führt zu (`cta_kind`: `mo_chat` / `shop`) + Shop-Link (`cta_url`, `https://` required for `shop`), Mo-Hinweis anhängen (`mo_promo`, default on — the chat button lives in the Mo hint, so `mo_chat` with `mo_promo = false` is refused: „Der Button zu Mo steht im Mo-Hinweis — Hinweis einschalten oder den Button auf den Shop zeigen lassen.“) |
+| Gestaltung | Design (`design_key`; empty = the design selected for campaign mails in Einstellungen), Titelbild (`hero_mode` — it decides about the AI picture only: „Kein KI-Titelbild“ `none` / „Standard-Titelbild“ `default` / „KI-Titelbild für einen Teil (A/B)“ `ai_ab` / „KI-Titelbild für alle“ `ai_all`; §4), Kampagnenbild (`hero_image`, migration `0079` — the campaign's own picture, below), Textlänge (`text_mode`), Button führt zu (`cta_kind`: `mo_chat` / `shop`) + Shop-Link (`cta_url`, `https://` required for `shop`), Mo-Hinweis anhängen (`mo_promo`, default on — the chat button lives in the Mo hint, so `mo_chat` with `mo_promo = false` is refused: „Der Button zu Mo steht im Mo-Hinweis — Hinweis einschalten oder den Button auf den Shop zeigen lassen.“) |
 | Brief | Letters as a channel (migration `0074`, §8): „Briefe“ (`letter_mode`: „Keine Briefe“ `aus` — the default —, „An alle ohne E-Mail-Einwilligung“ `ohne_einwilligung`, „An alle (auch mit Einwilligung)“ `alle`), „Porto-Budget (€)“ (`letter_budget_cents`, 0–100,000 €, empty = no cap) and the live line „Per Brief: N Empfänger:innen (Adresse schon bekannt: M) · ≈ X € Porto bei Y € je Brief“ (M counts purchase addresses only); Callouts while `PHYSICAL_MAIL_SENDS_APPROVED` is off or Pingen is not configured. Hidden for the Einzelansprache. |
 | Automatik | Automatisch vorbereiten 0–500 drafts per night (`auto_prepare_per_day`, §5), Tagesziel (`daily_target`, 1–5,000 — no automation; shown as „Tagesziel n“ next to today's progress in the desk header) |
 | Prüfen & testen | Nothing stored — the estimate and sample mails below. Hidden for the Einzelansprache. |
 
 Defaults per kind (`campaignDefaults`): `laufend` → dynamisch, re-entry 180 days, hero `ai_ab`,
 priority 10; `aktion` → fest, no re-entry, hero `default`, priority 50.
+
+**Kampagnenbild** (`hero_image`, [`CampaignHeroField.tsx`](../src/app/admin/kampagnen/CampaignHeroField.tsx);
+the field on screen: [`ADMIN_DASHBOARD.md`](./ADMIN_DASHBOARD.md) §3.2; upload rules, processing, label
+rule and storage: [`EMAIL_DESIGNS.md`](./EMAIL_DESIGNS.md) „Kampagnenbild“). The campaign's own default
+picture in a design with a hero (Performance): a mail without its own KI-Hero shows it instead of the
+design's default image — under every `hero_mode`, „Kein KI-Titelbild“ included. It works in „Neue
+Kampagne“ and „Bearbeiten“ for every kind (the Einzelansprache too) and is **staged**: the operator
+states the Bildherkunft (photo or AI-generated — it decides the EU label), uploads, and „Speichern“
+commits the value with the rest of the form (validated by `validateCampaignInput`; anything but the
+upload's own `campaign-default-…` files is refused: „Kampagnenbild ungültig — bitte erneut
+hochladen.“). „Entfernen“ + „Speichern“ stores NULL; no file is ever deleted.
 
 **The audience spec** ([`audience-spec.mjs`](../src/lib/audience-spec.mjs), tested) is versioned
 jsonb; unknown fields and values are dropped, never guessed. Every field is optional:
@@ -219,9 +230,13 @@ A changed audience of an `aktiv` campaign is re-materialised on save
   mode — but under the form's CURRENT values (validated like an update, laid over the saved
   campaign), so a briefing can be tried before saving. The person must have the consent and
   no block (fail-closed, `not_eligible`). Rendering (`renderCampaignSample`) uses the
-  campaign's design with the placeholder code, the design's own title image (AI heroes and
-  sets come only on the desk) and **inert** unsubscribe/erasure links. Nothing is stored —
-  no recipient row, no draft, no code; the AI call is metered (`ai_usage`, `campaign_draft`).
+  campaign's design with the placeholder code, the form's Kampagnenbild (saved or just
+  uploaded) or else the design's own title image (AI heroes and sets come only on the desk)
+  and **inert** unsubscribe/erasure links. The Kampagnenbild is deliberately not part of the
+  sample fingerprint (`SAMPLE_CONFIG_FIELDS`): a new picture never marks a paid sample as
+  „Einstellungen geändert“ — a sample shows the picture it was written with until „Neu
+  schreiben“. Nothing is stored — no recipient row, no draft, no code; the AI call is metered
+  (`ai_usage`, `campaign_draft`).
 - **Test send** (`action: "send_test"`): the sample becomes a Testkontakt (§5) of the SAVED
   campaign at the operator's address — it borrows the sample person's purchase history, its
   draft is exactly the sample's text and products — and goes through
@@ -229,7 +244,10 @@ A changed audience of an `aktiv` campaign is re-materialised on save
   test sends ignore the consent, block list and cadence of the inbox, every other gate
   applies). Each sample carries `sampleConfigFingerprint` of the settings it was made with;
   the server refuses (409 `stale_sample`) when the saved campaign's fingerprint differs, and
-  the UI blocks the button while the form has unsaved changes.
+  the UI blocks the button while the form has unsaved changes. The test mail renders like a
+  real send from the SAVED campaign, so it shows the saved Kampagnenbild — an unsaved picture
+  change does not block the button (it is outside the fingerprint): save first to test a new
+  picture.
 
 ### 2.3 Recipients and the audience refresh
 
@@ -284,7 +302,7 @@ written to the admin access log (`campaign.add_recipient`, `campaign.add_recipie
 
 | Table | Purpose | Key columns |
 | --- | --- | --- |
-| `campaigns` (`0066`) | One row per campaign | `name`, `slug` (unique), `kind`, `status`, `brief`, `audience` (jsonb spec), `audience_mode` (`dynamisch` \| `fest`), `priority`, `starts_at`/`ends_at`, `daily_target`, `auto_prepare_per_day`, `reentry_days`, `discount_percent`, `discount_scope`, `discount_valid_until`, `design_key`, `hero_mode`, `text_mode`, `mo_promo`, `cta_kind`/`cta_url`, `letter_mode` + `letter_budget_cents` (`0074`, §8), `audience_refreshed_at`, `started_at`/`ended_at` |
+| `campaigns` (`0066`) | One row per campaign | `name`, `slug` (unique), `kind`, `status`, `brief`, `audience` (jsonb spec), `audience_mode` (`dynamisch` \| `fest`), `priority`, `starts_at`/`ends_at`, `daily_target`, `auto_prepare_per_day`, `reentry_days`, `discount_percent`, `discount_scope`, `discount_valid_until`, `design_key`, `hero_mode`, `hero_image` (`0079`, jsonb — the Kampagnenbild: blob file names, the AI statement, display metadata; NULL = none — [`EMAIL_DESIGNS.md`](./EMAIL_DESIGNS.md) „Kampagnenbild“), `text_mode`, `mo_promo`, `cta_kind`/`cta_url`, `letter_mode` + `letter_budget_cents` (`0074`, §8), `audience_refreshed_at`, `started_at`/`ended_at` |
 | `campaign_contacts` (`0034`, recipients since `0066`) | One row per person per campaign per cycle + the review-queue lifecycle | `campaign_id` (FK campaigns, cascade), `customer_id` (FK customers, SET NULL, `0059`), `cycle` (default 1), normalized `email`, `first_name`/`last_name`, `language` + `language_override` (`0040`), `opt_in_level`, `consent_updated_at`, `orders_count`, `total_spent_cents`, `last_order_at` (`0052`), `last_synced_at`, `status` (`pending → drafted → sending → sent` \| `skipped` \| `suppressed` \| `excluded` \| `draft_failed`), `excluded_reason`, `admin_note`, `conversation_id` (FK conversations, SET NULL), `added_at`, `created_at`, `sent_at`, `skipped_at`; `is_test` + `test_source_email` (`0057`, Testkontakte — §5); `added_manually` (`0069`, hand-added — §2.4); `approved_at`, `release_at`, `approved_fingerprint`, `release_error`, `claimed_at` (`0072`, Einplanen — §5). Unique `(campaign_id, customer_id, cycle)` for real rows and `(campaign_id, email)` for test rows; `shopify_customer_id` (`0034`) is not unique and may be NULL. |
 | `campaign_drafts` | ONE editable draft per recipient (unique `contact_id`, cascade) | `subject`, `body` (with `MO-XXXX` placeholder), `discount_percent`, projected `discount_expires_at`, `discount_scope` (`all` \| `recommendations`; `set` only on drafts from before 12.10.2026 — history, `0058`), compact `purchase_summary` (jsonb), `purchase_selected_ids` (`0043`, the recommendation basis), `recommended_product_ids`, `low_confidence`, `product_highlights` (`0046`), `text_mode` (`0047`), `segment` + `segment_days` (`0052`), the KI-Hero `hero_image_url` + `hero_image_prompt` (`0050`), `hero_headline` (`0051`), `hero_image_mobile_url` (`0053`) — [`EMAIL_DESIGNS.md`](./EMAIL_DESIGNS.md) |
 | `campaign_sends` | Immutable send record (audit + KPI) | `contact_id` (SET NULL), `campaign_id` (FK campaigns, SET NULL, `0066`), `customer_id` (FK customers, SET NULL, `0066`), `email`, `subject`, `body_hash` (SHA-256 of the shipped text), `body_text`/`body_html` (the shipped parts as delivered — `0038`; `body_html` NULL on the copy path, both NULL for pre-0038 rows), `sent_via` (`email`/`copy`), real `discount_code` (`MK-…`) + `discount_code_gid` + `discount_expires_at`, `redirect_token`/`clicked_at` (`0041` — the tracked CTA, see below; NULL for copy sends and pre-0041 rows), `sent_at`; `segment` (`0052`); the snapshot of `0054` — `design_key`, `hero_variant`, `hero_image_url`, `hero_headline`, `text_mode`, `language`, `discount_percent`, `bundle_offer_id`, `bundle_clicked_at`, `unsubscribed_at` — plus `discount_scope` (`0058`); `is_test` (`0057`); the delivery columns of `0055` — `provider_email_id`, `delivered_at`, `bounced_at`, `bounce_type`, `complained_at` (both: sections below) |
@@ -545,9 +563,13 @@ way: a live set attached to the customer makes it a set mail drafted with depth 
 **Design and hero per campaign.** A campaign's `design_key` wins over the design selected for
 campaign mails in Einstellungen (`getEmailDesignForKey`; unknown key → the selection; the designs
 and the hero pipeline: [`EMAIL_DESIGNS.md`](./EMAIL_DESIGNS.md)).
-`hero_mode`: `none` — no per-recipient KI-Hero rides along even if one was generated; `default` —
-the design's standard hero; `ai_ab` — Vorbereiten generates the KI-Hero for the A group (even
-recipient ids); `ai_all` — for every prepared card (§5).
+`hero_mode` decides about the AI picture only: `none` („Kein KI-Titelbild“) — no per-recipient
+KI-Hero rides along even if one was generated; `default` („Standard-Titelbild“) — no KI-Hero is
+generated by Vorbereiten (one made by hand on the desk still rides along); `ai_ab` — Vorbereiten
+generates the KI-Hero for the A group (even recipient ids); `ai_all` — for every prepared card (§5).
+A mail without a KI-Hero shows the campaign's **Kampagnenbild** (§2.2) when it has one, else the
+design's default image — under every mode, `none` included (`resolveCampaignHero`, precedence:
+[`EMAIL_DESIGNS.md`](./EMAIL_DESIGNS.md) „Kampagnenbild“).
 
 ## 5. Review workflow (Kampagnen screen)
 
@@ -579,7 +601,7 @@ recommended product gone or sold out; an attached set expired or expiring
 within two days, a missing KI-Hero while the campaign design has a hero —
 following the campaign's hero mode: under `ai_ab` an A-group card without one,
 under `ai_all` every card without one („Ohne KI-Hero“), under `default` /
-`none` never —, draft older than 14 days, a segment outside the send window
+`none` never; a Kampagnenbild does not count as a KI-Hero —, draft older than 14 days, a segment outside the send window
 (`laufend` campaigns only — an Aktion and the Einzelansprache have no window),
 subject over 70 characters), *info* (edited by hand, a Testkontakt, a Testkontakt address on the
 block list, a KI-Hero present). Each check carries one fix action
@@ -747,8 +769,12 @@ Actions:
   placeholder without discount, an expired set offer). The row
   keeps status `drafted` and gets `approved_at`, `release_at` and
   `approved_fingerprint` (draft version + language + the campaign's design, hero,
-  CTA, Mo promo and code validity), so opt-out, consent loss and every other
-  open-status rule still apply to it. The job `/api/cron/release-campaign-mails`
+  CTA, Mo promo and code validity, and — only when one is set, so fingerprints from
+  before `0079` stay valid — the Kampagnenbild's file and AI statement:
+  `approvalFingerprint`), so opt-out, consent loss and every other
+  open-status rule still apply to it. A Kampagnenbild uploaded, replaced or removed
+  after „Einplanen“ therefore holds the planned mails for a new review („Nach der
+  Freigabe geändert — bitte erneut prüfen.“). The job `/api/cron/release-campaign-mails`
   (every 10 minutes, `CAMPAIGN_RELEASE_MAX_PER_RUN` default 30,
   `CAMPAIGN_RELEASE_SPACING_MS` default 1500) sends the due mails one at a time
   through `approveAndSendCampaign`; a changed fingerprint, an expired set or a
@@ -770,7 +796,7 @@ Actions:
 - **Vorschau** (`POST /api/admin/campaign/email-preview`) — renders the
   CURRENT card (the on-screen, possibly unsaved subject/body) through the
   exact send-path composition (`renderCampaignEmailPreview` reuses
-  `renderCampaignEmail`: the campaign's design and hero mode, branded shell, bundle block, CTA,
+  `renderCampaignEmail`: the campaign's design, hero mode and Kampagnenbild, branded shell, bundle block, CTA,
   discount line, unsubscribe footer) and returns `text/html`, shown in the viewer dialog
   (`EmailViewerDialog`).
   READ-ONLY and gate-free: nothing is claimed, minted, sent or recorded; the
@@ -851,6 +877,7 @@ Shopify side: [`DATA_RETENTION.md`](./DATA_RETENTION.md) „Complete erasure“ 
 | Live audience count + German description (with `letterMode` also `letters { total, withAddress }`, §8.2) | `POST /api/admin/campaigns/audience-preview` |
 | AI help: audience from a sentence / Briefing draft | `POST /api/admin/campaigns/assist` (`action: "audience" \| "brief"`) |
 | Prüfen & testen: sample recipients, sample mail, test send | `POST /api/admin/campaigns/sample` (`action: "pick" \| "generate" \| "send_test"`) |
+| Kampagnenbild upload (staged — processes and stores the files, writes nothing to the database) | `POST /api/admin/campaigns/hero-image?ai=0\|1&campaignId=&name=` (raw `image/jpeg` \| `image/png` \| `image/webp` body) |
 | Zielgruppe aktualisieren | `POST /api/admin/campaigns/refresh` |
 | Add one person (Einzelansprache by default) | `POST /api/admin/campaigns/add-recipient` |
 | Add a Kunden selection (≤ 200, consent-gated, nothing drafted) | `POST /api/admin/campaigns/add-recipients` (`{ customerIds, campaignId?, adminNote? }`) |
@@ -880,11 +907,11 @@ Shopify side: [`DATA_RETENTION.md`](./DATA_RETENTION.md) „Complete erasure“ 
 | Letters: the „Briefe“ view — list, purchase addresses, drafts, edit, release, send steps (§8) | `POST /api/admin/campaigns/letters` (`action`: `list`, `fill_addresses`, `draft`, `redraft`, `save`, `approve`, `unapprove`, `skip`, `unskip`, `send_step`) |
 | Letter as printed (read-only, `application/pdf`) | `POST /api/admin/campaigns/letters/preview` (`{ id, subject?, body? }`) |
 | Purchase address of one customer (Kunden → Brief) | `POST /api/admin/customers/letter-address` (`{ customerId }`) |
-| UI | `src/app/admin/KampagneTab.tsx` (overview or desk); overview + editor in `src/app/admin/kampagnen/` (`CampaignsOverview`, `CampaignEditor`, `CampaignCheckSection`); desk in `src/app/admin/kampagne/` (`KampagneWorkspace`, `CampaignHeader`, `PreparePopover`, `QueueRail`, `MailPane`, `ReviewColumn`, `ListView`, `ScheduledViews` (Einplanen dialog + view „Eingeplant“), `SentHistory`, `EmailViewerDialog`, `ContactHistorySheet`, `TestContactsSheet`, `LettersView`, `badges`, `sections/` (`BundleSection`, `HeroBlock`, `PurchaseHistorySection`), `useCampaignActions`, `useReleaseActions`, `useRenderedPreview`); the hero state hook `src/app/admin/useEmailHero.ts` |
-| Libs | `campaigns-store.ts`, `audience-store.ts`, `campaign-{store,prepare,draft,recommendations,email,recommendation-view,assist,sample,release}.ts`, `campaign-{def,language,flags,gates,segments,complement,draft-core,review-checks,desk-core,sample-core,release-core}.mjs`, `audience-spec.mjs`, `discount-swap.mjs`, `discount-scope.mjs`, `offer-mode.mjs` (set XOR items), `draft-offer.mjs`, `stock-level.mjs`, `set-composer-core.mjs`; letters: `campaign-letters{,-store}.ts`, `campaign-letter-draft.ts`, `postal-address-fill.ts`, `campaign-letter-core.mjs`, `postal-address.mjs`, `physical-mail.ts` (`submitLetter`) |
+| UI | `src/app/admin/KampagneTab.tsx` (overview or desk); overview + editor in `src/app/admin/kampagnen/` (`CampaignsOverview`, `CampaignEditor`, `CampaignHeroField`, `CampaignCheckSection`); desk in `src/app/admin/kampagne/` (`KampagneWorkspace`, `CampaignHeader`, `PreparePopover`, `QueueRail`, `MailPane`, `ReviewColumn`, `ListView`, `ScheduledViews` (Einplanen dialog + view „Eingeplant“), `SentHistory`, `EmailViewerDialog`, `ContactHistorySheet`, `TestContactsSheet`, `LettersView`, `badges`, `sections/` (`BundleSection`, `HeroBlock`, `PurchaseHistorySection`), `useCampaignActions`, `useReleaseActions`, `useRenderedPreview`); the hero state hook `src/app/admin/useEmailHero.ts` |
+| Libs | `campaigns-store.ts`, `audience-store.ts`, `campaign-{store,prepare,draft,recommendations,email,recommendation-view,assist,sample,release,hero-upload}.ts`, `campaign-{def,language,flags,gates,segments,complement,draft-core,review-checks,desk-core,sample-core,release-core,hero}.mjs`, `audience-spec.mjs`, `discount-swap.mjs`, `discount-scope.mjs`, `offer-mode.mjs` (set XOR items), `draft-offer.mjs`, `stock-level.mjs`, `set-composer-core.mjs`; letters: `campaign-letters{,-store}.ts`, `campaign-letter-draft.ts`, `postal-address-fill.ts`, `campaign-letter-core.mjs`, `postal-address.mjs`, `physical-mail.ts` (`submitLetter`) |
 
 All admin routes sit behind the existing proxy gate + `guardAdminPost` / `guardAdminGet`
-(auth + JSON-content-type CSRF defense). Everything fails closed: missing
+(auth + the content-type CSRF defense — [`ADMIN_DASHBOARD.md`](./ADMIN_DASHBOARD.md) §1). Everything fails closed: missing
 Shopify/DB config → "not configured" in the UI, never a crash, never an
 ungated send.
 
@@ -1217,8 +1244,11 @@ If the figures are to be updated, then on the pattern of the improvement loop: t
 ## KPIs and the hero A/B test (migration `0054`)
 
 **What each send records.** Besides the segment (`0052`), the send stamps a snapshot of the mail on
-`campaign_sends`: `design_key`, `hero_variant` (`ai` = individually generated KI-Hero, `default` =
-hero design with the default image, `none` = no hero / copy path), `hero_image_url`,
+`campaign_sends`: `design_key`, `hero_variant` (`ai` = individually generated KI-Hero, `campaign` =
+the campaign's uploaded Kampagnenbild (`0079`; under a design without a hero it is invisible and
+counts as `default`), `default` = hero design with the default image, `none` = no hero / copy
+path; `heroVariantForSnapshot`), `hero_image_url` (only for `ai` — the shared Kampagnenbild's URL is never
+copied into a per-person row, whose hero files the erasure deletes),
 `hero_headline`, `text_mode`, `language`, `discount_percent`, `discount_scope` (`0058`),
 `bundle_offer_id`; since `0066` also `campaign_id` and `customer_id`. The draft is overwritten on
 every regenerate — without the stamp, what was sent could not be reconstructed afterwards.
@@ -1240,13 +1270,16 @@ every regenerate — without the stamp, what was sent could not be reconstructed
 **The campaign and hero comparison on the KPI screen** (`kpi/sections/CampaignSection.tsx`; KPI
 definitions: [`ADMIN_DASHBOARD.md`](./ADMIN_DASHBOARD.md) §5.9). „Kampagnen im Vergleich“: the same
 funnel per campaign (Lebenszyklus, Aktionen, Einzelansprache), with „Chat gestartet“. „Hero-Vergleich:
-lohnt sich das KI-Bild?“: per variant Gesendet, Button-Klickrate, Set geklickt, Eingelöst, Umsatz,
-Umsatz / Send, Hero-Kosten, Kosten / Send, Abgemeldet — and „Nach Lebenszyklus-Segment“, the same
+lohnt sich das KI-Bild?“: per variant (`campaign` reads „Kampagnenbild (hochgeladen)“) Gesendet,
+Button-Klickrate, Set geklickt, Eingelöst, Umsatz, Umsatz / Send, Hero-Kosten, Kosten / Send,
+Abgemeldet — and „Nach Lebenszyklus-Segment“, the same
 funnel per segment. So that both groups get sends, the desk shows each recipient's **A/B group**
 (even contact id: send with a KI-Hero; odd: leave the hero empty — `abGroupOf`). The campaign's
 title-image mode decides for whom „Vorbereiten…“ generates KI-Heroes (`ai_ab`: the A group,
 `ai_all`: everyone); under `none` no KI-Hero rides along, and under `default` / `none` the desk shows
-no hero hints and no hero column. The stamp records what was actually sent, not the recommendation.
+no hero hints and no hero column. With a Kampagnenbild under a hero design the B group (and every
+other mail without a KI-Hero) is stamped `campaign` instead of `default`, so the comparison reads
+KI-Hero vs. the campaign's own picture. The stamp records what was actually sent, not the recommendation.
 Rule of thumb: click-rate differences of a few percentage points become reliable from about 100
 sends per group; revenue per send needs more.
 

@@ -67,10 +67,18 @@ before any admin page or API route renders.
    - invalid on an API route → **401** JSON.
 4. Each `/api/admin/*` handler additionally calls `guardAdminPost(req)` or
    `guardAdminGet()` (defense in depth). A POST re-verifies the cookie **and**
-   requires `Content-Type: application/json` (415 otherwise), which a cross-site
-   form can't send without a CORS preflight — a lightweight CSRF defense given the
-   cookie is the only credential. A GET (detail reads, PDFs, status) re-verifies
-   the cookie only.
+   requires the media type `application/json` **exactly** (parameters such as
+   `charset` allowed; 415 otherwise), which a cross-site page can't send without a
+   CORS preflight — a lightweight CSRF defense given the cookie is the only
+   credential (`SameSite=Lax`, and storefront and admin are the same site). Until
+   20.10.2026 the rule was „the header contains `application/json`“, which also let
+   the safelisted `text/plain; charset=application/json` through. A route that takes
+   a raw binary body (the Kampagnenbild upload) passes `accept` with an exact list
+   of image types instead (`image/jpeg`, `image/png`, `image/webp` — none
+   CORS-safelisted, so the preflight protection holds); `text/plain`,
+   `multipart/form-data` and `application/x-www-form-urlencoded` are refused even if
+   a caller lists one ([`admin-content-type.mjs`](../src/lib/admin-content-type.mjs),
+   tested). A GET (detail reads, PDFs, status) re-verifies the cookie only.
 5. Logout is a server action that deletes the cookie.
 
 If `ADMIN_PASSWORD` / signing secret are unset, auth **fails closed** (login is
@@ -190,7 +198,7 @@ src/app/admin/
 ├── login/page.tsx        # login form + server action (rate-limited)
 ├── <Screen>Tab.tsx       # server file per screen: queries → props
 ├── eingang/              # EingangWorkspace (list + item detail + keys), MailReply, UnmatchedInbound, types
-├── kampagnen/            # CampaignsOverview (cards), CampaignEditor (sheet), CampaignCheckSection („Prüfen & testen“), types
+├── kampagnen/            # CampaignsOverview (cards), CampaignEditor (sheet), CampaignHeroField („Kampagnenbild“), CampaignCheckSection („Prüfen & testen“), types
 ├── kampagne/             # the desk of one campaign: KampagneWorkspace, CampaignHeader, PreparePopover, QueueRail, MailPane, ReviewColumn, sections/*, ListView, ScheduledViews („Einplanen“ dialog, view „Eingeplant“), SentHistory, LettersView, TestContactsSheet, ContactHistorySheet, EmailViewerDialog, badges, useCampaignActions, useReleaseActions, useRenderedPreview
 ├── kunden/               # KundenWorkspace, CustomerDetail, badges, useCustomerDetail, tabs/{Ueberblick (+Profil), Aktivitaet, Kaeufe, Beratungen („Gespräche“), Marketing (+OptOutControl), Korrespondenz, Brief}, BundleComposer
 ├── kpi/                  # KpiToolbar, KpiSection, KpiTile (+ DeltaPill), FunnelBars, Sparkline, RevenueOrders (the drill-down), revenue-view (+ revenue-colors, revenue-series), groups, KpiTopQuestions, charts (next/dynamic) → charts-recharts + chart-geometry, sections/* (one file per section, §3.5)
@@ -199,7 +207,7 @@ src/app/admin/
 ├── einstellungen/        # EmailSettingsWorkspace, ShopifySyncCard, SystemStatusCard, DesignPreviewDialog
 ├── feedback/, analytics/, verbesserung/
 ├── HeroImagePanel.tsx, useEmailHero.ts, EmailPreviewButton.tsx, EmailPreviewFrame.tsx, EmailTextModeToggle.tsx   # shared e-mail widgets
-├── lib/                  # admin-fetch, use-async-action, use-step-loop, use-media-query, fetch-pdf
+├── lib/                  # admin-fetch, use-async-action, use-step-loop, use-media-query, fetch-pdf, prepare-hero-upload
 └── ui/                   # the primitives (§2.5)
 ```
 
@@ -213,12 +221,13 @@ Shared, pure logic sits in `src/lib/*.mjs` with `node --test` suites next to it
 
 | Helper | Use |
 | --- | --- |
-| `adminFetch(path, { body })` | the one way to call `/api/admin/*`: JSON in/out, throws `AdminApiError` (status, code, German message), redirects to the login on 401 and back afterwards. `friendlyErrorMessage()` turns network errors into „Netzwerkfehler — bitte erneut versuchen.“ |
+| `adminFetch(path, { body })` | the one way to call `/api/admin/*`: JSON in/out, throws `AdminApiError` (status, code, German message), redirects to the login on 401 and back afterwards. `friendlyErrorMessage()` turns network errors into „Netzwerkfehler — bitte erneut versuchen.“ A binary upload passes `rawBody` (a `Blob`, sent as-is with its own type as `Content-Type`, POST by default; never together with `body`) — same JSON answer and error handling. |
 | `useAsyncAction(fn, { onSuccess, errorToast })` | pending state + error toast for a button; prevents double submits. |
 | `useConfirm()` | promise-based `ConfirmDialog` (title, description, confirm label, destructive tone) — used for sends, deletes and paid bulk runs only. |
 | `useStepLoop({ path, body, onStep, isDone, isBusy, retry, resumable })` | drives the step-wise jobs (Komplettanalyse, Verbesserungslauf, Shopify import, letters): one bounded POST per step, retries a broken-off response (60 × 5 s, „reconnecting“), pauses, stops on `AdminApiError`, polls while the server is busy, stops on unmount. With `resumable` (Komplettanalyse, Verbesserung — retry-safe through the step claim) it also bridges a dropped connection the same way and a platform error page (502/503/504, a 5xx without the route's JSON, 429; `classifyStepFailure` in `lib/step-loop-retry.mjs`, tested) up to 3 times without progress, 15 s apart; the status line reads „Server nicht erreichbar — es wird automatisch weiter versucht“. |
 | `useMediaQuery(query, ssrDefault)` | responsive behaviour without layout flashes (sidebar labels, SplitPane stacking). |
-| `fetchPdf(path, payload)` | POST for a binary answer (a letter PDF) with the admin JSON error envelope — `adminFetch()` is JSON-only. Kunden → Brief and Kampagnen → Briefe. |
+| `fetchPdf(path, payload)` | POST for a binary answer (a letter PDF) with the admin JSON error envelope — `adminFetch()` reads JSON answers only. Kunden → Brief and Kampagnen → Briefe. |
+| `prepareHeroUpload(file)` | the browser step of the Kampagnenbild upload: decodes the file with its EXIF orientation, checks it against the shared upload rules and shrinks + re-encodes a heavy photo to JPEG so it fits the request limit; throws the German message ([`EMAIL_DESIGNS.md`](./EMAIL_DESIGNS.md) „Kampagnenbild“). |
 
 ### 2.5 Design system
 
@@ -257,7 +266,10 @@ trap + return), `ConfirmDialog`/`useConfirm`, `Sheet`, `Disclosure`, `toast`,
 into `#admin-root`, hover/focus/tap, Esc closes), `Callout`, `EmptyState`,
 `PageHeader`, `FilterBar`/`FilterChip`, `SplitPane` (master/detail, stacks on
 tablet), `DescriptionList`, `TranscriptView` (shared by Gespräche and Kunden),
-`Kbd`, `BarList`, `SidebarList`, `Markdown`, `CatalogProductPicker`.
+`Kbd`, `BarList`, `SidebarList`, `Markdown`, `CatalogProductPicker`, `FileDropZone`
+(one file by drag or the labelled „Datei wählen“ button; disabled with a Tooltip reason,
+busy state; while mounted it swallows files dropped elsewhere on the page so the browser
+never navigates away from an unsaved form).
 
 Rules of thumb: explanations → `InfoTip`; states → `Callout`/`EmptyState`/
 `StatusBadge` (toolbars always stay visible, even on an empty list); lists →
@@ -553,9 +565,48 @@ The sheet's sections, top to bottom (every field, column, bound and default per 
 - **Angebot** — Rabatt, Gilt für (Alles / Empfehlungen), „Codes gültig bis“
   (Aktion): starting values for Vorbereiten; codes are minted at send. A card
   that gets a set carries no code (offer-mode.mjs).
-- **Gestaltung** — Design, Titelbild, Textlänge, „Button führt zu“ Mo-Chat /
-  Shop, „Mo-Hinweis anhängen“ (Mo-Chat without the hint is refused: „Der Button
-  zu Mo steht im Mo-Hinweis — …“).
+- **Gestaltung** — Design, Titelbild („Kein KI-Titelbild“ / „Standard-Titelbild“ /
+  „KI-Titelbild für einen Teil (A/B)“ / „KI-Titelbild für alle“; InfoTip ends „Mails
+  ohne KI-Titelbild zeigen das Kampagnenbild, ohne Kampagnenbild das Standardbild des
+  Designs.“), Textlänge, then the full-width field **„Kampagnenbild“**
+  ([`kampagnen/CampaignHeroField.tsx`](../src/app/admin/kampagnen/CampaignHeroField.tsx);
+  rules and processing: [`EMAIL_DESIGNS.md`](./EMAIL_DESIGNS.md) „Kampagnenbild“), then
+  „Button führt zu“ Mo-Chat / Shop, „Mo-Hinweis anhängen“ (Mo-Chat without the hint is
+  refused: „Der Button zu Mo steht im Mo-Hinweis — …“). The Kampagnenbild field:
+  - InfoTip next to the label, verbatim: „Standard-Titelbild dieser Kampagne im Design
+    „Performance“. Es ersetzt das allgemeine Standardbild in allen Mails der Kampagne; ein
+    im Kampagnen-Desk pro Mail erzeugtes KI-Titelbild hat Vorrang. Format: JPG, PNG oder
+    WebP, max. 4 MB (iPhone-HEIC vorher als JPG exportieren). Größe: Querformat, empfohlen
+    1536 × 720 px oder größer (ca. 2,1 : 1), mindestens 1280 × 600 px; andere Formate
+    werden zugeschnitten — hohe Bilder mittig, breite vom rechten Rand. Motiv nach rechts:
+    die linke Hälfte trägt Überschrift, Text und Button und wird bis etwa 64 % der Breite
+    hell überblendet; auf dem Smartphone erscheint nur der rechte Teil (ab 40 %) unter dem
+    Text. Keine Schrift und keine Logos im Bild. Nur Bilder mit Nutzungsrechten für
+    E-Mail-Werbung verwenden, erkennbare Personen nur mit Einwilligung. Gespeichert wird
+    ein JPEG; Kamera-Metadaten (z. B. GPS) werden entfernt.“
+  - Callouts: „Bild-Upload nicht eingerichtet (BLOB_READ_WRITE_TOKEN fehlt).“ (warning;
+    the controls stay visible, disabled) and, when the effective design (the campaign's
+    own or „Wie in Einstellungen“) has no hero, „Nur im Design „Performance“ sichtbar —
+    „<Design>“ hat kein Titelbild. Das Bild bleibt gespeichert und erscheint, sobald die
+    Kampagne Performance nutzt.“ (info; the upload stays allowed).
+  - Empty: a thumbnail of the design's default picture („Ohne Kampagnenbild:
+    Standardbild des Designs“), the required Select **„Bildherkunft“** („Bitte wählen …“ /
+    „Foto oder eigene Grafik“ / „KI-generiert (EU-Hinweis in der Mail)“; InfoTip
+    „Pflichtangabe. Bestimmt den Hinweis „KI-generiertes Bild“ in der Mail
+    (EU-KI-Verordnung Art. 50) und die maschinenlesbare Kennzeichnung der Datei. Zum
+    Ändern das Bild erneut hochladen.“) and the drop zone („Bild hierher ziehen oder“ +
+    „Datei wählen“, „JPG, PNG oder WebP · max. 4 MB · Querformat ab 1280 × 600 px“),
+    disabled until a Bildherkunft is chosen (Tooltip „Erst die Bildherkunft wählen“);
+    busy: „Wird verarbeitet …“. Errors and the warnings (upscaled, cropped) as Callouts.
+  - Filled: the PROCESSED files — the desktop picture in the hero's frame with a dashed
+    outline over its left half („Textbereich: Überschrift, Text, Button“) and the phone
+    crop („Smartphone (unter dem Text)“); a line with file name, the original's size in px, „Foto“ /
+    „KI-generiert“ and „hochgeladen <date>“; „Ersetzen…“ (Bildherkunft + drop zone again,
+    „Abbrechen“) and „Entfernen“ (no confirm — nothing is deleted before „Speichern“, no
+    file ever). While the value (picture or Bildherkunft) differs from the saved one: the
+    badge „Noch nicht gespeichert“, plus „Zurücksetzen“ when a picture is saved.
+  - Staged: the upload only returns the value; „Speichern“ commits it and is disabled
+    while an upload runs (Tooltip „Das Kampagnenbild wird noch verarbeitet.“).
 - **Brief** (migration 0074) — „Briefe“ mode, „Porto-Budget (€)“ and the live
   line „Per Brief: N Empfänger:innen (Adresse schon bekannt: M) · ≈ X € Porto
   bei Y € je Brief“; Callouts while `PHYSICAL_MAIL_SENDS_APPROVED` is off or
@@ -640,7 +691,12 @@ clearing 100–200 e-mails a day:
   recommendations, unavailable ones greyed out, unit price + stock + count
   1–10 per product, the normal price greyed in the empty „Set-Preis“ field and
   the live saving — [`CAMPAIGNS.md`](./CAMPAIGNS.md) §4), Text (Sprache, Modus), Hero (only when the campaign design has a
-  hero: Erzeugen, Anpassen… sheet, Entfernen), Kundenprofil (persona badge,
+  hero and the Titelbild mode is not „Kein KI-Titelbild“ — the mail column still shows the
+  Kampagnenbild then: Erzeugen, Anpassen… sheet, Entfernen; the badge reads „KI-Hero“, „A-Gruppe ohne
+  Hero“, „Kampagnenbild“ — a mail without its own KI-Hero whose campaign has a
+  Kampagnenbild shows that picture as the thumbnail — or „Standard-Bild“; the Kampagnenbild
+  never counts as the card's KI-Hero for the Prüfpunkte and the A/B badges, and a changed
+  Kampagnenbild re-renders the mail column), Kundenprofil (persona badge,
   plain-text excerpt of the central profile, „Öffnen“ → the customer in
   Kunden), Kaufhistorie (collapsed, with the recommendation basis; "Letzte 5
   von N Bestellungen" when the snapshot is cut), Kontakt (opt-in, segment,
@@ -2474,11 +2530,11 @@ anomaly is logged server-side.
 
 ## 11. Admin API routes
 
-All under `/api/admin/*` — 106 route files —, gated by the Edge proxy **and**
+All under `/api/admin/*` — 107 route files —, gated by the Edge proxy **and**
 `guardAdminPost(req)` / `guardAdminGet()` in the handler (§1); JSON envelope
 `{ error: { code, message } }` on failure. Grouped by the screen that calls
 them. Actions that read or act on one person's data write the admin access log
-(`recordAdminAccess`, 40 route files) — among them `customers/ask`,
+(`recordAdminAccess`, 41 route files) — among them `customers/ask`,
 `customers/objection`, `campaigns/add-recipient(s)`, `campaigns/letters`,
 `customers/letter-address`, `inbox/accept`, `inbox/suggest` and
 `correspondence/assign-prospect`.
@@ -2497,6 +2553,7 @@ them. Actions that read or act on one person's data write the admin access log
 | | `POST campaigns/audience-preview { audience, letterMode? }` | the editor's live count with consent (total, with Mo, DE / EN as window aggregates, 8 sample names, plain-German description) plus `withoutConsent { total, letterReach }` — the same spec without the consent (the only match that skips it; nothing is materialised) and how many of those a letter could reach (postal address, no objection); with `letterMode` (`ohne_einwilligung` \| `alle`, 0074) also `letters { total, withAddress }` — the letter recipients under the letter rules and how many have a purchase address (the editor's „Per Brief: …“ line) |
 | | `POST campaigns/assist { action: audience \| brief, … }` | AI help in the editor: „Filter setzen“ from a sentence, „Briefing vorschlagen“ (proposals only) |
 | | `POST campaigns/sample { action: pick \| generate \| send_test, … }` | „Prüfen & testen“: `pick { audience }` → three varied recipients; `generate { campaignId?, config, customerId, language }` → a sample mail (subject, body, html; consent + block list checked, nothing stored); `send_test { campaignId, to, sample }` → Testkontakt + `approveAndSendCampaign` (409 `stale_sample` when the saved settings differ from the sample's) |
+| | `POST campaigns/hero-image?ai=0\|1&campaignId=&name=` (raw body `image/jpeg` \| `image/png` \| `image/webp`, `guardAdminPost` with `accept`) | the Kampagnenbild upload in the editor (new campaigns too): checks and processes the picture, stores the desktop and phone file in the Blob store → `{ heroImage, warnings }` — staged, nothing written to the database (`campaigns` / `campaigns/update` commit it). `ai` (the Bildherkunft) is required (400 `origin_required`); `campaignId` only names the files. Refusals with the German message: 415 `unsupported_media_type` (another Content-Type) / `format` (the sniffed bytes), 413 `too_large` (> 4 MB, checked on Content-Length and while reading) / `too_many_pixels` (> 40 MP), 400 `too_small` / `animated` / `empty` / `unreadable`, 503 `not_configured` (no `BLOB_READ_WRITE_TOKEN`), 502 `storage_failed`. Access log `campaign_hero.upload` (`{ campaignId, ai, bytes }`). Rules: [`EMAIL_DESIGNS.md`](./EMAIL_DESIGNS.md) „Kampagnenbild“ |
 | | `POST campaigns/refresh { campaignId }` | „Zielgruppe aktualisieren“ on the desk |
 | Kampagnen, Kunden | `POST campaigns/add-recipient { customerId, campaignId?, adminNote?, conversationId?, draft? }` | put one person into a campaign — without `campaignId` into the Einzelansprache; needs consent and no block; `draft: true` writes the draft (access log `campaign.add_recipient`) |
 | Kunden | `POST campaigns/add-recipients { customerIds, campaignId?, adminNote? }` | „Zur Kampagne…“ for a selection (≤ 200 ids, else 400): `addRecipient` per person — without consent or with a block counted and skipped, never added; nothing drafted or sent → `{ campaignId, campaignSlug, added, alreadyIn, noConsent, blocked, notFound, failed }`; 404 / 409 `campaign_closed` for an ended or archived campaign (access log `campaign.add_recipients` with counts) |
@@ -2532,7 +2589,7 @@ them. Actions that read or act on one person's data write the admin access log
 | Eingang | `POST correspondence/assign-prospect { messageId }` | „Als Interessent anlegen“: a customer from the sender (no consent), the mail assigned, the item opened → `{ customerId, itemId }` (access log `correspondence.assign_prospect`) |
 | | `POST customers/letter-draft / letter-preview`, `POST physical/send` | physical letter (`letter-draft` 409 after a postal objection; since 0074 `physical/send` answers 409 `objection`, `not_purchase_address` or `address_invalid` too) |
 | Kunden | `POST customers/letter-address { customerId }` | „Adresse aus letzter Bestellung holen“ (0074): the shipping address of the person's latest completed order, read from Shopify and stored as the purchase address → `{ checked, filled, unchanged, noOrder, noAddress, failed }`; 403 `flag_off` while `PHYSICAL_MAIL_SENDS_APPROVED` is off, 503 `shopify_not_configured`; access log `customer.letter_address` |
-| | `GET email-hero`, `POST email-hero/suggest / generate / headline / remove` | hero image of a marketing or campaign draft |
+| | `GET email-hero`, `POST email-hero/suggest / generate / headline / remove` | hero image of a marketing or campaign draft; the GET's `defaultUrl` is what the mail shows without a per-draft hero — for a campaign draft the Kampagnenbild when there is one (`defaultSource: "campaign"`), else the design's default (`"design"`) |
 | Wissen | `GET qa/list?status=`, `POST qa/scan / answer / publish / unpublish / dismiss / restore` | the Q&A queue |
 | KPIs | `POST kpi/top-questions { personaLabel, force? }` | on-demand Top-Fragen summary |
 | Gespräche | `POST conversations/detail / analyze / analyze-bulk / insights` | transcript, cached analysis, confirmed bulk analysis, insights rollup |

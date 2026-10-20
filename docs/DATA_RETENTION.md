@@ -419,7 +419,9 @@ audience matches it), `erasure_tombstones` (the Shopify id, so no import,
 reconcile or webhook re-creates the person; removed 30 days (default) after
 Shopify confirmed the redaction — see Kundenstamm above) and
 `admin_access_log` (numeric id only, own window). Hero images in Blob storage are
-deleted after the commit.
+deleted after the commit — the person's own; never a campaign's shared Kampagnenbild
+(`campaign-default-…`, `erasableHeroPathnames`; [`EMAIL_DESIGNS.md`](./EMAIL_DESIGNS.md)
+„Kampagnenbild“), which the other mails of the campaign still show.
 
 **Orders.** Mo's copy of the person's orders (`customer_orders`) is deleted with
 them — cascade with the customer row, plus an explicit delete by Shopify id.
