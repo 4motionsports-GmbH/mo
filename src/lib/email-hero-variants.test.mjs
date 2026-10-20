@@ -253,6 +253,23 @@ test("upload: a CMYK JPEG becomes 3-channel sRGB", async () => {
   assert.deepEqual(out.warnings, []);
 });
 
+test("upload: a 16-bit PNG with an ICC profile keeps its colours (no P3 values written as sRGB)", async () => {
+  const { default: sharp } = await import("sharp");
+  const png16 = await sharp({ create: { width: 1600, height: 750, channels: 3, background: { r: 224, g: 16, b: 16 } } })
+    .toColourspace("rgb16")
+    .withIccProfile("srgb")
+    .png()
+    .toBuffer();
+  assert.equal((await sharp(png16).metadata()).depth, "ushort", "fixture is 16-bit");
+  const out = await buildUploadedHeroVariants(png16, { aiGenerated: false });
+  assert.equal(out.ok, true);
+  // The phone file has no gradient: its pixels are the source colour.
+  const { data } = await sharp(out.mobile).extract({ left: 400, top: 300, width: 1, height: 1 }).raw().toBuffer({ resolveWithObject: true });
+  for (const [got, want] of [[data[0], 224], [data[1], 16], [data[2], 16]]) {
+    assert.ok(Math.abs(got - want) <= 3, `channel ${got} vs ${want}`);
+  }
+});
+
 test("upload: between the minimum and 1536×720 it is upscaled to the stored size, with a warning", async () => {
   const { default: sharp } = await import("sharp");
   const src = await sharp({ create: { width: 1400, height: 656, channels: 3, background: "#808080" } }).webp().toBuffer();

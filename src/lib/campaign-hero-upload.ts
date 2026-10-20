@@ -31,7 +31,8 @@ export type CampaignHeroUploadResult =
 /**
  * Process and store one uploaded picture. `aiGenerated` is the operator's
  * statement (EU label + machine-readable marking); `campaignId` only names
- * the files (null before the first save). Never throws.
+ * the files (null before the first save). A fault in our own processing
+ * throws (the route reports it); everything else is a result.
  */
 export async function storeCampaignHeroUpload(
   bytes: Buffer,
@@ -42,6 +43,8 @@ export async function storeCampaignHeroUpload(
 
   // The store is PRIVATE (it also holds the catalog + embeddings); the files
   // are published through /api/email-hero-image — see email-hero-blob.mjs.
+  const abort = new AbortController();
+  const timer = setTimeout(() => abort.abort(), BLOB_PUT_TIMEOUT_MS);
   const blobOpts = {
     access: "private" as const,
     contentType: "image/jpeg",
@@ -49,8 +52,10 @@ export async function storeCampaignHeroUpload(
     token: process.env.BLOB_READ_WRITE_TOKEN,
     // The SDK retries an unreachable store for minutes; the route has 60 s.
     // Give up in time so the operator gets „bitte erneut versuchen“ instead
-    // of a gateway timeout.
-    abortSignal: AbortSignal.timeout(BLOB_PUT_TIMEOUT_MS),
+    // of a gateway timeout. NOT AbortSignal.timeout(): its TimeoutError is
+    // retried by @vercel/blob — only a reason-less abort() (an AbortError)
+    // makes the SDK stop. One controller covers both parallel writes.
+    abortSignal: abort.signal,
   };
   const owner = opts.campaignId ?? "new";
   const stamp = Date.now(); // one stamp for both files: they stay a recognisable pair
@@ -66,6 +71,8 @@ export async function storeCampaignHeroUpload(
   } catch (err) {
     reportError(err, { route: "lib/campaign-hero-upload", phase: "put" });
     return heroUploadError("storage_failed");
+  } finally {
+    clearTimeout(timer);
   }
 
   // Check our own output with the rule the save applies: should the blob

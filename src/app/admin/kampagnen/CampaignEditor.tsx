@@ -31,7 +31,7 @@ import {
 } from "../ui";
 import { adminFetch, errorMessage } from "../lib/admin-fetch";
 import { CampaignCheckSection, type SampleConfig } from "./CampaignCheckSection";
-import { CampaignHeroField } from "./CampaignHeroField";
+import { CampaignHeroField, sameHero } from "./CampaignHeroField";
 import type { AudienceSpecProps, CampaignCardProps, CampaignEditorOptions, CampaignHeroImageProps } from "./types";
 
 type Kind = "laufend" | "aktion";
@@ -391,6 +391,10 @@ export function CampaignEditor({
     () => (campaign ? JSON.stringify(sampleConfigOf(initialState(campaign))) : null),
     [campaign]
   );
+  // A staged Kampagnenbild is not part of the sample key (paid samples stay
+  // valid), but the test send renders the SAVED picture — so it blocks the
+  // test send until saved, like any other unsaved change.
+  const heroDirty = campaign != null && !sameHero(form.heroImage, campaign.heroImage ?? null);
 
   const a = form.audience;
   const otherCampaigns = campaigns.filter((c) => c.id !== campaign?.id && c.kind !== "einzel");
@@ -841,7 +845,7 @@ export function CampaignEditor({
             config={sampleConfig}
             configKey={sampleKey}
             heroImage={form.heroImage}
-            dirty={savedSampleKey !== null && savedSampleKey !== sampleKey}
+            dirty={(savedSampleKey !== null && savedSampleKey !== sampleKey) || heroDirty}
             recipients={preview ? preview.preview.total : null}
             counting={previewLoading}
             heroMode={form.heroMode}

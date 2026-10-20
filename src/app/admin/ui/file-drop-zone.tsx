@@ -165,21 +165,29 @@ export function FileDropZone({
           if (file && !blocked) onFile(file);
         }}
       />
-      {busy ? (
-        <span className="flex items-center gap-2 text-sm text-muted-foreground" role="status">
-          <Spinner size="sm" /> {busyLabel}
-        </span>
-      ) : dragging && disabled && disabledReason ? (
+      {dragging && disabled && disabledReason && !busy ? (
         <span className="text-sm text-muted-foreground">{disabledReason}</span>
       ) : (
         <>
+          {/* The button stays mounted while busy (blocked via aria-disabled):
+              unmounting it would drop the keyboard focus to <body>. */}
           <span className="flex flex-wrap items-center justify-center gap-2 text-sm text-muted-foreground">
-            {prompt}
+            {busy ? (
+              <span className="flex items-center gap-2">
+                <Spinner size="sm" /> {busyLabel}
+              </span>
+            ) : (
+              prompt
+            )}
             {disabled && disabledReason ? <Tooltip content={disabledReason}>{button}</Tooltip> : button}
           </span>
           {hint && <span className="text-xs text-muted-foreground">{hint}</span>}
         </>
       )}
+      {/* Always mounted, so screen readers announce the busy text. */}
+      <span className="sr-only" role="status" aria-live="polite">
+        {busy ? busyLabel : ""}
+      </span>
     </div>
   );
 }

@@ -185,14 +185,20 @@ export function parseHeroOrigin(v) {
  * @param {unknown} v
  * @returns {string | null}
  */
+/** A UTF-16 half of an emoji without its other half — invalid in jsonb. */
+const LONE_SURROGATE_RE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g;
+
 export function sanitizeUploadName(v) {
   if (typeof v !== "string") return null;
   const base = v.split(/[/\\]/).pop() ?? "";
-  const clean = base
+  const tidy = base
     .replace(/[\u0000-\u001f\u007f]/g, "")
+    .replace(LONE_SURROGATE_RE, "")
     .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, HERO_UPLOAD_NAME_MAX)
     .trim();
+  // Cut by code point, not UTF-16 unit: a cut through an emoji would leave a
+  // lone surrogate, which Postgres rejects in jsonb — and every later save of
+  // the campaign would fail.
+  const clean = Array.from(tidy).slice(0, HERO_UPLOAD_NAME_MAX).join("").trim();
   return clean || null;
 }

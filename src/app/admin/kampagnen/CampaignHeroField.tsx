@@ -62,7 +62,7 @@ interface UploadResult {
 }
 
 /** Same picture and the same AI statement (what a save would change). */
-const sameHero = (a: CampaignHeroImageProps | null, b: CampaignHeroImageProps | null) =>
+export const sameHero = (a: CampaignHeroImageProps | null, b: CampaignHeroImageProps | null) =>
   (a?.file ?? null) === (b?.file ?? null) && (a?.ai ?? null) === (b?.ai ?? null);
 
 /** A preview image that degrades to a neutral box when the file cannot load
@@ -123,6 +123,7 @@ export function CampaignHeroField({
   const originRef = React.useRef<HTMLSelectElement>(null);
   const replaceRef = React.useRef<HTMLButtonElement>(null);
   // Where focus goes after an action removed the button that had it.
+  const rootRef = React.useRef<HTMLDivElement>(null);
   const focusNext = React.useRef<"origin" | "replace" | null>(null);
 
   const urls = React.useMemo(() => campaignHeroUrls(value, ""), [value]);
@@ -141,6 +142,11 @@ export function CampaignHeroField({
     },
     {
       errorToast: false,
+      onError: () => {
+        const active = document.activeElement;
+        // The uploader is open (that is where uploads start): its first control.
+        if (!active || active === document.body) focusNext.current = "origin";
+      },
       onSuccess: (r) => {
         onChange(r.heroImage);
         setWarnings(Array.isArray(r.warnings) ? r.warnings : []);
@@ -161,6 +167,11 @@ export function CampaignHeroField({
     const target = focusNext.current;
     if (!target) return;
     focusNext.current = null;
+    // The operator moved on to another field while the upload ran: leave the
+    // focus there (a jump would turn their next keystroke into „Ersetzen…“).
+    const active = document.activeElement;
+    const lost = !active || active === document.body || active.getAttribute("role") === "dialog";
+    if (!lost && !rootRef.current?.contains(active)) return;
     if (target === "origin") originRef.current?.focus();
     else replaceRef.current?.focus();
   });
@@ -195,7 +206,7 @@ export function CampaignHeroField({
   const pickDisabled = !uploadConfigured || origin === "";
 
   return (
-    <div className="flex flex-col gap-1.5">
+    <div ref={rootRef} className="flex flex-col gap-1.5">
       <div className="flex items-center justify-between gap-2">
         <span className="flex items-center gap-1.5">
           <Label id={labelId} className="text-xs">

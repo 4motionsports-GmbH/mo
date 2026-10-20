@@ -159,6 +159,18 @@ test("upload name: basename, no control characters, bounded", () => {
   for (const v of ["", "   ", "dir/", null, 42, {}]) assert.equal(sanitizeUploadName(v), null, String(v));
 });
 
+test("upload name: an emoji at the cut and lone surrogates never reach jsonb", () => {
+  // 119 characters + an emoji: a UTF-16 cut at 120 would keep half the emoji,
+  // which Postgres rejects in jsonb — every save of the campaign would fail.
+  const cut = sanitizeUploadName("x".repeat(119) + "\u{1F600}.jpg");
+  assert.equal(cut.isWellFormed(), true);
+  assert.equal(Array.from(cut).length, 120);
+  assert.equal(cut.endsWith("\u{1F600}"), true);
+  assert.equal(sanitizeUploadName("ab\uD83D"), "ab");
+  assert.equal(sanitizeUploadName("\uDE00cd.jpg"), "cd.jpg");
+  assert.equal(sanitizeUploadName("Sommer \u{1F3CB}\uFE0F.jpg"), "Sommer \u{1F3CB}\uFE0F.jpg");
+});
+
 test("errors carry code, status and the German text", () => {
   assert.deepEqual(heroUploadError("not_configured"), {
     ok: false,

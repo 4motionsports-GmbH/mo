@@ -244,10 +244,9 @@ A changed audience of an `aktiv` campaign is re-materialised on save
   test sends ignore the consent, block list and cadence of the inbox, every other gate
   applies). Each sample carries `sampleConfigFingerprint` of the settings it was made with;
   the server refuses (409 `stale_sample`) when the saved campaign's fingerprint differs, and
-  the UI blocks the button while the form has unsaved changes. The test mail renders like a
-  real send from the SAVED campaign, so it shows the saved Kampagnenbild — an unsaved picture
-  change does not block the button (it is outside the fingerprint): save first to test a new
-  picture.
+  the UI blocks the button while the form has unsaved changes — an unsaved Kampagnenbild
+  counts too (it is outside the fingerprint, so the editor checks it separately). The test mail
+  renders like a real send from the SAVED campaign, so it shows the saved Kampagnenbild.
 
 ### 2.3 Recipients and the audience refresh
 

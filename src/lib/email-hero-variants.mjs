@@ -142,44 +142,63 @@ export async function buildHeroVariants(image, opts = {}) {
  *   * writes the AI marking ONLY when the operator declared the picture AI
  *     generated — a real photo carries no metadata at all (the PNG master
  *     drops every input tag, so no camera EXIF or GPS leaves the server).
- * Never throws: a picture sharp cannot read becomes `unreadable`.
+ * A picture sharp cannot read becomes `unreadable`; a fault in our own
+ * processing (sharp not loading, the gradient, the encoders) THROWS so the
+ * caller reports it instead of blaming the operator's file.
  * @param {Buffer | Uint8Array} image the uploaded bytes
  * @param {{ aiGenerated: boolean, tool?: string }} opts
  * @returns {Promise<{ ok: true, desktop: Buffer, mobile: Buffer, sourceWidth: number, sourceHeight: number,
  *   warnings: string[] } | { ok: false, code: string, status: number, message: string }>}
  */
 export async function buildUploadedHeroVariants(image, opts) {
+  // A sharp that does not load is a server fault: it throws (the route
+  // reports it), it is not the operator's "unreadable picture".
+  const { default: sharp } = await import("sharp");
+  // The header is read without the pixel cap (metadata decodes no pixels;
+  // with the cap sharp would THROW and a 50-MP photo would read as
+  // "unreadable" instead of "too big"); the decode below keeps it as the
+  // backstop behind checkHeroUploadImage.
+  let meta;
   try {
-    const { default: sharp } = await import("sharp");
-    // The header is read without the pixel cap (metadata decodes no pixels;
-    // with the cap sharp would THROW and a 50-MP photo would read as
-    // "unreadable" instead of "too big"); the decode below keeps it as the
-    // backstop behind checkHeroUploadImage.
-    const meta = await sharp(image, { limitInputPixels: false }).metadata();
-    const limits = { limitInputPixels: HERO_UPLOAD_MAX_PIXELS };
-    const w = meta.autoOrient?.width ?? meta.width;
-    const h = meta.autoOrient?.height ?? meta.height;
-    const check = checkHeroUploadImage({ format: meta.format, width: w, height: h, pages: meta.pages ?? 1 });
-    if (!check.ok) return check;
-    // One pass: rotate upright, cut the hero crop, scale it to the stored size.
-    const master = await sharp(image, { ...limits, autoOrient: true })
+    meta = await sharp(image, { limitInputPixels: false }).metadata();
+  } catch {
+    return heroUploadError("unreadable"); // junk bytes, not a picture
+  }
+  const limits = { limitInputPixels: HERO_UPLOAD_MAX_PIXELS };
+  const w = meta.autoOrient?.width ?? meta.width;
+  const h = meta.autoOrient?.height ?? meta.height;
+  const check = checkHeroUploadImage({ format: meta.format, width: w, height: h, pages: meta.pages ?? 1 });
+  if (!check.ok) return check;
+  // One pass: rotate upright, cut the hero crop, scale it to the stored size.
+  // sharp processes 16-bit RGB with an embedded ICC profile in Display P3,
+  // and toColourspace("srgb") then only drops the bit depth — the P3 numbers
+  // would be written as sRGB (washed-out colours). 16-bit input is therefore
+  // processed in sRGB; 8-bit input keeps sharp's default (which converts
+  // CMYK and P3 correctly).
+  let master;
+  try {
+    let pipeline = sharp(image, { ...limits, autoOrient: true });
+    if (meta.depth === "ushort") pipeline = pipeline.pipelineColourspace("srgb");
+    master = await pipeline
       .extract(check.crop)
       .resize(HERO_IMAGE_WIDTH, HERO_IMAGE_HEIGHT, { fit: "cover", position: "right" })
       .flatten({ background: "#ffffff" })
       .toColourspace("srgb")
       .png()
       .toBuffer();
-    const marking = { tool: opts?.tool ?? "generative AI (hochgeladen)" };
-    const encode = (pipeline) =>
-      (opts?.aiGenerated === true ? markAsAiGenerated(pipeline, marking) : pipeline)
-        .jpeg({ quality: HERO_JPEG_QUALITY, mozjpeg: true })
-        .toBuffer();
-    const desktop = await encode(sharp(await applyHeroGradient(master)));
-    const mobile = await encode(sharp(master).extract(heroMobileCrop(HERO_IMAGE_WIDTH, HERO_IMAGE_HEIGHT)));
-    return { ok: true, desktop, mobile, sourceWidth: Number(w), sourceHeight: Number(h), warnings: check.warnings };
   } catch {
-    // Junk bytes, a truncated file, a decoder limit — the operator's problem
+    // A truncated or corrupt body, a decoder limit — the operator's problem
     // is "this is not a readable picture", not a server error.
     return heroUploadError("unreadable");
   }
+  // Everything below runs on our own PNG master: an error here is ours, so
+  // it throws and the route reports it.
+  const marking = { tool: opts?.tool ?? "generative AI (hochgeladen)" };
+  const encode = (pipeline) =>
+    (opts?.aiGenerated === true ? markAsAiGenerated(pipeline, marking) : pipeline)
+      .jpeg({ quality: HERO_JPEG_QUALITY, mozjpeg: true })
+      .toBuffer();
+  const desktop = await encode(sharp(await applyHeroGradient(master)));
+  const mobile = await encode(sharp(master).extract(heroMobileCrop(HERO_IMAGE_WIDTH, HERO_IMAGE_HEIGHT)));
+  return { ok: true, desktop, mobile, sourceWidth: Number(w), sourceHeight: Number(h), warnings: check.warnings };
 }
