@@ -11,33 +11,37 @@
 // or not at all; a quality-88 JPEG of the same picture is a fraction of that
 // and visually identical for a photograph.
 //
-// Also here: which image model to call, in which order. Everything that is
-// not the sharp compositing is pure and unit-tested.
+// Also here: which image model to call, in which order, and the processing of
+// an operator-UPLOADED picture (buildUploadedHeroVariants — the per-campaign
+// „Kampagnenbild“). Everything that is not the sharp compositing is pure and
+// unit-tested.
 
 import { applyHeroGradient } from "./email-hero-gradient.mjs";
 import { markAsAiGenerated } from "./email-hero-marking.mjs";
+import {
+  HERO_IMAGE_HEIGHT,
+  HERO_IMAGE_WIDTH,
+  heroAspectCrop,
+  heroMobileCrop,
+} from "./email-hero-geometry.mjs";
+import { checkHeroUploadImage, heroUploadError, HERO_UPLOAD_MAX_PIXELS } from "./email-hero-upload.mjs";
 
-/**
- * The hero's native picture format. The desktop hero is 640×300 (2.133:1);
- * rendering EXACTLY that ratio means the model composes for the frame the
- * reader sees — nothing is cropped away afterwards — and no tokens are spent
- * on rows that background-size:cover would discard. Both dimensions are
- * multiples of 16, as gpt-image-2's free-form sizes require.
- */
-export const HERO_IMAGE_WIDTH = 1536;
-export const HERO_IMAGE_HEIGHT = 720;
+// The geometry (native format, aspect and mobile crops) lives in the
+// sharp-free email-hero-geometry.mjs so the browser can use it; re-exported
+// here for every existing importer.
+export {
+  HERO_ASPECT,
+  HERO_IMAGE_HEIGHT,
+  HERO_IMAGE_WIDTH,
+  HERO_MOBILE_CROP_START,
+  heroAspectCrop,
+  heroMobileCrop,
+} from "./email-hero-geometry.mjs";
+
 export const HERO_IMAGE_SIZE = `${HERO_IMAGE_WIDTH}x${HERO_IMAGE_HEIGHT}`;
-export const HERO_ASPECT = HERO_IMAGE_WIDTH / HERO_IMAGE_HEIGHT;
 
 /** The classic 3:2 size every GPT image model accepts — the fallback format. */
 export const HERO_FALLBACK_SIZE = "1536x1024";
-
-/**
- * Where the mobile crop starts (fraction of the width). The prompt keeps the
- * left 45% calm and the scene lives in the right 55%; starting at 40% keeps
- * a little breathing room before the first product.
- */
-export const HERO_MOBILE_CROP_START = 0.4;
 
 const HERO_JPEG_QUALITY = 88;
 
@@ -98,39 +102,6 @@ export function heroImageAttempts(env = process.env, opts = {}) {
 }
 
 /**
- * The cover-crop that brings a picture of `width`×`height` to the hero's
- * aspect — the same region background-size:cover / position:center right
- * would show, so desktop and mobile files always come from the same pixels.
- * A picture already in the hero's ratio is returned whole.
- * @param {number} width
- * @param {number} height
- * @returns {{ left: number, top: number, width: number, height: number }}
- */
-export function heroAspectCrop(width, height) {
-  const targetHeight = Math.round(width / HERO_ASPECT);
-  if (targetHeight <= height) {
-    // Too tall (e.g. 3:2): keep the full width, take a vertically centred band.
-    return { left: 0, top: Math.floor((height - targetHeight) / 2), width, height: targetHeight };
-  }
-  // Too wide: keep the full height, take the right-anchored band (the scene
-  // lives on the right; the left is calm wall that can go).
-  const targetWidth = Math.round(height * HERO_ASPECT);
-  return { left: width - targetWidth, top: 0, width: targetWidth, height };
-}
-
-/**
- * The mobile crop of a hero-aspect picture: everything from
- * HERO_MOBILE_CROP_START to the right edge, full height.
- * @param {number} width
- * @param {number} height
- * @returns {{ left: number, top: number, width: number, height: number }}
- */
-export function heroMobileCrop(width, height) {
-  const left = Math.round(width * HERO_MOBILE_CROP_START);
-  return { left, top: 0, width: width - left, height };
-}
-
-/**
  * Turn the model's output into the two stored files. `master` is the
  * hero-aspect picture BEFORE the gradient — what the quality check looks at.
  * Every file is written with the machine-readable AI marking
@@ -154,4 +125,80 @@ export async function buildHeroVariants(image, opts = {}) {
   const mobile = await encode(sharp(master).extract(heroMobileCrop(crop.width, crop.height)));
   const masterJpeg = await encode(sharp(master));
   return { desktop, mobile, master: masterJpeg, width: crop.width, height: crop.height };
+}
+
+/**
+ * Turn an operator-UPLOADED picture (the „Kampagnenbild“, Kampagnen-Editor →
+ * Gestaltung) into the same two stored files an AI render becomes — but
+ * from an arbitrary photo, so unlike buildHeroVariants it
+ *   * checks the sniffed format, animation, pixel count and minimum size
+ *     (email-hero-upload.mjs — the declared Content-Type is ignored),
+ *   * applies the EXIF orientation first (a portrait phone photo would
+ *     otherwise be cropped from its unrotated pixels and stored sideways),
+ *   * scales the hero crop to exactly 1536×720 (a camera photo would stay
+ *     several MB per mail otherwise),
+ *   * flattens transparency onto white and converts CMYK / wide-gamut
+ *     sources to sRGB,
+ *   * writes the AI marking ONLY when the operator declared the picture AI
+ *     generated — a real photo carries no metadata at all (the PNG master
+ *     drops every input tag, so no camera EXIF or GPS leaves the server).
+ * A picture sharp cannot read becomes `unreadable`; a fault in our own
+ * processing (sharp not loading, the gradient, the encoders) THROWS so the
+ * caller reports it instead of blaming the operator's file.
+ * @param {Buffer | Uint8Array} image the uploaded bytes
+ * @param {{ aiGenerated: boolean, tool?: string }} opts
+ * @returns {Promise<{ ok: true, desktop: Buffer, mobile: Buffer, sourceWidth: number, sourceHeight: number,
+ *   warnings: string[] } | { ok: false, code: string, status: number, message: string }>}
+ */
+export async function buildUploadedHeroVariants(image, opts) {
+  // A sharp that does not load is a server fault: it throws (the route
+  // reports it), it is not the operator's "unreadable picture".
+  const { default: sharp } = await import("sharp");
+  // The header is read without the pixel cap (metadata decodes no pixels;
+  // with the cap sharp would THROW and a 50-MP photo would read as
+  // "unreadable" instead of "too big"); the decode below keeps it as the
+  // backstop behind checkHeroUploadImage.
+  let meta;
+  try {
+    meta = await sharp(image, { limitInputPixels: false }).metadata();
+  } catch {
+    return heroUploadError("unreadable"); // junk bytes, not a picture
+  }
+  const limits = { limitInputPixels: HERO_UPLOAD_MAX_PIXELS };
+  const w = meta.autoOrient?.width ?? meta.width;
+  const h = meta.autoOrient?.height ?? meta.height;
+  const check = checkHeroUploadImage({ format: meta.format, width: w, height: h, pages: meta.pages ?? 1 });
+  if (!check.ok) return check;
+  // One pass: rotate upright, cut the hero crop, scale it to the stored size.
+  // sharp processes 16-bit RGB with an embedded ICC profile in Display P3,
+  // and toColourspace("srgb") then only drops the bit depth — the P3 numbers
+  // would be written as sRGB (washed-out colours). 16-bit input is therefore
+  // processed in sRGB; 8-bit input keeps sharp's default (which converts
+  // CMYK and P3 correctly).
+  let master;
+  try {
+    let pipeline = sharp(image, { ...limits, autoOrient: true });
+    if (meta.depth === "ushort") pipeline = pipeline.pipelineColourspace("srgb");
+    master = await pipeline
+      .extract(check.crop)
+      .resize(HERO_IMAGE_WIDTH, HERO_IMAGE_HEIGHT, { fit: "cover", position: "right" })
+      .flatten({ background: "#ffffff" })
+      .toColourspace("srgb")
+      .png()
+      .toBuffer();
+  } catch {
+    // A truncated or corrupt body, a decoder limit — the operator's problem
+    // is "this is not a readable picture", not a server error.
+    return heroUploadError("unreadable");
+  }
+  // Everything below runs on our own PNG master: an error here is ours, so
+  // it throws and the route reports it.
+  const marking = { tool: opts?.tool ?? "generative AI (hochgeladen)" };
+  const encode = (pipeline) =>
+    (opts?.aiGenerated === true ? markAsAiGenerated(pipeline, marking) : pipeline)
+      .jpeg({ quality: HERO_JPEG_QUALITY, mozjpeg: true })
+      .toBuffer();
+  const desktop = await encode(sharp(await applyHeroGradient(master)));
+  const mobile = await encode(sharp(master).extract(heroMobileCrop(HERO_IMAGE_WIDTH, HERO_IMAGE_HEIGHT)));
+  return { ok: true, desktop, mobile, sourceWidth: Number(w), sourceHeight: Number(h), warnings: check.warnings };
 }

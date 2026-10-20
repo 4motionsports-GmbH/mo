@@ -1,8 +1,8 @@
 "use client";
 
 // The „Hero“ block of the review column — shown only when the campaign
-// design has a hero slot. State pill (KI-Hero / Standard-Bild / A-Gruppe ohne
-// Hero), thumbnail, „Erzeugen“ (suggest + generate in one go), „Anpassen…“
+// design has a hero slot. State pill (KI-Hero / Kampagnenbild / Standard-Bild
+// / A-Gruppe ohne Hero), thumbnail, „Erzeugen“ (suggest + generate in one go), „Anpassen…“
 // (a sheet with headline + prompt and the single actions) and „Entfernen“.
 // All five actions of the Kunden hero panel are kept; the hook is shared.
 
@@ -11,7 +11,7 @@ import { Image as ImageIcon, Sparkles, Trash2, Wand2 } from "lucide-react";
 import { abGroupOf } from "@/lib/campaign-review-checks.mjs";
 import { Button, InfoTip, Label, Sheet, StatusBadge, Textarea, Tooltip } from "../../ui";
 import { useEmailHero } from "../../useEmailHero";
-import type { CampaignQueueItemProps } from "../types";
+import type { CampaignDeskCampaign, CampaignQueueItemProps } from "../types";
 
 export interface HeroBlockHandle {
   /** Suggest a prompt and render the image in one go (the Prüfpunkt fix). */
@@ -23,12 +23,15 @@ export const HeroBlock = React.forwardRef<
   {
     item: CampaignQueueItemProps;
     designName: string | null;
+    /** The Kampagnenbild: shown (thumbnail + pill) while the mail has no KI-Hero
+     *  of its own — never folded into item.heroUrl (checks + A/B stay per draft). */
+    campaignHero?: CampaignDeskCampaign["heroImage"];
     generationConfigured: boolean;
     locked: boolean;
     onChange: (hero: { url: string | null; headline: string | null }) => void;
     onBusy: (generating: boolean) => void;
   }
->(function HeroBlock({ item, designName, generationConfigured, locked, onChange, onBusy }, ref) {
+>(function HeroBlock({ item, designName, campaignHero = null, generationConfigured, locked, onChange, onBusy }, ref) {
   const [sheetOpen, setSheetOpen] = React.useState(false);
   const hero = useEmailHero({
     kind: "campaign",
@@ -40,6 +43,9 @@ export const HeroBlock = React.forwardRef<
   const { busy } = hero;
   const group = abGroupOf(item.contactId);
   const hasHero = Boolean(item.heroUrl);
+  // Without its own KI-Hero the mail shows the Kampagnenbild (campaign-hero.mjs
+  // resolveCampaignHero) — or, without one, the design's default picture.
+  const fallbackHero = !hasHero && campaignHero ? campaignHero : null;
 
   React.useEffect(() => {
     onBusy(busy === "generate");
@@ -73,8 +79,9 @@ export const HeroBlock = React.forwardRef<
           Das Hero-Bild des Designs „{designName ?? "Performance"}“ oben in der E-Mail. „Erzeugen“
           lässt die KI einen Bild-Prompt aus Produkten und E-Mail-Inhalt vorschlagen und rendert
           das Bild (mit KI-Prüfung, bis zu drei Minuten — die Prüfung anderer Entwürfe läuft
-          weiter). Ohne eigenes Bild nutzt der Hero das Standard-Bild. A/B-Regel: gerade
-          Kontakt-IDs (A) mit KI-Hero senden, ungerade (B) ohne.
+          weiter). Ohne eigenes Bild nutzt der Hero das Kampagnenbild (Kampagne bearbeiten →
+          Gestaltung), sonst das Standard-Bild des Designs. A/B-Regel: gerade Kontakt-IDs (A) mit
+          KI-Hero senden, ungerade (B) ohne.
         </InfoTip>
       </div>
       <div className="flex items-center gap-2 text-xs">
@@ -84,6 +91,13 @@ export const HeroBlock = React.forwardRef<
             src={item.heroUrl}
             alt="Generiertes Hero-Bild"
             className="h-10 w-20 shrink-0 rounded-md border border-border object-cover"
+          />
+        ) : fallbackHero ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={fallbackHero.desktopUrl}
+            alt="Kampagnenbild"
+            className="h-10 w-20 shrink-0 rounded-md border border-border object-cover object-right"
           />
         ) : (
           <span
@@ -98,7 +112,13 @@ export const HeroBlock = React.forwardRef<
             tone={hasHero ? "success" : group === "A" ? "warning" : "neutral"}
             className="w-fit"
           >
-            {hasHero ? "KI-Hero" : group === "A" ? "A-Gruppe ohne Hero" : "Standard-Bild"}
+            {hasHero
+              ? "KI-Hero"
+              : group === "A"
+                ? "A-Gruppe ohne Hero"
+                : fallbackHero
+                  ? "Kampagnenbild"
+                  : "Standard-Bild"}
           </StatusBadge>
           {item.heroHeadline && (
             <span className="truncate text-muted-foreground" title={undefined}>

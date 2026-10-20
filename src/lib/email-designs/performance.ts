@@ -68,6 +68,7 @@ import {
 import type { EmailProductGridItem, EmailProductRowItem } from "../email-products";
 import type { BundleOfferBlockInput } from "../bundle-email";
 import { defaultHeroImageUrl } from "../email-hero";
+import { heroAiLabel } from "../campaign-hero.mjs";
 import { campaignMoDeeplinkUrl } from "../campaign-flags.mjs";
 import { SHOP_URL, couponCodeType } from "../discount-coupon.mjs";
 import { COUNTDOWN_HEIGHT, COUNTDOWN_WIDTH } from "../email-countdown-image.mjs";
@@ -823,13 +824,16 @@ function makeShell(kind: keyof typeof HERO_COPY) {
     const en = (opts.locale ?? "de") === "en";
     const copy = HERO_COPY[kind];
     const year = new Date().getFullYear();
-    const heroImage = activeEmailRenderData().heroImageUrl || defaultHeroImageUrl();
+    const rd = activeEmailRenderData();
+    const heroImage = rd.heroImageUrl || defaultHeroImageUrl();
     // Phones show the picture under the text, so they get the products-only
     // crop when the render produced one (older heroes: the desktop image).
-    const heroImageMobile = activeEmailRenderData().heroImageMobileUrl || heroImage;
-    // Per-send heroes are always AI-generated; the default asset is too (see
-    // DEFAULT_HERO_IS_AI_GENERATED). The disclosure follows the picture.
-    const heroIsAi = Boolean(activeEmailRenderData().heroImageUrl) || DEFAULT_HERO_IS_AI_GENERATED;
+    const heroImageMobile = rd.heroImageMobileUrl || heroImage;
+    // The disclosure follows the picture: per-send heroes are always
+    // AI-generated, a Kampagnenbild carries the operator's statement from the
+    // upload (an explicit false = a photo, no label), and the default asset
+    // is AI-generated too (DEFAULT_HERO_IS_AI_GENERATED).
+    const heroIsAi = heroAiLabel(rd, DEFAULT_HERO_IS_AI_GENERATED);
     // The hero button reuses the composer's primary CTA (its URL is the tracked
     // one), but swaps an over-long label for the design's short one so the
     // button stays a single line. Kinds without a hero button (campaign) link

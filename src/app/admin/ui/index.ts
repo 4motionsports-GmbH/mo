@@ -80,6 +80,7 @@ export { Popover, type PopoverProps } from "./popover";
 export { Menu, type MenuItem, type MenuProps } from "./menu";
 export { Callout, type CalloutProps, type CalloutTone } from "./callout";
 export { EmptyState, type EmptyStateProps } from "./empty-state";
+export { FileDropZone, type FileDropZoneProps } from "./file-drop-zone";
 export { PageHeader, type PageHeaderProps } from "./page-header";
 export { FilterBar, FilterChip, FilterGroup, type FilterBarProps } from "./filter-bar";
 export { SplitPane, type SplitPaneProps } from "./split-pane";

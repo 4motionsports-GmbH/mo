@@ -19,25 +19,42 @@
 export const HERO_BLOB_PREFIX = "email-heroes/";
 
 /**
- * Storage key for a freshly generated hero (a random suffix is appended by the
- * blob SDK, so URLs are not enumerable).
- *
- * @param {"marketing" | "campaign"} kind
- * @param {number} id
- * @returns {string}
+ * The key kind of a campaign's uploaded default hero („Kampagnenbild“,
+ * lib/campaign-hero.mjs): `campaign-default-<campaignId|new>-<stamp>…`. One
+ * file is shared by EVERY mail of the campaign, so it must never be deleted
+ * with one person's data (erasableHeroPathnames) — and it can never be
+ * confused with a per-draft `campaign-<contactId>-…` file.
  */
+export const CAMPAIGN_DEFAULT_HERO_KIND = "campaign-default";
+
 /**
- * Storage key for one hero file. `variant` distinguishes the files of one
- * render (e.g. "mobile" for the phone crop), `ext` the encoding ("png" or
- * "jpg" — heroes are stored as JPEG since the mobile variant shipped).
+ * Storage key for one hero file (a random suffix is appended by the blob
+ * SDK, so URLs are not enumerable). `kind` is "marketing" / "campaign" for a
+ * per-draft hero (`id` = the send / contact id) or CAMPAIGN_DEFAULT_HERO_KIND.
+ * `variant` distinguishes the files of one render (e.g. "mobile" for the
+ * phone crop), `ext` the encoding ("png" or "jpg" — heroes are stored as JPEG
+ * since the mobile variant shipped), `stamp` the millisecond timestamp — pass
+ * the same one for the files of one render so they stay recognisably a pair
+ * (default: now).
  * @param {string} kind
- * @param {number} id
- * @param {{ variant?: string, ext?: "png" | "jpg" }} [opts]
+ * @param {number | string} id
+ * @param {{ variant?: string, ext?: "png" | "jpg", stamp?: number }} [opts]
  */
 export function heroBlobKey(kind, id, opts = {}) {
   const variant = opts.variant ? `-${opts.variant}` : "";
   const ext = opts.ext === "jpg" ? "jpg" : "png";
-  return `${HERO_BLOB_PREFIX}${kind}-${id}-${Date.now()}${variant}.${ext}`;
+  const stamp = Number.isSafeInteger(opts.stamp) && Number(opts.stamp) > 0 ? opts.stamp : Date.now();
+  return `${HERO_BLOB_PREFIX}${kind}-${id}-${stamp}${variant}.${ext}`;
+}
+
+/**
+ * Is this hero file (or blob pathname) a campaign's shared default picture?
+ * @param {unknown} fileOrPathname
+ * @returns {boolean}
+ */
+export function isCampaignDefaultHeroFile(fileOrPathname) {
+  if (typeof fileOrPathname !== "string") return false;
+  return heroBlobFileFromPathname(fileOrPathname).startsWith(`${CAMPAIGN_DEFAULT_HERO_KIND}-`);
 }
 
 /** The MIME type a hero file is served with, from its extension. */
@@ -115,4 +132,23 @@ export function heroBlobPathnameFromUrl(url) {
   if (idx < 0) return null;
   const file = parseHeroBlobFile(url.slice(idx + marker.length).split(/[?#]/)[0]);
   return file ? heroBlobPathname(file) : null;
+}
+
+/**
+ * The blob pathnames erasure may delete for one person: the hero URLs of
+ * their drafts and sends, deduplicated, without anything that is not one of
+ * our hero files — and NEVER a campaign's shared default picture (a
+ * `campaign-default-…` file is resolved at render time and not copied into
+ * per-person rows, but if one ever got there, erasing one recipient must not
+ * break the picture in every other mail of the campaign).
+ * @param {Iterable<unknown>} urls
+ * @returns {string[]}
+ */
+export function erasableHeroPathnames(urls) {
+  const out = new Set();
+  for (const url of urls ?? []) {
+    const path = heroBlobPathnameFromUrl(url);
+    if (path && !isCampaignDefaultHeroFile(path)) out.add(path);
+  }
+  return [...out];
 }

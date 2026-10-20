@@ -2,7 +2,10 @@
 // (replaces the per-file callApi / call / post copies). JSON in, JSON out;
 // errors become an AdminApiError carrying status + code + the server's German
 // message; a 401 (expired session) sends the operator to the login page and
-// back to the screen they were on.
+// back to the screen they were on. A binary upload (the Kampagnenbild) sends
+// its bytes with `rawBody` instead — same envelope, same error handling; the
+// route accepts only its exact, non-CORS-safelisted Content-Type
+// (guardAdminPost `accept`, lib/admin-content-type.mjs).
 
 export class AdminApiError extends Error {
   readonly status: number;
@@ -27,6 +30,12 @@ export interface AdminFetchOptions {
   method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
   /** JSON-serialised request body. */
   body?: unknown;
+  /**
+   * Raw binary request body (an image upload), sent as-is with
+   * `Content-Type: rawBody.type` — never JSON-encoded. Defaults the method to
+   * POST. Mutually exclusive with `body`.
+   */
+  rawBody?: Blob;
   signal?: AbortSignal;
   headers?: Record<string, string>;
   /** What to do on 401 — redirect to /admin/login (default) or just throw. */
@@ -76,8 +85,11 @@ export async function adminFetch<T = unknown>(
   path: string,
   options: AdminFetchOptions = {}
 ): Promise<T> {
-  const { body, signal, headers = {}, onUnauthorized = "redirect" } = options;
-  const method = options.method ?? (body === undefined ? "GET" : "POST");
+  const { body, rawBody, signal, headers = {}, onUnauthorized = "redirect" } = options;
+  if (body !== undefined && rawBody !== undefined) {
+    throw new Error("adminFetch: `body` and `rawBody` are mutually exclusive.");
+  }
+  const method = options.method ?? (body === undefined && rawBody === undefined ? "GET" : "POST");
   const init: RequestInit = {
     method,
     signal,
@@ -87,6 +99,14 @@ export async function adminFetch<T = unknown>(
   if (body !== undefined) {
     init.headers = { ...(init.headers as Record<string, string>), "Content-Type": "application/json" };
     init.body = JSON.stringify(body);
+  } else if (rawBody !== undefined) {
+    // An untyped Blob goes out as octet-stream, which every admin route
+    // refuses (415) — never silently as one of the accepted types.
+    init.headers = {
+      ...(init.headers as Record<string, string>),
+      "Content-Type": rawBody.type || "application/octet-stream",
+    };
+    init.body = rawBody;
   }
 
   let res: Response;

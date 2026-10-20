@@ -2,7 +2,8 @@
 
 // The campaign editor (Neue Kampagne / Bearbeiten) — one sheet, eight sections:
 // Grundlagen, Briefing, Zielgruppe (builder + „beschreiben“ via KI + live
-// count), Angebot, Gestaltung, Brief (letters as a channel, 0074), Automatik,
+// count), Angebot, Gestaltung (with the Kampagnenbild upload, 0079 —
+// CampaignHeroField), Brief (letters as a channel, 0074), Automatik,
 // Prüfen & testen (estimate + sample mails, CampaignCheckSection). Everything is validated again on the
 // server (campaign-def.validateCampaignInput); the audience spec is normalised
 // there (audience-spec.mjs). The live count always means „with consent“ — the
@@ -25,11 +26,13 @@ import {
   Spinner,
   Textarea,
   ToggleChips,
+  Tooltip,
   toast,
 } from "../ui";
 import { adminFetch, errorMessage } from "../lib/admin-fetch";
 import { CampaignCheckSection, type SampleConfig } from "./CampaignCheckSection";
-import type { AudienceSpecProps, CampaignCardProps, CampaignEditorOptions } from "./types";
+import { CampaignHeroField, sameHero } from "./CampaignHeroField";
+import type { AudienceSpecProps, CampaignCardProps, CampaignEditorOptions, CampaignHeroImageProps } from "./types";
 
 type Kind = "laufend" | "aktion";
 
@@ -48,6 +51,8 @@ interface FormState {
   discountValidUntil: string;
   designKey: string;
   heroMode: "none" | "default" | "ai_ab" | "ai_all";
+  /** The Kampagnenbild — a staged upload or the saved one; null = none. */
+  heroImage: CampaignHeroImageProps | null;
   textMode: "" | "detailed" | "compact" | "minimal";
   moPromo: boolean;
   ctaKind: "mo_chat" | "shop";
@@ -111,7 +116,9 @@ function toLocalInput(iso: string | null): string {
 const fromLocalInput = (v: string): string | null => (v ? new Date(v).toISOString() : null);
 const intOrNull = (v: string): number | null => (v.trim() === "" ? null : Math.round(Number(v)));
 
-/** The settings a sample mail depends on, as the sample route validates them. */
+/** The settings a sample mail depends on, as the sample route validates them.
+ * NOT the Kampagnenbild: it goes to the samples as its own prop, so a new
+ * picture never marks paid AI samples as outdated (CampaignCheckSection). */
 function sampleConfigOf(f: FormState): SampleConfig {
   return {
     name: f.name,
@@ -146,6 +153,7 @@ function initialState(c: CampaignCardProps | null, presetAudience: Record<string
     discountValidUntil: toLocalInput(c?.discountValidUntil ?? null),
     designKey: c?.designKey ?? "",
     heroMode: c?.heroMode ?? "default",
+    heroImage: c?.heroImage ?? null,
     textMode: c?.textMode ?? "",
     moPromo: c?.moPromo ?? true,
     ctaKind: c?.ctaKind ?? "mo_chat",
@@ -233,6 +241,7 @@ export function CampaignEditor({
 }) {
   const [form, setForm] = React.useState<FormState>(() => initialState(campaign, presetAudience));
   const [saving, setSaving] = React.useState(false);
+  const [heroUploading, setHeroUploading] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [preview, setPreview] = React.useState<Preview | null>(null);
   const [previewLoading, setPreviewLoading] = React.useState(false);
@@ -339,6 +348,8 @@ export function CampaignEditor({
       discountScope: form.discountScope,
       designKey: form.designKey || null,
       heroMode: form.heroMode,
+      // Every kind, Einzelansprache too (validated by campaign-def; null clears it).
+      heroImage: form.heroImage,
       textMode: form.textMode || null,
       moPromo: form.moPromo,
       ctaKind: form.ctaKind,
@@ -380,9 +391,17 @@ export function CampaignEditor({
     () => (campaign ? JSON.stringify(sampleConfigOf(initialState(campaign))) : null),
     [campaign]
   );
+  // A staged Kampagnenbild is not part of the sample key (paid samples stay
+  // valid), but the test send renders the SAVED picture — so it blocks the
+  // test send until saved, like any other unsaved change.
+  const heroDirty = campaign != null && !sameHero(form.heroImage, campaign.heroImage ?? null);
 
   const a = form.audience;
   const otherCampaigns = campaigns.filter((c) => c.id !== campaign?.id && c.kind !== "einzel");
+  // The design the mails will use: the campaign's own, else the Einstellungen
+  // choice (an unknown key falls back to it too — email-design-store).
+  const effectiveDesign =
+    (form.designKey ? options.designs.find((d) => d.key === form.designKey) : undefined) ?? options.settingsDesign;
 
   return (
     <Sheet
@@ -391,9 +410,13 @@ export function CampaignEditor({
       size="xl"
       title={campaign ? `${campaign.name} bearbeiten` : "Neue Kampagne"}
       actions={
-        <Button size="sm" onClick={() => void save()} loading={saving}>
-          Speichern
-        </Button>
+        <Tooltip content="Das Kampagnenbild wird noch verarbeitet." disabled={!heroUploading}>
+          <span className="inline-flex">
+            <Button size="sm" onClick={() => void save()} loading={saving} disabled={heroUploading}>
+              Speichern
+            </Button>
+          </span>
+        </Tooltip>
       }
     >
       <div className="flex flex-col gap-6 pb-8">
@@ -693,7 +716,7 @@ export function CampaignEditor({
                 ))}
               </Select>
             </Field>
-            <Field label="Titelbild" info="KI-Titelbilder entstehen beim Vorbereiten (Kosten pro Bild). A/B: nur jede zweite Mail — für den Vergleich in den KPIs.">
+            <Field label="Titelbild" info="KI-Titelbilder entstehen beim Vorbereiten (Kosten pro Bild). A/B: nur jede zweite Mail — für den Vergleich in den KPIs. Mails ohne KI-Titelbild zeigen das Kampagnenbild, ohne Kampagnenbild das Standardbild des Designs.">
               <Select value={form.heroMode} onChange={(e) => patch({ heroMode: e.target.value as FormState["heroMode"] })}>
                 {Object.entries(HERO_MODE_LABELS).map(([k, label]) => (
                   <option key={k} value={k}>
@@ -711,6 +734,17 @@ export function CampaignEditor({
               </Select>
             </Field>
           </div>
+          <CampaignHeroField
+            value={form.heroImage}
+            saved={campaign?.heroImage ?? null}
+            onChange={(heroImage) => patch({ heroImage })}
+            onBusyChange={setHeroUploading}
+            campaignId={campaign?.id ?? null}
+            designHasHero={effectiveDesign.hasHero}
+            designName={effectiveDesign.name}
+            uploadConfigured={options.heroUpload.configured}
+            defaultUrl={options.heroUpload.defaultUrl}
+          />
           <div className="grid gap-3 sm:grid-cols-2">
             <Field label="Button führt zu" info="Mo-Chat: der Button öffnet die Beratung mit Mo. Shop: ein Link in den Shop, z. B. die Black-Friday-Kollektion.">
               <SegmentedControl
@@ -810,7 +844,8 @@ export function CampaignEditor({
             audience={form.audience}
             config={sampleConfig}
             configKey={sampleKey}
-            dirty={savedSampleKey !== null && savedSampleKey !== sampleKey}
+            heroImage={form.heroImage}
+            dirty={(savedSampleKey !== null && savedSampleKey !== sampleKey) || heroDirty}
             recipients={preview ? preview.preview.total : null}
             counting={previewLoading}
             heroMode={form.heroMode}

@@ -4,6 +4,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  CAMPAIGN_DEFAULT_HERO_KIND,
+  erasableHeroPathnames,
+  isCampaignDefaultHeroFile,
   heroBlobContentType,
   HERO_BLOB_PREFIX,
   heroBlobFileFromPathname,
@@ -85,6 +88,44 @@ test("public URL points at the serving route and round-trips", () => {
   assert.equal(url, "https://chat.example.de/api/email-hero-image/campaign-1-2.png");
   const file = url.slice(url.lastIndexOf("/") + 1);
   assert.equal(parseHeroBlobFile(file), "campaign-1-2.png");
+});
+
+test("heroBlobKey: a shared stamp keeps the files of one render a pair", () => {
+  const stamp = 1729000000000;
+  assert.equal(
+    heroBlobKey(CAMPAIGN_DEFAULT_HERO_KIND, 12, { ext: "jpg", stamp }),
+    "email-heroes/campaign-default-12-1729000000000.jpg"
+  );
+  assert.equal(
+    heroBlobKey(CAMPAIGN_DEFAULT_HERO_KIND, "new", { variant: "mobile", ext: "jpg", stamp }),
+    "email-heroes/campaign-default-new-1729000000000-mobile.jpg"
+  );
+  // Without (or with a nonsense) stamp: now.
+  const before = Date.now();
+  for (const opts of [{}, { stamp: -1 }, { stamp: 1.5 }, { stamp: "x" }]) {
+    const t = Number(/-(\d+)\.png$/.exec(heroBlobKey("campaign", 1, opts))?.[1]);
+    assert.ok(t >= before && t <= Date.now(), JSON.stringify(opts));
+  }
+});
+
+test("the campaign default picture is recognised and never erased with one person", () => {
+  assert.equal(CAMPAIGN_DEFAULT_HERO_KIND, "campaign-default");
+  assert.equal(isCampaignDefaultHeroFile("campaign-default-12-1729000000000-AbC.jpg"), true);
+  assert.equal(isCampaignDefaultHeroFile("email-heroes/campaign-default-new-1729000000000-mobile.jpg"), true);
+  assert.equal(isCampaignDefaultHeroFile("campaign-12-1729000000000.jpg"), false, "per-draft hero");
+  assert.equal(isCampaignDefaultHeroFile("marketing-7-1729000000000.jpg"), false);
+  assert.equal(isCampaignDefaultHeroFile(null), false);
+
+  const base = "https://mo.example";
+  const perDraft = heroImagePublicUrl(base, "campaign-41-1729000000000-x1.jpg");
+  const perDraftMobile = heroImagePublicUrl(base, "campaign-41-1729000000000-mobile-x2.jpg");
+  const shared = heroImagePublicUrl(base, "campaign-default-3-1729000000000-y1.jpg");
+  const sharedMobile = heroImagePublicUrl(base, "campaign-default-3-1729000000000-mobile-y2.jpg");
+  assert.deepEqual(
+    erasableHeroPathnames([perDraft, perDraftMobile, shared, sharedMobile, perDraft, null, "", `${base}/email-hero-default.jpg`]),
+    ["email-heroes/campaign-41-1729000000000-x1.jpg", "email-heroes/campaign-41-1729000000000-mobile-x2.jpg"]
+  );
+  assert.deepEqual(erasableHeroPathnames([]), []);
 });
 
 test("heroBlobPathnameFromUrl inverts the public URL and rejects everything else", async () => {

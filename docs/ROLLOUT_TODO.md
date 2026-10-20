@@ -12,7 +12,7 @@ who owns the Shopify app · **L** = the lawyer · **FE** = the frontend agent (t
 widget).
 Mo's admin is German; English translations are in brackets.
 
-Last updated: 2026-10-13 (sender name „Mo von motion sports“ from the code; mails rebuilt for classic Outlook for Windows — open items 12 (Outlook check, 1.13) and 13 (optional: mo@motionsports.de, 1.12)); before: 2026-10-12 (sets, offers and Kontakthäufigkeit live after M's CLI deploy and migration `0078` — old open item 12 moved to Done; the Performance set block's „Zur Kasse“ is solid black with white text); before: 2026-10-11 night (counsel approved dossier § 22 and M said yes to O-1…O-9: copy v6 with the voucher hint, Mo's voucher rule and the confirmation-page note built behind switches (off); Shopify Messaging cannot send personal 30-day codes, so the issuer is open again — new open list 1–6: issuer decision, Shopify preparation, counsel's one-line OK on the final texts, theme texts, the switch-on, the live test); before: 2026-10-11 evening (M's third round: webhooks arrive again; 10f = 0 old-link cases; the welcome code's settings read; test case 8 passed — a chat DOI confirmation fires Shopify Messaging's 5 % welcome mail within a minute; open items 1–2 done, item 3 down to two steps; dossier § 22.1 updated); before: 2026-10-11 afternoon (M's second round: all 13 webhook subscriptions were missing — created, one tag check left; welcome code issued by Shopify Messaging, one shared code; open items 1–3 updated, dossier § 22.1 with the facts); before: 2026-10-11 (M's outputs of `verify:live` / `check:welcome` read: Shopify webhooks down since 05.10. ~16:45 — new open item 1, warnings on the KPI page, in Einstellungen and the Eingang, nightly alert (PR #235); welcome-code candidate: one shared code used by 150 customers, `check:welcome` now prints its settings; old-link check now `verify:live` 10f — the SQL item is gone; the live check of 09.10. done; open list rewritten with copy-paste commands, new C.32); before: 2026-10-08 evening (opt-in reward round of 08.10. built in PR #234 — no migration, no new switch, no widget change: DOI only once, C.29 fixed (Done), `npm run check:welcome`, `verify:live` section 10, KPI blocks of the voucher test, dossier § 22; new open list items 1–5 for M at the top (the old items 1–7 are now 6–12), new C.31); before: 2026-10-08 (the 504 of the Komplettanalyse fixed and pushed to main — Done; open list item 3 (now 8) updated: a stopped report continues when opened); before: 2026-10-06 late evening (three reworks on the branch, live with the next deploy together with the Verbesserung rework: Kunden profile card, KPI screen, Komplettanalyse as a decision report on the new AI tier `strategist` — Done; one migration `0077` for M; new open list item 3 „Neue Auswertungen prüfen“, new C.30; C.26 OI3 B4 needs the next free migration number); before: 2026-10-06 evening (four C tracks built, no migration, no new switch: consent — owner decision: no ask for a blocked address, OI1 F3; retention gaps + `db:reset`; admin texts and copy; attribution §9.1/§9.2/§4.9 — C.26, C.27; new C.28/C.29; Performance mail design on main `599e2e1`; open list item 1 = re-test after M's popup test of 06.10.); before: 2026-10-06 afternoon (widget checks evaluated: page context live and in use, both switches on since 05.10.; consent-popup check open); before: 2026-10-06 (widget `bc7fb5d` live, C.22 done); before: 2026-10-05 evening (all C items of 05.10. built; open list for M at the top; 5.2 + 5.4
+Last updated: 2026-10-20 („Kampagnenbild“ built — a campaign's own hero picture, uploaded in the campaign editor; migration `0079` for M before or with the deploy — new open item 14, new C.33; the admin POST guard now requires exactly `application/json`); before: 2026-10-13 (sender name „Mo von motion sports“ from the code; mails rebuilt for classic Outlook for Windows — open items 12 (Outlook check, 1.13) and 13 (optional: mo@motionsports.de, 1.12)); before: 2026-10-12 (sets, offers and Kontakthäufigkeit live after M's CLI deploy and migration `0078` — old open item 12 moved to Done; the Performance set block's „Zur Kasse“ is solid black with white text); before: 2026-10-11 night (counsel approved dossier § 22 and M said yes to O-1…O-9: copy v6 with the voucher hint, Mo's voucher rule and the confirmation-page note built behind switches (off); Shopify Messaging cannot send personal 30-day codes, so the issuer is open again — new open list 1–6: issuer decision, Shopify preparation, counsel's one-line OK on the final texts, theme texts, the switch-on, the live test); before: 2026-10-11 evening (M's third round: webhooks arrive again; 10f = 0 old-link cases; the welcome code's settings read; test case 8 passed — a chat DOI confirmation fires Shopify Messaging's 5 % welcome mail within a minute; open items 1–2 done, item 3 down to two steps; dossier § 22.1 updated); before: 2026-10-11 afternoon (M's second round: all 13 webhook subscriptions were missing — created, one tag check left; welcome code issued by Shopify Messaging, one shared code; open items 1–3 updated, dossier § 22.1 with the facts); before: 2026-10-11 (M's outputs of `verify:live` / `check:welcome` read: Shopify webhooks down since 05.10. ~16:45 — new open item 1, warnings on the KPI page, in Einstellungen and the Eingang, nightly alert (PR #235); welcome-code candidate: one shared code used by 150 customers, `check:welcome` now prints its settings; old-link check now `verify:live` 10f — the SQL item is gone; the live check of 09.10. done; open list rewritten with copy-paste commands, new C.32); before: 2026-10-08 evening (opt-in reward round of 08.10. built in PR #234 — no migration, no new switch, no widget change: DOI only once, C.29 fixed (Done), `npm run check:welcome`, `verify:live` section 10, KPI blocks of the voucher test, dossier § 22; new open list items 1–5 for M at the top (the old items 1–7 are now 6–12), new C.31); before: 2026-10-08 (the 504 of the Komplettanalyse fixed and pushed to main — Done; open list item 3 (now 8) updated: a stopped report continues when opened); before: 2026-10-06 late evening (three reworks on the branch, live with the next deploy together with the Verbesserung rework: Kunden profile card, KPI screen, Komplettanalyse as a decision report on the new AI tier `strategist` — Done; one migration `0077` for M; new open list item 3 „Neue Auswertungen prüfen“, new C.30; C.26 OI3 B4 needs the next free migration number); before: 2026-10-06 evening (four C tracks built, no migration, no new switch: consent — owner decision: no ask for a blocked address, OI1 F3; retention gaps + `db:reset`; admin texts and copy; attribution §9.1/§9.2/§4.9 — C.26, C.27; new C.28/C.29; Performance mail design on main `599e2e1`; open list item 1 = re-test after M's popup test of 06.10.); before: 2026-10-06 afternoon (widget checks evaluated: page context live and in use, both switches on since 05.10.; consent-popup check open); before: 2026-10-06 (widget `bc7fb5d` live, C.22 done); before: 2026-10-05 evening (all C items of 05.10. built; open list for M at the top; 5.2 + 5.4
 done by M alone on 05.10. (Dev Dashboard + Shopify CLI); C.26 = the open follow-ups of the archived plans;
 doc paths follow the new layout — widget docs in `docs/frontend/`, history in `docs/archive/`).
 
@@ -170,6 +170,31 @@ lawyer ready to send, the Shopify steps and the frontend prompt: [`WELCOME_VOUCH
 13. **Optional, when you want: Mo sends and receives as `mo@motionsports.de` (~1.5–2 h hands-on in
    two sessions, plus DNS waiting).** Step by step with tests and rollback: **1.12**. The sender
    name „Mo von motion sports“ needs nothing from you — it comes from the code since 13.10.
+14. **Migration 0079 (Kampagnenbild) — run `npm run db:migrate` BEFORE / with the deploy; until it
+   runs, saving a campaign fails.** The „Kampagnenbild“ (C.33) adds `campaigns.hero_image` and lets
+   `campaign_sends.hero_variant` take `campaign` — additive, the code running now ignores both. Order:
+   `git pull`, `npm run db:migrate` (applies `0079`), then deploy. If the code goes live first, every
+   „Speichern“ in the campaign editor (Neue Kampagne and Bearbeiten) fails until `0079` ran; the desk,
+   sending and status changes keep working. Check afterwards (Neon SQL editor):
+   `SELECT conname, pg_get_constraintdef(oid) FROM pg_constraint WHERE conrelid = 'campaign_sends'::regclass AND contype = 'c';`
+   → exactly one `hero_variant` check, and it includes `'campaign'`. The upload needs
+   `BLOB_READ_WRITE_TOKEN` in Vercel (the same token as the KI-Hero and the catalog) — without it the
+   field says „Bild-Upload nicht eingerichtet (BLOB_READ_WRITE_TOKEN fehlt).“
+   **How to use it (~10 min):** Kampagnen → „Bestandskunden – Lebenszyklus“ → Bearbeiten →
+   Gestaltung → Kampagnenbild: **Bildherkunft wählen** („Foto oder eigene Grafik“, or „KI-generiert
+   (EU-Hinweis in der Mail)“ for an AI picture — it decides the „AI GENERATED“ label), **Bild
+   hochladen** (JPG, PNG or WebP; landscape, ideally 1536 × 720 px or larger, at least 1280 × 600;
+   subject on the right, no text or logos in the picture; the InfoTip next to „Kampagnenbild“ has the
+   details), look at the two previews (desktop with the text area, phone crop), **Speichern**. Only
+   the design „Performance“ shows it (the field says so otherwise). Then check on the desk and in the
+   preview: open the campaign's desk → in the block „Hero“ a card without its own KI-Hero shows your
+   picture as the thumbnail, with the badge „Kampagnenbild“ (B group, odd contact id; an A-group card
+   without a KI-Hero keeps the warning „A-Gruppe ohne Hero“); the rendered mail in the middle column
+   shows it at the top, and „Vorschau“ (`V`) → „Mobil“ under the text — with the „AI GENERATED“
+   label only if you chose „KI-generiert“. Good to know: a card with a KI-Hero keeps it
+   (that one wins); a new picture after „Einplanen“ sends the planned mails back for review; a test
+   mail from „Prüfen & testen“ shows the SAVED picture — save first. Tell C if anything looks off (a
+   screenshot is best).
 
 ## Done
 
@@ -1185,6 +1210,20 @@ Each is one Vercel variable + Redeploy unless noted. Do them one at a time.
   `verify:live`). Open, optional, if M wants it: backfill the attribution of the gap's marked orders
   (read the orders of the gap with their `_mo` attribute from the Admin API and run them through
   `ingestShopifyOrder`, read-only on Shopify).
+- [x] **C.33** **Kampagnenbild** — built 20.10. (owner request: one picture of its own for
+  Lebenszyklus and every future campaign; live with the next deploy; M: migration `0079`, open list
+  item 14). A campaign's own default hero, uploaded in the editor (Gestaltung, also „Neue Kampagne“
+  and the Einzelansprache), staged until „Speichern“; precedence KI-Hero → Kampagnenbild → design
+  default under every hero mode (labels now „Kein KI-Titelbild“ / „Standard-Titelbild“); required
+  Bildherkunft — an uploaded photo shows no EU label; desk badge „Kampagnenbild“; send stamp
+  `hero_variant = 'campaign'`; approval fingerprint (a new picture holds planned mails). Same
+  branch: the admin POST guard requires the media type `application/json` exactly (the old
+  „contains“ check let the safelisted `text/plain; charset=application/json` through). Docs:
+  [`EMAIL_DESIGNS.md`](./EMAIL_DESIGNS.md) „Kampagnenbild“, [`CAMPAIGNS.md`](./CAMPAIGNS.md) §2.2,
+  [`ADMIN_DASHBOARD.md`](./ADMIN_DASHBOARD.md) §1, §3.2. Accepted, open if it ever matters: unsaved
+  or replaced uploads stay in the Blob store (~150–300 KB each, no sweep — a sweep would have to
+  check `campaign_sends.body_html`, which holds the URL); the test send is not blocked by an unsaved
+  picture and shows the saved one.
 
 ## Backlog — not built, decide later
 

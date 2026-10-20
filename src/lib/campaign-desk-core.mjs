@@ -287,15 +287,20 @@ export function offerValidityLabel(validity) {
  * Fingerprint of everything the rendered e-mail depends on beyond the prose.
  * The mail column re-renders its preview whenever it changes, so a new
  * KI-Hero, a swapped product, an attached Set, a changed Rabatt or a switched
- * language shows up at once — without a browser reload. `previewVersion` is
- * the desk's client-only nudge for changes the fields cannot express (a
- * regenerate that produced the same text, a hero replaced under the same URL).
+ * language shows up at once — without a browser reload. `campaignHero` is the
+ * campaign's Kampagnenbild (its desktop URL — every upload gets a new file
+ * name, so the URL alone tells a new picture), which the mail shows when the
+ * draft has no KI-Hero; the desk passes it in, the draft row does not carry
+ * it. `previewVersion` is the desk's client-only nudge for changes the fields
+ * cannot express (a regenerate that produced the same text, a hero replaced
+ * under the same URL).
  * @param {{
  *   subject: string, body: string, language?: string | null,
  *   discountPercent?: number, discountExpiresAt?: string | null,
  *   recommendations?: Array<{ id: string }>,
  *   bundle?: { id: number, bundlePrice?: string, expiresAt?: string | null } | null,
  *   heroUrl?: string | null, heroHeadline?: string | null,
+ *   campaignHero?: string | null,
  *   draftUpdatedAt?: string | null, previewVersion?: number
  * }} item
  * @returns {string}
@@ -314,6 +319,7 @@ export function previewSignature(item) {
     item.heroHeadline ?? null,
     item.draftUpdatedAt ?? null,
     item.previewVersion ?? 0,
+    item.campaignHero ?? null,
   ]);
 }
 

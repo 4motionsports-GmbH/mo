@@ -196,6 +196,8 @@ function heroVariantLabel(key: string): string {
       return "Mit KI-Hero (individuell)";
     case "default":
       return "Standard-Hero";
+    case "campaign":
+      return "Kampagnenbild (hochgeladen)";
     case "none":
       return "Ohne Hero (klassisch / kopiert)";
     default:

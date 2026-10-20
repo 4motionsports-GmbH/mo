@@ -241,12 +241,21 @@ export function activeEmailDesignRenderers(): EmailDesignRenderers | null {
 // their defaults when a field is absent.
 
 export interface EmailRenderData {
-  /** Absolute https URL of the per-send custom hero image, or null → the
-   * design's default hero asset. */
+  /** Absolute https URL of this mail's hero image — the per-send AI hero or
+   * the campaign's Kampagnenbild (campaign-hero.mjs resolveCampaignHero) —
+   * or null → the design's default hero asset. */
   heroImageUrl?: string | null;
   /** Right-side crop of the same hero for phones (shown under the text there),
    * or null/absent → phones show heroImageUrl. */
   heroImageMobileUrl?: string | null;
+  /**
+   * Only with heroImageUrl: does that picture carry the EU „KI-generiertes
+   * Bild“ label? null/absent → yes (per-send heroes are always AI); an
+   * explicit false (a Kampagnenbild declared a photo at upload) drops the
+   * label. Without heroImageUrl the design's default asset decides
+   * (campaign-hero.mjs heroAiLabel).
+   */
+  heroIsAiGenerated?: boolean | null;
   /**
    * Per-send hero claim (two short lines, "\n"-separated) — the AI-drafted,
    * operator-edited headline. Null/absent → the design's per-type default.

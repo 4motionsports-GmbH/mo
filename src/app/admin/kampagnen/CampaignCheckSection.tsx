@@ -34,7 +34,7 @@ import { adminFetch, errorMessage } from "../lib/admin-fetch";
 import { useAsyncAction } from "../lib/use-async-action";
 import { EmailViewerDialog } from "../kampagne/EmailViewerDialog";
 import type { EmailView } from "../kampagne/useCampaignActions";
-import type { AudienceSpecProps, CampaignEditorOptions } from "./types";
+import type { AudienceSpecProps, CampaignEditorOptions, CampaignHeroImageProps } from "./types";
 
 /** The form's sample-relevant settings (what /api/admin/campaigns/sample validates). */
 export interface SampleConfig {
@@ -50,6 +50,10 @@ export interface SampleConfig {
   moPromo: boolean;
   ctaKind: "mo_chat" | "shop";
   ctaUrl: string;
+  /** The Kampagnenbild as in the form. Sent with every sample request, but
+   *  never part of `configKey`: a new picture must not mark paid AI samples
+   *  as outdated (campaign-sample-core SAMPLE_CONFIG_FIELDS leaves it out too). */
+  heroImage?: CampaignHeroImageProps | null;
 }
 
 interface Candidate {
@@ -108,6 +112,7 @@ export function CampaignCheckSection({
   audience,
   config,
   configKey,
+  heroImage,
   dirty,
   recipients,
   counting,
@@ -124,6 +129,8 @@ export function CampaignCheckSection({
   config: SampleConfig;
   /** Stable key of `config` — a sample made under another key is outdated. */
   configKey: string;
+  /** The form's Kampagnenbild — rendered into every sample, not in `configKey`. */
+  heroImage: CampaignHeroImageProps | null;
   /** The form differs from the saved campaign. */
   dirty: boolean;
   /** Live audience count (with consent); null while unknown. */
@@ -182,7 +189,13 @@ export function CampaignCheckSection({
       const key = configKey;
       try {
         const json = await adminFetch<{ sample: Sample }>("/api/admin/campaigns/sample", {
-          body: { action: "generate", campaignId, config, customerId: candidate.customerId, language: candidate.language },
+          body: {
+            action: "generate",
+            campaignId,
+            config: { ...config, heroImage },
+            customerId: candidate.customerId,
+            language: candidate.language,
+          },
         });
         setSlots((prev) =>
           prev.map((s) =>
@@ -201,7 +214,7 @@ export function CampaignCheckSection({
         );
       }
     },
-    [campaignId, config, configKey]
+    [campaignId, config, configKey, heroImage]
   );
 
   const generateAll = async () => {

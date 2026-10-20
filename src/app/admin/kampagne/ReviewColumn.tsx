@@ -54,7 +54,7 @@ import { LanguageToggle, OptInBadge, SegmentBadge } from "./badges";
 import { HeroBlock } from "./sections/HeroBlock";
 import { BundleSection } from "./sections/BundleSection";
 import { PurchaseHistorySection } from "./sections/PurchaseHistorySection";
-import { optInShort, type CampaignQueueItemProps } from "./types";
+import { optInShort, type CampaignDeskCampaign, type CampaignQueueItemProps } from "./types";
 import type { CampaignActions, ReviewCheck, ReviewVerdict } from "./useCampaignActions";
 
 const DISCOUNT_STEPS = ["0", "5", "10", "15", "20"] as const;
@@ -110,6 +110,7 @@ export function ReviewColumn({
   heroDesignActive,
   heroDesignName,
   heroGenerationConfigured,
+  campaignHero = null,
   minSendIntervalDays,
   onFocusSubject,
   onHistory,
@@ -122,6 +123,8 @@ export function ReviewColumn({
   heroDesignActive: boolean;
   heroDesignName: string | null;
   heroGenerationConfigured: boolean;
+  /** The Kampagnenbild — what a mail without its own KI-Hero shows. */
+  campaignHero?: CampaignDeskCampaign["heroImage"];
   minSendIntervalDays: number;
   onFocusSubject: () => void;
   onHistory: () => void;
@@ -585,6 +588,7 @@ export function ReviewColumn({
             ref={heroRef}
             item={item}
             designName={heroDesignName}
+            campaignHero={campaignHero}
             generationConfigured={heroGenerationConfigured}
             locked={locked}
             onChange={(hero) => actions.setHero(id, hero)}

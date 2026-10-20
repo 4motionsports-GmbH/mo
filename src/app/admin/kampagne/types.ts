@@ -233,6 +233,9 @@ export interface CampaignDeskCampaign {
   discountScope: DiscountScope;
   textMode: EmailTextModeValue | null;
   heroMode: "none" | "default" | "ai_ab" | "ai_all";
+  /** The Kampagnenbild (0079) as relative preview URLs — the picture a mail
+   *  without its own KI-Hero shows; null = the design's default picture. */
+  heroImage: { desktopUrl: string; mobileUrl: string; ai: boolean } | null;
   /** Sends per day the team aims for (shown next to today's progress), or null. */
   dailyTarget: number | null;
   /** The audience in plain German (audience-spec.describeAudienceSpec). */

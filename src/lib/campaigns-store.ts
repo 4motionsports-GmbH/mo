@@ -29,10 +29,35 @@ import { normalizeAudienceSpec } from "./audience-spec.mjs";
 import { canTransition, slugifyCampaignName, campaignPhase } from "./campaign-def.mjs";
 import { effectiveEmailLanguage } from "./campaign-language.mjs";
 import { parseDiscountScope, type DiscountScope } from "./discount-scope.mjs";
+import { normalizeCampaignHeroImage } from "./campaign-hero.mjs";
 
 export type CampaignKind = "laufend" | "aktion" | "einzel";
 export type CampaignStatus = "entwurf" | "aktiv" | "pausiert" | "beendet" | "archiviert";
 export type HeroMode = "none" | "default" | "ai_ab" | "ai_all";
+
+/**
+ * The „Kampagnenbild“ (migration 0079, campaigns.hero_image): the campaign's
+ * own default hero, uploaded in the editor (Gestaltung). FILE NAMES under
+ * email-heroes/, never URLs — the public URL is built at render time
+ * (campaign-hero.mjs campaignHeroUrls). Validated by normalizeCampaignHeroImage
+ * on every read and save; an invalid value reads as null (global default).
+ */
+export interface CampaignHeroImage {
+  v: 1;
+  /** Desktop JPEG (legibility gradient baked in), file under email-heroes/. */
+  file: string;
+  /** Phone crop JPEG (no gradient). */
+  mobileFile: string;
+  /** Declared AI-generated → EU label in the mail + XMP marking in the file. */
+  ai: boolean;
+  /** Original file name (display only, ≤ 120 chars). */
+  name: string | null;
+  /** Source size after EXIF orientation (display only). */
+  width: number | null;
+  height: number | null;
+  /** ISO timestamp of the upload. */
+  uploadedAt: string | null;
+}
 
 export interface Campaign {
   id: number;
@@ -54,6 +79,8 @@ export interface Campaign {
   discountValidUntil: string | null;
   designKey: string | null;
   heroMode: HeroMode;
+  /** The Kampagnenbild (0079); null = the design's default hero. Applies under every heroMode. */
+  heroImage: CampaignHeroImage | null;
   textMode: "detailed" | "compact" | "minimal" | null;
   moPromo: boolean;
   ctaKind: "mo_chat" | "shop";
@@ -112,6 +139,8 @@ export function mapCampaign(r: Record<string, unknown>): Campaign {
     discountValidUntil: iso(r.discount_valid_until),
     designKey: (r.design_key as string | null) ?? null,
     heroMode: (["none", "default", "ai_ab", "ai_all"].includes(String(r.hero_mode)) ? r.hero_mode : "none") as HeroMode,
+    // Absent before 0079 runs (SELECT * has no column) → null.
+    heroImage: normalizeCampaignHeroImage(r.hero_image),
     textMode: textMode === "detailed" || textMode === "compact" || textMode === "minimal" ? textMode : null,
     moPromo: r.mo_promo !== false,
     ctaKind: r.cta_kind === "shop" ? "shop" : "mo_chat",
@@ -339,6 +368,8 @@ export interface CampaignInput {
   discountValidUntil?: string | null;
   designKey?: string | null;
   heroMode?: HeroMode;
+  /** null removes the Kampagnenbild (the blob files are kept — sent mails reference them). */
+  heroImage?: CampaignHeroImage | null;
   textMode?: "detailed" | "compact" | "minimal" | null;
   moPromo?: boolean;
   ctaKind?: "mo_chat" | "shop";
@@ -365,7 +396,7 @@ export async function createCampaign(
       INSERT INTO campaigns
         (name, slug, kind, status, brief, audience, audience_mode, priority, starts_at, ends_at,
          daily_target, auto_prepare_per_day, reentry_days, discount_percent, discount_scope,
-         discount_valid_until, design_key, hero_mode, text_mode, mo_promo, cta_kind, cta_url,
+         discount_valid_until, design_key, hero_mode, hero_image, text_mode, mo_promo, cta_kind, cta_url,
          letter_mode, letter_budget_cents)
       VALUES
         (${input.name}, ${slug}, ${input.kind}, 'entwurf', ${input.brief ?? null},
@@ -373,7 +404,8 @@ export async function createCampaign(
          ${input.priority ?? 50}, ${input.startsAt ?? null}, ${input.endsAt ?? null},
          ${input.dailyTarget ?? null}, ${input.autoPreparePerDay ?? 0}, ${input.reentryDays ?? null},
          ${input.discountPercent ?? 0}, ${input.discountScope ?? "all"}, ${input.discountValidUntil ?? null},
-         ${input.designKey ?? null}, ${input.heroMode ?? "default"}, ${input.textMode ?? null},
+         ${input.designKey ?? null}, ${input.heroMode ?? "default"},
+         ${input.heroImage ? JSON.stringify(input.heroImage) : null}::jsonb, ${input.textMode ?? null},
          ${input.moPromo ?? true}, ${input.ctaKind ?? "mo_chat"}, ${input.ctaUrl ?? null},
          ${input.letterMode ?? "aus"}, ${input.letterBudgetCents ?? null})
       RETURNING id
@@ -415,6 +447,8 @@ export async function updateCampaign(id: number, patch: CampaignInput, sql: Sql 
                                     THEN ${patch.discountValidUntil ?? null}::timestamptz ELSE discount_valid_until END,
         design_key           = CASE WHEN ${has("designKey")} THEN ${patch.designKey ?? null} ELSE design_key END,
         hero_mode            = CASE WHEN ${has("heroMode")} THEN ${patch.heroMode ?? "none"} ELSE hero_mode END,
+        hero_image           = CASE WHEN ${has("heroImage")}
+                                    THEN ${patch.heroImage ? JSON.stringify(patch.heroImage) : null}::jsonb ELSE hero_image END,
         text_mode            = CASE WHEN ${has("textMode")} THEN ${patch.textMode ?? null} ELSE text_mode END,
         mo_promo             = CASE WHEN ${has("moPromo")} THEN ${patch.moPromo ?? true} ELSE mo_promo END,
         cta_kind             = CASE WHEN ${has("ctaKind")} THEN ${patch.ctaKind ?? "mo_chat"} ELSE cta_kind END,
