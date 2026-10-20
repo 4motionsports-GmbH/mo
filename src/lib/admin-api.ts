@@ -5,9 +5,11 @@
 // an upstream check alone) and enforce a lightweight CSRF defense:
 //
 //   - The session cookie is the only credential, so a cross-site form POST could
-//     in principle ride it. We require Content-Type: application/json, which the
-//     browser cannot send cross-origin without a CORS preflight the admin origin
-//     would reject — so only same-origin fetch() calls get through.
+//     in principle ride it. We require the media type application/json EXACTLY
+//     (not merely contained in the header — "text/plain; charset=application/json"
+//     is safelisted and needs no preflight), which the browser cannot send
+//     cross-origin without a CORS preflight the admin origin would reject — so
+//     only same-origin fetch() calls get through.
 //   - A route that takes a raw binary body (the Kampagnenbild upload) passes
 //     `accept` with its exact media types instead (image/jpeg, image/png,
 //     image/webp). None of them is CORS-safelisted either, so the same preflight

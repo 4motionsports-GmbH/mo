@@ -4,7 +4,7 @@ import { CORS_SAFELISTED_CONTENT_TYPES, isAcceptedAdminContentType, mediaTypeOf 
 
 const IMAGES = ["image/jpeg", "image/png", "image/webp"];
 
-test("default: the historical JSON rule, unchanged for every existing route", () => {
+test("default: exactly application/json (parameters allowed)", () => {
   assert.equal(isAcceptedAdminContentType("application/json"), true);
   assert.equal(isAcceptedAdminContentType("application/json; charset=utf-8"), true);
   assert.equal(isAcceptedAdminContentType("Application/JSON"), true);
@@ -15,6 +15,13 @@ test("default: the historical JSON rule, unchanged for every existing route", ()
   assert.equal(isAcceptedAdminContentType("multipart/form-data; boundary=x"), false);
   assert.equal(isAcceptedAdminContentType("application/x-www-form-urlencoded"), false);
   assert.equal(isAcceptedAdminContentType("text/plain"), false);
+  // The old "contains application/json" rule let these through — all are
+  // CORS-safelisted or not JSON, so a storefront script could send them
+  // without a preflight (20.10.2026).
+  assert.equal(isAcceptedAdminContentType("text/plain; charset=application/json"), false);
+  assert.equal(isAcceptedAdminContentType("text/plain; x=application/json"), false);
+  assert.equal(isAcceptedAdminContentType("application/jsonx"), false);
+  assert.equal(isAcceptedAdminContentType("application/json-patch+json"), false);
   // An explicit null/undefined list is the default, not "accept nothing".
   assert.equal(isAcceptedAdminContentType("application/json", null), true);
 });

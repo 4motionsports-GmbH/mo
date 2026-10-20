@@ -21,6 +21,9 @@ import { normalizeCampaignHeroImage } from "./campaign-hero.mjs";
 import { reportError } from "./observability";
 import type { CampaignHeroImage } from "./campaigns-store";
 
+/** Longest wait for one Blob write (both run in parallel) — well under the route's 60 s. */
+const BLOB_PUT_TIMEOUT_MS = 25_000;
+
 export type CampaignHeroUploadResult =
   | { ok: true; heroImage: CampaignHeroImage; warnings: string[] }
   | { ok: false; code: string; status: number; message: string };
@@ -44,6 +47,10 @@ export async function storeCampaignHeroUpload(
     contentType: "image/jpeg",
     addRandomSuffix: true,
     token: process.env.BLOB_READ_WRITE_TOKEN,
+    // The SDK retries an unreachable store for minutes; the route has 60 s.
+    // Give up in time so the operator gets „bitte erneut versuchen“ instead
+    // of a gateway timeout.
+    abortSignal: AbortSignal.timeout(BLOB_PUT_TIMEOUT_MS),
   };
   const owner = opts.campaignId ?? "new";
   const stamp = Date.now(); // one stamp for both files: they stay a recognisable pair
