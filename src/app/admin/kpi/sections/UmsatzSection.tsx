@@ -76,6 +76,8 @@ export function UmsatzSection({ view, range }: { view: RevenueView | null; range
       `${plural(cc.orders, "Bestellung", "Bestellungen")} mit Mo-Code (${eur(cc.revenue)}) aus dem Shopify-Code-Abgleich ergänzt — vor der Webhook-Registrierung aufgegeben. Der Vergleich mit dem Vorzeitraum rechnet ohne sie.`,
     s.unrealised.orders > 0 &&
       `${plural(s.unrealised.orders, "erfasste Bestellung", "erfasste Bestellungen")} im Zeitraum (${eur(s.unrealised.revenue)}) sind (noch) nicht bezahlt und zählen nicht zum Umsatz.`,
+    s.refunded.orders > 0 &&
+      `${plural(s.refunded.orders, "Bestellung", "Bestellungen")} im Zeitraum wurden erstattet oder storniert und zählen nicht zum Umsatz.`,
     unresolved > 0 &&
       `${plural(unresolved, "markierte Bestellung", "markierte Bestellungen")} im Zeitraum ohne Zuordnung: ${num(view.unresolved.unknownToken)} mit unbekannter oder gelöschter Markierung, ${num(view.unresolved.outsideWindow)} außerhalb des Zuordnungsfensters — keiner Beratung zugeordnet (nicht in der Mo-Zuordnung gespeichert), nur gezählt.`,
     !cc.shopifyConfigured &&

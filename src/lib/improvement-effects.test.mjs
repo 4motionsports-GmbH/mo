@@ -414,3 +414,17 @@ test("snapshotMovers: better and worse decision metrics, measurement-changed met
   assert.ok(movers.steady >= 1, "journey.chatToOrder did not move");
   assert.deepEqual(snapshotMovers(null), { improved: [], worsened: [], notComparable: [], steady: 0 });
 });
+
+test("the 21.10. releases: ledger money and the configurator's own metrics are measurement changes, the Eingang a confounder", () => {
+  const isIn = (key, areas) => areas.some((a) => keyInArea(key, a));
+  const refunds = RELEASE_EFFECTS["attribution-variants-refunds"];
+  for (const key of ["revenue.total", "revenue.viaConfigurator", "bundles.revenue", "campaigns.revenue", "campaigns.orders"]) {
+    assert.ok(isIn(key, refunds.measurement), `${key} under attribution-variants-refunds`);
+  }
+  const cfg = RELEASE_EFFECTS["home-gym-konfigurator"];
+  for (const key of ["chat.configuratorHandover", "chat.configuratorPlans", "chat.configuratorCarts", "chat.cartClicks", "chat.recommended"]) {
+    assert.ok(isIn(key, cfg.measurement), `${key} under home-gym-konfigurator`);
+  }
+  assert.ok(isIn("inbox.created", cfg.product));
+  assert.equal(isIn("chat.reach", cfg.measurement), false);
+});

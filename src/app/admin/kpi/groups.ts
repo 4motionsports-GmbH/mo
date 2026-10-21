@@ -33,7 +33,7 @@ export const KPI_GROUPS: readonly KpiGroup[] = [
     label: "Beratung & Funnel",
     chip: "Funnel",
     description:
-      "Vom Chat zur Bestellung — wo Sitzungen abspringen —, das Volumen der Beratungen mit Sprachen und der Seitenkontext auf Produktseiten, im gewählten Zeitraum.",
+      "Vom Chat zur Bestellung — wo Sitzungen abspringen —, das Volumen der Beratungen mit Sprachen, der Seitenkontext auf Produktseiten und der Home-Gym-Konfigurator, im gewählten Zeitraum.",
     periodic: true,
   },
   {

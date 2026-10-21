@@ -33,16 +33,24 @@ import {
 import { FunnelBars } from "../kpi/FunnelBars";
 import { KpiSection } from "../kpi/KpiSection";
 
-const STAGE_INFO: Record<string, string> = {
-  started: "Sitzungen, die auf der Konfigurator-Seite mindestens eine Antwort gewählt haben (Widget-Ereignis configurator_started).",
+export const STAGE_INFO: Record<string, string> = {
+  started: "Sitzungen, die einen Durchgang auf der Konfigurator-Seite begonnen haben — die erste Antwort gewählt oder, mit vorausgefüllten Angaben aus dem Link, direkt übergeben; „Neu starten“ beginnt einen neuen Durchgang (configurator_started).",
   handover: "Klick auf „Mo berät mich“ — die Angaben gehen an Mo (configurator_handover).",
   chats: "Mo hat die Beratung mit den Angaben gestartet (serverseitig, configurator_chat_started). Weniger als „übergeben“, wenn der Chat nicht antworten konnte (z. B. Rate-Limit).",
   plans: "Mo hat mindestens einen Home-Gym-Plan gezeigt (show_gym_plan, serverseitig gezählt).",
   carts: "„Alles in den Warenkorb“ im Plan wurde geklickt und der Warenkorb hat die Produkte angenommen (configurator_cart_added).",
-  orders: "Sitzungen mit einer Mo-zugeordneten, bezahlten Bestellung nach dem Konfigurator-Start (mo_orders; braucht die Analyse-Einwilligung im Shop für die Warenkorb-Markierung).",
+  orders: "Sitzungen mit einer bezahlten Bestellung im Zeitraum, deren letzte Beratung vor dem Kauf ein Konfigurator-Gespräch mit Home-Gym-Plan war (mo_orders; braucht die Analyse-Einwilligung im Shop für die Warenkorb-Markierung).",
 };
 
-const INFO = (
+/** The order rule, shared by the Konfigurator screen and the KPI screen. */
+export const ORDERS_INFO =
+  "Bezahlte Bestellungen im Zeitraum (nach Bestelldatum, wie „Umsatz durch Mo“), deren letzte Beratung vor dem Kauf ein Konfigurator-Gespräch mit Home-Gym-Plan war — sie sind in „Umsatz durch Mo“ enthalten, nicht zusätzlich; Erstattungen mindern den Umsatz.";
+
+/** What the cart figure is. */
+export const CART_INFO =
+  "Wert der Produkte, die mit „Alles in den Warenkorb“ im Shop-Warenkorb gelandet sind (Preis laut Plan beim Klick, ohne Versand) — kein Umsatz.";
+
+export const FUNNEL_INFO = (
   <div className="flex flex-col gap-1.5">
     <p>
       Jede Stufe zählt Sitzungen für sich (ein Gerät, keine Person). Beim Übergeben startet das Widget einen neuen Chat —
@@ -50,8 +58,9 @@ const INFO = (
       Teilmenge der vorigen.
     </p>
     <p>
-      Seitenaufrufe zählen nur mit Analyse-Einwilligung im Shop. Bestellungen: nur Mo-markierte, bezahlte Bestellungen bis
-      zum Ende des Zeitraums (docs/ORDER_ATTRIBUTION.md).
+      Seitenaufrufe zählen nur mit Analyse-Einwilligung im Shop. Bestellungen: bezahlte Bestellungen im Zeitraum, deren
+      letzte Beratung vor dem Kauf ein Konfigurator-Gespräch mit Home-Gym-Plan war — dieselben wie „davon über den
+      Home-Gym-Konfigurator“ in „Wie der Umsatz entstand“ (docs/CONFIGURATOR.md §6).
     </p>
   </div>
 );
@@ -69,7 +78,7 @@ export function KonfiguratorKpis({
   const f = s ? configuratorFunnel(s) : null;
   const empty = !kpis
     ? "Noch keine Daten."
-    : s && s.started + s.handover + s.chats === 0
+    : s && s.started + s.handover + s.chats + s.plans + s.carts + s.orders === 0
       ? "Im Zeitraum hat niemand den Konfigurator genutzt."
       : null;
   return (
@@ -100,19 +109,19 @@ export function KonfiguratorKpis({
           <Stat
             label="Warenkorb"
             value={eur(kpis.cartValue, 0)}
-            hint={`${num(kpis.cartAdds)} ${kpis.cartAdds === 1 ? "Mal" : "Mal"} · ${num(kpis.cartUnits)} Artikel`}
-            info="Summe der Pläne, die mit „Alles in den Warenkorb“ in den Shop-Warenkorb gelegt wurden (Wert laut Plan beim Klick, ohne Versand)."
+            hint={`${num(kpis.cartAdds)}-mal · ${num(kpis.cartUnits)} Artikel`}
+            info={CART_INFO}
           />
           <Stat
             label="Bestellungen"
             value={num(kpis.orders)}
             hint={`${eur(kpis.revenue, 0)} Umsatz`}
-            info="Mo-zugeordnete, bezahlte Bestellungen der Konfigurator-Sitzungen nach dem Start der Beratung."
+            info={ORDERS_INFO}
           />
         </div>
       )}
       <div className="flex flex-col gap-6">
-        <KpiSection id="konfigurator-funnel" title="Vom ersten Klick zur Bestellung" info={INFO} empty={empty}>
+        <KpiSection id="konfigurator-funnel" title="Vom ersten Klick zur Bestellung" info={FUNNEL_INFO} empty={empty}>
           {s && f && (
             <Card>
               <CardContent className="p-5">

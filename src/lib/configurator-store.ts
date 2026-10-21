@@ -4,7 +4,8 @@
 //     0078 — no new migration), cached for the chat path;
 //   - the curated assortment („Konfigurator-Sortiment“) resolved against the
 //     live catalog;
-//   - the KPIs of the admin screen „Konfigurator“ over kpi_events + mo_orders.
+//   - the KPIs of the admin screen „Konfigurator“ (and the summary on the KPI
+//     screen and in the Komplettanalyse) over kpi_events + mo_orders + messages.
 // Fail-soft throughout: without a database, before migration 0078 or on a read
 // error the defaults apply and the KPIs are null. Nothing here can break a chat
 // response. docs/CONFIGURATOR.md.
@@ -13,9 +14,12 @@ import { getSql, type Sql } from "./db";
 import { reportError } from "./observability";
 import { loadProductCatalog } from "./catalog-store";
 import { REALISED_FINANCIAL_STATUSES } from "./kpi-revenue-core.mjs";
+import { CONSULTATION_ANCHOR_TOOLS } from "./order-attribution.mjs";
 import {
   CONFIGURATOR_FIELDS,
+  CONFIGURATOR_PLAN_TOOL,
   CONFIGURATOR_SETTINGS_KEY,
+  CONFIGURATOR_TOOLS,
   CONFIGURATOR_WIDGET_EVENTS,
   DEFAULT_CONFIGURATOR_SETTINGS,
   KPI_CONFIGURATOR_CHAT_STARTED,
@@ -130,12 +134,16 @@ export async function loadConfiguratorAssortment(settings: ConfiguratorSettings)
 }
 
 // ---------------------------------------------------------------------------
-// KPIs (admin screen „Konfigurator“) — pure DB, never cached
+// KPIs (admin screen „Konfigurator“, KPI screen, Komplettanalyse) — pure DB,
+// never cached
 // ---------------------------------------------------------------------------
 
-export interface ConfiguratorKpis {
+/** The funnel and money of a period — what the KPI screen and the business
+ * snapshot show, without the Konfigurator screen's detail lists. */
+export interface ConfiguratorSummary {
   /** Distinct sessions per stage (each stage counted on its own — the widget
-   * starts a fresh thread at the handover, which can change the session id). */
+   * starts a fresh thread at the handover, which can change the session id).
+   * `orders` = sessions with an order „über den Konfigurator“ in the period. */
   sessions: {
     viewed: number;
     started: number;
@@ -151,8 +159,13 @@ export interface ConfiguratorKpis {
   cartAdds: number;
   cartUnits: number;
   cartValue: number;
+  /** Realised orders of the period „über den Konfigurator“ (docs/CONFIGURATOR.md
+   * §6) — the same orders as the KPI screen's row in „Wie der Umsatz entstand“. */
   orders: number;
   revenue: number;
+}
+
+export interface ConfiguratorKpis extends ConfiguratorSummary {
   distributions: Array<{ key: string; label: string; rows: Array<{ key: string; label: string; count: number }> }>;
   partners: Array<{ key: string; label: string; count: number }>;
   chipTopics: Array<{ key: string; count: number }>;
@@ -171,62 +184,118 @@ export interface ConfiguratorKpis {
 const PARTNER_LABELS: Record<string, string> = { mh: "Men's Health", wh: "Women's Health", "": "Direkt / ohne Partner" };
 
 /**
- * Funnel, answer distribution, plan products and the latest configurator
- * sessions of `range`. Orders: realised `mo_orders` of a configurator chat
- * session, processed after its first configurator chat and before the end of
- * the period (the attribution itself — `_mo` marker, window — is
- * docs/ORDER_ATTRIBUTION.md). Null without a database or on failure.
+ * Stage counts (kpi_events of the period) and the orders „über den
+ * Konfigurator“: realised mo_orders processed in the period whose latest
+ * consultation row before the order — the attribution anchor — sits in a
+ * thread where Mo showed a Home-Gym plan. Counted by order date like „Umsatz
+ * durch Mo“ (mo-revenue-store spells out the same predicate). Throws.
+ */
+async function queryConfiguratorSummary(range: KpiRange, sql: Sql): Promise<ConfiguratorSummary> {
+  const realised = [...REALISED_FINANCIAL_STATUSES];
+  const consultationTools = [...CONSULTATION_ANCHOR_TOOLS];
+  const W = CONFIGURATOR_WIDGET_EVENTS;
+  const [stageRows, orderRows] = await Promise.all([
+    sql`
+      SELECT
+        count(DISTINCT session_id) FILTER (WHERE event = ${W.viewed})::int AS viewed,
+        count(DISTINCT session_id) FILTER (WHERE event = ${W.started})::int AS started,
+        count(DISTINCT session_id) FILTER (WHERE event = ${W.handover})::int AS handover,
+        count(DISTINCT session_id) FILTER (WHERE event = ${KPI_CONFIGURATOR_CHAT_STARTED})::int AS chats,
+        count(DISTINCT session_id) FILTER (WHERE event = ${KPI_CONFIGURATOR_PLAN_SHOWN})::int AS plans,
+        count(DISTINCT session_id) FILTER (WHERE event = ${W.cartAdded})::int AS carts,
+        count(*) FILTER (WHERE event = ${KPI_CONFIGURATOR_PLAN_SHOWN})::int AS plans_shown,
+        count(*) FILTER (WHERE event = ${W.chipClicked})::int AS chip_clicks,
+        count(*) FILTER (WHERE event = ${W.planEdited})::int AS plan_edits,
+        count(*) FILTER (WHERE event = ${W.cartAdded})::int AS cart_adds,
+        COALESCE(sum(CASE WHEN event = ${W.cartAdded} AND data->>'units' ~ '^[0-9]{1,6}$'
+                          THEN (data->>'units')::int ELSE 0 END), 0)::int AS cart_units,
+        COALESCE(sum(CASE WHEN event = ${W.cartAdded} AND data->>'value' ~ '^[0-9]{1,9}([.][0-9]{1,2})?$'
+                          THEN (data->>'value')::numeric ELSE 0 END), 0)::float AS cart_value
+        FROM kpi_events
+       WHERE event IN (${W.viewed}, ${W.started}, ${W.handover}, ${KPI_CONFIGURATOR_CHAT_STARTED},
+                       ${KPI_CONFIGURATOR_PLAN_SHOWN}, ${W.cartAdded}, ${W.chipClicked}, ${W.planEdited})
+         AND session_id IS NOT NULL
+         AND session_id NOT LIKE 'livecheck-%'
+         AND created_at >= ${range.from}::date
+         AND created_at < (${range.to}::date + 1)
+    `,
+    sql`
+      SELECT count(DISTINCT o.session_id)::int AS sessions,
+             count(*)::int AS orders,
+             COALESCE(sum(o.total_price), 0)::float AS revenue
+        FROM mo_orders o
+       WHERE o.processed_at >= ${range.from}::date
+         AND o.processed_at < (${range.to}::date + 1)
+         AND upper(COALESCE(o.financial_status, '')) = ANY(${realised}::text[])
+         AND o.session_id IS NOT NULL
+         AND EXISTS (
+           SELECT 1 FROM messages g
+            WHERE g.tool_name = ${CONFIGURATOR_PLAN_TOOL}
+              AND g.created_at <= o.processed_at
+              AND g.conversation_id = (
+                SELECT m.conversation_id FROM messages m
+                 WHERE m.session_id = o.session_id
+                   AND m.tool_name = ANY(${consultationTools}::text[])
+                   AND m.created_at <= o.processed_at
+                 ORDER BY m.created_at DESC, m.id DESC
+                 LIMIT 1)
+         )
+    `,
+  ]);
+  const s = (stageRows as Array<Record<string, number>>)[0] ?? {};
+  const o = (orderRows as Array<Record<string, number>>)[0] ?? {};
+  return {
+    sessions: {
+      viewed: Number(s.viewed ?? 0),
+      started: Number(s.started ?? 0),
+      handover: Number(s.handover ?? 0),
+      chats: Number(s.chats ?? 0),
+      plans: Number(s.plans ?? 0),
+      carts: Number(s.carts ?? 0),
+      orders: Number(o.sessions ?? 0),
+    },
+    plansShown: Number(s.plans_shown ?? 0),
+    chipClicks: Number(s.chip_clicks ?? 0),
+    planEdits: Number(s.plan_edits ?? 0),
+    cartAdds: Number(s.cart_adds ?? 0),
+    cartUnits: Number(s.cart_units ?? 0),
+    cartValue: Number(s.cart_value ?? 0),
+    orders: Number(o.orders ?? 0),
+    revenue: Number(o.revenue ?? 0),
+  };
+}
+
+/**
+ * The configurator's funnel and money for `range` (KPI screen „Home-Gym-
+ * Konfigurator“, Komplettanalyse). Null without a database or on failure.
+ */
+export async function getConfiguratorSummary(
+  range: KpiRange,
+  sql: Sql | null = getSql()
+): Promise<ConfiguratorSummary | null> {
+  if (!sql) return null;
+  try {
+    return await queryConfiguratorSummary(range, sql);
+  } catch (err) {
+    reportError(err, { route: "lib/configurator-store", phase: "getConfiguratorSummary" });
+    return null;
+  }
+}
+
+/**
+ * The Konfigurator screen: the summary plus answer distribution, partners,
+ * chips, plan products and the latest configurator sessions of `range`.
+ * Null without a database or on failure.
  */
 export async function getConfiguratorKpis(range: KpiRange, sql: Sql | null = getSql()): Promise<ConfiguratorKpis | null> {
   if (!sql) return null;
   const realised = [...REALISED_FINANCIAL_STATUSES];
+  const consultationTools = [...CONSULTATION_ANCHOR_TOOLS];
+  const configuratorTools = [...CONFIGURATOR_TOOLS];
   const W = CONFIGURATOR_WIDGET_EVENTS;
   try {
-    const [stageRows, orderRows, distRows, chipRows, productRows, recentRows] = await Promise.all([
-      sql`
-        SELECT
-          count(DISTINCT session_id) FILTER (WHERE event = ${W.viewed})::int AS viewed,
-          count(DISTINCT session_id) FILTER (WHERE event = ${W.started})::int AS started,
-          count(DISTINCT session_id) FILTER (WHERE event = ${W.handover})::int AS handover,
-          count(DISTINCT session_id) FILTER (WHERE event = ${KPI_CONFIGURATOR_CHAT_STARTED})::int AS chats,
-          count(DISTINCT session_id) FILTER (WHERE event = ${KPI_CONFIGURATOR_PLAN_SHOWN})::int AS plans,
-          count(DISTINCT session_id) FILTER (WHERE event = ${W.cartAdded})::int AS carts,
-          count(*) FILTER (WHERE event = ${KPI_CONFIGURATOR_PLAN_SHOWN})::int AS plans_shown,
-          count(*) FILTER (WHERE event = ${W.chipClicked})::int AS chip_clicks,
-          count(*) FILTER (WHERE event = ${W.planEdited})::int AS plan_edits,
-          count(*) FILTER (WHERE event = ${W.cartAdded})::int AS cart_adds,
-          COALESCE(sum(CASE WHEN event = ${W.cartAdded} AND data->>'units' ~ '^[0-9]{1,6}$'
-                            THEN (data->>'units')::int ELSE 0 END), 0)::int AS cart_units,
-          COALESCE(sum(CASE WHEN event = ${W.cartAdded} AND data->>'value' ~ '^[0-9]{1,9}([.][0-9]{1,2})?$'
-                            THEN (data->>'value')::numeric ELSE 0 END), 0)::float AS cart_value
-          FROM kpi_events
-         WHERE event IN (${W.viewed}, ${W.started}, ${W.handover}, ${KPI_CONFIGURATOR_CHAT_STARTED},
-                         ${KPI_CONFIGURATOR_PLAN_SHOWN}, ${W.cartAdded}, ${W.chipClicked}, ${W.planEdited})
-           AND session_id IS NOT NULL
-           AND session_id NOT LIKE 'livecheck-%'
-           AND created_at >= ${range.from}::date
-           AND created_at < (${range.to}::date + 1)
-      `,
-      sql`
-        WITH cfg AS (
-          SELECT session_id, min(created_at) AS first_at
-            FROM kpi_events
-           WHERE event = ${KPI_CONFIGURATOR_CHAT_STARTED}
-             AND session_id IS NOT NULL
-             AND session_id NOT LIKE 'livecheck-%'
-             AND created_at >= ${range.from}::date
-             AND created_at < (${range.to}::date + 1)
-           GROUP BY session_id
-        )
-        SELECT count(DISTINCT o.session_id)::int AS sessions,
-               count(*)::int AS orders,
-               COALESCE(sum(o.total_price), 0)::float AS revenue
-          FROM mo_orders o
-          JOIN cfg ON cfg.session_id = o.session_id
-         WHERE o.processed_at >= cfg.first_at
-           AND o.processed_at < (${range.to}::date + 1)
-           AND upper(COALESCE(o.financial_status, '')) = ANY(${realised}::text[])
-      `,
+    const [summary, distRows, chipRows, productRows, recentRows] = await Promise.all([
+      queryConfiguratorSummary(range, sql),
       sql`
         SELECT f.key, COALESCE(f.value, '') AS value, count(*)::int AS n
           FROM kpi_events e
@@ -270,6 +339,11 @@ export async function getConfiguratorKpis(range: KpiRange, sql: Sql | null = get
          ORDER BY n DESC, pid ASC
          LIMIT 12
       `,
+      // The latest configurator sessions. „Bestellt“ uses the same rule as the
+      // summary (any later order „über den Konfigurator“); the conversation is
+      // the first one of the session created at or after the configurator
+      // chat, a configurator thread preferred (a signed-in session keeps its
+      // id across threads).
       sql`
         WITH cfg AS (
           SELECT DISTINCT ON (session_id) session_id, created_at, data
@@ -293,17 +367,30 @@ export async function getConfiguratorKpis(range: KpiRange, sql: Sql | null = get
                           AND k.created_at >= l.created_at) AS cart,
                EXISTS (SELECT 1 FROM mo_orders o
                         WHERE o.session_id = l.session_id AND o.processed_at >= l.created_at
-                          AND upper(COALESCE(o.financial_status, '')) = ANY(${realised}::text[])) AS ordered,
+                          AND upper(COALESCE(o.financial_status, '')) = ANY(${realised}::text[])
+                          AND EXISTS (
+                            SELECT 1 FROM messages g
+                             WHERE g.tool_name = ${CONFIGURATOR_PLAN_TOOL}
+                               AND g.created_at <= o.processed_at
+                               AND g.conversation_id = (
+                                 SELECT m.conversation_id FROM messages m
+                                  WHERE m.session_id = o.session_id
+                                    AND m.tool_name = ANY(${consultationTools}::text[])
+                                    AND m.created_at <= o.processed_at
+                                  ORDER BY m.created_at DESC, m.id DESC
+                                  LIMIT 1)
+                          )) AS ordered,
                (SELECT c.id FROM conversations c
-                 WHERE c.session_id = l.session_id AND c.created_at >= l.created_at - interval '5 minutes'
-                 ORDER BY c.created_at ASC LIMIT 1) AS conversation_id
+                 WHERE c.session_id = l.session_id AND c.created_at >= l.created_at
+                 ORDER BY (EXISTS (SELECT 1 FROM messages mc
+                                    WHERE mc.conversation_id = c.id
+                                      AND mc.tool_name = ANY(${configuratorTools}::text[]))) DESC,
+                          c.created_at ASC
+                 LIMIT 1) AS conversation_id
           FROM latest l
          ORDER BY l.created_at DESC
       `,
     ]);
-
-    const s = (stageRows as Array<Record<string, number>>)[0] ?? {};
-    const o = (orderRows as Array<Record<string, number>>)[0] ?? {};
 
     const byField = new Map<string, Array<{ value: string; n: number }>>();
     for (const row of distRows as Array<{ key: string; value: string; n: number }>) {
@@ -365,23 +452,7 @@ export async function getConfiguratorKpis(range: KpiRange, sql: Sql | null = get
     });
 
     return {
-      sessions: {
-        viewed: Number(s.viewed ?? 0),
-        started: Number(s.started ?? 0),
-        handover: Number(s.handover ?? 0),
-        chats: Number(s.chats ?? 0),
-        plans: Number(s.plans ?? 0),
-        carts: Number(s.carts ?? 0),
-        orders: Number(o.sessions ?? 0),
-      },
-      plansShown: Number(s.plans_shown ?? 0),
-      chipClicks: Number(s.chip_clicks ?? 0),
-      planEdits: Number(s.plan_edits ?? 0),
-      cartAdds: Number(s.cart_adds ?? 0),
-      cartUnits: Number(s.cart_units ?? 0),
-      cartValue: Number(s.cart_value ?? 0),
-      orders: Number(o.orders ?? 0),
-      revenue: Number(o.revenue ?? 0),
+      ...summary,
       distributions: distributions.filter((d) => d.key !== "partner"),
       partners,
       chipTopics: (chipRows as Array<{ topic: string; n: number }>).map((r) => ({ key: r.topic, count: Number(r.n) || 0 })),

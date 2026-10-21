@@ -37,6 +37,9 @@ import { getPhysicalLetterStats } from "@/lib/physical-letters-store";
 import { loadKpiShopifyBlock } from "@/lib/kpi-cache";
 import { getCustomerBaseKpis, getMoEffectKpis } from "@/lib/customer-list-store";
 import { getInboxKpis } from "@/lib/inbox-store";
+import { getConfiguratorSummary } from "@/lib/configurator-store";
+import { configuratorRangeParam } from "@/lib/configurator-core.mjs";
+import { adminTabHref } from "@/lib/admin-tabs.mjs";
 import { getConsentExperiment, getWelcomeCodeStats } from "@/lib/kpi-consent-experiment-store";
 import type { KpiRange } from "@/lib/kpi-range";
 import { plural } from "@/lib/admin-format.mjs";
@@ -53,6 +56,7 @@ import { UmsatzBestellungenSection } from "./kpi/sections/UmsatzBestellungenSect
 import { JourneySection } from "./kpi/sections/JourneySection";
 import { CoreSection } from "./kpi/sections/CoreSection";
 import { PageContextSection } from "./kpi/sections/PageContextSection";
+import { KonfiguratorSection } from "./kpi/sections/KonfiguratorSection";
 import { LoginGateSection } from "./kpi/sections/LoginGateSection";
 import { ConsentGateSection } from "./kpi/sections/ConsentGateSection";
 import { EmailCaptureSection } from "./kpi/sections/EmailCaptureSection";
@@ -108,6 +112,7 @@ export async function KpiTab({
     core,
     locales,
     pageContext,
+    configurator,
     loginGate,
     signinDiagnosis,
     gateFunnel,
@@ -136,6 +141,7 @@ export async function KpiTab({
     getCoreMetrics(range),
     getLocaleSplit(range),
     getPageContextKpis(range),
+    getConfiguratorSummary(range),
     getLoginGateFunnel(range),
     getSigninDiagnosis(range),
     getConsentGateFunnel(range),
@@ -168,9 +174,11 @@ export async function KpiTab({
   const setChannel = revenue?.summary.byChannel.find((c) => c.key === "set");
   const group = (key: KpiGroupKey) => KPI_GROUPS.find((g) => g.key === key) as KpiGroup;
   const releases = releasesInRange(range);
+  const konfiguratorHref = adminTabHref("konfigurator", { kpiRange: configuratorRangeParam(range.preset) });
   // Marked orders reach „Umsatz durch Mo“ only through the orders/create and
-  // orders/paid webhooks (Mo-code orders also through the code lookup); the
-  // nightly reconcile fills the order copy but attributes nothing.
+  // orders/paid webhooks (orders/updated + orders/cancelled refresh their money;
+  // Mo-code orders also through the code lookup); the nightly reconcile fills
+  // the order copy but attributes nothing.
   const webhooksQuietSince = isWebhookQuiet(syncHealth?.lastWebhookAt) ? syncHealth?.lastWebhookAt ?? null : null;
 
   return (
@@ -223,7 +231,7 @@ export async function KpiTab({
 
       <Group group={group("umsatz")}>
         <UmsatzSection view={revenue} range={range} />
-        <UmsatzWegeSection view={revenue} />
+        <UmsatzWegeSection view={revenue} konfiguratorHref={konfiguratorHref} />
         <UmsatzBestellungenSection view={revenue} />
       </Group>
 
@@ -231,6 +239,7 @@ export async function KpiTab({
         <JourneySection counts={journey} />
         <CoreSection core={core} locales={locales} range={range} />
         <PageContextSection kpis={pageContext} range={range} />
+        <KonfiguratorSection summary={configurator} range={range} href={konfiguratorHref} />
       </Group>
 
       <Group group={group("kunden")}>

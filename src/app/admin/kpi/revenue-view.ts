@@ -44,6 +44,8 @@ export interface RevenueDrillRow {
   conversationId: number | null;
   /** „ledger“ = per webhook erfasst; „shopify_code“ = per Code-Abgleich ergänzt. */
   origin: "ledger" | "shopify_code";
+  /** The last consultation before the order was a Home-Gym-Konfigurator thread. */
+  viaConfigurator: boolean;
 }
 
 export interface RevenueView {
@@ -140,6 +142,7 @@ export function buildRevenueView({
       customerId: d.customerId,
       conversationId: d.conversationId,
       origin: "ledger",
+      viaConfigurator: d.viaConfigurator,
     });
   }
   extra.forEach((e, i) => {
@@ -162,6 +165,7 @@ export function buildRevenueView({
       customerId: null,
       conversationId: null,
       origin: "shopify_code",
+      viaConfigurator: false,
     });
   });
   rows.sort((a, b) => (Date.parse(b.date ?? "") || 0) - (Date.parse(a.date ?? "") || 0));

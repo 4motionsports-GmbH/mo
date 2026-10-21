@@ -1,9 +1,11 @@
 // „Wie der Umsatz entstand“ — the split of „Umsatz durch Mo“ by HOW each order
 // came about: the three tiers as one part-to-whole bar, then every channel with
 // orders, revenue, share and Ø Bestellwert, grouped under its tier, and the
-// cross-cut „mit Mo-Rabattcode“ (inside the rows above, never on top). Every
-// order sits in exactly one row (precedence in lib/mo-revenue.mjs).
+// cross-cuts „mit Mo-Rabattcode“ and „über den Home-Gym-Konfigurator“ (inside
+// the rows above, never on top). Every order sits in exactly one row
+// (precedence in lib/mo-revenue.mjs).
 
+import Link from "next/link";
 import { REVENUE_CHANNELS, TIER_LABELS } from "@/lib/mo-revenue.mjs";
 import { money, num, ratio } from "@/lib/admin-format.mjs";
 import {
@@ -35,8 +37,8 @@ const INFO = (
     </p>
     <p>
       Die drei Stufen sind die der Bestell-Zuordnung: „Beraten & gekauft“ und „Beraten, anderes gekauft“ (Warenkorb vom
-      Widget markiert) sowie „Direkt über Mo“ (Mo-Link oder Mo-Code). „Mit Mo-Rabattcode“ ist ein Querschnitt über die
-      Zeilen — dieselben Bestellungen, nicht zusätzlich.
+      Widget markiert) sowie „Direkt über Mo“ (Mo-Link oder Mo-Code). „Mit Mo-Rabattcode“ und „über den
+      Home-Gym-Konfigurator“ sind Querschnitte über die Zeilen — dieselben Bestellungen, nicht zusätzlich.
     </p>
   </Explain>
 );
@@ -46,7 +48,7 @@ const GROUPS: Array<{ label: string; tiers: RevenueSeriesKey[] }> = [
   { label: "Direkt über Mo", tiers: ["direct"] },
 ];
 
-export function UmsatzWegeSection({ view }: { view: RevenueView | null }) {
+export function UmsatzWegeSection({ view, konfiguratorHref }: { view: RevenueView | null; konfiguratorHref: string }) {
   if (!view) return <KpiSection id="umsatz-wege" title="Wie der Umsatz entstand" info={INFO} empty="Noch keine Daten." />;
   const s = view.summary;
   const cur = s.currency;
@@ -169,6 +171,35 @@ export function UmsatzWegeSection({ view }: { view: RevenueView | null }) {
                   </TableCell>
                   <TableCell align="right" className="pr-5 text-muted-foreground">
                     {s.withMoCode.orders > 0 ? money(s.withMoCode.revenue / s.withMoCode.orders, cur) : "—"}
+                  </TableCell>
+                </TableRow>
+                <TableRow className="hover:bg-transparent">
+                  <TableCell className="pl-5">
+                    <span className="flex items-center gap-1.5 whitespace-nowrap text-muted-foreground">
+                      <span>
+                        davon über den{" "}
+                        <Link href={konfiguratorHref} className="underline-offset-2 hover:text-foreground hover:underline">
+                          Home-Gym-Konfigurator
+                        </Link>
+                      </span>
+                      <InfoTip label="Wie Konfigurator-Bestellungen gezählt werden">
+                        Bestellungen, deren letzte Beratung vor dem Kauf ein Konfigurator-Gespräch mit Home-Gym-Plan war —
+                        sie stehen schon in den Zeilen oben (meist „Beraten & gekauft“ bzw. „Beraten, anderes gekauft“) und
+                        werden nicht zusätzlich gezählt. Dieselbe Regel wie im Bereich Konfigurator.
+                      </InfoTip>
+                    </span>
+                  </TableCell>
+                  <TableCell align="right" className="text-muted-foreground">
+                    {num(s.viaConfigurator.orders)}
+                  </TableCell>
+                  <TableCell align="right" className="text-muted-foreground">
+                    {money(s.viaConfigurator.revenue, cur)}
+                  </TableCell>
+                  <TableCell className="text-muted-foreground">
+                    {total > 0 ? ratio(s.viaConfigurator.revenue / total) : "—"}
+                  </TableCell>
+                  <TableCell align="right" className="pr-5 text-muted-foreground">
+                    {s.viaConfigurator.orders > 0 ? money(s.viaConfigurator.revenue / s.viaConfigurator.orders, cur) : "—"}
                   </TableCell>
                 </TableRow>
               </TableBody>

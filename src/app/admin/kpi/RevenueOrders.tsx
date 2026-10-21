@@ -112,6 +112,11 @@ export function RevenueOrders({ rows, truncated }: { rows: RevenueDrillRow[]; tr
                   Code-Abgleich
                 </StatusBadge>
               )}
+              {r.viaConfigurator && (
+                <StatusBadge tone="accent" dot={false}>
+                  Konfigurator
+                </StatusBadge>
+              )}
             </span>
             <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
               <span className={cn("size-2 shrink-0 rounded-sm", TIER_BG[r.tier])} aria-hidden />

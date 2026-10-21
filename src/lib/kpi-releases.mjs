@@ -115,6 +115,20 @@ export const KPI_RELEASES = Object.freeze([
     detail:
       "Das Widget kann einen Gutschein-Hinweis im Einwilligungs-Popup, in der Karte und im Anmelde-Popup zeigen und angemeldete Kund:innen nach einer Produktempfehlung fragen („Wertmoment“) — erst, wenn der Server die Texte ausliefert (Schalter aus). Sofort wirksam: Ein zweiter Tab desselben Geräts fragt 24 Stunden nach einem Ja nicht erneut („Angezeigt“ kann leicht sinken); nach einer abgebrochenen Antwort erneuert das Widget die Bestell-Markierung nicht.",
   },
+  {
+    date: "2026-10-21",
+    key: "home-gym-konfigurator",
+    title: "Home-Gym-Konfigurator live (Men's Health / Women's Health)",
+    detail:
+      "Die Konfigurator-Seite übergibt die Angaben an Mo; jede Übergabe startet einen Chat mit Begrüßung (zählt in „Chats gesamt“). Mos Home-Gym-Plan zählt als gezeigte Produkte und als Auswahl des Gesprächs („Gespräche mit Produktempfehlung“, „Cart angeboten“, Eingang-Regel „Kaufabsicht ohne Kauf“ für angemeldete Kund:innen), „Alles in den Warenkorb“ im Plan als Warenkorb-Klick. Anmelde- und Einwilligungs-Popup erscheinen in Konfigurator-Chats erst nach dem Plan („Angezeigt“ kann sinken). Mit dem Widget-Nachtrag zählt ein neuer Chat bei offenem Fenster als geöffnet („Geöffnet → geschrieben“ kann sinken). Neue Besucher über Men's Health / Women's Health.",
+  },
+  {
+    date: "2026-10-21",
+    key: "attribution-variants-refunds",
+    title: "Bestell-Zuordnung: Varianten und Erstattungen",
+    detail:
+      "Ein Produkt, das Mo mit Variante empfohlen hat (z. B. das Gewicht im Home-Gym-Plan), zählt beim Kauf als „Beraten & gekauft“ statt „Beraten, anderes gekauft“. Erstattungen und Stornierungen nach der Zahlung erreichen jetzt die Zuordnung — „Umsatz durch Mo“ (auch der Kampagnen-Umsatz) sinkt um zurückgegebene Beträge, auch für ältere Bestellungen, sobald Shopify sie ändert; erstattete Bestellungen stehen nicht mehr unter „noch nicht bezahlt“. Bereits erfasste Stufen bleiben unverändert.",
+  },
 ]);
 
 /** First day the opt-in events carry source and outcome (OI1). */
@@ -137,6 +151,10 @@ const MEANINGFUL_FROM = Object.freeze({
   campaign: {
     date: "2026-10-04",
     why: "„Chat gestartet“ zählt erst, seit das Widget den Kampagnen-Token (mo_c) mitschickt",
+  },
+  konfigurator: {
+    date: "2026-10-21",
+    why: "den Home-Gym-Konfigurator gibt es erst seit dem Theme-Upload vom 21.10.2026",
   },
   attribution: {
     date: "2026-10-05",
@@ -165,7 +183,7 @@ function isYmd(v) {
  * before the section's data is meaningful, one when it covers the sign-in
  * outage. Empty when the period is entirely after both.
  *
- * @param {string} section "anmelde-popup" | "consent" | "konto" | "campaign" | "attribution" | "capture"
+ * @param {string} section "anmelde-popup" | "consent" | "konto" | "campaign" | "attribution" | "capture" | "konfigurator"
  * @param {{ from: string, to: string }} range
  * @returns {string[]}
  */

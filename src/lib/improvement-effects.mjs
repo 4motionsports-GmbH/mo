@@ -126,6 +126,30 @@ export const RELEASE_EFFECTS = Object.freeze({
   // of a yes) acts measurably today. H-1 (no marker renewal after a broken
   // answer with partial content) is too rare to block revenue comparisons.
   "widget-reward-dormant": { measurement: ["consent.popupShown", "consent.popupRate"], product: [] },
+  // The configurator: plan cart adds match the cart pattern, the plan is a
+  // selection, and the widget follow-up counts a new chat in an open panel as
+  // opened (counting changes); the new traffic, the greeting-only handover
+  // threads and the popup hold until the plan are behaviour (confounders).
+  // The configurator's own metrics only exist from this day (counted from the
+  // launch); the plan as a selection also widens the Eingang rule
+  // „Kaufabsicht ohne Kauf“ (a confounder for inbox.*).
+  "home-gym-konfigurator": {
+    measurement: [
+      "chat.cartClicks",
+      "chat.cartPerChat",
+      "chat.recommended",
+      "chat.opened",
+      "chat.engagement",
+      "chat.configuratorHandover",
+      "chat.configuratorPlans",
+      "chat.configuratorCarts",
+    ],
+    product: ["chat", "journey", "revenue", "signin", "consent", "inbox"],
+  },
+  // Variant refs match their product (tier of new orders), refunds and
+  // cancellations after payment reach the ledger (revenue of every order,
+  // the campaign channel included).
+  "attribution-variants-refunds": { measurement: [...ATTRIBUTION, "campaigns.revenue", "campaigns.orders"], product: [] },
 });
 
 /** What flipping a switch changes (switch keys of business-snapshot snapshotSwitches). */

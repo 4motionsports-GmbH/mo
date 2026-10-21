@@ -107,6 +107,31 @@ test("summariseRevenue tallies what it does not count", () => {
   assert.equal(s.revenue, 15);
 });
 
+test("summariseRevenue: the configurator cross-cut is inside the tiers, realised and main currency only", () => {
+  const s = summariseRevenue([
+    paid({ total: 1200, tier: "assisted", source: "widget", viaConfigurator: true }),
+    paid({ total: 300, tier: "influenced", source: "widget", viaConfigurator: true }),
+    paid({ total: 80, tier: "assisted", source: "widget" }),
+    { total: 999, financialStatus: "PENDING", tier: "assisted", source: "widget", viaConfigurator: true },
+    paid({ total: 500, currency: "USD", tier: "assisted", source: "widget", viaConfigurator: true }),
+  ]);
+  assert.deepEqual(s.viaConfigurator, { orders: 2, revenue: 1500 });
+  assert.equal(s.revenue, 1580, "not added on top");
+  assert.deepEqual(summariseRevenue([]).viaConfigurator, { orders: 0, revenue: 0 });
+});
+
+test("summariseRevenue: refunded or voided orders are their own tally, not „unpaid“", () => {
+  const s = summariseRevenue([
+    { total: 0, financialStatus: "refunded", tier: "assisted", source: "widget" },
+    { total: 0, financialStatus: "VOIDED", tier: "direct", source: "bundle" },
+    { total: 80, financialStatus: "PENDING", tier: "direct", source: "bundle" },
+    paid({ total: 900, financialStatus: "PARTIALLY_REFUNDED", tier: "assisted", source: "widget" }),
+  ]);
+  assert.deepEqual(s.refunded, { orders: 2 });
+  assert.deepEqual(s.unrealised, { orders: 1, revenue: 80 });
+  assert.equal(s.revenue, 900, "a partial refund keeps its remaining amount");
+});
+
 test("summariseRevenue on nothing", () => {
   const s = summariseRevenue(undefined);
   assert.equal(s.orders, 0);
@@ -215,6 +240,18 @@ test("markConsultedLines flags products from the consultation", () => {
   assert.equal(lines[1].consulted, false);
   assert.equal(lines[2].title, "Unbenannter Artikel");
   assert.deepEqual(markConsultedLines(null, []), []);
+});
+
+test("markConsultedLines: a variant ref from the consultation marks the product's line", () => {
+  const lines = markConsultedLines(
+    [
+      { title: "ATX Kettlebell 16 kg", quantity: 2, price: "49", handle: "atx-kettlebell" },
+      { title: "Matte", quantity: 1, price: "20", handle: "matte" },
+    ],
+    ["atx-kettlebell~222"]
+  );
+  assert.equal(lines[0].consulted, true);
+  assert.equal(lines[1].consulted, false);
 });
 
 test("daysAfterChat in whole days, never negative", () => {

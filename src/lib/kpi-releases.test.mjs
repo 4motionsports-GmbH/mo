@@ -10,7 +10,7 @@ test("release keys are unique and dates ascend", () => {
 });
 
 test("releases are ordered and dated as documented", () => {
-  assert.deepEqual(KPI_RELEASES.map((r) => r.date), ["2026-10-01", "2026-10-03", "2026-10-04", "2026-10-05", "2026-10-05", "2026-10-05", "2026-10-05", "2026-10-05", "2026-10-06", "2026-10-06", "2026-10-06", "2026-10-06", "2026-10-06", "2026-10-06", "2026-10-08"]);
+  assert.deepEqual(KPI_RELEASES.map((r) => r.date), ["2026-10-01", "2026-10-03", "2026-10-04", "2026-10-05", "2026-10-05", "2026-10-05", "2026-10-05", "2026-10-05", "2026-10-06", "2026-10-06", "2026-10-06", "2026-10-06", "2026-10-06", "2026-10-06", "2026-10-08", "2026-10-21", "2026-10-21"]);
   assert.deepEqual(SIGNIN_OUTAGE, { from: "2026-10-03", to: "2026-10-04" });
   assert.equal(germanDay("2026-10-04"), "04.10.2026");
 });
@@ -59,7 +59,7 @@ test("unknown sections and invalid ranges stay silent", () => {
 test("releasesInRange is inclusive on both ends", () => {
   assert.deepEqual(releasesInRange({ from: "2026-10-01", to: "2026-10-03" }).map((r) => r.key), ["widget-popups", "signin-code"]);
   assert.deepEqual(releasesInRange({ from: "2026-10-04", to: "2026-10-04" }).map((r) => r.key), ["customer-platform-widget"]);
-  assert.deepEqual(releasesInRange({ from: "2026-10-05", to: "2026-10-30" }).map((r) => r.key), [
+  assert.deepEqual(releasesInRange({ from: "2026-10-05", to: "2026-10-20" }).map((r) => r.key), [
     "attribution-unresolved",
     "attribution-window",
     "signedin-offer-off",
@@ -73,7 +73,7 @@ test("releasesInRange is inclusive on both ends", () => {
     "attribution-threads-maillinks",
     "widget-reward-dormant",
   ]);
-  assert.deepEqual(releasesInRange({ from: "2026-10-06", to: "2026-10-30" }).map((r) => r.key), [
+  assert.deepEqual(releasesInRange({ from: "2026-10-06", to: "2026-10-20" }).map((r) => r.key), [
     "consent-benefits-served",
     "page-context-typed",
     "attribution-token-renewal",
@@ -82,7 +82,19 @@ test("releasesInRange is inclusive on both ends", () => {
     "attribution-threads-maillinks",
     "widget-reward-dormant",
   ]);
-  assert.deepEqual(releasesInRange({ from: "2026-10-07", to: "2026-10-30" }).map((r) => r.key), ["widget-reward-dormant"]);
-  assert.deepEqual(releasesInRange({ from: "2026-10-09", to: "2026-10-30" }), []);
+  assert.deepEqual(releasesInRange({ from: "2026-10-07", to: "2026-10-20" }).map((r) => r.key), ["widget-reward-dormant"]);
+  assert.deepEqual(releasesInRange({ from: "2026-10-09", to: "2026-10-20" }), []);
+  assert.deepEqual(releasesInRange({ from: "2026-10-09", to: "2026-10-30" }).map((r) => r.key), [
+    "home-gym-konfigurator",
+    "attribution-variants-refunds",
+  ]);
+  assert.deepEqual(releasesInRange({ from: "2026-10-22", to: "2026-10-30" }), []);
   assert.deepEqual(releasesInRange({ from: "bad", to: "2026-10-30" }), []);
+});
+
+test("konfigurator: one 'meaningful from' note before the launch, none after", () => {
+  const notes = releaseNotesFor("konfigurator", { from: "2026-09-22", to: "2026-10-21" });
+  assert.equal(notes.length, 1);
+  assert.match(notes[0], /^Erst ab dem 21\.10\.2026 aussagekräftig/);
+  assert.deepEqual(releaseNotesFor("konfigurator", { from: "2026-10-21", to: "2026-11-19" }), []);
 });

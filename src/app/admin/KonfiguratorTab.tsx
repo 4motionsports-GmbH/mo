@@ -10,6 +10,7 @@
 //     against the live catalog, edited in the client KonfiguratorWorkspace.
 
 import { resolveKpiRange } from "@/lib/kpi-range";
+import { configuratorRangeParam } from "@/lib/configurator-core.mjs";
 import {
   getConfiguratorKpis,
   getConfiguratorSettings,
@@ -21,7 +22,7 @@ import { KonfiguratorKpis } from "./konfigurator/KonfiguratorKpis";
 import type { AssortmentRow } from "./konfigurator/types";
 
 export async function KonfiguratorTab({ dbReady, kpiRange }: { dbReady: boolean; kpiRange?: string }) {
-  const range = resolveKpiRange({ kpiRange: kpiRange === "7d" || kpiRange === "90d" ? kpiRange : "30d" });
+  const range = resolveKpiRange({ kpiRange: configuratorRangeParam(kpiRange) });
   const settings = await getConfiguratorSettings();
   const [assortment, kpis] = await Promise.all([
     loadConfiguratorAssortment(settings),
@@ -52,7 +53,7 @@ export async function KonfiguratorTab({ dbReady, kpiRange }: { dbReady: boolean;
       <KonfiguratorKpis
         kpis={kpis}
         rangeLabel={range.label}
-        rangeControl={<KonfiguratorRange preset={range.preset === "7d" || range.preset === "90d" ? range.preset : "30d"} />}
+        rangeControl={<KonfiguratorRange preset={configuratorRangeParam(range.preset)} />}
       />
       <KonfiguratorWorkspace
         dbReady={dbReady}

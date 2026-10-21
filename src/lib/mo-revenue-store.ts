@@ -1,6 +1,7 @@
 // „Umsatz durch Mo“ — the database side of the KPI revenue centre
 // (docs/ADMIN_DASHBOARD.md §5.1–§5.3). Pure DB over the attribution ledger
-// `mo_orders` (orders/create + orders/paid webhooks, docs/ORDER_ATTRIBUTION.md),
+// `mo_orders` (orders/create + orders/paid webhooks, refreshed by orders/updated +
+// orders/cancelled, docs/ORDER_ATTRIBUTION.md),
 // so it is NEVER cached (CLAUDE.md, KPI cache rule). The Shopify code lookup that
 // fills the gap before the webhooks were registered stays in the cached
 // lib/kpi-revenue-store; the two meet at render time in the pure
@@ -25,7 +26,8 @@
 import { getSql, type Sql } from "./db";
 import { reportError } from "./observability";
 import { KPI_MO_ORDER_MARKER_UNRESOLVED } from "./kpi-events";
-import { countUnresolvedMarkers } from "./order-attribution.mjs";
+import { CONSULTATION_ANCHOR_TOOLS, countUnresolvedMarkers } from "./order-attribution.mjs";
+import { CONFIGURATOR_PLAN_TOOL } from "./configurator-core.mjs";
 import { isAttributionSessionAnchorEnabled } from "./platform-flags.mjs";
 import { attributionWindowDays } from "./mo-orders-store";
 import { previousPeriod } from "./mo-revenue.mjs";
@@ -44,6 +46,9 @@ export interface RevenueLedgerOrder {
   source: string | null;
   discountCodes: string[];
   overlap: boolean | null;
+  /** The order's last consultation was a Home-Gym-Konfigurator thread
+   * (docs/CONFIGURATOR.md §6) — a cross-cut, never added on top. */
+  viaConfigurator: boolean;
 }
 
 export interface RevenueLineItem {
@@ -97,6 +102,7 @@ type LedgerRow = {
   attribution_source: string | null;
   discount_codes: string[] | null;
   recommended_overlap: boolean | null;
+  via_configurator?: boolean | null;
 };
 
 function iso(v: string | Date | null | undefined): string | null {
@@ -122,6 +128,7 @@ function toLedgerOrder(r: LedgerRow): RevenueLedgerOrder {
     source: r.attribution_source ?? null,
     discountCodes: Array.isArray(r.discount_codes) ? r.discount_codes.map(String) : [],
     overlap: r.recommended_overlap ?? null,
+    viaConfigurator: r.via_configurator === true,
   };
 }
 
@@ -154,22 +161,51 @@ function safeJson(s: string): unknown {
 export async function getMoRevenueData(range: KpiRange, sql: Sql | null = getSql()): Promise<MoRevenueData | null> {
   if (!sql) return null;
   const previous = previousPeriod(range);
+  // via_configurator, spelled out in each ledger query (Neon templates are not
+  // composable): the latest consultation row the order's session wrote before
+  // the order — the attribution anchor — belongs to a thread where Mo showed a
+  // Home-Gym plan (docs/CONFIGURATOR.md §6; same rule in configurator-store).
+  const consultationTools = [...CONSULTATION_ANCHOR_TOOLS];
   try {
     const [orderRows, previousRows, detailRows, codeRows, unresolvedRows, seenRows] = await Promise.all([
       sql`
-        SELECT processed_at, total_price, currency, financial_status, attribution_tier,
-               attribution_source, discount_codes, recommended_overlap
-          FROM mo_orders
-         WHERE processed_at >= ${range.from}::date
-           AND processed_at < (${range.to}::date + 1)
+        SELECT o.processed_at, o.total_price, o.currency, o.financial_status, o.attribution_tier,
+               o.attribution_source, o.discount_codes, o.recommended_overlap,
+               (o.session_id IS NOT NULL AND EXISTS (
+                 SELECT 1 FROM messages g
+                  WHERE g.tool_name = ${CONFIGURATOR_PLAN_TOOL}
+                    AND g.created_at <= o.processed_at
+                    AND g.conversation_id = (
+                      SELECT m.conversation_id FROM messages m
+                       WHERE m.session_id = o.session_id
+                         AND m.tool_name = ANY(${consultationTools}::text[])
+                         AND m.created_at <= o.processed_at
+                       ORDER BY m.created_at DESC, m.id DESC
+                       LIMIT 1)
+               )) AS via_configurator
+          FROM mo_orders o
+         WHERE o.processed_at >= ${range.from}::date
+           AND o.processed_at < (${range.to}::date + 1)
       `,
       previous
         ? sql`
-            SELECT processed_at, total_price, currency, financial_status, attribution_tier,
-                   attribution_source, discount_codes, recommended_overlap
-              FROM mo_orders
-             WHERE processed_at >= ${previous.from}::date
-               AND processed_at < (${previous.to}::date + 1)
+            SELECT o.processed_at, o.total_price, o.currency, o.financial_status, o.attribution_tier,
+                   o.attribution_source, o.discount_codes, o.recommended_overlap,
+                   (o.session_id IS NOT NULL AND EXISTS (
+                     SELECT 1 FROM messages g
+                      WHERE g.tool_name = ${CONFIGURATOR_PLAN_TOOL}
+                        AND g.created_at <= o.processed_at
+                        AND g.conversation_id = (
+                          SELECT m.conversation_id FROM messages m
+                           WHERE m.session_id = o.session_id
+                             AND m.tool_name = ANY(${consultationTools}::text[])
+                             AND m.created_at <= o.processed_at
+                           ORDER BY m.created_at DESC, m.id DESC
+                           LIMIT 1)
+                   )) AS via_configurator
+              FROM mo_orders o
+             WHERE o.processed_at >= ${previous.from}::date
+               AND o.processed_at < (${previous.to}::date + 1)
           `
         : Promise.resolve([]),
       // The newest orders with their story: the latest chat message of the
@@ -181,6 +217,18 @@ export async function getMoRevenueData(range: KpiRange, sql: Sql | null = getSql
         SELECT o.id, o.order_name, o.processed_at, o.total_price, o.currency, o.financial_status,
                o.attribution_tier, o.attribution_source, o.discount_codes, o.recommended_overlap,
                o.line_items,
+               (o.session_id IS NOT NULL AND EXISTS (
+                 SELECT 1 FROM messages g
+                  WHERE g.tool_name = ${CONFIGURATOR_PLAN_TOOL}
+                    AND g.created_at <= COALESCE(o.processed_at, now())
+                    AND g.conversation_id = (
+                      SELECT m.conversation_id FROM messages m
+                       WHERE m.session_id = o.session_id
+                         AND m.tool_name = ANY(${consultationTools}::text[])
+                         AND m.created_at <= COALESCE(o.processed_at, now())
+                       ORDER BY m.created_at DESC, m.id DESC
+                       LIMIT 1)
+               )) AS via_configurator,
                last_chat.conversation_id,
                last_chat.created_at AS last_chat_at,
                COALESCE(

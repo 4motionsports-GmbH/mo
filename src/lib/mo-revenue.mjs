@@ -2,7 +2,8 @@
 // (docs/ADMIN_DASHBOARD.md §5.1, design of the attribution: docs/ORDER_ATTRIBUTION.md).
 //
 // Every order counts ONCE. The ledger is `mo_orders` (orders/create + orders/paid
-// webhooks, every order with a Mo marker: the `_mo` cart attribute and/or an
+// webhooks; orders/updated + orders/cancelled refresh refunds and cancellations;
+// every order with a Mo marker: the `_mo` cart attribute and/or an
 // MS5-/MK- code). Each ledger order gets exactly one tier (the snapshot taken at
 // ingest) and exactly one channel — the way it came about — by a fixed
 // precedence: a Mo code beats a link marker (MK- → Kampagne, MS5- → persönliche
@@ -23,6 +24,7 @@
 import { isRealisedFinancialStatus } from "./kpi-revenue-core.mjs";
 import { isMoDiscountCode } from "./order-attribution.mjs";
 import { normalizeHandle } from "./kpi-match.mjs";
+import { parseProductRef } from "./product-ref.mjs";
 import { ADMIN_DAY_MONTH, formatAdmin } from "./admin-datetime.mjs";
 
 /** The three honest attribution tiers, in their fixed display (and colour) order. */
@@ -191,12 +193,14 @@ export function mainCurrency(orders) {
  * @property {unknown} [discountCodes]
  * @property {boolean | null} [overlap]
  * @property {string | Date | null} [processedAt]
+ * @property {boolean} [viaConfigurator] — last consultation was a Home-Gym-Konfigurator thread
  */
 
 /**
  * Fold orders into the revenue centre's figures: totals, per tier, per channel
- * (all channels in display order, zeros included), the code cross-cut and the
- * tallies of what was NOT counted (unpaid, other currency, unclassifiable).
+ * (all channels in display order, zeros included), the code and configurator
+ * cross-cuts (inside the rows, never on top) and the tallies of what was NOT
+ * counted (unpaid, refunded or voided, other currency, unclassifiable).
  *
  * @param {RevenueOrder[]} orders
  */
@@ -208,7 +212,11 @@ export function summariseRevenue(orders) {
   /** @type {Map<string, { orders: number, revenue: number }>} */
   const byChannel = new Map(REVENUE_CHANNELS.map((c) => [c.key, { orders: 0, revenue: 0 }]));
   const withMoCode = { orders: 0, revenue: 0 };
+  const viaConfigurator = { orders: 0, revenue: 0 };
   const unrealised = { orders: 0, revenue: 0 };
+  // Refunded, or voided (cancelled before capture) — orders/updated,
+  // orders/cancelled. Not „noch nicht bezahlt“; nothing remains, so only counted.
+  const refunded = { orders: 0 };
   let otherCurrency = 0;
   let unclassified = 0;
   let revenue = 0;
@@ -221,6 +229,11 @@ export function summariseRevenue(orders) {
       continue;
     }
     const amount = amountOf(o.total);
+    const status = typeof o.financialStatus === "string" ? o.financialStatus.trim().toUpperCase() : "";
+    if (status === "REFUNDED" || status === "VOIDED") {
+      refunded.orders++;
+      continue;
+    }
     if (!isRealisedFinancialStatus(o.financialStatus)) {
       unrealised.orders++;
       if (amount != null) unrealised.revenue = cents(unrealised.revenue + amount);
@@ -245,6 +258,10 @@ export function summariseRevenue(orders) {
       withMoCode.orders++;
       withMoCode.revenue = cents(withMoCode.revenue + add);
     }
+    if (o.viaConfigurator === true) {
+      viaConfigurator.orders++;
+      viaConfigurator.revenue = cents(viaConfigurator.revenue + add);
+    }
   }
 
   return {
@@ -266,7 +283,9 @@ export function summariseRevenue(orders) {
       };
     }),
     withMoCode,
+    viaConfigurator,
     unrealised,
+    refunded,
     otherCurrency,
     unclassified,
   };
@@ -450,7 +469,10 @@ export function mergeCodeRedemptions({ ledgerCodes = [], ledgerOrderNames = [], 
  * @returns {Array<{ title: string, quantity: number, price: number | null, consulted: boolean }>}
  */
 export function markConsultedLines(lineItems, consulted) {
-  const keys = new Set((consulted ?? []).map(normalizeHandle).filter(Boolean));
+  // Variant refs ("bank~42") are matched on their product handle.
+  const keys = new Set(
+    (consulted ?? []).map((c) => normalizeHandle(typeof c === "string" ? parseProductRef(c).productId : c)).filter(Boolean),
+  );
   if (!Array.isArray(lineItems)) return [];
   return lineItems
     .filter((li) => li && typeof li === "object")
