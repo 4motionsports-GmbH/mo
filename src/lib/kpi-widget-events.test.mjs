@@ -14,6 +14,11 @@ import {
   signinSource,
 } from "./kpi-widget-events.mjs";
 import { CART_PATTERNS, CTA_PATTERNS } from "./kpi-event-patterns.mjs";
+import {
+  CONFIGURATOR_WIDGET_EVENTS,
+  KPI_CONFIGURATOR_CHAT_STARTED,
+  KPI_CONFIGURATOR_PLAN_SHOWN,
+} from "./configurator-core.mjs";
 
 test("the widget's 2026-10-01 event names, exactly as it sends them", () => {
   assert.equal(LOGIN_GATE_SHOWN, "login_gate_shown");
@@ -252,4 +257,13 @@ test("served-variant rows: only sessions with a served variant, teaser share cou
     ["a|10|0", "b|8|6", "unbekannt|1|0"]
   );
   assert.equal(rows[1].rates.overallRate, 0.25);
+});
+
+test("configurator events: only the plan's „Alles in den Warenkorb“ counts as a cart click, none as a product click", () => {
+  const names = [...Object.values(CONFIGURATOR_WIDGET_EVENTS), KPI_CONFIGURATOR_CHAT_STARTED, KPI_CONFIGURATOR_PLAN_SHOWN];
+  for (const name of names) {
+    for (const p of CTA_PATTERNS) assert.equal(like(p).test(name), false, `${name} must not match ${p}`);
+    const cart = CART_PATTERNS.some((p) => like(p).test(name));
+    assert.equal(cart, name === CONFIGURATOR_WIDGET_EVENTS.cartAdded, `${name}: cart pattern ${cart}`);
+  }
 });

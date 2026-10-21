@@ -137,3 +137,11 @@ test("show_gym_plan: every plan line is a discussed product, never a show_produc
   assert.deepEqual(collectDiscussedProductIds([show("a"), plan]), ["a", "rack", "bank~42"]);
   assert.deepEqual(recommendedCardIdsInOrder([plan]), []);
 });
+
+test("latestSelectedProductIds: a Home-Gym plan is the selection; a later plan or add_to_cart replaces it", () => {
+  const plan = (ids) => ({ toolName: "show_gym_plan", input: { title: "Set", items: ids.map((productId) => ({ productId, role: "base" })) } });
+  assert.deepEqual(latestSelectedProductIds([show("a"), plan(["rack", "bank~42"])]), ["rack", "bank~42"]);
+  assert.deepEqual(latestSelectedProductIds([plan(["rack", "bank~42"]), plan(["rack", "matte"])]), ["rack", "matte"]);
+  assert.deepEqual(latestSelectedProductIds([plan(["rack"]), cart(["kb~2"])]), ["kb~2"]);
+  assert.deepEqual(latestSelectedProductIds([cart(["kb~2"]), plan(["rack"])]), ["rack"]);
+});

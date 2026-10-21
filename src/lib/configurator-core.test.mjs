@@ -9,16 +9,21 @@ import {
   configuratorFunnel,
   configuratorGreetingTrigger,
   configuratorLabel,
+  configuratorRangeParam,
   configuratorRetrievalQuery,
   configuratorToolCopy,
+  countShownGymPlans,
   hasConfiguratorTag,
+  isConfiguratorThread,
   mergeConfiguratorProfile,
   normalizePlanItems,
   normalizeTag,
   parseConfiguratorContext,
   parseConfiguratorSettings,
   parseProductIdList,
+  parseStoredGymPlan,
   planShownEventData,
+  planShownEvents,
   renderConfiguratorSection,
   selectAssortment,
   unknownExtraIds,
@@ -313,4 +318,77 @@ test("configuratorFunnel: stage order and rates (null without a base)", () => {
   assert.equal(f.cartRate, 1 / 3);
   assert.equal(f.orderRate, 1 / 18);
   assert.equal(configuratorFunnel({ viewed: 0, started: 0, handover: 0, chats: 0, plans: 0, carts: 0, orders: 0 }).planRate, null);
+});
+
+test("planShownEvents: only rendered plans count, numbered on, unknown lines left out", () => {
+  const plan = (id, items) => ({ toolCallId: id, toolName: "show_gym_plan", input: { title: "Set", items } });
+  const calls = [
+    plan("a", [{ productId: "rack", role: "base" }, { productId: "kb~2", quantity: 2, role: "weights" }]),
+    { ...plan("b", [{ productId: "rack", role: "base" }]), invalid: true }, // failed the schema
+    plan("c", [{ productId: "ghost", role: "extra" }]), // all lines unknown
+    plan("d", [{ productId: "bank", role: "accessory" }, { productId: "ghost2", role: "extra" }]),
+    { toolCallId: "e", toolName: "show_product", input: { productId: "x" } },
+    plan("f", [{ productId: "rack", role: "base" }]), // no tool result (tool error)
+  ];
+  const results = new Map([
+    ["a", { ok: true, shownItems: 2 }],
+    ["b", { ok: true, shownItems: 1 }],
+    ["c", { ok: true, shownItems: 0, unknownIds: ["ghost"], soldOutIds: [] }],
+    ["d", { ok: true, shownItems: 1, unknownIds: ["ghost2"], soldOutIds: [] }],
+  ]);
+  assert.deepEqual(planShownEvents(calls, results, 1), [
+    { planNumber: 2, items: 2, units: 3, productIds: ["rack", "kb"] },
+    { planNumber: 3, items: 1, units: 1, productIds: ["bank"] },
+  ]);
+  assert.deepEqual(planShownEvents(undefined, new Map(), 0), []);
+});
+
+test("parseStoredGymPlan: the stored tool input with notes and German roles; junk → null", () => {
+  const stored = JSON.stringify({
+    title: "Dein Kraft-Set",
+    summary: "Kompakt für 6 m².",
+    tips: ["Matte zuerst auslegen", 7],
+    items: [
+      { productId: "rack", quantity: 1, role: "base", note: "Herzstück" },
+      { productId: "kb~2", quantity: 2, role: "weights" },
+      { productId: "matte", role: "unknown-role" },
+    ],
+  });
+  assert.deepEqual(parseStoredGymPlan(stored), {
+    title: "Dein Kraft-Set",
+    summary: "Kompakt für 6 m².",
+    tips: ["Matte zuerst auslegen"],
+    items: [
+      { productId: "rack", quantity: 1, role: "base", roleLabel: "Basisgerät", note: "Herzstück" },
+      { productId: "kb~2", quantity: 2, role: "weights", roleLabel: "Gewichte", note: null },
+      { productId: "matte", quantity: 1, role: "extra", roleLabel: "Extra", note: null },
+    ],
+  });
+  assert.equal(parseStoredGymPlan('{"title":"cut off at 8000 chars'), null);
+  assert.equal(parseStoredGymPlan(JSON.stringify({ title: "leer", items: [] })), null);
+  assert.equal(parseStoredGymPlan(null), null);
+});
+
+test("isConfiguratorThread and configuratorRangeParam", () => {
+  assert.equal(isConfiguratorThread(["show_product", "suggest_replies"]), true);
+  assert.equal(isConfiguratorThread(["show_gym_plan"]), true);
+  assert.equal(isConfiguratorThread(["show_product", "add_to_cart"]), false);
+  assert.equal(isConfiguratorThread(null), false);
+  assert.equal(configuratorRangeParam("7d"), "7d");
+  assert.equal(configuratorRangeParam("90d"), "90d");
+  assert.equal(configuratorRangeParam("30d"), "30d");
+  assert.equal(configuratorRangeParam("custom"), "30d");
+  assert.equal(configuratorRangeParam(undefined), "30d");
+});
+
+test("countShownGymPlans: rendered plans of the history; an all-unknown plan does not count", () => {
+  const msgs = [
+    { role: "user", parts: [{ type: "text" }] },
+    { role: "assistant", parts: [{ type: "tool-show_gym_plan", output: { ok: true, shownItems: 0, unknownIds: ["ghost"] } }] },
+    { role: "assistant", parts: [{ type: "text" }, { type: "tool-show_gym_plan", output: { ok: true, shownItems: 3 } }] },
+    { role: "assistant", parts: [{ type: "tool-show_gym_plan" }] }, // no stored result (older history)
+    { role: "assistant", parts: [{ type: "tool-show_product", output: { ok: true } }] },
+  ];
+  assert.equal(countShownGymPlans(msgs), 2);
+  assert.equal(countShownGymPlans(undefined), 0);
 });

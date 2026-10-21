@@ -842,6 +842,32 @@ export function configuratorGreetingTrigger(locale) {
 /** The tools only a configurator conversation gets (withheld via activeTools otherwise). */
 export const CONFIGURATOR_TOOLS = /** @type {const} */ (["suggest_replies", "show_gym_plan"]);
 
+/**
+ * The plan tool. An order counts as „über den Konfigurator“ when the latest
+ * product consultation of its session before the order (the attribution
+ * anchor, CONSULTATION_ANCHOR_TOOLS) sits in a thread where Mo showed this
+ * plan — one rule for the KPI screen and the Konfigurator screen
+ * (docs/CONFIGURATOR.md §6, spelled out in mo-revenue-store and
+ * configurator-store because Neon templates are not composable).
+ */
+export const CONFIGURATOR_PLAN_TOOL = "show_gym_plan";
+
+/**
+ * The Konfigurator screen's ?kpiRange= for a KPI preset: it offers 7, 30 and
+ * 90 days, so a custom KPI period opens the 30-day view.
+ * @param {string | null | undefined} preset
+ * @returns {"7d" | "30d" | "90d"}
+ */
+export function configuratorRangeParam(preset) {
+  return preset === "7d" || preset === "90d" ? preset : "30d";
+}
+
+/** True when a thread's fired tools mark it as a configurator consultation. */
+export function isConfiguratorThread(toolsFired) {
+  if (!Array.isArray(toolsFired)) return false;
+  return toolsFired.some((t) => typeof t === "string" && /** @type {readonly string[]} */ (CONFIGURATOR_TOOLS).includes(t));
+}
+
 /** suggest_replies topics (the page fills its profile summary from budget/wishes). */
 export const REPLY_TOPICS = /** @type {const} */ (["budget", "wishes", "frequency", "space", "equipment", "other"]);
 
@@ -921,6 +947,45 @@ export function normalizePlanItems(input) {
   return out;
 }
 
+/**
+ * A stored show_gym_plan row (messages.content = the tool input as JSON,
+ * truncated at 8000 characters) → title, summary, tips and the normalised lines
+ * with their note and German role label — what Gespräche shows above the
+ * transcript. Null when the row is unreadable or has no valid line.
+ * @param {unknown} content
+ * @returns {null | { title: string, summary: string, tips: string[], items: Array<{ productId: string, quantity: number, role: string, roleLabel: string, note: string | null }> }}
+ */
+export function parseStoredGymPlan(content) {
+  if (typeof content !== "string" || !content.trim()) return null;
+  /** @type {unknown} */
+  let input;
+  try {
+    input = JSON.parse(content);
+  } catch {
+    return null;
+  }
+  const items = normalizePlanItems(input);
+  if (items.length === 0) return null;
+  const rec = asRecord(input) ?? {};
+  /** @type {Map<string, string>} */
+  const notes = new Map();
+  for (const raw of Array.isArray(rec.items) ? rec.items : []) {
+    const it = asRecord(raw);
+    if (!it || typeof it.productId !== "string" || typeof it.note !== "string") continue;
+    const id = it.productId.trim();
+    const note = it.note.trim().slice(0, 120);
+    if (note && !notes.has(id)) notes.set(id, note);
+  }
+  const text = (/** @type {unknown} */ v, /** @type {number} */ max) => (typeof v === "string" ? v.trim().slice(0, max) : "");
+  const roleLabels = /** @type {Record<string, { de: string }>} */ (PLAN_ROLE_LABELS);
+  return {
+    title: text(rec.title, 80),
+    summary: text(rec.summary, 400),
+    tips: (Array.isArray(rec.tips) ? rec.tips : []).map((t) => text(t, 200)).filter(Boolean).slice(0, 3),
+    items: items.map((i) => ({ ...i, roleLabel: roleLabels[i.role]?.de ?? i.role, note: notes.get(i.productId) ?? null })),
+  };
+}
+
 // ---------------------------------------------------------------------------
 // KPI (ids, enums, booleans and counts only — API_CONTRACT §0 rule 13)
 // ---------------------------------------------------------------------------
@@ -972,6 +1037,64 @@ export function planShownEventData(input, planNumber) {
     units: items.reduce((n, it) => n + it.quantity, 0),
     productIds: items.map((it) => baseId(it.productId)),
   };
+}
+
+/**
+ * The configurator_plan_shown events of one turn: one per show_gym_plan call
+ * the widget renders — a valid call (the SDK keeps schema failures in the
+ * step's toolCalls, flagged invalid; the widget never renders those) whose tool
+ * result shows at least one line — numbered on from `before`. Lines the result
+ * named unknown are left out of the counts and productIds.
+ *
+ * @param {ReadonlyArray<{ toolCallId?: string, toolName?: string, input?: unknown, invalid?: boolean } | null | undefined>} calls
+ * @param {ReadonlyMap<string, unknown>} results toolCallId → tool result output
+ * @param {number} before plans already shown in the thread
+ * @returns {Array<{ planNumber: number, items: number, units: number, productIds: string[] }>}
+ */
+export function planShownEvents(calls, results, before) {
+  /** @type {Array<{ planNumber: number, items: number, units: number, productIds: string[] }>} */
+  const out = [];
+  let n = Number.isInteger(before) && before > 0 ? before : 0;
+  for (const c of calls ?? []) {
+    if (!c || c.toolName !== CONFIGURATOR_PLAN_TOOL || c.invalid === true) continue;
+    const output = asRecord(typeof c.toolCallId === "string" ? results?.get(c.toolCallId) : undefined);
+    if (!output || output.ok !== true || !(Number(output.shownItems) > 0)) continue;
+    const unknown = new Set(
+      (Array.isArray(output.unknownIds) ? output.unknownIds : []).filter((x) => typeof x === "string")
+    );
+    const items = normalizePlanItems(c.input).filter((it) => !unknown.has(it.productId));
+    if (items.length === 0) continue;
+    n += 1;
+    out.push({
+      planNumber: n,
+      items: items.length,
+      units: items.reduce((sum, it) => sum + it.quantity, 0),
+      productIds: items.map((it) => baseId(it.productId)),
+    });
+  }
+  return out;
+}
+
+/**
+ * Plans already shown in a thread, counted from the replayed UI history (the
+ * `before` of planShownEvents): every `tool-show_gym_plan` part except one
+ * whose stored result showed nothing (`ok` with `shownItems` 0 — all lines
+ * unknown, never rendered). A part without a result counts (older histories).
+ * @param {ReadonlyArray<{ role?: string, parts?: ReadonlyArray<{ type?: string, output?: unknown }> }> | null | undefined} messages
+ * @returns {number}
+ */
+export function countShownGymPlans(messages) {
+  let count = 0;
+  for (const msg of messages ?? []) {
+    if (!msg || msg.role !== "assistant") continue;
+    for (const part of msg.parts ?? []) {
+      if (!part || part.type !== `tool-${CONFIGURATOR_PLAN_TOOL}`) continue;
+      const out = asRecord(part.output);
+      if (out && out.ok === true && !(Number(out.shownItems) > 0)) continue;
+      count++;
+    }
+  }
+  return count;
 }
 
 /**

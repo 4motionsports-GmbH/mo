@@ -46,9 +46,11 @@ const PRODUCT_CARD_TOOLS = new Set([
 // the widget should mirror is the show_product calls.
 const RECOMMENDATION_CARD_TOOLS = new Set(["show_product"]);
 
-// The buy SELECTION: the direct-checkout CTA. The latest call replaces earlier
-// ones (a switch to an alternative drops the rejected product).
-const SELECTION_TOOLS = new Set(["add_to_cart"]);
+// The buy SELECTION: the direct-checkout CTA, and the configurator's Home-Gym
+// plan (its own „Alles in den Warenkorb“ — docs/CONFIGURATOR.md §6). The latest
+// call replaces earlier ones (a switch to an alternative, or a re-planned set,
+// drops the rejected products).
+const SELECTION_TOOLS = new Set(["add_to_cart", "show_gym_plan"]);
 
 /**
  * Read every catalog product id a single tool call references — both the single
@@ -91,10 +93,10 @@ export function collectDiscussedProductIds(toolCalls) {
 }
 
 /**
- * The current buy SELECTION: the product ids of the LATEST add_to_cart call in
- * the given (chronological) tool calls, or null when none fired. The latest call
- * REPLACES earlier ones — the tool call IS the signal, no NLP over the
- * transcript.
+ * The current buy SELECTION: the product ids of the LATEST add_to_cart or
+ * show_gym_plan call in the given (chronological) tool calls, or null when none
+ * fired. The latest call REPLACES earlier ones — the tool call IS the signal, no
+ * NLP over the transcript. Variant refs ("bank~42") are kept.
  *
  * @param {ReadonlyArray<{ toolName?: string, input?: unknown }>} toolCalls
  * @returns {string[] | null}

@@ -126,8 +126,8 @@ export interface ConversationSummaryData {
   /** Every product referenced by tool calls — the DISCUSSED set. */
   recommendedProductIds: string[];
   /**
-   * Products the user expressed intent to BUY (latest add_to_cart call) — the
-   * SELECTED set. Empty when no buy signal occurred; cart-link builders then
+   * Products the user expressed intent to BUY (latest add_to_cart call or
+   * configurator plan) — the SELECTED set. Empty when no buy signal occurred; cart-link builders then
    * fall back to the discussed set (see chooseCartProductIds in lib/cart).
    */
   selectedProductIds: string[];
@@ -291,8 +291,8 @@ export async function persistTurn(input: PersistTurnInput): Promise<boolean> {
     // harmless.
     const newProductIds = collectDiscussedProductIds(allToolCalls);
 
-    // The user's current SELECTION (latest add_to_cart across the full
-    // conversation), or null when no buy signal has fired. Recomputed from
+    // The user's current SELECTION (latest add_to_cart or Home-Gym plan across
+    // the full conversation), or null when no buy signal has fired. Recomputed from
     // scratch each turn — the widget re-sends the whole history — so the
     // stored value always mirrors the latest selection state, including a
     // switch to an alternative (replacement, not accumulation).

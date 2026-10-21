@@ -57,7 +57,8 @@ import {
   KPI_CONFIGURATOR_PLAN_SHOWN,
   mergeConfiguratorProfile,
   parseConfiguratorContext,
-  planShownEventData,
+  planShownEvents,
+  countShownGymPlans,
   renderConfiguratorSection,
 } from "@/lib/configurator-core.mjs";
 import { getCachedConfiguratorSettings, loadConfiguratorAssortment } from "@/lib/configurator-store";
@@ -161,18 +162,11 @@ function extractProfile(messages: UIMessage[]): CustomerProfile {
   return profile;
 }
 
-// Prior show_gym_plan calls of a configurator thread (the plan number of the
+// Prior rendered plans of a configurator thread (the plan number of the
 // configurator_plan_shown KPI), counted from the replayed history like the
-// email-offer cap.
+// email-offer cap (countShownGymPlans, configurator-core.mjs).
 function countGymPlans(messages: UIMessage[]): number {
-  let count = 0;
-  for (const msg of messages) {
-    if (msg.role !== "assistant") continue;
-    for (const part of msg.parts ?? []) {
-      if (part.type === "tool-show_gym_plan") count++;
-    }
-  }
-  return count;
+  return countShownGymPlans(messages as Parameters<typeof countShownGymPlans>[0]);
 }
 
 function countEmailSummaryOffers(messages: UIMessage[]): number {
@@ -797,16 +791,25 @@ export async function POST(req: Request) {
           // Configurator: one event per plan shown in this turn (handles and
           // counts only). The handover event was started at request time.
           if (configuratorStarted) await configuratorStarted;
+          // Only plans the widget renders count (planShownEvents): a call that
+          // failed the schema or whose lines are all unknown shows nothing.
           if (configurator && sessionId) {
-            let planNumber = gymPlansBefore;
-            for (const tc of toolCalls) {
-              if (tc.toolName !== "show_gym_plan") continue;
-              planNumber += 1;
-              await recordKpiEvent({
-                sessionId,
-                event: KPI_CONFIGURATOR_PLAN_SHOWN,
-                data: planShownEventData(tc.input, planNumber),
-              });
+            const planCalls = steps.flatMap((s) =>
+              (s.toolCalls ?? []).map((tc) => ({
+                toolCallId: tc.toolCallId,
+                toolName: tc.toolName,
+                input: (tc as { input?: unknown }).input,
+                invalid: (tc as { invalid?: boolean }).invalid === true,
+              }))
+            );
+            const planResults = new Map<string, unknown>();
+            for (const s of steps) {
+              for (const tr of s.toolResults ?? []) {
+                planResults.set(tr.toolCallId, (tr as { output?: unknown }).output);
+              }
+            }
+            for (const data of planShownEvents(planCalls, planResults, gymPlansBefore)) {
+              await recordKpiEvent({ sessionId, event: KPI_CONFIGURATOR_PLAN_SHOWN, data });
             }
           }
 
