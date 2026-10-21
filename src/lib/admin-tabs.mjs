@@ -11,8 +11,8 @@
 // `kampagnen` → Kampagnen.
 
 /**
- * @typedef {"eingang" | "kunden" | "kampagne" | "kpi" | "feedback" | "gespraeche" |
- *   "wissen" | "analyse" | "verbesserung" | "einstellungen"} AdminTabKey
+ * @typedef {"eingang" | "kunden" | "kampagne" | "konfigurator" | "kpi" | "feedback" |
+ *   "gespraeche" | "wissen" | "analyse" | "verbesserung" | "einstellungen"} AdminTabKey
  * @typedef {"Arbeit" | "Einblicke" | "System"} AdminTabGroup
  * @typedef {{
  *   key: AdminTabKey,
@@ -30,6 +30,8 @@ export const ADMIN_TAB_GROUPS = /** @type {const} */ (["Arbeit", "Einblicke", "S
 /**
  * Screens in display order (also the shortcut order: 1 … 9, 0). Descriptions
  * are the former tab subtitles — they now live in the InfoTip next to the title.
+ * The digits are all taken: a screen added later carries shortcut "" (no
+ * digit; the shell shows no key hint for it).
  * @type {readonly AdminTabMeta[]}
  */
 export const ADMIN_TABS = Object.freeze([
@@ -50,6 +52,15 @@ export const ADMIN_TABS = Object.freeze([
       "Kampagnen planen und personalisierte E-Mails an Kund:innen mit Einwilligung prüfen, anpassen, senden.",
     wide: true,
     shortcut: "2",
+  },
+  {
+    key: "konfigurator",
+    label: "Konfigurator",
+    group: "Arbeit",
+    description:
+      "Home-Gym-Konfigurator (Men's Health / Women's Health): Mos Sortiment & Hinweise für die geführte Beratung — und wie der Konfigurator wirkt, vom Start bis zur Bestellung.",
+    wide: true,
+    shortcut: "",
   },
   {
     key: "kunden",
@@ -184,5 +195,6 @@ export function adminTabHref(key, params = {}) {
  * @returns {AdminTabKey | null}
  */
 export function adminTabForShortcut(digit) {
+  if (!digit) return null;
   return ADMIN_TABS.find((t) => t.shortcut === digit)?.key ?? null;
 }

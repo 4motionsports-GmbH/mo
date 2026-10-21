@@ -10,11 +10,15 @@ import {
   parseAdminTab,
 } from "./admin-tabs.mjs";
 
-test("registry has ten screens with unique keys, labels and shortcuts", () => {
-  assert.equal(ADMIN_TABS.length, 10);
-  assert.equal(new Set(ADMIN_TAB_KEYS).size, 10);
-  assert.equal(new Set(ADMIN_TABS.map((t) => t.label)).size, 10);
-  assert.equal(new Set(ADMIN_TABS.map((t) => t.shortcut)).size, 10);
+test("registry has eleven screens with unique keys, labels and shortcuts", () => {
+  assert.equal(ADMIN_TABS.length, 11);
+  assert.equal(new Set(ADMIN_TAB_KEYS).size, 11);
+  assert.equal(new Set(ADMIN_TABS.map((t) => t.label)).size, 11);
+  // The ten digits are taken; a screen without one carries "".
+  const digits = ADMIN_TABS.map((t) => t.shortcut).filter(Boolean);
+  assert.equal(digits.length, 10);
+  assert.equal(new Set(digits).size, 10);
+  for (const d of digits) assert.match(d, /^[0-9]$/);
   for (const t of ADMIN_TABS) {
     assert.ok(ADMIN_TAB_GROUPS.includes(t.group), `${t.key} has a known group`);
     assert.ok(t.description.length > 10, `${t.key} has a description`);
@@ -26,6 +30,7 @@ test("every legacy tab key still resolves", () => {
     "eingang",
     "kunden",
     "kampagne",
+    "konfigurator",
     "kpi",
     "feedback",
     "gespraeche",
@@ -63,6 +68,8 @@ test("shortcuts map 1…9 and 0 in display order", () => {
   assert.equal(adminTabForShortcut("1"), "eingang");
   assert.equal(adminTabForShortcut("0"), "einstellungen");
   assert.equal(adminTabForShortcut("x"), null);
+  assert.equal(adminTabForShortcut(""), null);
+  assert.equal(adminTabMeta("konfigurator").shortcut, "");
   assert.equal(adminTabMeta("kampagne").wide, true);
   assert.equal(adminTabMeta("feedback").group, "Einblicke");
 });

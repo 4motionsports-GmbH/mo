@@ -3,7 +3,7 @@
 // Per-screen client chunks (TECH-E7). Every screen's client workspace is
 // exported here through next/dynamic, so its JavaScript forms its own chunk and
 // the browser downloads only the workspace of the screen it shows — not the
-// client code of all ten. Server-side rendering stays on (the HTML of a screen
+// client code of all eleven. Server-side rendering stays on (the HTML of a screen
 // arrives complete; React hydrates the workspace once its chunk is loaded), so
 // nothing flashes. The server tabs import the workspaces from this file.
 
@@ -47,4 +47,12 @@ export const VerbesserungWorkspace = dynamic(() =>
 
 export const EmailSettingsWorkspace = dynamic(() =>
   import("./einstellungen/EmailSettingsWorkspace").then((m) => m.EmailSettingsWorkspace)
+);
+
+export const KonfiguratorWorkspace = dynamic(() =>
+  import("./konfigurator/KonfiguratorWorkspace").then((m) => m.KonfiguratorWorkspace)
+);
+
+export const KonfiguratorRange = dynamic(() =>
+  import("./konfigurator/KonfiguratorRange").then((m) => m.KonfiguratorRange)
 );

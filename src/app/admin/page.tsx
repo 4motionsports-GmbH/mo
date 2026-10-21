@@ -30,6 +30,7 @@ import { AnalyseTab } from "./AnalyseTab";
 import { VerbesserungTab } from "./VerbesserungTab";
 import { KampagneTab } from "./KampagneTab";
 import { EinstellungenTab } from "./EinstellungenTab";
+import { KonfiguratorTab } from "./KonfiguratorTab";
 import { AdminShell, type AdminBadges } from "./AdminShell";
 import { THEME_COOKIE, type Theme } from "./theme-config";
 
@@ -107,6 +108,9 @@ async function renderScreen(tab: AdminTabKey, sp: SearchParams, dbReady: boolean
           initialFilter={firstParam(sp.filter)}
         />
       );
+    case "konfigurator":
+      // The KPI period of the screen uses the KPI screen's ?kpiRange= (presets).
+      return <KonfiguratorTab dbReady={dbReady} kpiRange={firstParam(sp.kpiRange)} />;
     case "kpi": {
       // KPI date-range picker state lives in the URL so a refresh / copied link
       // keeps the window; resolveKpiRange validates + clamps it.

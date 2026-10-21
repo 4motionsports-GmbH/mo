@@ -3,6 +3,7 @@
 
 import {
   BookOpen,
+  Dumbbell,
   FileText,
   Inbox,
   MessagesSquare,
@@ -21,6 +22,7 @@ export type AdminTab = AdminTabKey;
 export const TAB_ICONS: Record<AdminTab, LucideIcon> = {
   eingang: Inbox,
   kampagne: Send,
+  konfigurator: Dumbbell,
   kunden: Users,
   wissen: BookOpen,
   kpi: TrendingUp,

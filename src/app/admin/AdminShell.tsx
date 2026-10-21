@@ -121,7 +121,9 @@ function NavItem({
         <span className="inline-flex items-center gap-2">
           {meta.label}
           {count && <span className="opacity-80">· {count}</span>}
-          <Kbd className="border-background/30 bg-background/10 text-background">{meta.shortcut}</Kbd>
+          {meta.shortcut && (
+            <Kbd className="border-background/30 bg-background/10 text-background">{meta.shortcut}</Kbd>
+          )}
         </span>
       }
       side="bottom"
@@ -295,7 +297,7 @@ export function AdminShell({
                   <span>…</span>
                   <Kbd>9</Kbd>
                   <Kbd>0</Kbd>
-                  <span>Bereich wechseln (Reihenfolge wie links)</span>
+                  <span>Bereich wechseln (Reihenfolge wie links; Konfigurator ohne Ziffer)</span>
                 </div>
                 <div className="flex items-center gap-2">
                   <Kbd>/</Kbd>
