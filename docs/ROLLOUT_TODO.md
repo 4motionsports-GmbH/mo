@@ -209,7 +209,7 @@ lawyer ready to send, the Shopify steps and the frontend prompt: [`WELCOME_VOUCH
       handle `home-gym-konfigurator`, template **`page.home-gym-mo`** (or open any page with
       `?view=home-gym-mo`, e.g. `…/pages/angebotsanfrage?view=home-gym-mo`). The old static guide
       (`page.home-gym-konfigurator`) stays as it is.
-   4. **Seals + texts:** theme editor → that page → section „Home-Gym-Konfigurator (Mo)“ → „Siegel
+   4. **Seals + texts:** theme editor → that page → section „Home-Gym-Konfigurator“ → „Siegel
       Men's Health“ / „Siegel Women's Health“ (upload Anna's PNGs there — they land in Inhalte →
       Dateien), check the hero texts, replace the draft cooperation text with the partner material;
       for a partner-specific landing page set „Partner dieser Landingpage“ (or use `?partner=mh` /

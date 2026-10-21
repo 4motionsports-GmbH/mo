@@ -187,7 +187,7 @@ export function KonfiguratorWorkspace({
     <div className="flex flex-col gap-8">
       <Section
         title="Mo im Konfigurator"
-        info="Wie Mo die Beratung auf der Konfigurator-Seite führt. Die Seite selbst (Texte, Siegel, Fragen) wird im Shopify-Theme gepflegt — Abschnitt „Home-Gym-Konfigurator (Mo)“."
+        info="Wie Mo die Beratung auf der Konfigurator-Seite führt. Die Seite selbst (Texte, Siegel, Fragen) wird im Shopify-Theme gepflegt — Abschnitt „Home-Gym-Konfigurator“."
       >
         <Card>
           <CardHeader>
