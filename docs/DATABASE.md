@@ -47,7 +47,7 @@ the pooled one. To add a migration, drop a new file with the next number
 DDL (`--` comments and `;` statement separators; no dollar-quoted function
 bodies, which the lightweight splitter doesn't parse). Production migrations are
 run manually by the maintainer. The latest migration is
-`0079_campaign_hero_image.sql`; the [table index](#table-index--every-table-and-where-it-is-documented)
+`0080_mo_orders_shopify_updated_at.sql`; the [table index](#table-index--every-table-and-where-it-is-documented)
 below names the migration that created each table.
 
 ## Schema overview
@@ -211,7 +211,7 @@ The schema follows the two-cluster split whose lawful bases and windows
 
 ## Table index — every table and where it is documented
 
-Every base table in the schema (migrations `0001`–`0079`; dropped tables
+Every base table in the schema (migrations `0001`–`0080`; dropped tables
 `bestandskunden_suppression_list`, `email_templates`, `email_template_assignments`
 are gone since `0029` / `0049`). Columns of the tables marked *here* are in the
 sections above; the others are owned by the linked doc. Retention and erasure of
@@ -235,7 +235,7 @@ every table: [`DATA_RETENTION.md`](./DATA_RETENTION.md).
 | `analytics_reports` | 0032 | `title`, `date_from`/`date_to`, `preset`, `status` (running/complete/failed), `phase`, `progress`, `options`, `sections` (jsonb; v2 since 2026-10-06 adds `version`, `snapshot`, `decision`, `comparison`), `usage`, `error`, timestamps, `step_claimed_at` (0077 — the step claim) — the stored Komplettanalyse ([`ADMIN_DASHBOARD.md`](./ADMIN_DASHBOARD.md) §3.8) |
 | `campaign_contacts`, `campaign_drafts`, `campaign_sends` | 0034 | here + [`CAMPAIGNS.md`](./CAMPAIGNS.md) §2.5 (owner) |
 | `qa_entries` | 0036 (`question_en`/`answer_en` 0037) | [`QA_KNOWLEDGE.md`](./QA_KNOWLEDGE.md) |
-| `mo_attribution_tokens`, `mo_orders` | 0042 | [`ORDER_ATTRIBUTION.md`](./ORDER_ATTRIBUTION.md) |
+| `mo_attribution_tokens`, `mo_orders` | 0042 (`mo_orders.shopify_updated_at` 0080) | [`ORDER_ATTRIBUTION.md`](./ORDER_ATTRIBUTION.md) |
 | `improvement_runs`, `improvement_suggestions`, `mo_directives`, `mo_directive_versions` | 0044 (`step_claimed_at` 0045) | [`IMPROVEMENT_LOOP.md`](./IMPROVEMENT_LOOP.md) |
 | `email_design_selections` | 0049 | `email_kind` (PK: summary/doi/marketing/campaign), `design_key`, `updated_at` — [`EMAIL_DESIGNS.md`](./EMAIL_DESIGNS.md) |
 | `customer_orders`, `customer_facts`, `consent_events`, `shopify_webhook_events`, `shopify_sync_runs`, `shopify_outbox`, `erasure_tombstones` | 0062–0065 | here (Kundenstamm) |

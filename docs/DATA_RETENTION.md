@@ -517,7 +517,7 @@ step numbers below are the ones in the code. Each run:
    the attribution window + 7 days. With `MO_ATTRIBUTION_SESSION_ANCHOR` on, a
    `widget` token older than that stays only while its **own** session wrote a
    product consultation (`show_product`, `compare_products`, `add_to_cart`,
-   `suggest_showroom`) inside the same window + 7 horizon, and never longer than
+   `suggest_showroom`, `show_gym_plan` — `CONSULTATION_ANCHOR_TOOLS`) inside the same window + 7 horizon, and never longer than
    `attributionTokenMaxDays` = max(`KPI_RETENTION_DAYS`, or 180 when that is 0,
    window + 7) after minting. Rows written before migration `0076`
    (`messages.session_id` NULL) count for the thread's session until they leave

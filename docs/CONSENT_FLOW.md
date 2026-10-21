@@ -361,11 +361,12 @@ The backend tracks two product sets per conversation (`src/lib/recommended-produ
 the conversation:
 
 - **Selected** — products the user expressed intent to **buy**: the ids of the latest `add_to_cart`
-  (direct-checkout) tool call. Updated by replacement, so switching to an alternative drops the
-  rejected product.
+  (direct-checkout) or `show_gym_plan` (the Home-Gym-Konfigurator's plan, [`CONFIGURATOR.md`](./CONFIGURATOR.md)
+  §6) tool call. Updated by replacement, so switching to an alternative or re-planning drops the
+  rejected products.
 - **Discussed** — every product any product tool referenced (`show_product`, `compare_products`,
-  `add_to_cart`, `suggest_showroom`, `show_contact_form`, `offer_email_summary`), including
-  compared-and-rejected alternatives.
+  `add_to_cart`, `suggest_showroom`, `show_contact_form`, `offer_email_summary`, `show_gym_plan`),
+  including compared-and-rejected alternatives.
 
 The cart permalink uses the **selected** set when the user made a clear choice and falls back to the
 **discussed** set only when there is no selection (`chooseCartProductIds`, `src/lib/cart.ts`).

@@ -12,7 +12,7 @@ who owns the Shopify app · **L** = the lawyer · **FE** = the frontend agent (t
 widget).
 Mo's admin is German; English translations are in brackets.
 
-Last updated: 2026-10-21 (Home-Gym-Konfigurator built — Mo leads the configurator page of the Men's Health / Women's Health cooperation, new admin screen „Konfigurator“; no migration — new open item 15); before: 2026-10-20 („Kampagnenbild“ built — a campaign's own hero picture, uploaded in the campaign editor; migration `0079` for M before or with the deploy — new open item 14, new C.33; the admin POST guard now requires exactly `application/json`); before: 2026-10-13 (sender name „Mo von motion sports“ from the code; mails rebuilt for classic Outlook for Windows — open items 12 (Outlook check, 1.13) and 13 (optional: mo@motionsports.de, 1.12)); before: 2026-10-12 (sets, offers and Kontakthäufigkeit live after M's CLI deploy and migration `0078` — old open item 12 moved to Done; the Performance set block's „Zur Kasse“ is solid black with white text); before: 2026-10-11 night (counsel approved dossier § 22 and M said yes to O-1…O-9: copy v6 with the voucher hint, Mo's voucher rule and the confirmation-page note built behind switches (off); Shopify Messaging cannot send personal 30-day codes, so the issuer is open again — new open list 1–6: issuer decision, Shopify preparation, counsel's one-line OK on the final texts, theme texts, the switch-on, the live test); before: 2026-10-11 evening (M's third round: webhooks arrive again; 10f = 0 old-link cases; the welcome code's settings read; test case 8 passed — a chat DOI confirmation fires Shopify Messaging's 5 % welcome mail within a minute; open items 1–2 done, item 3 down to two steps; dossier § 22.1 updated); before: 2026-10-11 afternoon (M's second round: all 13 webhook subscriptions were missing — created, one tag check left; welcome code issued by Shopify Messaging, one shared code; open items 1–3 updated, dossier § 22.1 with the facts); before: 2026-10-11 (M's outputs of `verify:live` / `check:welcome` read: Shopify webhooks down since 05.10. ~16:45 — new open item 1, warnings on the KPI page, in Einstellungen and the Eingang, nightly alert (PR #235); welcome-code candidate: one shared code used by 150 customers, `check:welcome` now prints its settings; old-link check now `verify:live` 10f — the SQL item is gone; the live check of 09.10. done; open list rewritten with copy-paste commands, new C.32); before: 2026-10-08 evening (opt-in reward round of 08.10. built in PR #234 — no migration, no new switch, no widget change: DOI only once, C.29 fixed (Done), `npm run check:welcome`, `verify:live` section 10, KPI blocks of the voucher test, dossier § 22; new open list items 1–5 for M at the top (the old items 1–7 are now 6–12), new C.31); before: 2026-10-08 (the 504 of the Komplettanalyse fixed and pushed to main — Done; open list item 3 (now 8) updated: a stopped report continues when opened); before: 2026-10-06 late evening (three reworks on the branch, live with the next deploy together with the Verbesserung rework: Kunden profile card, KPI screen, Komplettanalyse as a decision report on the new AI tier `strategist` — Done; one migration `0077` for M; new open list item 3 „Neue Auswertungen prüfen“, new C.30; C.26 OI3 B4 needs the next free migration number); before: 2026-10-06 evening (four C tracks built, no migration, no new switch: consent — owner decision: no ask for a blocked address, OI1 F3; retention gaps + `db:reset`; admin texts and copy; attribution §9.1/§9.2/§4.9 — C.26, C.27; new C.28/C.29; Performance mail design on main `599e2e1`; open list item 1 = re-test after M's popup test of 06.10.); before: 2026-10-06 afternoon (widget checks evaluated: page context live and in use, both switches on since 05.10.; consent-popup check open); before: 2026-10-06 (widget `bc7fb5d` live, C.22 done); before: 2026-10-05 evening (all C items of 05.10. built; open list for M at the top; 5.2 + 5.4
+Last updated: 2026-10-21 evening (Home-Gym-Konfigurator live — M uploaded the theme and tested the page; KPI integration built: KPI screen section, revenue cross-cut, plan in Gespräche, refunds into „Umsatz durch Mo“ with migration `0080` for M — item 15 now the migration, the follow-up upload and the partner material); before: 2026-10-21 (Home-Gym-Konfigurator built — Mo leads the configurator page of the Men's Health / Women's Health cooperation, new admin screen „Konfigurator“; no migration — new open item 15); before: 2026-10-20 („Kampagnenbild“ built — a campaign's own hero picture, uploaded in the campaign editor; migration `0079` for M before or with the deploy — new open item 14, new C.33; the admin POST guard now requires exactly `application/json`); before: 2026-10-13 (sender name „Mo von motion sports“ from the code; mails rebuilt for classic Outlook for Windows — open items 12 (Outlook check, 1.13) and 13 (optional: mo@motionsports.de, 1.12)); before: 2026-10-12 (sets, offers and Kontakthäufigkeit live after M's CLI deploy and migration `0078` — old open item 12 moved to Done; the Performance set block's „Zur Kasse“ is solid black with white text); before: 2026-10-11 night (counsel approved dossier § 22 and M said yes to O-1…O-9: copy v6 with the voucher hint, Mo's voucher rule and the confirmation-page note built behind switches (off); Shopify Messaging cannot send personal 30-day codes, so the issuer is open again — new open list 1–6: issuer decision, Shopify preparation, counsel's one-line OK on the final texts, theme texts, the switch-on, the live test); before: 2026-10-11 evening (M's third round: webhooks arrive again; 10f = 0 old-link cases; the welcome code's settings read; test case 8 passed — a chat DOI confirmation fires Shopify Messaging's 5 % welcome mail within a minute; open items 1–2 done, item 3 down to two steps; dossier § 22.1 updated); before: 2026-10-11 afternoon (M's second round: all 13 webhook subscriptions were missing — created, one tag check left; welcome code issued by Shopify Messaging, one shared code; open items 1–3 updated, dossier § 22.1 with the facts); before: 2026-10-11 (M's outputs of `verify:live` / `check:welcome` read: Shopify webhooks down since 05.10. ~16:45 — new open item 1, warnings on the KPI page, in Einstellungen and the Eingang, nightly alert (PR #235); welcome-code candidate: one shared code used by 150 customers, `check:welcome` now prints its settings; old-link check now `verify:live` 10f — the SQL item is gone; the live check of 09.10. done; open list rewritten with copy-paste commands, new C.32); before: 2026-10-08 evening (opt-in reward round of 08.10. built in PR #234 — no migration, no new switch, no widget change: DOI only once, C.29 fixed (Done), `npm run check:welcome`, `verify:live` section 10, KPI blocks of the voucher test, dossier § 22; new open list items 1–5 for M at the top (the old items 1–7 are now 6–12), new C.31); before: 2026-10-08 (the 504 of the Komplettanalyse fixed and pushed to main — Done; open list item 3 (now 8) updated: a stopped report continues when opened); before: 2026-10-06 late evening (three reworks on the branch, live with the next deploy together with the Verbesserung rework: Kunden profile card, KPI screen, Komplettanalyse as a decision report on the new AI tier `strategist` — Done; one migration `0077` for M; new open list item 3 „Neue Auswertungen prüfen“, new C.30; C.26 OI3 B4 needs the next free migration number); before: 2026-10-06 evening (four C tracks built, no migration, no new switch: consent — owner decision: no ask for a blocked address, OI1 F3; retention gaps + `db:reset`; admin texts and copy; attribution §9.1/§9.2/§4.9 — C.26, C.27; new C.28/C.29; Performance mail design on main `599e2e1`; open list item 1 = re-test after M's popup test of 06.10.); before: 2026-10-06 afternoon (widget checks evaluated: page context live and in use, both switches on since 05.10.; consent-popup check open); before: 2026-10-06 (widget `bc7fb5d` live, C.22 done); before: 2026-10-05 evening (all C items of 05.10. built; open list for M at the top; 5.2 + 5.4
 done by M alone on 05.10. (Dev Dashboard + Shopify CLI); C.26 = the open follow-ups of the archived plans;
 doc paths follow the new layout — widget docs in `docs/frontend/`, history in `docs/archive/`).
 
@@ -195,37 +195,37 @@ lawyer ready to send, the Shopify steps and the frontend prompt: [`WELCOME_VOUCH
    (that one wins); a new picture after „Einplanen“ sends the planned mails back for review; a test
    mail from „Prüfen & testen“ shows the SAVED picture — save first. Tell C if anything looks off (a
    screenshot is best).
-15. **Home-Gym-Konfigurator (Men's Health / Women's Health) — deploy + theme upload + 3 Shopify steps
-   (~45 min). No migration, no new env var, no switch in Vercel.** The feature: [`CONFIGURATOR.md`](./CONFIGURATOR.md).
-   1. **Backend:** `git pull`, deploy as usual. Nothing changes for other chats (the new tools and the
-      prompt section exist only in a configurator thread). New admin screen „Konfigurator“ (sidebar,
-      group Arbeit).
-   2. **Theme upload** (theme repo `MANIFEST.md`, entry 2026-10-21): new files
-      `sections/ms-home-gym-configurator.liquid`, `assets/ms-home-gym-configurator.js`,
-      `assets/ms-home-gym-configurator.css`, `templates/page.home-gym-mo.json`; replaced files
-      `assets/ms-chat-widget.js`, `assets/ms-chat-widget.css` (the widget keeps working everywhere
-      else). Check after the upload: `npm run verify:widget` still reports the expected build markers.
-   3. **Page:** Shopify → Onlineshop → Seiten → „Seite hinzufügen“, title e.g. „Home-Gym-Konfigurator“,
-      handle `home-gym-konfigurator`, template **`page.home-gym-mo`** (or open any page with
-      `?view=home-gym-mo`, e.g. `…/pages/angebotsanfrage?view=home-gym-mo`). The old static guide
-      (`page.home-gym-konfigurator`) stays as it is.
-   4. **Seals + texts:** theme editor → that page → section „Home-Gym-Konfigurator“ → „Siegel
-      Men's Health“ / „Siegel Women's Health“ (upload Anna's PNGs there — they land in Inhalte →
-      Dateien), check the hero texts, replace the draft cooperation text with the partner material;
-      for a partner-specific landing page set „Partner dieser Landingpage“ (or use `?partner=mh` /
-      `?partner=wh` in the links).
-   5. **Assortment:** tag the products Mo should plan with **`home-gym-konfigurator`** (Produkte →
-      select → „Tags hinzufügen“) — base units, benches, weights, floor protection, small cardio.
-      Until the tag arrives (catalog sync), Konfigurator → „Zusätzliche Produkte“ works for a test.
-      Optional: „Hinweise für Mo“ (a running promotion, delivery times).
-   6. **Live check (~10 min):** open the page, pick the answers, „Weiter – Mo berät mich“ → Mo greets
-      with the first question and chips; answer budget and wishes → a plan appears in the chat and on
-      the left; change a quantity, „Alles in den Warenkorb“ → the cart drawer opens with the products.
-      Reload the page → the conversation and the plan come back. Konfigurator → „Wirkung“ shows the
-      session (page views only with the consent banner accepted). Tell C what looks off.
+15. **Home-Gym-Konfigurator (Men's Health / Women's Health) — migration 0080 + follow-up upload +
+   partner material (~25 min). No new env var, no switch in Vercel.** Live since 21.10. (Done below);
+   the feature: [`CONFIGURATOR.md`](./CONFIGURATOR.md).
+   1. **Backend:** run migration **`0080_mo_orders_shopify_updated_at.sql`** (`npm run db:migrate`;
+      additive — before or after the deploy, the code writes without the column until it exists) and
+      deploy `main` as usual — the KPI integration of 21.10. (KPI screen section „Home-Gym-Konfigurator“,
+      the row „davon über den Home-Gym-Konfigurator“ in „Wie der Umsatz entstand“, the plan in
+      Gespräche, refunds and cancellations into „Umsatz durch Mo“, ordered by Shopify's `updated_at`).
+   2. **Theme follow-up upload** (theme repo `MANIFEST.md`, entry „2026-10-21, follow-up“): replace
+      `assets/ms-chat-widget.js` and `assets/ms-home-gym-configurator.js` (KPI accuracy only — nothing
+      visible changes). `npm run verify:widget` keeps reporting `konfigurator-2026-10-21`.
+   3. **Partner material:** replace the draft cooperation text in the theme editor (section
+      „Home-Gym-Konfigurator“ → Kooperation) with Anna's text, and have Men's Health / Women's Health
+      confirm the seals and names before the link goes out — the page is visible
+      (`/pages/home-gym-konfigurator-1`, in the sitemap) but not linked.
+   4. **Assortment:** tag the final set with `home-gym-konfigurator`; Konfigurator → „Sortiment“ lists it.
+   5. **Optional — the URL:** the old static guide holds `/pages/home-gym-konfigurator`. For a clean
+      partner link, rename one of the two handles (Shopify offers a redirect when a handle changes)
+      before the links are printed.
+   6. **Check after the first orders:** KPIs → „Home-Gym-Konfigurator“ and the cross-cut row in „Wie der
+      Umsatz entstand“ show the same orders as Konfigurator → „Wirkung“; a refunded order drops out of
+      „Umsatz durch Mo“ once Shopify sends the refund. Tell C what looks off.
 
 ## Done
 
+- [x] **21.10. — Home-Gym-Konfigurator live.** Backend on `main` (no migration); M uploaded the theme
+  files of `MANIFEST.md` entry 2026-10-21 (widget `cc6c8c8`, now the expected build of
+  `verify:widget`; the section name had to be shortened to Shopify's 25 characters, theme `7220769`),
+  created the page `/pages/home-gym-konfigurator-1` (template `page.home-gym-mo`, visible, not linked),
+  uploaded the two seals in the section and tested the flow live; the Konfigurator screen showed the
+  session. Open: item 15 (follow-up upload, partner text, assortment).
 - [x] **12.10. — sets, offers and Kontakthäufigkeit live (#241).** Migration `0078` run by M. The
   production deploy came from the Vercel CLI (`npx vercel --prod`) because Vercel's own build could
   not read the commit from GitHub („Git information retrieval failed“, a GitHub secondary rate limit);

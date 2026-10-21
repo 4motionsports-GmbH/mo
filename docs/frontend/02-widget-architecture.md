@@ -691,7 +691,7 @@ Every `track()` call in the file (grep-complete). The payload shape is `{event, 
 
 | Event | `data` | Emitted in |
 | --- | --- | --- |
-| `chat_opened` / `chat_closed` | `{}` | `openPanel()` / `closePanel()` (every open and close, not once; includes the no-click opens from a deep link or sign-in return, §2.6) |
+| `chat_opened` / `chat_closed` | `{}` | `openPanel()` / `closePanel()` (every open and close, not once; includes the no-click opens from a deep link or sign-in return, §2.6); since the follow-up of 2026-10-21 also `startNewChat()` when an anonymous session rotates while the panel stays open (always so in the configurator dock) |
 | `message_sent` | `{}` | `sendMessage()`. This includes the product-CTA primer message and voice transcripts. It excludes the nudge's context greeting (`sendContextGreeting()`), which has no user message. |
 | `launcher_attention_played` | `{}` | `playLauncherAttention()` |
 | `nudge_shown` | `{pageType, contextual, trigger}` (`trigger` always present: `dwell` / `scroll` / `exit`) | `showNudge()` |

@@ -132,6 +132,17 @@ Prefilled answers are only preselected — the visitor still confirms with „We
 Storage: `admin_settings` key `configurator` (migration 0078 — **no new migration**). Route:
 `POST /api/admin/konfigurator/settings` (`guardAdminPost`, audit `settings.configurator`).
 
+Elsewhere in the admin (ADMIN_DASHBOARD.md §3.5 / §5.22 and §3.4):
+
+- **KPIs** → group „Beratung & Funnel“ → „Home-Gym-Konfigurator“ (handovers, plans, cart value, orders +
+  revenue for any KPI period, link „Im Konfigurator öffnen“); „Wie der Umsatz entstand“ has the cross-cut
+  row „davon über den Home-Gym-Konfigurator“, and the order list a „Konfigurator“ badge (§6).
+- **Gespräche:** a „Konfigurator“ badge on every configurator thread (fired `suggest_replies` or
+  `show_gym_plan`; search for `suggest_replies` lists them all), the tools as „Antwort-Chips“ /
+  „Home-Gym-Plan“, and the latest plan (lines, roles, notes, today's prices) above the transcript.
+- **Komplettanalyse / Verbesserung:** `chat.configuratorHandover`, `chat.configuratorPlans`,
+  `chat.configuratorCarts` and `revenue.viaConfigurator` ([`BUSINESS_SNAPSHOT.md`](./BUSINESS_SNAPSHOT.md)).
+
 ## 6. KPIs and attribution
 
 Events (names and data: API_CONTRACT §5): widget `configurator_viewed` (only with Shopify analytics
@@ -144,13 +155,31 @@ and booleans only — never a name, text or e-mail.
   (anonymous visitors get a new session id like „Neuen Chat starten“), so the stages before and after
   the handover can sit on different session ids. Within the chat (chat → plan → cart → order) the
   session is the same.
-- **Orders:** realised `mo_orders` (PAID / PARTIALLY_REFUNDED) of a configurator chat session, processed
-  after its first `configurator_chat_started` and before the end of the period. They exist only with
-  the `_mo` marker, i.e. with analytics consent ([`ORDER_ATTRIBUTION.md`](./ORDER_ATTRIBUTION.md)); the
-  plan's products enter the conversation's discussed products (`recommended-products.mjs`), so the
-  overlap tier works, and `show_gym_plan` anchors the attribution window like `show_product`.
+- **Started** = once per configurator run: the first answer picked, or the handover itself when the
+  link prefilled everything; „Neu starten“ begins a new run.
+- **Orders „über den Konfigurator“** — one rule for the Konfigurator screen, the KPI screen and the
+  snapshot: a realised `mo_orders` row (PAID / PARTIALLY_REFUNDED) **processed in the period** (order
+  date, like „Umsatz durch Mo“) whose **latest consultation row before the order** — the attribution
+  anchor (`CONSULTATION_ANCHOR_TOOLS`, written by the order's session) — sits in a thread where Mo showed
+  a Home-Gym plan (`CONFIGURATOR_PLAN_TOOL`). Spelled out in `mo-revenue-store.ts` and
+  `configurator-store.ts` (Neon templates are not composable). A later ordinary consultation of the same
+  device moves the order out; signed-in customers keep their session id across threads, so the thread,
+  not the session, decides. These orders are **inside** „Umsatz durch Mo“ (mostly „Beraten & gekauft“ /
+  „Beraten, anderes gekauft“), never added on top. They exist only with the `_mo` marker, i.e. with
+  analytics consent ([`ORDER_ATTRIBUTION.md`](./ORDER_ATTRIBUTION.md)); refunds and cancellations after
+  payment lower them (orders/updated + orders/cancelled).
+- **The plan in the attribution and the selection:** its products enter the discussed products, it
+  anchors the attribution window like `show_product`, and the latest plan is the conversation's
+  **selection** (`selected_product_ids`, like `add_to_cart` — `recommended-products.mjs`): „Cart
+  angeboten“ in Gespräche, „Gespräche mit Produktempfehlung“, the Eingang rule „Kaufabsicht ohne Kauf“
+  and the summary cart. A pinned variant (`id~variantId`) counts as its product for „Beraten & gekauft“.
+- **Plans shown** = `show_gym_plan` calls the widget renders: a call that failed the schema or whose
+  lines are all unknown is not counted (`planShownEvents`); unknown lines are left out of the products.
+- **Cart value** = the plan price of the lines that actually landed in the cart (not the plan total).
 - `configurator_cart_added` matches `%cart%`, so it also counts as an add-to-cart click on the KPI
-  screen.
+  screen (tested in `kpi-widget-events.test.mjs`); no other configurator event matches a click pattern.
+- KPI release markers `home-gym-konfigurator` and `attribution-variants-refunds` (21.10.2026,
+  `kpi-releases.mjs`) name the counting changes for periods across the launch.
 
 ## 7. Storefront (theme repo `ms_shopify_clone`)
 
@@ -169,7 +198,8 @@ draft to be replaced by the partner material.
 
 Screenshots (local harness: the real section and widget, Mo's dialogue mocked, placeholder seals):
 [`screenshots/konfigurator/`](./screenshots/konfigurator/) — storefront 1440 / 1024 / 390 px, admin
-1440 / 1024 px in light and dark.
+1440 / 1024 px in light and dark; the KPI integration (`kpi-section-*`, `kpi-umsatz-wege-*`,
+`kpi-bestellungen-*`, `gespraeche-plan-*`) on local seed data.
 
 ## 8. Limits
 

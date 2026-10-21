@@ -1222,7 +1222,7 @@ silently (§0 rule 15). Their `data` is not read unless a subsection below defin
 
 | Event | Read as |
 | --- | --- |
-| `chat_opened`, `message_sent` | sessions that opened the chat / wrote |
+| `chat_opened`, `message_sent` | sessions that opened the chat / wrote (`chat_opened` also fires when „Neuen Chat starten“ rotates an anonymous session while the panel stays open — always so in the configurator dock; since the follow-up of 2026-10-21) |
 | `product_cta_opened`, `nudge_clicked` | chat opened from the PDP CTA / a nudge (page-context measurement) |
 | `email_capture_declined` | below, "Email-capture funnel events" |
 | `login_gate_*`, `account_signin_started`, `account_signin_return` | below, "Sign-in popup events" |
@@ -1385,12 +1385,12 @@ only `configurator_*` names and flat ids/enums/numbers). Read by the admin scree
 | Event | When | `data` |
 | --- | --- | --- |
 | `configurator_viewed` | the page was shown — **only with Shopify analytics consent**, once per tab session | `{ partner }` (`mh` \| `wh` \| `""`) |
-| `configurator_started` | first answer picked, once per tab session | `{ partner, prefilled }` |
+| `configurator_started` | once per configurator run: the first answer picked, or the handover when the link prefilled the answers; „Neu starten“ begins a new run (since the follow-up of 2026-10-21) | `{ partner, prefilled }` |
 | `configurator_handover` | „Weiter – Mo berät mich“ (after the new thread started) | `{ persona, location, space, training, level, goal, partner, prefilled }` — ids; `training` comma list |
 | `configurator_answers_changed` | changed answers sent to Mo after the handover | `{ fields }` — comma list of field keys |
 | `configurator_chip_clicked` | an answer chip of `suggest_replies` was sent | `{ topic, multi, count }` |
 | `configurator_plan_edited` | quantity, variant, remove or restore in the plan | `{ action }` — `qty` \| `variant` \| `remove` \| `restore` |
-| `configurator_cart_added` | „Alles in den Warenkorb“ landed (matches `%cart%`: counts as an add-to-cart click) | `{ items, units, value, partial }` — `value` = plan total in whole EUR |
+| `configurator_cart_added` | „Alles in den Warenkorb“ landed (matches `%cart%`: counts as an add-to-cart click) | `{ items, units, value, partial }` — `value` = whole EUR of the lines that landed (plan prices; since the follow-up of 2026-10-21 — before, the plan total) |
 
 ### Server-emitted lifecycle events (canonical names)
 
@@ -1418,7 +1418,7 @@ server-side capture-funnel names above, but does not store them:
 | `consent_ask_eligible`     | `GET /api/auth/me` when it answers `marketing.optInActionable: true` — at most once per session per 24 h (2026-10-08). Only there: the App Proxy whoami never writes it | `{ variant, mode, locale }` — `variant` = the sign-in copy variant this session is assigned (the same pick as `/api/consent-copy?surface=signin` with this `x-ms-session`); `mode` `popup` \| `value_moment` (`value_moment` only when that copy carries an approved, valid `valueMoment`); `locale` `de` \| `en` (`?locale=` / `x-ms-locale`, §12). Session-keyed. The base of the welcome-voucher test (AD §5.7). |
 | `consent_copy_served`      | `GET /api/consent-copy?surface=signin` with `x-ms-session`, only while more than one variant is active (the `private, no-store` answer, §7.4) — at most once per session per 24 h, written after the answer (2026-10-08) | `{ variant, locale, reward, valueMoment }` — the variant served; `reward` / `valueMoment` = whether the served copy carries an approved, valid one (what the widget would render). Session-keyed, anonymous sessions included. |
 | `configurator_chat_started` | `POST /api/chat` — the fresh open (`messages: []`) of a configurator thread, at request time (2026-10-21) | `{ persona, location, space, training, level, goal, budget, wishes, partner, locale }` — answer ids (comma lists for `training` / `wishes`, `""` when open). Session-keyed. |
-| `configurator_plan_shown` | `POST /api/chat` — one per `show_gym_plan` call, when the turn finished (2026-10-21) | `{ planNumber, items, units, productIds }` — catalog handles (no variant ids, no names). Session-keyed. |
+| `configurator_plan_shown` | `POST /api/chat` — one per `show_gym_plan` call the widget renders (valid input, at least one known line), when the turn finished (2026-10-21) | `{ planNumber, items, units, productIds }` — catalog handles of the known lines (no variant ids, no names). Session-keyed. |
 
 Which admin KPI section reads which event: backend doc `ADMIN_DASHBOARD.md` §5.
 
@@ -2362,3 +2362,4 @@ section that holds the fact; this table repeats none of the detail.
 | 2026-10-08 | The data the dormant widget of 2026-10-08 (`495fdf6`) already sends — `login_gate_shown` `{ teaser: true, variant? }`, `consent_gate_*` `reward: true` and `placement: "value_moment"` — is stored verbatim and read by the dashboard (JSON `true` only); nothing to change. | §5 |
 | 2026-10-11 | Copy `v6` on every surface (framing only; every `consentTextShown` unchanged). `surface=signin` may carry `reward` (variants `b`/`c`, `CONSENT_REWARD_ENABLED`) and `valueMoment` (variant `c`, `CONSENT_VALUE_MOMENT_ENABLED`), German and English; both switches default off in code, so nothing changes until the owner turns them on. The widget of 2026-10-08 renders them; no widget change. | §7.4, §5, §12.3; CONSENT_CONTRACT.md §1, §3 |
 | 2026-10-21 | Home-Gym-Konfigurator: `context.type: "configurator"` (the page's answers + plan, on every turn of the thread); configurator-only tools `suggest_replies` (answer chips) and `show_gym_plan` (plan card + the page's editable plan, cart via `/cart/add.js`); widget events `configurator_*`, server-only `configurator_chat_started` / `configurator_plan_shown`. Additive: an older widget never sends the context and renders nothing for the tools. | §2 "`context.type: "configurator"`", "Tools the widget MUST render"; §5 |
+| 2026-10-21 (follow-up) | KPI accuracy, no shape change: `configurator_started` once per run (also for a prefilled handover and after „Neu starten“), `configurator_cart_added.value` = the lines that landed, `chat_opened` after a session rotation in an open panel, the plan thumbnail sends `product_cta_clicked`, an attribution token minted for a session that rotated meanwhile is dropped — the new session mints its own only once it is consulted (lazy); `configurator_plan_shown` only for rendered plans. | §5 |

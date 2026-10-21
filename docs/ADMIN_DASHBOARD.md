@@ -940,7 +940,7 @@ lifetime aggregates last:
 | Group (toolbar chip) | Sections (§) |
 | --- | --- |
 | Umsatz | Umsatz durch Mo (§5.5) · Wie der Umsatz entstand · Was genau passiert ist (§5.16) |
-| Beratung & Funnel (Funnel) | Vom Chat zur Bestellung (§5.21) · Beratungen incl. Sprachen (§5.1, §5.14) · Seitenkontext auf Produktseiten (§5.1a) |
+| Beratung & Funnel (Funnel) | Vom Chat zur Bestellung (§5.21) · Beratungen incl. Sprachen (§5.1, §5.14) · Seitenkontext auf Produktseiten (§5.1a) · Home-Gym-Konfigurator (§5.22) |
 | Anmeldung & Einwilligung (Anmeldung) | Anmelde-Popup (anonyme Besucher:innen) incl. „Diagnose: wo Anmeldungen enden“ (§5.7a) · Einwilligung nach der Anmeldung (Marketing-Opt-in) (§5.7) · E-Mail-Capture-Funnel (§5.8) · Kundenkonto & Self-Service (§5.15) |
 | Kampagnen & Eingang (Kampagnen) | Kampagnen-Funnel incl. „Kampagnen im Vergleich“ (§5.9) · Bundle-Angebote (§5.10) · Eingang (§5.18) |
 | Qualität & Wissen (Qualität) | Gesprächsqualität (KI-Analyse) (§5.13) · Wissen (Q&A-Queue) (§5.11) · Feedback (§5.12) · Bestellstatus im Chat (§5.15a) |
@@ -990,7 +990,8 @@ category/quality if present, and outcome signals derived from existing data:
 | Signal | Source | Notes |
 | --- | --- | --- |
 | tools fired | distinct `messages.tool_name` | reliable |
-| checkout offered | `conversations.selected_product_ids` non-empty | `add_to_cart` fired |
+| checkout offered | `conversations.selected_product_ids` non-empty | `add_to_cart` or a Home-Gym plan (`show_gym_plan`) fired |
+| Konfigurator | a fired `suggest_replies` or `show_gym_plan` (`isConfiguratorThread`) | badge „Konfigurator“; the detail shows the latest plan (lines, roles, notes, today's prices) in a `Disclosure` „Home-Gym-Plan“ above the transcript ([`CONFIGURATOR.md`](./CONFIGURATOR.md) §5) |
 | cart link used | `kpi_events` `%cart%`/`%checkout%` by session | session-grained |
 | email captured | `email_captures` EXISTS by session | session-grained |
 | "keine Antwort" (error proxy) | user turn present, zero assistant turns | see below |
@@ -1393,7 +1394,9 @@ one pass), client `konfigurator/KonfiguratorWorkspace` and `KonfiguratorRange` (
 
 - **Wirkung** (`?kpiRange=7d|30d|90d`, default 30 days; pure DB, never cached —
   `configurator-store.getConfiguratorKpis`): tiles Seitenaufrufe (only with analytics consent), An Mo
-  übergeben, Plan erstellt, Warenkorb (value of the plans put into the cart), Bestellungen + Umsatz; the
+  übergeben, Plan erstellt, Warenkorb (value of the plan lines that landed in the cart), Bestellungen +
+  Umsatz (orders „über den Konfigurator“ by order date — the rule of [`CONFIGURATOR.md`](./CONFIGURATOR.md)
+  §6, the same orders as the KPI screen's cross-cut row, §5.16); the
   funnel „Vom ersten Klick zur Bestellung“ (`FunnelBars`, each stage = distinct sessions on its own,
   because the handover starts a fresh thread); „So antworten die Besucher“ (one `BarList` per answer —
   fields with nothing but „ohne Angabe“ are hidden — plus „Herkunft“ Men's Health / Women's Health /
@@ -1614,8 +1617,13 @@ ab der letzten Mail“ (`attribution-threads-maillinks`: §5.16), and on 08.10.2
 Gutschein-Hinweise vorbereitet (ohne sichtbare Änderung)“ (`widget-reward-dormant`, the widget build
 `495fdf6`: reward hint, sign-in teaser and value-moment ask stay dormant until the server serves them;
 at once a second tab of the same device does not ask again within 24 h of an accept — „Angezeigt“ in
-§5.7 can drop slightly — and a broken answer renews no order marker) — fifteen entries in all; the six
-of 06.10. and the one of 08.10. add no section note. The
+§5.7 can drop slightly — and a broken answer renews no order marker), and on 21.10.2026 „Home-Gym-Konfigurator
+live (Men's Health / Women's Health)“ (`home-gym-konfigurator`: plan cart adds count as cart clicks, the plan
+as the conversation's selection, popups wait for the plan in configurator threads, a new chat in an open
+panel counts as opened; section note on §5.22) and „Bestell-Zuordnung: Varianten und Erstattungen“
+(`attribution-variants-refunds`: variant refs count as their product, refunds reach the ledger — §5.5,
+§5.16) — seventeen entries in all; the six of 06.10., the one of 08.10. and the second of 21.10. add no
+section note. The
 affected sections add a note when the period starts earlier: Anmelde-Popup,
 Einwilligung, Kundenkonto and „Chat gestartet“ of the Kampagnen-Funnel are
 „erst ab dem 04.10.2026 aussagekräftig“, the two widget tiers of
@@ -1677,7 +1685,9 @@ complement adds orders, a note says the comparison is computed without them.
 
 **Notes under the section** (only when they apply): the release note
 `attribution` (§5.0); the complement („n Bestellungen mit Mo-Code (x €) aus dem
-Shopify-Code-Abgleich ergänzt …“); unpaid ledger orders with their value;
+Shopify-Code-Abgleich ergänzt …“); unpaid ledger orders with their value; orders refunded or voided
+(„… wurden erstattet oder storniert …“, since 2026-10-21 — orders/updated and
+orders/cancelled reach the ledger);
 marked orders without attribution („Ohne Zuordnung“, §5.16); Shopify not
 configured (the complement cannot run); codes Shopify did not answer; the
 100-code cap; orders in another currency (only the main currency — the most
@@ -1695,7 +1705,8 @@ marked order is seen (`ingestionSeen`) a Callout names the webhook setup
 
 The attribution ledger behind „Umsatz durch Mo“ (design:
 [`ORDER_ATTRIBUTION.md`](./ORDER_ATTRIBUTION.md)): orders/create + orders/paid
-webhooks push every order carrying a **Mo marker** (the opaque cart attribute
+webhooks push every order carrying a **Mo marker** (orders/updated + orders/cancelled refresh the money
+of a stored order — refunds and cancellations after payment, since 2026-10-21) (the opaque cart attribute
 `attributes[_mo]` from Mo-built cart links or the widget's live-cart stamp,
 and/or an MS5-/MK- code) into `mo_orders` (migration **0042**). Plain DB — **no
 Shopify calls, no caps, no sampling** (the drill-down lists the newest 500 of a
@@ -1706,8 +1717,11 @@ period, the totals count all). Two sections show it (2026-10-06; they replace
 (revenue, share, orders) and as one part-to-whole bar (2 px gaps, a tooltip per
 segment), then a table of the channels grouped by tier — Bestellungen · Umsatz ·
 Anteil am Umsatz (a bar in the tier colour) · Ø Bestellwert —, a subtotal row per
-group („Beratung im Chat“ = the two widget tiers, „Direkt über Mo“) and the cross-cut row „davon mit Mo-Rabattcode (MS5-/MK-)“ (the coded
-orders inside the rows above, InfoTip on how they count). Each channel row
+group („Beratung im Chat“ = the two widget tiers, „Direkt über Mo“) and the cross-cut rows „davon mit Mo-Rabattcode (MS5-/MK-)“ (the coded
+orders inside the rows above, InfoTip on how they count) and „davon über den Home-Gym-Konfigurator“ (since
+2026-10-21: orders whose last consultation was a configurator thread with a plan — the rule of
+[`CONFIGURATOR.md`](./CONFIGURATOR.md) §6, `via_configurator` in the ledger queries, `summariseRevenue`
+`viaConfigurator`; the label links the Konfigurator screen). Each channel row
 carries its definition in an InfoTip (`REVENUE_CHANNELS`); channels without
 orders stay visible (greyed), „Sonstiger Mo-Weg“ only when it has some.
 
@@ -1735,8 +1749,8 @@ product) and **Mit Kundenkonto verknüpft** (rows with a customer link; hint: ro
 with a conversation) — `drillInsights`. Per row:
 - date and time; the order number with its Mo code; a badge for an unpaid order
   („noch nicht bezahlt“, „erstattet“, „storniert“ — amount struck through, not in
-  the totals), a partial refund („teilerstattet“) and the complement
-  („Code-Abgleich“); the channel in its tier colour;
+  the totals), a partial refund („teilerstattet“), the complement
+  („Code-Abgleich“) and „Konfigurator“ (the cross-cut above); the channel in its tier colour;
 - **Was passiert ist** (`orderPathSummary`): e.g. „Beraten am 12.08. · 2 Tage
   später gekauft · 1 von 2 Produkten aus der Beratung“, „Kampagnen-Code MK-…
   eingelöst · zuletzt beraten am …“, „Link der Zusammenfassungs-E-Mail · nach der
@@ -1809,7 +1823,7 @@ manual-check sessions (`livecheck-%`) never count.
 | Stage | Sessions … |
 | --- | --- |
 | **Beratung** | with a conversation started in the period that has ≥ 1 visitor message (`messages.role = 'user'`) |
-| **Produkt gezeigt** | … whose chats in the period discussed or selected ≥ 1 product (`recommended_product_ids` / `selected_product_ids` not empty — every product of a `show_product`, `compare_products` or `add_to_cart` call) |
+| **Produkt gezeigt** | … whose chats in the period discussed or selected ≥ 1 product (`recommended_product_ids` / `selected_product_ids` not empty — every product of a product tool call — `PRODUCT_CARD_TOOLS` in `recommended-products.mjs`, incl. the Home-Gym plan) |
 | **Produkt angeklickt** | … with a product click (`CTA_PATTERNS`) or an add-to-cart click (`CART_PATTERNS`) at or after the first chat (widget events, [`API_CONTRACT.md`](./frontend/API_CONTRACT.md) §5) |
 | **Warenkorb / Kasse** | … with an add-to-cart / checkout click (`CART_PATTERNS`) |
 | **Bestellt** | … with a paid `mo_orders` row of the session at or after the first chat |
@@ -1942,6 +1956,18 @@ observed base rate). Without it no comparison is shown.
 > getippte Fragen tragen den Seitenkontext erst mit dem Widget vom 06.10.2026.“).
 > Which build is live: `npm run verify:widget`. Live check: `npm run
 > verify:live -- --session <prefix>` section 9.
+
+### 5.22 Home-Gym-Konfigurator — [`getConfiguratorSummary()`](../src/lib/configurator-store.ts), [`kpi/sections/KonfiguratorSection.tsx`](../src/app/admin/kpi/sections/KonfiguratorSection.tsx)
+
+Section in the „Beratung & Funnel“ group after the page context (anchor `konfigurator`, 2026-10-21): four
+tiles for the KPI period — An Mo übergeben (hint: share of the started runs), Plan erstellt (plans shown,
+share of the consultations), Warenkorb (plan value of the lines that landed — not revenue) and
+Bestellungen (orders „über den Konfigurator“ with their revenue, „in ‚Umsatz durch Mo‘ enthalten“) — and
+„Im Konfigurator öffnen“ (`?tab=konfigurator`, 7 / 30 / 90 days; a custom period opens 30). The
+definitions, the funnel and the detail lists are the Konfigurator screen's (§3.11,
+[`CONFIGURATOR.md`](./CONFIGURATOR.md) §6); the InfoTips are the same texts (exported from
+`konfigurator/KonfiguratorKpis.tsx`). Pure DB (`kpi_events`, `mo_orders`, `messages`), never cached; a
+period starting before 21.10.2026 notes that the feature began then (`releaseNotesFor("konfigurator")`).
 
 ### 5.7a Anmelde-Popup — [`getLoginGateFunnel()`](../src/lib/kpi-store.ts)
 

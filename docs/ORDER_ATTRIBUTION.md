@@ -36,7 +36,24 @@ Shopify's own cart is the carrier:
    `POST /api/webhooks/shopify` (HMAC-verified over the raw body like every Shopify
    webhook, before parsing). Orders
    carrying a Mo marker are ingested into `mo_orders`; unmarked orders are
-   **never stored in `mo_orders`** (data minimisation). Separately, the order
+   **never stored in `mo_orders`** (data minimisation). **`orders/updated` and
+   `orders/cancelled`** (since 2026-10-21) only refresh the money of an order
+   already in `mo_orders` — refunds and cancellations after payment
+   (`financial_status`, `total_price = current_total_price`, codes) — and never
+   attribute a new one. Shopify does not guarantee the delivery order, so the
+   payload's `updated_at` decides (`mo_orders.shopify_updated_at`, migration
+   `0080`): an older delivery is skipped — in `mergeOrderFinancials` and again in
+   the UPDATE's own WHERE for concurrent deliveries. Without a timestamp (rows
+   from before `0080`, or before it ran) a status ladder never moves an order
+   back (a late `orders/paid` after the refund keeps the refund; two partial
+   refunds keep the lower amount). A first delivery that loses the insert race
+   to a concurrent one (`ON CONFLICT DO NOTHING`) goes through the same merge. A
+   cancelled order that is not refunded yet stays „paid“ until Shopify reports
+   the refund; refunded and voided orders are counted apart („erstattet oder
+   storniert“), never as „noch nicht bezahlt“. Known gap: an `orders/updated`
+   that arrives before the order is stored (its `orders/create` still failing
+   and retried) is acknowledged without effect — the later create stores the
+   older money until the next update of that order. Separately, the order
    ledger (`customer_orders`, `docs/CUSTOMERS.md` „Kundenstamm“) stores every
    order of a Shopify customer (guest orders without a customer are not stored)
    while `SHOPIFY_CUSTOMER_SYNC_ENABLED` is on (ANWALTSDOSSIER §13.1 item 1).
@@ -55,12 +72,13 @@ campaign code, …) and is listed in „Was genau passiert ist“:
 | Tier | Definition |
 | --- | --- |
 | **Direkt** | The order redeemed a Mo code (MS5-/MK-), or came through a cart link Mo itself built (summary email, marketing email, bundle offer — token sources `summary_email` / `marketing_email` / `bundle`). |
-| **Beraten & gekauft** (`assisted`) | The widget stamped the live cart (source `widget`) AND ≥1 purchased line matches a product discussed/selected in that session's consultation (normalised-handle matching, `lib/kpi-match.mjs`). This is the "typed it into the search bar" case. „Consultation“ = every thread of the session (`conversations.session_id`) that started at or before the order and was active within the attribution window before it — not only the latest thread (`overlapLookback`, `unionConsultedProducts`). A thread started after the order never counts. |
+| **Beraten & gekauft** (`assisted`) | The widget stamped the live cart (source `widget`) AND ≥1 purchased line matches a product discussed/selected in that session's consultation (normalised-handle matching, `lib/kpi-match.mjs`). This is the "typed it into the search bar" case. „Consultation“ = every thread of the session (`conversations.session_id`) that started at or before the order and was active within the attribution window before it — not only the latest thread (`overlapLookback`, `unionConsultedProducts`). A thread started after the order never counts. A product Mo named with a variant (`id~variantId`, e.g. the weight in a Home-Gym plan) counts as its product (since 2026-10-21). |
 | **Beraten, anderes gekauft** (`influenced`) | Session stamp present, but no purchased line matches the consultation. |
 
 Only **realised money** counts toward revenue (financial status
-PAID/PARTIALLY_REFUNDED — same policy as `lib/kpi-revenue-core.mjs`); other
-ingested orders are shown as "not yet paid", never silently dropped.
+PAID/PARTIALLY_REFUNDED — same policy as `lib/kpi-revenue-core.mjs`); refunded
+and voided orders are counted as „erstattet oder storniert“, other ingested
+orders as "not yet paid" — never silently dropped.
 
 **Attribution window:** an order attributes only within
 `MO_ATTRIBUTION_WINDOW_DAYS` (default **30**) of its token's **anchor** —
@@ -75,8 +93,9 @@ decision 2026-10-05: on after the migration, ANWALTSDOSSIER §20; turn on only
 * **Switch on, session source `widget`:** the later of the minting and the
   latest **product consultation written by the token's own session** at or
   before the order (`attributionAnchor`, `lastConsultationAt`). Consultation =
-  a tool marker row with `show_product`, `compare_products`, `add_to_cart` or
-  `suggest_showroom` (`CONSULTATION_ANCHOR_TOOLS`); a pure shipping/support
+  a tool marker row with `show_product`, `compare_products`, `add_to_cart`,
+  `suggest_showroom` or `show_gym_plan` (the Home-Gym-Konfigurator's plan,
+  [`CONFIGURATOR.md`](./CONFIGURATOR.md) §6) — `CONSULTATION_ANCHOR_TOOLS`; a pure shipping/support
   chat does not count. "Own session" = `messages.session_id` (migration
   `0076`), so another device's turns in a resumed thread never extend the
   window. Rows written before `0076` (`session_id` NULL) fall back to the
@@ -214,9 +233,10 @@ simply can't contribute to the overlap check.
 
 Which of these steps are done in production: [`ROLLOUT_TODO.md`](./ROLLOUT_TODO.md).
 
-1. Run `npm run db:migrate` (applies `0042_order_attribution.sql`; migrations are run
-   by the maintainer).
-2. Webhooks: `orders/create` and `orders/paid` are among the subscriptions the app
+1. Run `npm run db:migrate` (applies `0042_order_attribution.sql`, `0076` and
+   `0080_mo_orders_shopify_updated_at.sql`; migrations are run by the maintainer).
+2. Webhooks: `orders/create`, `orders/paid`, `orders/updated` and `orders/cancelled`
+   (the last two refresh stored orders — refunds, cancellations) are among the subscriptions the app
    registers itself — `npm run shopify:webhooks` (dry run: what exists, what is
    missing), `-- --apply` to create the missing ones at
    `<PUBLIC_BASE_URL>/api/webhooks/shopify`, `-- --dedupe` to delete duplicates
@@ -253,18 +273,19 @@ consent is withdrawn. Contract (request, response, re-stamp, renewal, blanking, 
 | --- | --- |
 | `migrations/0042_order_attribution.sql` | `mo_attribution_tokens` + `mo_orders`. |
 | `migrations/0076_message_session_id.sql` | `messages.session_id` (writer of tool marker rows) + partial index `messages_session_marker_idx`. Additive; safe to run right after the merge. |
-| `src/lib/order-attribution.mjs` (+ tests) | Pure: marker URL builder, payload parsing (PII-free), catalog matching, tier classification, window check, window anchor (`attributionAnchor`), mail-link window restart (`restartsWindowOnReuse`), cross-thread overlap (`overlapLookback`, `unionConsultedProducts`), unresolved-marker event, event-id dedupe key and tally. |
-| `src/lib/mo-orders-store.ts` | I/O: token minting (mail-link re-stamp), webhook ingest (anchor query, overlap over the session's threads in the window, `unknown_token` / `outside_window`), `noteUnresolvedMarker` (event-id claim), sweep short-circuit. |
+| `migrations/0080_mo_orders_shopify_updated_at.sql` | `mo_orders.shopify_updated_at` — Shopify's `updated_at` of the last delivery applied (orders the follow-up deliveries). Additive; until it runs the status ladder decides. |
+| `src/lib/order-attribution.mjs` (+ tests) | Pure: marker URL builder, payload parsing (PII-free), catalog matching, tier classification, window check, window anchor (`attributionAnchor`), mail-link window restart (`restartsWindowOnReuse`), cross-thread overlap (`overlapLookback`, `unionConsultedProducts`), unresolved-marker event, event-id dedupe key and tally.; follow-up money (`mergeOrderFinancials`: newer `updated_at` wins, else the status ladder; `parseOrderWebhook.updatedAt`); variant refs reduced to their product in `unionConsultedProducts` |
+| `src/lib/mo-orders-store.ts` | I/O: token minting (mail-link re-stamp), webhook ingest (anchor query, overlap over the session's threads in the window, `unknown_token` / `outside_window`), `noteUnresolvedMarker` (event-id claim), sweep short-circuit.; follow-up refresh `refreshStoredOrder` (orders/paid, and orders/updated + orders/cancelled in the update-only mode; a first delivery that loses the insert race — `ON CONFLICT DO NOTHING` — goes through it too) |
 | `src/lib/platform-flags.mjs`, `src/lib/retention-options.mjs` (+ tests) | `MO_ATTRIBUTION_SESSION_ANCHOR`; `attributionSessionAnchor` + `attributionTokenMaxDays` (the cap). |
 | `src/lib/retention.ts` | Step 5i: token purge (switch off) or keep rule with cap (switch on), `keptActiveAttributionTokens`. |
 | `src/lib/conversation-store.ts` | `persistTurn` writes `messages.session_id` on tool marker rows; retries without the column until `0076` ran. |
 | `src/lib/customer-erasure.ts` | `erasePerson` (every erasure path): severs `mo_orders` of the person's sessions (session id + token NULLed) and deletes their `mo_attribution_tokens`. |
 | `src/lib/db-errors.mjs` (+ tests) | `isUndefinedColumnError` (SQLSTATE 42703) for that retry. |
-| `src/app/api/webhooks/shopify/route.ts` | Routes `orders/create` + `orders/paid` to the ingest (HMAC-first); emits `mo_order_marker_unresolved` after the delivery is recorded (passes `X-Shopify-Event-Id`). |
+| `src/app/api/webhooks/shopify/route.ts` | Routes `orders/create` + `orders/paid` to the ingest and `orders/updated` + `orders/cancelled` to its update-only mode (HMAC-first); emits `mo_order_marker_unresolved` after the delivery is recorded (passes `X-Shopify-Event-Id`). |
 | `src/app/api/attribution/token/route.ts` | Widget-facing token mint (origin + secret + session guards; contract API_CONTRACT §10). |
 | `src/lib/summary-email.ts`, `src/lib/marketing-email.ts`, `src/lib/bundle-offers.ts` | Stamp their cart links at build/send time. |
 | `src/lib/conversion-sweep.ts` | Uses ingested orders as a Shopify-free short-circuit. |
 | `src/lib/mo-revenue-store.ts`, `src/lib/mo-revenue.mjs` (+ tests), `src/app/admin/kpi/sections/Umsatz*Section.tsx`, `src/app/admin/kpi/RevenueOrders.tsx` | The revenue sections (ADMIN_DASHBOARD §5.5, §5.16): tiers, channels, the drill-down, the „ohne Zuordnung“ note and the release notes. |
-| `src/lib/kpi-releases.mjs` | Release entries `attribution-unresolved` + `attribution-window` (2026-10-05), `attribution-token-renewal` (2026-10-06, the widget's renewal and blanking) and `MEANINGFUL_FROM.attribution`. |
+| `src/lib/kpi-releases.mjs` | Release entries `attribution-unresolved` + `attribution-window` (2026-10-05), `attribution-token-renewal` (2026-10-06, the widget's renewal and blanking), `attribution-variants-refunds` (2026-10-21, variant refs and refunds) and `MEANINGFUL_FROM.attribution`. |
 | `scripts/verify-live-kpis.mjs` | Section 7 (pre-checks P1–P6) and 7b (live checks V0, V2/V2b against the latest nightly retention run or `--ran-at`, V3, V4, tokens older than 37 days). |
-| `scripts/register-shopify-webhooks.mjs` | `npm run shopify:webhooks`: registers the `orders/create` + `orders/paid` subscriptions (with the app's other topics), `--dedupe` for duplicates. |
+| `scripts/register-shopify-webhooks.mjs` | `npm run shopify:webhooks`: registers the `orders/create` + `orders/paid` subscriptions and `orders/updated` + `orders/cancelled` (with the app's other topics), `--dedupe` for duplicates. |
