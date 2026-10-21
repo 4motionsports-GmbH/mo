@@ -8,10 +8,13 @@
 //      stamps onto the live storefront cart. One token per (session, source),
 //      reused on re-request, so a session never accumulates marker spam; a
 //      reused mail-link token restarts its window (created_at = now()).
-//   2. INGEST orders/create + orders/paid webhook deliveries — idempotent
-//      upsert keyed by shopify_order_id. Only orders carrying a Mo marker are
-//      stored (data minimisation); the tier is snapshotted at ingest against
-//      the session's discussed/selected products.
+//   2. INGEST orders/create + orders/paid webhook deliveries — keyed by
+//      shopify_order_id (insert, or the follow-up refresh). Only orders carrying
+//      a Mo marker are stored (data minimisation); the tier is snapshotted at
+//      ingest against the session's discussed/selected products.
+//      orders/updated + orders/cancelled refresh a stored order's money only
+//      (refunds, cancellations; mergeOrderFinancials, ordered by Shopify's
+//      updated_at — mo_orders.shopify_updated_at, migration 0080).
 //
 // GDPR: everything here is Cluster A — session-keyed, pseudonymous. The
 // webhook payload's customer fields are never read (see parseOrderWebhook).
@@ -25,6 +28,7 @@ import { hasRecommendedPurchase } from "./kpi-match.mjs";
 import {
   parseOrderWebhook,
   hasMoMarker,
+  mergeOrderFinancials,
   isMoDiscountCode,
   matchOrderLineItems,
   classifyAttributionTier,
@@ -42,6 +46,7 @@ import { isAttributionSessionAnchorEnabled } from "./platform-flags.mjs";
 import { recordKpiEvent, KPI_MO_ORDER_MARKER_UNRESOLVED } from "./kpi-events";
 import { reportError } from "./observability";
 import { parseIntEnv } from "./env-num";
+import { isUndefinedColumnError } from "./db-errors.mjs";
 
 // ---------------------------------------------------------------------------
 // Tokens
@@ -212,13 +217,82 @@ async function consultedProductIds(
   return unionConsultedProducts(rows);
 }
 
+type ParsedOrder = NonNullable<ReturnType<typeof parseOrderWebhook>>;
+
 /**
- * Ingest one (verified) orders/create | orders/paid webhook payload.
- * Idempotent on shopify_order_id: a duplicate or follow-up delivery (create →
- * paid) updates the mutable order facts (status, total, codes) and keeps the
+ * A follow-up delivery for an order already in mo_orders: refresh its money
+ * (status, remaining total), currency and codes through mergeOrderFinancials —
+ * the newer Shopify updated_at wins, an older delivery is skipped, and without
+ * timestamps the status ladder never moves an order back. The UPDATE repeats
+ * the timestamp check in its own WHERE, so two concurrent deliveries cannot put
+ * the older one last. Before migration 0080 (no shopify_updated_at) it falls
+ * back to the ladder alone. False when the order is not in the ledger. Throws
+ * (the ingest's db-error path lets Shopify retry).
+ */
+async function refreshStoredOrder(parsed: ParsedOrder, sql: Sql): Promise<boolean> {
+  let withColumn = true;
+  let rows: Array<{ financial_status: string | null; total_price: string | number | null; shopify_updated_at?: string | Date | null }>;
+  try {
+    rows = (await sql`
+      SELECT financial_status, total_price, shopify_updated_at
+        FROM mo_orders WHERE shopify_order_id = ${parsed.shopifyOrderId} LIMIT 1
+    `) as typeof rows;
+  } catch (err) {
+    if (!isUndefinedColumnError(err)) throw err;
+    withColumn = false;
+    rows = (await sql`
+      SELECT financial_status, total_price
+        FROM mo_orders WHERE shopify_order_id = ${parsed.shopifyOrderId} LIMIT 1
+    `) as typeof rows;
+  }
+  const row = rows[0];
+  if (!row) return false;
+  const money = mergeOrderFinancials(
+    { financialStatus: row.financial_status, totalPrice: row.total_price, updatedAt: row.shopify_updated_at ?? null },
+    { financialStatus: parsed.financialStatus, totalPrice: parsed.totalPrice, updatedAt: withColumn ? parsed.updatedAt : null }
+  );
+  if (!money.apply) return true;
+  if (withColumn) {
+    await sql`
+      UPDATE mo_orders
+         SET financial_status   = ${money.financialStatus},
+             total_price        = ${money.totalPrice},
+             currency           = COALESCE(${parsed.currency}, currency),
+             discount_codes     = ${parsed.discountCodes}::text[],
+             shopify_updated_at = COALESCE(${money.stamp ? parsed.updatedAt : null}::timestamptz, shopify_updated_at),
+             updated_at         = now()
+       WHERE shopify_order_id = ${parsed.shopifyOrderId}
+         AND (${parsed.updatedAt}::timestamptz IS NULL
+              OR shopify_updated_at IS NULL
+              OR ${parsed.updatedAt}::timestamptz >= shopify_updated_at)
+    `;
+  } else {
+    await sql`
+      UPDATE mo_orders
+         SET financial_status = ${money.financialStatus},
+             total_price      = ${money.totalPrice},
+             currency         = COALESCE(${parsed.currency}, currency),
+             discount_codes   = ${parsed.discountCodes}::text[],
+             updated_at       = now()
+       WHERE shopify_order_id = ${parsed.shopifyOrderId}
+    `;
+  }
+  return true;
+}
+
+/**
+ * Ingest one (verified) orders/create | orders/paid webhook payload — or, with
+ * `updateOnly`, an orders/updated | orders/cancelled one, which only refreshes
+ * an order already in the ledger (refunds and cancellations after payment) and
+ * never attributes a new one. Idempotent on shopify_order_id: a duplicate or
+ * follow-up delivery updates the mutable order facts (status, total, codes;
+ * never back from refunded to paid — mergeOrderFinancials) and keeps the
  * original attribution snapshot. Never throws.
  */
-export async function ingestShopifyOrder(payload: unknown): Promise<IngestOrderResult> {
+export async function ingestShopifyOrder(
+  payload: unknown,
+  opts: { updateOnly?: boolean } = {}
+): Promise<IngestOrderResult> {
   const sql = getSql();
   if (!sql) return { ok: true, action: "ignored", reason: "no-db" };
 
@@ -232,21 +306,9 @@ export async function ingestShopifyOrder(payload: unknown): Promise<IngestOrderR
   try {
     // Follow-up delivery for an order we already ingested? Update the mutable
     // facts only (the attribution snapshot at first ingest stays).
-    const existing = (await sql`
-      SELECT id FROM mo_orders WHERE shopify_order_id = ${parsed.shopifyOrderId} LIMIT 1
-    `) as Array<{ id: number }>;
-    if (existing.length > 0) {
-      await sql`
-        UPDATE mo_orders
-           SET financial_status = ${parsed.financialStatus},
-               total_price      = ${parsed.totalPrice},
-               currency         = COALESCE(${parsed.currency}, currency),
-               discount_codes   = ${parsed.discountCodes}::text[],
-               updated_at       = now()
-         WHERE shopify_order_id = ${parsed.shopifyOrderId}
-      `;
-      return { ok: true, action: "updated" };
-    }
+    if (await refreshStoredOrder(parsed, sql)) return { ok: true, action: "updated" };
+    // orders/updated | orders/cancelled only refresh what the ledger holds.
+    if (opts.updateOnly) return { ok: true, action: "ignored", reason: "not-in-ledger" };
 
     // Resolve the token → (session, source, anchor). An unknown token (aged
     // out by retention, erased, forged) or one outside the window contributes
@@ -320,23 +382,50 @@ export async function ingestShopifyOrder(payload: unknown): Promise<IngestOrderR
     const tier = classifyAttributionTier({ hasMoCode, tokenSource, hasOverlap });
     if (!tier) return { ok: true, action: "ignored", reason: "unclassifiable" };
 
-    await sql`
-      INSERT INTO mo_orders (
-        shopify_order_id, order_name, processed_at, financial_status, currency,
-        total_price, discount_codes, line_items, attribution_token, session_id,
-        attribution_source, attribution_tier, recommended_overlap, matched_handles
-      ) VALUES (
-        ${parsed.shopifyOrderId}, ${parsed.orderName}, ${parsed.processedAt},
-        ${parsed.financialStatus}, ${parsed.currency}, ${parsed.totalPrice},
-        ${parsed.discountCodes}::text[], ${JSON.stringify(items)}::jsonb,
-        ${parsed.moToken}, ${sessionId}, ${tokenSource ?? (hasMoCode ? "discount_code" : null)},
-        ${tier}, ${hasOverlap}, ${matchedHandles}::text[]
-      )
-      ON CONFLICT (shopify_order_id) DO UPDATE
-        SET financial_status = EXCLUDED.financial_status,
-            total_price      = EXCLUDED.total_price,
-            updated_at       = now()
-    `;
+    // A concurrent first delivery (create and paid at once) may have stored the
+    // order meanwhile: then this one is a follow-up and goes through the same
+    // merge rule instead of overwriting.
+    const source = tokenSource ?? (hasMoCode ? "discount_code" : null);
+    let inserted: Array<{ id: number }>;
+    try {
+      inserted = (await sql`
+        INSERT INTO mo_orders (
+          shopify_order_id, order_name, processed_at, financial_status, currency,
+          total_price, discount_codes, line_items, attribution_token, session_id,
+          attribution_source, attribution_tier, recommended_overlap, matched_handles, shopify_updated_at
+        ) VALUES (
+          ${parsed.shopifyOrderId}, ${parsed.orderName}, ${parsed.processedAt},
+          ${parsed.financialStatus}, ${parsed.currency}, ${parsed.totalPrice},
+          ${parsed.discountCodes}::text[], ${JSON.stringify(items)}::jsonb,
+          ${parsed.moToken}, ${sessionId}, ${source},
+          ${tier}, ${hasOverlap}, ${matchedHandles}::text[], ${parsed.updatedAt}::timestamptz
+        )
+        ON CONFLICT (shopify_order_id) DO NOTHING
+        RETURNING id
+      `) as Array<{ id: number }>;
+    } catch (err) {
+      if (!isUndefinedColumnError(err)) throw err;
+      // Before migration 0080: the same row without shopify_updated_at.
+      inserted = (await sql`
+        INSERT INTO mo_orders (
+          shopify_order_id, order_name, processed_at, financial_status, currency,
+          total_price, discount_codes, line_items, attribution_token, session_id,
+          attribution_source, attribution_tier, recommended_overlap, matched_handles
+        ) VALUES (
+          ${parsed.shopifyOrderId}, ${parsed.orderName}, ${parsed.processedAt},
+          ${parsed.financialStatus}, ${parsed.currency}, ${parsed.totalPrice},
+          ${parsed.discountCodes}::text[], ${JSON.stringify(items)}::jsonb,
+          ${parsed.moToken}, ${sessionId}, ${source},
+          ${tier}, ${hasOverlap}, ${matchedHandles}::text[]
+        )
+        ON CONFLICT (shopify_order_id) DO NOTHING
+        RETURNING id
+      `) as Array<{ id: number }>;
+    }
+    if (inserted.length === 0) {
+      await refreshStoredOrder(parsed, sql);
+      return { ok: true, action: "updated" };
+    }
     return { ok: true, action: "stored", tier };
   } catch (err) {
     reportError(err, { route: "lib/mo-orders-store", phase: "ingestShopifyOrder" });

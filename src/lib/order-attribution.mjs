@@ -31,6 +31,7 @@ import {
   productVariants,
   normalizeVariantId,
   formatProductRef,
+  parseProductRef,
 } from "./product-ref.mjs";
 
 // ---------------------------------------------------------------------------
@@ -91,6 +92,7 @@ export function isMoDiscountCode(code) {
  * @property {string[]} discountCodes   Codes on the order (may be empty).
  * @property {Array<{title: string, quantity: number, price: number | null, variantId: string | null, productId: string | null}>} lineItems
  * @property {string | null} moToken    The attributes[_mo] value, if present.
+ * @property {string | null} updatedAt  Shopify's updated_at of this payload (orders the follow-up deliveries).
  */
 
 function asNumericIdString(value) {
@@ -169,7 +171,81 @@ export function parseOrderWebhook(payload) {
     discountCodes,
     lineItems,
     moToken,
+    updatedAt: typeof body.updated_at === "string" && body.updated_at ? body.updated_at : null,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Follow-up deliveries: the money of an order already in the ledger
+// ---------------------------------------------------------------------------
+
+/** How far an order's money story has got. Shopify does not guarantee the
+ * order of webhook deliveries, so a late orders/paid retry must not undo a
+ * refund that orders/updated or orders/cancelled already brought. */
+const FINANCIAL_STAGE = Object.freeze({
+  PENDING: 0,
+  AUTHORIZED: 0,
+  PARTIALLY_PAID: 1,
+  PAID: 1,
+  PARTIALLY_REFUNDED: 2,
+  REFUNDED: 3,
+  VOIDED: 3,
+});
+
+/** @param {unknown} status */
+function financialStage(status) {
+  const key = typeof status === "string" ? status.trim().toUpperCase() : "";
+  return Object.prototype.hasOwnProperty.call(FINANCIAL_STAGE, key)
+    ? /** @type {Record<string, number>} */ (FINANCIAL_STAGE)[key]
+    : null;
+}
+
+/** @param {unknown} v ms since epoch, or null */
+function timeOf(v) {
+  if (typeof v !== "string" && !(v instanceof Date)) return null;
+  const t = v instanceof Date ? v.getTime() : Date.parse(v);
+  return Number.isFinite(t) ? t : null;
+}
+
+/**
+ * What to store when a follow-up delivery (orders/paid, orders/updated,
+ * orders/cancelled) reaches an order already in mo_orders. With Shopify's
+ * updated_at on both sides (migration 0080) the strictly newer delivery wins
+ * outright and an older one is skipped (`apply: false`). Without a timestamp —
+ * or with the same second on both — the status ladder decides: the incoming
+ * facts win unless they would move the order BACK (paid after refunded), and
+ * two partial refunds keep the lower remaining amount. A delivery without a
+ * status or an amount never erases a known one. `stamp` = the incoming facts
+ * were taken, so its updated_at becomes the stored one (a delivery the ladder
+ * overruled must not make a later stale one look newer).
+ *
+ * @param {{ financialStatus: string | null, totalPrice: number | string | null, updatedAt?: string | Date | null }} stored
+ * @param {{ financialStatus: string | null, totalPrice: number | null, updatedAt?: string | null }} incoming
+ * @returns {{ apply: boolean, stamp: boolean, financialStatus: string | null, totalPrice: number | null }}
+ */
+export function mergeOrderFinancials(stored, incoming) {
+  const storedTotal = stored?.totalPrice == null || stored.totalPrice === "" ? null : Number(stored.totalPrice);
+  const keep = {
+    financialStatus: stored?.financialStatus ?? null,
+    totalPrice: storedTotal != null && Number.isFinite(storedTotal) ? storedTotal : null,
+  };
+  const next = {
+    financialStatus: incoming?.financialStatus ?? keep.financialStatus,
+    totalPrice: incoming?.totalPrice ?? keep.totalPrice,
+  };
+  const storedAt = timeOf(stored?.updatedAt ?? null);
+  const incomingAt = timeOf(incoming?.updatedAt ?? null);
+  if (storedAt != null && incomingAt != null && incomingAt !== storedAt) {
+    return incomingAt < storedAt ? { apply: false, stamp: false, ...keep } : { apply: true, stamp: true, ...next };
+  }
+  const from = financialStage(keep.financialStatus);
+  const to = financialStage(next.financialStatus);
+  if (from == null || to == null) return { apply: true, stamp: true, ...next };
+  if (to < from) return { apply: true, stamp: false, ...keep };
+  if (to === from && from === FINANCIAL_STAGE.PARTIALLY_REFUNDED && keep.totalPrice != null && next.totalPrice != null) {
+    return { apply: true, stamp: true, financialStatus: next.financialStatus, totalPrice: Math.min(keep.totalPrice, next.totalPrice) };
+  }
+  return { apply: true, stamp: true, ...next };
 }
 
 /** An order is worth ingesting ONLY when it carries a Mo marker (data
@@ -463,7 +539,8 @@ export function overlapLookback(orderAt, windowDays) {
 
 /**
  * Union of discussed ∪ selected product ids over a session's threads
- * (`conversations` rows), first occurrence kept; blanks and non-strings dropped.
+ * (`conversations` rows), first occurrence kept; blanks and non-strings dropped;
+ * variant refs reduced to their product id.
  *
  * @param {Array<{ recommended_product_ids?: unknown, selected_product_ids?: unknown }> | null | undefined} rows
  * @returns {string[]}
@@ -475,7 +552,9 @@ export function unionConsultedProducts(rows) {
       if (!Array.isArray(list)) continue;
       for (const id of list) {
         if (typeof id !== "string") continue;
-        const v = id.trim();
+        // A variant ref ("bank~42", e.g. the weight a Home-Gym plan pins) is
+        // compared on its product: matched order lines are product handles.
+        const v = parseProductRef(id).productId;
         if (v) seen.add(v);
       }
     }

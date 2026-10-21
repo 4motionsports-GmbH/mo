@@ -1,6 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { hasRecommendedPurchase } from "./kpi-match.mjs";
 import {
+  mergeOrderFinancials,
   withCartAttribution,
   isMoDiscountCode,
   parseOrderWebhook,
@@ -120,6 +122,7 @@ test("parseOrderWebhook extracts the pseudonymous subset", () => {
   assert.equal(parsed.totalPrice, 479);
   assert.deepEqual(parsed.discountCodes, ["MS5-ABC123"]);
   assert.equal(parsed.moToken, "tok_123");
+  assert.equal(parsed.updatedAt, ORDER_PAYLOAD.updated_at ?? null);
   assert.equal(parsed.lineItems.length, 1);
   assert.deepEqual(parsed.lineItems[0], {
     title: "150 KG ATX® GYM Set",
@@ -145,6 +148,8 @@ test("parseOrderWebhook falls back to total_price and created_at", () => {
   assert.equal(parsed.processedAt, "2026-08-01T00:00:00Z");
   assert.equal(parsed.moToken, null);
   assert.deepEqual(parsed.discountCodes, []);
+  assert.equal(parsed.updatedAt, null);
+  assert.equal(parseOrderWebhook({ id: 2, updated_at: "2026-10-21T12:00:00+02:00" }).updatedAt, "2026-10-21T12:00:00+02:00");
 });
 
 test("parseOrderWebhook accepts a GID-only id and rejects an id-less payload", () => {
@@ -464,6 +469,18 @@ test("unionConsultedProducts: discussed ∪ selected across threads, deduped, ju
   );
 });
 
+test("unionConsultedProducts: variant refs (a Home-Gym plan's pinned weight) count as their product", () => {
+  assert.deepEqual(
+    unionConsultedProducts([
+      { recommended_product_ids: ["atx-kettlebell~222", "hantelbank"], selected_product_ids: ["atx-kettlebell~223"] },
+      { recommended_product_ids: ["atx-kettlebell"], selected_product_ids: [] },
+    ]),
+    ["atx-kettlebell", "hantelbank"]
+  );
+  // The purchase of the pinned product (any variant) is an overlap.
+  assert.equal(hasRecommendedPurchase(unionConsultedProducts([{ recommended_product_ids: ["atx-kettlebell~222"] }]), ["atx-kettlebell"]), true);
+});
+
 test("§9.2: a product from an older thread inside the window makes the order „assisted“", () => {
   // Thread 1 (days 18–20) discussed the kettlebell, thread 2 (day 25) the mat;
   // the order on day 28 buys the kettlebell. The latest thread alone said
@@ -492,4 +509,68 @@ test("anchor constants are pinned", () => {
   assert.deepEqual([...SESSION_ANCHORED_SOURCES], ["widget"]);
   assert.deepEqual([...CONSULTATION_ANCHOR_TOOLS].sort(), ["add_to_cart", "compare_products", "show_gym_plan", "show_product", "suggest_showroom"]);
   assert.deepEqual([...UNRESOLVED_MARKER_REASONS], ["unknown_token", "outside_window"]);
+});
+
+test("mergeOrderFinancials without timestamps: the status ladder moves the money forward, never back", () => {
+  const m = (stored, incoming) => {
+    const r = mergeOrderFinancials(stored, incoming);
+    assert.equal(r.apply, true);
+    return { financialStatus: r.financialStatus, totalPrice: r.totalPrice };
+  };
+  const paid = { financialStatus: "paid", totalPrice: "1200.00" };
+  // create (pending) → paid → partially refunded → refunded
+  assert.deepEqual(m({ financialStatus: "pending", totalPrice: 1200 }, { financialStatus: "paid", totalPrice: 1200 }), { financialStatus: "paid", totalPrice: 1200 });
+  assert.deepEqual(m(paid, { financialStatus: "partially_refunded", totalPrice: 900 }), { financialStatus: "partially_refunded", totalPrice: 900 });
+  assert.deepEqual(m({ financialStatus: "partially_refunded", totalPrice: 900 }, { financialStatus: "refunded", totalPrice: 0 }), { financialStatus: "refunded", totalPrice: 0 });
+  // A late orders/paid retry after the refund keeps the refund.
+  assert.deepEqual(m({ financialStatus: "REFUNDED", totalPrice: "0.00" }, { financialStatus: "paid", totalPrice: 1200 }), { financialStatus: "REFUNDED", totalPrice: 0 });
+  assert.deepEqual(m({ financialStatus: "voided", totalPrice: 0 }, { financialStatus: "pending", totalPrice: 1200 }), { financialStatus: "voided", totalPrice: 0 });
+  // Two partial refunds out of order keep the lower remaining amount.
+  assert.deepEqual(m({ financialStatus: "partially_refunded", totalPrice: 800 }, { financialStatus: "partially_refunded", totalPrice: 900 }), { financialStatus: "partially_refunded", totalPrice: 800 });
+  // Same stage otherwise: the incoming facts (an order edit) win.
+  assert.deepEqual(m(paid, { financialStatus: "paid", totalPrice: 1250 }), { financialStatus: "paid", totalPrice: 1250 });
+  // Unknown or missing statuses never block an update; a missing value never erases one.
+  assert.deepEqual(m({ financialStatus: null, totalPrice: null }, { financialStatus: "paid", totalPrice: 10 }), { financialStatus: "paid", totalPrice: 10 });
+  assert.deepEqual(m(paid, { financialStatus: null, totalPrice: 10 }), { financialStatus: "paid", totalPrice: 10 });
+  assert.deepEqual(m(paid, { financialStatus: "paid", totalPrice: null }), { financialStatus: "paid", totalPrice: 1200 });
+  assert.deepEqual(m(paid, { financialStatus: "expired", totalPrice: 0 }), { financialStatus: "expired", totalPrice: 0 });
+});
+
+test("mergeOrderFinancials with Shopify's updated_at: the newer delivery wins outright, an older one is skipped", () => {
+  const stored = { financialStatus: "partially_refunded", totalPrice: 900, updatedAt: "2026-10-21T10:00:00Z" };
+  // An order edit after the partial refund raises the total (partially_paid), then the balance is paid.
+  assert.deepEqual(mergeOrderFinancials(stored, { financialStatus: "partially_paid", totalPrice: 1100, updatedAt: "2026-10-21T11:00:00Z" }), {
+    apply: true,
+    stamp: true,
+    financialStatus: "partially_paid",
+    totalPrice: 1100,
+  });
+  assert.deepEqual(
+    mergeOrderFinancials({ financialStatus: "partially_paid", totalPrice: 1100, updatedAt: "2026-10-21T11:00:00Z" }, { financialStatus: "partially_refunded", totalPrice: 1100, updatedAt: "2026-10-21T12:00:00Z" }),
+    { apply: true, stamp: true, financialStatus: "partially_refunded", totalPrice: 1100 }
+  );
+  // A stale retry (older updated_at) changes nothing — whatever its status.
+  assert.deepEqual(mergeOrderFinancials({ financialStatus: "paid", totalPrice: 1200, updatedAt: new Date("2026-10-21T12:00:00Z") }, { financialStatus: "partially_paid", totalPrice: 1100, updatedAt: "2026-10-21T09:00:00Z" }), {
+    apply: false,
+    stamp: false,
+    financialStatus: "paid",
+    totalPrice: 1200,
+  });
+  // One side without a timestamp (a row from before migration 0080): the ladder decides,
+  // and a delivery it overrules is not stamped.
+  assert.deepEqual(mergeOrderFinancials({ financialStatus: "refunded", totalPrice: 0, updatedAt: null }, { financialStatus: "paid", totalPrice: 1200, updatedAt: "2026-10-21T12:00:00Z" }), {
+    apply: true,
+    stamp: false,
+    financialStatus: "refunded",
+    totalPrice: 0,
+  });
+  // The same second on both (Shopify's updated_at has second precision): the ladder decides.
+  const T = "2026-10-21T10:00:00Z";
+  assert.deepEqual(mergeOrderFinancials({ financialStatus: "paid", totalPrice: 1200, updatedAt: new Date(T) }, { financialStatus: "pending", totalPrice: 1200, updatedAt: "2026-10-21T12:00:00+02:00" }), {
+    apply: true,
+    stamp: false,
+    financialStatus: "paid",
+    totalPrice: 1200,
+  });
+  assert.equal(mergeOrderFinancials({ financialStatus: "refunded", totalPrice: 0, updatedAt: T }, { financialStatus: "paid", totalPrice: 1200, updatedAt: T }).financialStatus, "refunded");
 });

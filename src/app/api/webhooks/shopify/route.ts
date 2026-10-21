@@ -9,7 +9,9 @@
 // consultation can claim (unknown token, outside the window) is counted once,
 // on orders/create after the delivery was recorded, as the session-less event
 // mo_order_marker_unresolved {reason, source?} (noteUnresolvedMarker; once per
-// X-Shopify-Event-Id when Shopify sends it). See docs/ORDER_ATTRIBUTION.md. We:
+// X-Shopify-Event-Id when Shopify sends it). orders/updated + orders/cancelled
+// refresh the money of an order already stored (refunds, cancellations after
+// payment; never back from refunded to paid). See docs/ORDER_ATTRIBUTION.md. We:
 //   1. VERIFY the X-Shopify-Hmac-SHA256 signature over the RAW body BEFORE
 //      parsing it — an unverified request never touches the catalog (mirrors the
 //      Resend/Pingen HMAC-first discipline).
@@ -133,9 +135,14 @@ export async function POST(req: Request) {
         } else {
           outcome = syncOff ? { ok: true, action: "ledger:sync-off" } : await handleOrderLedgerWebhook(payload);
           // orders/create + orders/paid also feed the pseudonymous attribution
-          // pipeline exactly as before (Mo-marked orders only).
+          // pipeline exactly as before (Mo-marked orders only); orders/updated
+          // + orders/cancelled refresh an order already in it (refunds,
+          // cancellations after payment) and never attribute a new one.
           if (t === "orders/create" || t === "orders/paid") {
             attribution = await ingestShopifyOrder(payload);
+            if (!attribution.ok) outcome = { ok: false, action: `attribution:${attribution.reason}` };
+          } else {
+            attribution = await ingestShopifyOrder(payload, { updateOnly: true });
             if (!attribution.ok) outcome = { ok: false, action: `attribution:${attribution.reason}` };
           }
         }
