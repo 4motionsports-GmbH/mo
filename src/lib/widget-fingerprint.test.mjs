@@ -83,7 +83,7 @@ test("the live-safe builds are exactly the ones that redeem the code", () => {
       assert.equal(Boolean(b?.acceptable), widgetRedeemsLinkCode(counts), `${variant} ${commit}`);
     }
   }
-  assert.deepEqual(WIDGET_BUILDS.filter((b) => b.current).map((b) => b.key), ["reward-2026-10-08"]);
+  assert.deepEqual(WIDGET_BUILDS.filter((b) => b.current).map((b) => b.key), ["konfigurator-2026-10-21"]);
 });
 
 test("a half-applied set or a non-widget file is never passed off as a known build", () => {
@@ -174,7 +174,7 @@ test("the Home-Gym-Konfigurator build (2026-10-21) is recognised only with both 
   const row = WIDGET_BUILDS.find((b) => b.key === "konfigurator-2026-10-21");
   assert.equal(WIDGET_BUILDS[0], row); // newest first
   assert.equal(row?.acceptable, true);
-  assert.equal(row?.current, false); // becomes current once the upload is confirmed live
+  assert.equal(row?.current, true); // live since 2026-10-21 (M's upload, page tested)
   const c = countWidgetMarkers(`dockRoot = el('div', { class: 'ms-chat-root ms-chat-root--dock' }); wrap = el('div', { class: 'ms-chat-root ms-chat-planhost' });`);
   assert.equal(c["ms-chat-root--dock"], 1);
   assert.equal(c["ms-chat-planhost"], 1);
