@@ -98,6 +98,8 @@ via `NEON_FETCH_ENDPOINT`, seed data with `scripts/seed-dev.mjs`).
   shortcuts, theme), the screen registry `src/lib/admin-tabs.mjs` + `tabs.tsx` (icons), `lazy.tsx`
   (per-screen chunks), `<Screen>Tab.tsx` (server queries → props) with its client workspace in
   `<screen>/`, `ui/` primitives, `lib/` client helpers. Reference: `docs/ADMIN_DASHBOARD.md` §2.
+- `src/lib/configurator-core.mjs` + `configurator-store.ts` — the Home-Gym-Konfigurator (`docs/CONFIGURATOR.md`):
+  the answer vocabulary shared with the theme, the prompt section, settings, assortment and KPIs.
 - `scripts/` — operational scripts (see `package.json` for the npm aliases).
 
 ## Admin design system — how to build or change a screen
@@ -127,5 +129,6 @@ via `NEON_FETCH_ENDPOINT`, seed data with `scripts/seed-dev.mjs`).
 - **Verify visually.** Run the production build, take Playwright/Chromium screenshots of the changed
   screen at 1440 px and 1024 px in light and dark, and exercise the interactions you touched (the
   before/after sets of the 2026-09 redesign are under `docs/screenshots/`).
-- **Keep the German terminology** and the keyboard shortcuts (`1…9`/`0` screens, `/` search; Kampagne
+- **Keep the German terminology** and the keyboard shortcuts (`1…9`/`0` screens — the Konfigurator has
+  none, `/` search; Kampagne
   `N P V C S A X`; Wissen `j k Esc`; Eingang `J K Enter E Z D Esc`).

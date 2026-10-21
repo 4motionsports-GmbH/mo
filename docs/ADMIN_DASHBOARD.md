@@ -1,6 +1,6 @@
 # Admin dashboard (`/admin`)
 
-The German back office of Mo: one shared admin login, ten screens in a grouped
+The German back office of Mo: one shared admin login, eleven screens in a grouped
 sidebar, and a send path that concentrates every legal guarantee in one place.
 The operator reviews and approves — the **system** sends (nobody copies text
 into a personal mail client).
@@ -9,6 +9,7 @@ into a personal mail client).
 | --- | --- | --- | --- | --- | --- |
 | Arbeit | Eingang | `eingang` (bare `/admin`) | 1 | The operator inbox: ranked customer signals with AI suggestions, system strip, unassigned mail | §3.1 |
 | Arbeit | Kampagnen | `kampagne` | 2 | All campaigns (overview, editor) and the review desk per campaign, incl. the Einzelansprache | §3.2, [`CAMPAIGNS.md`](./CAMPAIGNS.md) |
+| Arbeit | Konfigurator | `konfigurator` | — | The Home-Gym-Konfigurator (Men's Health / Women's Health): Mo's assortment and notes for the guided consultation, and its funnel from the first answer to the order | §3.11, [`CONFIGURATOR.md`](./CONFIGURATOR.md) |
 | Arbeit | Kunden | `kunden` | 3 | The whole customer base (Shopify mirror + Mo leads), server-side list; one person's figures, activity, orders, chats, consent, correspondence, letter | §3.3, [`CUSTOMERS.md`](./CUSTOMERS.md) |
 | Arbeit | Wissen | `wissen` | 4 | Q&A knowledge queue (gaps → answers → published) | §3.4, [`QA_KNOWLEDGE.md`](./QA_KNOWLEDGE.md) |
 | Einblicke | KPIs | `kpi` | 5 | Pseudonymous analytics + Shopify revenue per period | §3.5, §5 |
@@ -21,7 +22,8 @@ into a personal mail client).
 Legacy keys still resolve: `?tab=overview` (the retired Übersicht, see §3.1) →
 Eingang, `customers` / `marketing` → Kunden, `kampagnen` → Kampagnen (the
 screen keeps the key `kampagne`; its label is „Kampagnen“). An unknown key
-falls back to the Eingang. The registry (keys, labels, groups, shortcuts,
+falls back to the Eingang. All ten digits are taken, so the Konfigurator has
+no shortcut (its tooltip shows no key). The registry (keys, labels, groups, shortcuts,
 descriptions, aliases, URL builder) is the pure, unit-tested
 [`src/lib/admin-tabs.mjs`](../src/lib/admin-tabs.mjs); the icons live in
 [`src/app/admin/tabs.tsx`](../src/app/admin/tabs.tsx) (Eingang: `Inbox`).
@@ -162,6 +164,7 @@ Everything an operator can point a colleague at is in the URL:
 | Kampagnen | `?filter=<chip>` | desk queue filter chip: `doi`, `soi`, `en`, `discount`, `set`, `hints`, `blocked` (absent = Alle) |
 | KPIs | `?kpiRange=7d\|30d\|90d\|custom`, `?kpiFrom=`, `?kpiTo=` | period (validated + clamped by [`kpi-range.mjs`](../src/lib/kpi-range.mjs)) |
 | KPIs | `?kpiFresh=<unix seconds>` | freshness floor for the Shopify cache — set by „Aktualisieren“ (§5.0) |
+| Konfigurator | `?kpiRange=7d\|30d\|90d` | period of „Wirkung“ (presets only; anything else = 30 days) |
 | Gespräche | `?gid=<conversationId>` | selected conversation (opened by id, also off the current page) |
 | Gespräche | `g*` filter params (`gq` search, `gcat`, `gqual`, `gpage`, tier, error flag, range) | list filter, parsed by [`admin-conversation-filter.mjs`](../src/lib/admin-conversation-filter.mjs) |
 | Analyse | `?report=<id>` | selected Komplettanalyse |
@@ -201,6 +204,7 @@ src/app/admin/
 ├── kampagnen/            # CampaignsOverview (cards), CampaignEditor (sheet), CampaignHeroField („Kampagnenbild“), CampaignCheckSection („Prüfen & testen“), types
 ├── kampagne/             # the desk of one campaign: KampagneWorkspace, CampaignHeader, PreparePopover, QueueRail, MailPane, ReviewColumn, sections/*, ListView, ScheduledViews („Einplanen“ dialog, view „Eingeplant“), SentHistory, LettersView, TestContactsSheet, ContactHistorySheet, EmailViewerDialog, badges, useCampaignActions, useReleaseActions, useRenderedPreview
 ├── kunden/               # KundenWorkspace, CustomerDetail, badges, useCustomerDetail, tabs/{Ueberblick (+Profil), Aktivitaet, Kaeufe, Beratungen („Gespräche“), Marketing (+OptOutControl), Korrespondenz, Brief}, BundleComposer
+├── konfigurator/         # KonfiguratorWorkspace (settings + Sortiment), KonfiguratorKpis („Wirkung“, server), KonfiguratorRange, types
 ├── kpi/                  # KpiToolbar, KpiSection, KpiTile (+ DeltaPill), FunnelBars, Sparkline, RevenueOrders (the drill-down), revenue-view (+ revenue-colors, revenue-series), groups, KpiTopQuestions, charts (next/dynamic) → charts-recharts + chart-geometry, sections/* (one file per section, §3.5)
 ├── gespraeche/           # GespraecheWorkspace, ConversationFilters, StatsPanel, ConversationList, ConversationDetail, ReportPanel, badges
 ├── wissen/               # WissenWorkspace, QaEntryEditor, ProductField, badges, useQaQueue
@@ -1380,6 +1384,33 @@ the customer platform's link to Shopify:
 
 Screenshots: `docs/screenshots/customer-platform/einstellungen-*`.
 
+### 3.11 Konfigurator
+
+The Home-Gym-Konfigurator of the Men's Health / Women's Health cooperation — the feature itself is
+[`CONFIGURATOR.md`](./CONFIGURATOR.md). Server file `KonfiguratorTab.tsx` (settings, assortment, KPIs in
+one pass), client `konfigurator/KonfiguratorWorkspace` and `KonfiguratorRange` (both through `lazy.tsx`),
+`konfigurator/KonfiguratorKpis` (server-rendered). Group Arbeit, no digit shortcut.
+
+- **Wirkung** (`?kpiRange=7d|30d|90d`, default 30 days; pure DB, never cached —
+  `configurator-store.getConfiguratorKpis`): tiles Seitenaufrufe (only with analytics consent), An Mo
+  übergeben, Plan erstellt, Warenkorb (value of the plans put into the cart), Bestellungen + Umsatz; the
+  funnel „Vom ersten Klick zur Bestellung“ (`FunnelBars`, each stage = distinct sessions on its own,
+  because the handover starts a fresh thread); „So antworten die Besucher“ (one `BarList` per answer —
+  fields with nothing but „ohne Angabe“ are hidden — plus „Herkunft“ Men's Health / Women's Health /
+  direct); „Produkte in Mos Plänen“ (top 12 by sessions); „Antwort-Chips“ (by topic, plus chip clicks and
+  plan edits); „Letzte Konfigurator-Beratungen“ (12 newest with answers, plans, result badge and a link
+  `?tab=gespraeche&gid=`).
+- **Mo im Konfigurator**: „Geführte Beratung“ Aktiv/Aus, „Sortiments-Fokus“ (bevorzugen / nur
+  Sortiment), „Shopify-Tag des Sortiments“, „Zusätzliche Produkte“ (`CatalogProductPicker`, up to 60),
+  „Hinweise für Mo“ (≤ 1.500 characters). Saved with `POST konfigurator/settings` (validation:
+  `validateConfiguratorSettingsInput`); `router.refresh()` reloads the assortment. The chat reads the
+  settings with a 60-second cache per instance.
+- **Sortiment**: the resolved assortment (`DataTable`: product, category, price, Lieferbar/Ausverkauft,
+  Tag / Liste, shop link) with warnings for unknown extra handles and a mostly sold-out assortment; an
+  empty assortment is an `EmptyState` explaining the tag.
+
+Storage: `admin_settings` key `configurator` (migration 0078, no new migration).
+
 ---
 
 ## 4. Marketing e-mails from the Kunden screen (former `MS5-` path)
@@ -2530,11 +2561,11 @@ anomaly is logged server-side.
 
 ## 11. Admin API routes
 
-All under `/api/admin/*` — 107 route files —, gated by the Edge proxy **and**
+All under `/api/admin/*` — 108 route files —, gated by the Edge proxy **and**
 `guardAdminPost(req)` / `guardAdminGet()` in the handler (§1); JSON envelope
 `{ error: { code, message } }` on failure. Grouped by the screen that calls
 them. Actions that read or act on one person's data write the admin access log
-(`recordAdminAccess`, 41 route files) — among them `customers/ask`,
+(`recordAdminAccess`, 42 route files) — among them `customers/ask`,
 `customers/objection`, `campaigns/add-recipient(s)`, `campaigns/letters`,
 `customers/letter-address`, `inbox/accept`, `inbox/suggest` and
 `correspondence/assign-prospect`.
@@ -2592,6 +2623,7 @@ them. Actions that read or act on one person's data write the admin access log
 | | `GET email-hero`, `POST email-hero/suggest / generate / headline / remove` | hero image of a marketing or campaign draft; the GET's `defaultUrl` is what the mail shows without a per-draft hero — for a campaign draft the Kampagnenbild when there is one (`defaultSource: "campaign"`), else the design's default (`"design"`) |
 | Wissen | `GET qa/list?status=`, `POST qa/scan / answer / publish / unpublish / dismiss / restore` | the Q&A queue |
 | KPIs | `POST kpi/top-questions { personaLabel, force? }` | on-demand Top-Fragen summary |
+| Konfigurator | `POST konfigurator/settings { enabled, tag, extraProductIds, focus, notes }` | „Mo im Konfigurator“: store the configurator settings (`admin_settings` key `configurator`, 0078) → `{ ok, settings }`; German 400 on invalid input, 503 without a database or before 0078; audit `settings.configurator` |
 | Gespräche | `POST conversations/detail / analyze / analyze-bulk / insights` | transcript, cached analysis, confirmed bulk analysis, insights rollup |
 | Analyse | `GET analytics`, `GET analytics/<id>`, `GET analytics/<id>/pdf`, `POST analytics/estimate / create / step / delete` | Komplettanalysen; `estimate` also returns `strategistEur`, `minutes { low, high }` and `previousReport`; `step` answers `busy: true` while another step holds the report's claim (0077) |
 | Verbesserung | `GET improve`, `GET improve/<id>`, `GET improve/backlog`, `POST improve/run / step / suggestion / adopt / delete` | improvement runs, the open backlog |

@@ -349,6 +349,45 @@ The backend keys its behavior off whether `messages` is empty:
 In both cases the **response is the same SSE chunk stream** documented below — `context` only seeds
 the model, it does not change the response shape.
 
+#### `context.type: "configurator"` — the Home-Gym-Konfigurator (since 2026-10-21)
+
+The configurator page (theme `sections/ms-home-gym-configurator.liquid`, backend
+[`docs/CONFIGURATOR.md`](../CONFIGURATOR.md)) hands its answers to Mo. Unlike the product/browsing
+context this is the **page's own form state**, not browsing data: the widget sends it with **every**
+request of a configurator thread (the fresh open with `messages: []` and every later turn), so a
+changed answer or an edited plan reaches Mo with the next message.
+
+```jsonc
+"context": {
+  "type": "configurator",
+  "source": "configurator",
+  "configurator": {
+    "v": 1,
+    "persona": "busy",          // busy | ambitious | health | family | best_ager
+    "location": "apartment",    // house | apartment | garage
+    "space": "xs",              // xs (≤ 6 m²) | s (6–10) | m (10–20) | l (> 20)
+    "training": ["free_weights", "cardio"],  // free_weights | machines | cardio | functional (0–4)
+    "level": "rookie",          // rookie | intermediate | pro
+    "goal": "muscle",           // muscle | fitness | health | endurance | athletic
+    "budget": "b2",             // optional: b1 (≤ 1.000 €) … b5 (> 10.000 €)
+    "wishes": ["quiet"],        // optional: assembly | fast_delivery | quiet | no_drilling | foldable | floor_protection | showroom
+    "partner": "mh",            // optional: mh | wh (Men's / Women's Health landing page)
+    "plan": [{ "id": "atx-rack~4400000", "qty": 2 }]  // optional: the plan as it stands on the page (≤ 20, ids or variant refs, qty 1–20)
+  }
+}
+```
+
+- The vocabulary is `src/lib/configurator-core.mjs` (`CONFIGURATOR_FIELDS`). Unknown values are dropped;
+  a context with no known answer is no configurator context. **Ignored gracefully**, never an error.
+- Used only while the configurator is on (admin „Konfigurator“, admin setting, default on). Then Mo gets
+  the configurator section in its prompt (answers, guide, curated assortment, team notes, the plan), the
+  answers fill the profile fields the conversation has not set, and the two configurator tools
+  `suggest_replies` / `show_gym_plan` are offered (below). Off: the request is a normal chat.
+- A fresh open streams a greeting plus the first open question (`messages: []`, like the CTA/nudge path).
+- The widget prefers this context over a typed page context (`source: "page"`) while the thread is a
+  configurator thread; an explicit CTA / nudge context still wins.
+- An older backend ignores the unknown `type` (generic greeting); an older widget never sends it.
+
 #### Optional `customer` — returning-customer memory after in-session re-identification
 
 After a **successful `POST /api/capture-email` in the current chat session** (§7.1), the widget MAY
@@ -796,6 +835,47 @@ If the user dismisses or declines the capture card without submitting, the widge
 backend cannot observe a dismissal itself, and the event also stops the backend from forcing another
 ask in that session. The shown/submitted events are recorded server-side; the widget never sends them.
 
+##### `suggest_replies` → answer chips (configurator threads only)
+
+Input schema:
+```ts
+{ options: string[]; multiSelect?: boolean; topic?: "budget" | "wishes" | "frequency" | "space" | "equipment" | "other" }
+// options: 2–6 short answers (≤ 60 chars each), in the conversation's language
+```
+Output: `{ ok: true }`. Widget action: render the options as tappable chips under Mo's message (the
+question itself is in Mo's text). A tap sends the chip's text as the next user message (`sendMessage`,
+busy guard as §3.2 of the playbook); `multiSelect` lets the visitor pick several and confirm them
+together (sent as „A, B und C“). Chips above a later user message are spent (disabled). KPI:
+`configurator_chip_clicked` (§5). Only offered with a configurator context (above) — an older widget
+renders nothing and the question stays answerable by typing.
+
+##### `show_gym_plan` → the home-gym plan (configurator threads only)
+
+Input schema:
+```ts
+{
+  title: string;            // ≤ 80
+  summary?: string;         // ≤ 400
+  items: Array<{            // 1–12
+    productId: string;      // catalog id or variant ref
+    quantity?: number;      // 1–20, default 1
+    role: "base" | "accessory" | "weights" | "cardio" | "flooring" | "extra";
+    note?: string;          // ≤ 120
+  }>;
+  tips?: string[];          // ≤ 3, ≤ 200 each
+}
+```
+Output: `{ ok: true, shownItems, unknownIds?, soldOutIds? }` — for the model only (it may correct the
+plan in the same turn); the widget renders from the input. Widget action: hydrate the ids with
+`GET /api/products` (variant fields of §3) and render a plan card (lines, total, „Alles in den
+Warenkorb“); on the configurator page also the editable plan in `[data-ms-chat-plan]` (quantities,
+variants, remove/restore). The newest plan of the thread is the active one. „Alles in den Warenkorb“
+adds the available lines through the shop's `POST /cart/add.js` (same origin), stamps the attribution
+marker first (§10, consent-gated) and opens the cart drawer. A plan counts as a consultation
+(attribution token, `MO_CONSULT_PARTS`); its products enter the conversation's discussed products.
+KPI: `configurator_plan_edited`, `configurator_cart_added` (§5); the server records
+`configurator_plan_shown`.
+
 #### Tools the widget MUST NOT render
 
 These background tools stream the full `tool-input-start → … → tool-output-available` chunk sequence.
@@ -1148,6 +1228,7 @@ silently (§0 rule 15). Their `data` is not read unless a subsection below defin
 | `login_gate_*`, `account_signin_started`, `account_signin_return` | below, "Sign-in popup events" |
 | `consent_gate_*` | below, "Consent-gate events" |
 | `product_cta_clicked` | below, "Product clicks (widget)" |
+| `configurator_*` | below, "Home-Gym-Konfigurator events" (admin screen „Konfigurator“) |
 
 In addition, every widget event whose name matches `%product%click%` or `%cta%click%` counts as a
 product click, and every one matching `%cart%` or `%checkout%` as an add-to-cart click
@@ -1295,6 +1376,22 @@ computed at click time: `true` when the clicked product is the product of the op
 pattern; „Seitenkontext auf Produktseiten“ counts only clicks whose `samePage` is not `true` as „andere
 Produkte geklickt“.
 
+### Home-Gym-Konfigurator events (widget, since 2026-10-21)
+
+Sent by the widget (the configurator page through `window.MS_CHAT.configurator.track`, which accepts
+only `configurator_*` names and flat ids/enums/numbers). Read by the admin screen „Konfigurator“
+(backend `docs/CONFIGURATOR.md`).
+
+| Event | When | `data` |
+| --- | --- | --- |
+| `configurator_viewed` | the page was shown — **only with Shopify analytics consent**, once per tab session | `{ partner }` (`mh` \| `wh` \| `""`) |
+| `configurator_started` | first answer picked, once per tab session | `{ partner, prefilled }` |
+| `configurator_handover` | „Weiter – Mo berät mich“ (after the new thread started) | `{ persona, location, space, training, level, goal, partner, prefilled }` — ids; `training` comma list |
+| `configurator_answers_changed` | changed answers sent to Mo after the handover | `{ fields }` — comma list of field keys |
+| `configurator_chip_clicked` | an answer chip of `suggest_replies` was sent | `{ topic, multi, count }` |
+| `configurator_plan_edited` | quantity, variant, remove or restore in the plan | `{ action }` — `qty` \| `variant` \| `remove` \| `restore` |
+| `configurator_cart_added` | „Alles in den Warenkorb“ landed (matches `%cart%`: counts as an add-to-cart click) | `{ items, units, value, partial }` — `value` = plan total in whole EUR |
+
 ### Server-emitted lifecycle events (canonical names)
 
 These land in the same `kpi_events` stream but are emitted **exclusively server-side** — the widget
@@ -1320,6 +1417,8 @@ server-side capture-funnel names above, but does not store them:
 | `page_context_answered`    | `POST /api/chat` — when that turn finished (2026-10-05) | `{ kind, productCards, otherCards }` — card tool calls in the answer (`show_product`, `compare_products`, `add_to_cart`); `otherCards` leaves out a `show_product` of the open page's product. Counts only, no ids. Session-keyed. |
 | `consent_ask_eligible`     | `GET /api/auth/me` when it answers `marketing.optInActionable: true` — at most once per session per 24 h (2026-10-08). Only there: the App Proxy whoami never writes it | `{ variant, mode, locale }` — `variant` = the sign-in copy variant this session is assigned (the same pick as `/api/consent-copy?surface=signin` with this `x-ms-session`); `mode` `popup` \| `value_moment` (`value_moment` only when that copy carries an approved, valid `valueMoment`); `locale` `de` \| `en` (`?locale=` / `x-ms-locale`, §12). Session-keyed. The base of the welcome-voucher test (AD §5.7). |
 | `consent_copy_served`      | `GET /api/consent-copy?surface=signin` with `x-ms-session`, only while more than one variant is active (the `private, no-store` answer, §7.4) — at most once per session per 24 h, written after the answer (2026-10-08) | `{ variant, locale, reward, valueMoment }` — the variant served; `reward` / `valueMoment` = whether the served copy carries an approved, valid one (what the widget would render). Session-keyed, anonymous sessions included. |
+| `configurator_chat_started` | `POST /api/chat` — the fresh open (`messages: []`) of a configurator thread, at request time (2026-10-21) | `{ persona, location, space, training, level, goal, budget, wishes, partner, locale }` — answer ids (comma lists for `training` / `wishes`, `""` when open). Session-keyed. |
+| `configurator_plan_shown` | `POST /api/chat` — one per `show_gym_plan` call, when the turn finished (2026-10-21) | `{ planNumber, items, units, productIds }` — catalog handles (no variant ids, no names). Session-keyed. |
 
 Which admin KPI section reads which event: backend doc `ADMIN_DASHBOARD.md` §5.
 
@@ -2262,3 +2361,4 @@ section that holds the fact; this table repeats none of the detail.
 | 2026-10-08 | Opt-in server events: outcomes `doi_pending` / `shopify_pending`, `doiCooldown`, `doiResend`, `shopifyConsent`; the chat gate's events come after the send with `doiSent` and always `trigger: "chat_gate"`; `email_capture_marketing_confirmed` gains `placement?` / `variant?`; both events carry `captureId` (the consent row's id) and the confirmation is credited to the opt-in that mailed its link. New server-only events `consent_ask_eligible` (`GET /api/auth/me`, which now reads the locale for it) and `consent_copy_served` (`GET /api/consent-copy?surface=signin`, per-session copy); `POST /api/kpi` drops both. No widget change. | §5, §7.6, §12.2; ACCOUNT_CONTRACT.md §4 |
 | 2026-10-08 | The data the dormant widget of 2026-10-08 (`495fdf6`) already sends — `login_gate_shown` `{ teaser: true, variant? }`, `consent_gate_*` `reward: true` and `placement: "value_moment"` — is stored verbatim and read by the dashboard (JSON `true` only); nothing to change. | §5 |
 | 2026-10-11 | Copy `v6` on every surface (framing only; every `consentTextShown` unchanged). `surface=signin` may carry `reward` (variants `b`/`c`, `CONSENT_REWARD_ENABLED`) and `valueMoment` (variant `c`, `CONSENT_VALUE_MOMENT_ENABLED`), German and English; both switches default off in code, so nothing changes until the owner turns them on. The widget of 2026-10-08 renders them; no widget change. | §7.4, §5, §12.3; CONSENT_CONTRACT.md §1, §3 |
+| 2026-10-21 | Home-Gym-Konfigurator: `context.type: "configurator"` (the page's answers + plan, on every turn of the thread); configurator-only tools `suggest_replies` (answer chips) and `show_gym_plan` (plan card + the page's editable plan, cart via `/cart/add.js`); widget events `configurator_*`, server-only `configurator_chat_started` / `configurator_plan_shown`. Additive: an older widget never sends the context and renders nothing for the tools. | §2 "`context.type: "configurator"`", "Tools the widget MUST render"; §5 |
