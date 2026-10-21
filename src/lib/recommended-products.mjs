@@ -32,6 +32,10 @@ const PRODUCT_CARD_TOOLS = new Set([
   "suggest_showroom",
   "show_contact_form",
   "offer_email_summary",
+  // The home-gym plan of the configurator (configurator-core.mjs): every line
+  // is a recommended product, so a plan counts like its show_product cards
+  // for the summary cart and the attribution overlap.
+  "show_gym_plan",
 ]);
 
 // The ONE tool that declares an explicit RECOMMENDATION card: Mo calls
@@ -65,6 +69,12 @@ export function productIdsFromToolCall(inv) {
   if (typeof obj.productId === "string") out.push(obj.productId);
   if (Array.isArray(obj.productIds)) {
     for (const p of obj.productIds) if (typeof p === "string") out.push(p);
+  }
+  // show_gym_plan: { items: [{ productId, quantity, role }] }
+  if (Array.isArray(obj.items)) {
+    for (const it of obj.items) {
+      if (it && typeof it === "object" && typeof it.productId === "string") out.push(it.productId);
+    }
   }
   return out;
 }

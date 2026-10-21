@@ -490,6 +490,6 @@ test("ยง9.2: a product from an older thread inside the window makes the order โ€
 
 test("anchor constants are pinned", () => {
   assert.deepEqual([...SESSION_ANCHORED_SOURCES], ["widget"]);
-  assert.deepEqual([...CONSULTATION_ANCHOR_TOOLS].sort(), ["add_to_cart", "compare_products", "show_product", "suggest_showroom"]);
+  assert.deepEqual([...CONSULTATION_ANCHOR_TOOLS].sort(), ["add_to_cart", "compare_products", "show_gym_plan", "show_product", "suggest_showroom"]);
   assert.deepEqual([...UNRESOLVED_MARKER_REASONS], ["unknown_token", "outside_window"]);
 });

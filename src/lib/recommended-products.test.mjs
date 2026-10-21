@@ -127,3 +127,13 @@ test("guardRecommendedCardIds resolves variant refs against the chosen variant",
   assert.deepEqual(droppedUnknown, ["kb~999"]);
   assert.deepEqual(droppedSoldOut, ["kb~3"]);
 });
+
+test("show_gym_plan: every plan line is a discussed product, never a show_product card", () => {
+  const plan = {
+    toolName: "show_gym_plan",
+    input: { title: "Set", items: [{ productId: "rack", role: "base" }, { productId: "bank~42" }, { role: "x" }, null] },
+  };
+  assert.deepEqual(productIdsFromToolCall(plan), ["rack", "bank~42"]);
+  assert.deepEqual(collectDiscussedProductIds([show("a"), plan]), ["a", "rack", "bank~42"]);
+  assert.deepEqual(recommendedCardIdsInOrder([plan]), []);
+});

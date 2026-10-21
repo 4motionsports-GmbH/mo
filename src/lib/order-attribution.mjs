@@ -312,6 +312,7 @@ export const CONSULTATION_ANCHOR_TOOLS = Object.freeze([
   "compare_products",
   "add_to_cart",
   "suggest_showroom",
+  "show_gym_plan",
 ]);
 
 /** Why a Mo-marked order stays unattributed (server event enum, AC §5). */

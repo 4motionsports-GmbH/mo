@@ -1111,11 +1111,15 @@ export function greetingTriggerText(locale, ctx) {
  *   locale?: "de" | "en",
  *   orderStatus?: boolean,
  *   welcomeReward?: { badge: string, terms: string, termsUrl?: string, alt?: { badge: string, terms: string } } | null,
+ *   configuratorBlock?: string,
  * }} opts  orderStatus: get_order_status is offered (CHAT_ORDER_STATUS_ENABLED);
  *   absent/false leaves the prompt byte-identical to before the feature.
  *   welcomeReward: the live newsletter welcome voucher (CONSENT_REWARD_ENABLED,
  *   consent-variants.mjs welcomeRewardForPrompt); absent/null → the neutral
  *   interim rule (OPTIN_REWARD T4)
+ *   configuratorBlock: the Home-Gym-Konfigurator section of a configurator
+ *   conversation (configurator-core.mjs renderConfiguratorSection), placed
+ *   right after the context blocks; absent/"" leaves the prompt byte-identical
  * @returns {string}
  */
 export function buildSystemPrompt({
@@ -1131,6 +1135,7 @@ export function buildSystemPrompt({
   locale = "de",
   orderStatus = false,
   welcomeReward = null,
+  configuratorBlock = "",
 }) {
   const profileBlock = renderProfileForPrompt(profile, locale);
   const archetypeAddendum = getPersonaAddendum(archetype, locale);
@@ -1146,6 +1151,7 @@ export function buildSystemPrompt({
   const browsingContextBlock = browsingContext
     ? `\n\n${renderBrowsingContext(browsingContext, { greet: !productContext }, locale)}`
     : "";
+  const configuratorSection = configuratorBlock ? `\n\n${configuratorBlock}` : "";
   const customerMemoryBlock = customerMemory
     ? `\n\n${renderCustomerMemory(customerMemory, locale, orderStatus === true, welcomeReward ?? null)}`
     : "";
@@ -1158,7 +1164,7 @@ export function buildSystemPrompt({
   const welcomeRewardSection = renderWelcomeRewardSection(welcomeReward, locale);
 
   if (locale === "en") {
-    return `You are Mo, the AI fitness advisor of motion sports (motionsports.de), a leading European online shop for high-quality fitness equipment and gear.${productContextBlock}${browsingContextBlock}
+    return `You are Mo, the AI fitness advisor of motion sports (motionsports.de), a leading European online shop for high-quality fitness equipment and gear.${productContextBlock}${browsingContextBlock}${configuratorSection}
 
 ## Your personality
 
@@ -1287,7 +1293,7 @@ ${productsBlock}${generalQaBlock}${directivesBlock}
 - All devices can be tested on site`;
   }
 
-  return `Du bist Mo, der KI-Fitnessberater von motion sports (motionsports.de), einem führenden europäischen Online-Shop für hochwertige Fitnessgeräte und Equipment.${productContextBlock}${browsingContextBlock}
+  return `Du bist Mo, der KI-Fitnessberater von motion sports (motionsports.de), einem führenden europäischen Online-Shop für hochwertige Fitnessgeräte und Equipment.${productContextBlock}${browsingContextBlock}${configuratorSection}
 
 ## Deine Persönlichkeit
 

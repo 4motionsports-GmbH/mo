@@ -88,6 +88,10 @@ interface BuildPromptOpts {
   // exactly the served badge + terms when asked. Absent/null → the neutral
   // interim rule (neither promise nor deny).
   welcomeReward?: { badge: string; terms: string; termsUrl?: string; alt?: { badge: string; terms: string } } | null;
+  // The Home-Gym-Konfigurator section of a configurator conversation
+  // (configurator-core.mjs renderConfiguratorSection). Absent/"" → the prompt
+  // is byte-identical to before the feature.
+  configuratorBlock?: string;
 }
 
 // Lightweight in-conversation note used when the user opens the product

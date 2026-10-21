@@ -150,12 +150,20 @@ export interface RetrievalHit {
   score: number;
 }
 
+// Additive score bonus for a boosted product (the Home-Gym-Konfigurator's
+// curated assortment, configurator-core.mjs). Cosine scores of good matches sit
+// around 0.3–0.6, so this lifts a curated product past a slightly better
+// uncurated one without letting an unrelated curated product win.
+const BOOST_SCORE = 0.08;
+
 export async function retrieve(opts: {
   query: string;
   profile: CustomerProfile;
   filters?: SearchProductsArgs["filters"];
   limit?: number;
   queryVector?: number[] | null;
+  /** Product ids that get BOOST_SCORE on top (the configurator assortment). */
+  boostIds?: ReadonlySet<string>;
 }): Promise<RetrievalHit[]> {
   const limit = opts.limit ?? 8;
   const [catalog, emb] = await Promise.all([loadProductCatalog(), getIndexedEmbeddings()]);
@@ -183,6 +191,7 @@ export async function retrieve(opts: {
     }
     // (Sold-out items were already filtered out of `candidates` above, so every
     // product scored here is currently recommendable.)
+    if (score > 0 && opts.boostIds?.has(product.id)) score += BOOST_SCORE;
     return { product, score };
   });
 
@@ -194,6 +203,7 @@ export async function retrieveForTurn(opts: {
   latestUserMessage: string;
   profile: CustomerProfile;
   limit?: number;
+  boostIds?: ReadonlySet<string>;
 }): Promise<RetrievalHit[]> {
   const profileSignals: string[] = [];
   if (opts.profile.trainingFocus !== "unknown") profileSignals.push(opts.profile.trainingFocus);
@@ -207,5 +217,6 @@ export async function retrieveForTurn(opts: {
     query,
     profile: opts.profile,
     limit: opts.limit ?? 8,
+    boostIds: opts.boostIds,
   });
 }

@@ -49,6 +49,19 @@ import { persistTurn, ensureConversationStarted, type ToolInvocation } from "@/l
 import { recordCampaignChatStarted } from "@/lib/campaign-store";
 import { isOrderStatusEnabledFor } from "@/lib/order-status";
 import {
+  chatStartedEventData,
+  configuratorGreetingTrigger,
+  configuratorRetrievalQuery,
+  CONFIGURATOR_TOOLS,
+  KPI_CONFIGURATOR_CHAT_STARTED,
+  KPI_CONFIGURATOR_PLAN_SHOWN,
+  mergeConfiguratorProfile,
+  parseConfiguratorContext,
+  planShownEventData,
+  renderConfiguratorSection,
+} from "@/lib/configurator-core.mjs";
+import { getCachedConfiguratorSettings, loadConfiguratorAssortment } from "@/lib/configurator-store";
+import {
   KPI_EMAIL_CAPTURE_ASK_SHOWN,
   KPI_PAGE_CONTEXT_ANSWERED,
   KPI_PAGE_CONTEXT_APPLIED,
@@ -148,6 +161,20 @@ function extractProfile(messages: UIMessage[]): CustomerProfile {
   return profile;
 }
 
+// Prior show_gym_plan calls of a configurator thread (the plan number of the
+// configurator_plan_shown KPI), counted from the replayed history like the
+// email-offer cap.
+function countGymPlans(messages: UIMessage[]): number {
+  let count = 0;
+  for (const msg of messages) {
+    if (msg.role !== "assistant") continue;
+    for (const part of msg.parts ?? []) {
+      if (part.type === "tool-show_gym_plan") count++;
+    }
+  }
+  return count;
+}
+
 function countEmailSummaryOffers(messages: UIMessage[]): number {
   // Count prior offer_email_summary tool calls the same way extractProfile
   // replays profile patches: straight from the message history, so the two-ask
@@ -171,12 +198,15 @@ function countEmailSummaryOffers(messages: UIMessage[]): number {
 // a chat request the user initiated — conversation input, not tracking; it
 // seeds the live conversation and is never stored as a profile.
 interface ChatRequestContext {
+  /** "product" | "browsing" | "configurator" (Home-Gym-Konfigurator, configurator-core.mjs). */
   type?: string;
   productId?: unknown;
   productTitle?: unknown;
   recentlyViewed?: unknown;
   /** "page" (facts of the open page on a typed turn), "cta", "nudge"; absent = today's behaviour (A3). */
   source?: unknown;
+  /** type "configurator": the page's answers + plan state, sent with every turn of the thread. */
+  configurator?: unknown;
 }
 
 // Optional re-identification the widget attaches ONLY after a successful
@@ -296,7 +326,21 @@ export async function POST(req: Request) {
       );
     }
 
-    const profile = extractProfile(messages);
+    // Home-Gym-Konfigurator (configurator-core.mjs): the page sends its
+    // answers (and the plan as it stands) with every turn of a configurator
+    // thread. Used only while the feature is on in Konfigurator (admin
+    // setting, default on); an unknown or empty context is simply no
+    // configurator conversation. The answers fill the profile fields the
+    // conversation has not set yet, so the retrieval's gates apply from the
+    // greeting on.
+    const configuratorAnswers = parseConfiguratorContext(body.context);
+    const configuratorSettings = configuratorAnswers ? await getCachedConfiguratorSettings() : null;
+    const configurator = configuratorAnswers && configuratorSettings?.enabled ? configuratorAnswers : null;
+    const assortment =
+      configurator && configuratorSettings ? await loadConfiguratorAssortment(configuratorSettings) : null;
+    const boostIds = assortment ? new Set(assortment.products.map((p) => p.id)) : undefined;
+
+    const profile = mergeConfiguratorProfile(extractProfile(messages), configurator);
     archetype = deriveArchetype(profile);
     const latestUserText = getLatestUserText(messages);
 
@@ -338,8 +382,10 @@ export async function POST(req: Request) {
     const campaignToken = typeof body.campaignToken === "string" ? body.campaignToken.slice(0, 128) : null;
     const [hits, identity, emailOfferDeclined, generalQa, directives] = await Promise.all([
       latestUserText
-        ? retrieveForTurn({ latestUserMessage: latestUserText, profile, limit: 8 })
-        : Promise.resolve([]),
+        ? retrieveForTurn({ latestUserMessage: latestUserText, profile, limit: configurator ? 6 : 8, boostIds })
+        : configurator
+          ? retrieveForTurn({ latestUserMessage: configuratorRetrievalQuery(configurator), profile, limit: 6, boostIds })
+          : Promise.resolve([]),
       resolveChatIdentity({ sessionId, email: claimedEmail || null }),
       // Whether the user dismissed a capture card in this session (a UI click
       // the message history never shows — only the widget's KPI event records
@@ -434,9 +480,15 @@ export async function POST(req: Request) {
     // a specific answer about THAT product — specs and the sold-out flag are
     // visible without a tool roundtrip. Context products lead; semantic hits
     // follow, deduped.
+    // A configurator thread also grounds the plan as it stands on the page
+    // (capped — the curated assortment is listed compactly in its section).
+    const configuratorPlan = configurator ? configurator.plan.slice(0, 8) : [];
+    const configuratorPlanProducts =
+      configuratorPlan.length > 0 ? await getProductsByIds(configuratorPlan.map((p) => p.id)) : [];
     const contextProductIds = [
       ...(productContext ? [productContext.id] : []),
       ...(browsingContext?.products.map((p) => p.id) ?? []),
+      ...configuratorPlanProducts.map((p) => p.id),
     ];
     const contextProducts =
       contextProductIds.length > 0 ? await getProductsByIds(contextProductIds) : [];
@@ -474,9 +526,11 @@ export async function POST(req: Request) {
       greetingBrowsingContext = browsingContext;
       modelMessages.push({
         role: "user",
-        content: greetingTriggerText(locale, {
-          productName: productContext?.name,
-        }),
+        content: configurator
+          ? configuratorGreetingTrigger(locale)
+          : greetingTriggerText(locale, {
+              productName: productContext?.name,
+            }),
       });
     } else {
       // Existing conversation (including a typed first message): pivot via
@@ -500,6 +554,31 @@ export async function POST(req: Request) {
         ? recordKpiEvent({ sessionId, event: KPI_PAGE_CONTEXT_APPLIED, data: { ...pagePlan.event, locale } })
         : null;
 
+    // Configurator: the handover (a fresh open of a configurator thread) is
+    // recorded once, at request time; the plans in onFinish. Ids and enums only.
+    const configuratorStarted =
+      configurator && sessionId && !hasUserMessage
+        ? recordKpiEvent({
+            sessionId,
+            event: KPI_CONFIGURATOR_CHAT_STARTED,
+            data: chatStartedEventData(configurator, locale),
+          })
+        : null;
+    const gymPlansBefore = configurator ? countGymPlans(messages) : 0;
+    const configuratorBlock =
+      configurator && configuratorSettings && assortment
+        ? renderConfiguratorSection({
+            answers: configurator,
+            assortment: assortment.products,
+            settings: configuratorSettings,
+            plan: configuratorPlan.flatMap((line) => {
+              const p = configuratorPlanProducts.find((x) => x.id === line.id.split("~")[0]);
+              return p ? [{ ...line, name: p.name }] : [];
+            }),
+            locale,
+          })
+        : "";
+
     // The full tool set is always built (stable type for the forced-offer
     // prepareStep below); offer_email_summary is withheld from the model via
     // `activeTools` once the ask cap is reached or the email was captured —
@@ -515,10 +594,12 @@ export async function POST(req: Request) {
     // a second cached prefix for those sessions only (docs/PROMPT_CACHING.md).
     const orderStatusEnabled = await isOrderStatusEnabledFor(sessionId);
     const tools = buildChatTools(profile, locale, { sessionId, orderStatusEnabled });
+    const configuratorToolNames: readonly string[] = CONFIGURATOR_TOOLS;
     const defaultActiveTools = Object.keys(tools).filter(
       (name) =>
         (emailOfferAvailable || name !== "offer_email_summary") &&
-        (orderStatusEnabled || name !== "get_order_status")
+        (orderStatusEnabled || name !== "get_order_status") &&
+        (configurator !== null || !configuratorToolNames.includes(name))
     ) as Array<keyof typeof tools>;
 
     // PROMPT CACHING (see docs/PROMPT_CACHING.md). Anthropic bills cached
@@ -576,6 +657,7 @@ export async function POST(req: Request) {
             locale,
             orderStatus: orderStatusEnabled,
             welcomeReward: welcomeRewardForPrompt(locale),
+            configuratorBlock,
           }),
           providerOptions: cacheEphemeral,
         },
@@ -710,6 +792,22 @@ export async function POST(req: Request) {
                 otherCards: countOtherCards(toolCalls, resolvedProduct?.id),
               },
             });
+          }
+
+          // Configurator: one event per plan shown in this turn (handles and
+          // counts only). The handover event was started at request time.
+          if (configuratorStarted) await configuratorStarted;
+          if (configurator && sessionId) {
+            let planNumber = gymPlansBefore;
+            for (const tc of toolCalls) {
+              if (tc.toolName !== "show_gym_plan") continue;
+              planNumber += 1;
+              await recordKpiEvent({
+                sessionId,
+                event: KPI_CONFIGURATOR_PLAN_SHOWN,
+                data: planShownEventData(tc.input, planNumber),
+              });
+            }
           }
 
           // Funnel telemetry: one pseudonymous event per email-summary offer

@@ -4,6 +4,16 @@ import { retrieve, embedQuery } from "./retrieval";
 import { captureConsentCopy } from "./consent-copy";
 import { toolCopy } from "./tool-descriptions.mjs";
 import { createOrderStatusLookup } from "./order-status";
+import { resolveProductSelections } from "./product-catalog";
+import {
+  PLAN_MAX_ITEMS,
+  PLAN_ROLES,
+  REPLY_MAX_CHARS,
+  REPLY_MAX_OPTIONS,
+  REPLY_TOPICS,
+  configuratorToolCopy,
+  normalizePlanItems,
+} from "./configurator-core.mjs";
 import type { Locale } from "./locale";
 import type { CustomerProfile } from "./types";
 
@@ -101,6 +111,7 @@ export function buildChatTools(
   options: ChatToolOptions = {}
 ) {
   const c = toolCopy(locale);
+  const k = configuratorToolCopy(locale);
   // One lookup per request: the access gate (link + live token) is resolved
   // once even when the model calls the tool several times in parallel.
   const lookupOrderStatus = createOrderStatusLookup(options.sessionId ?? null);
@@ -290,6 +301,61 @@ export function buildChatTools(
       // locale picks the consent language so an /en chat captures /en consent.
       // See src/lib/consent-copy.ts and docs/frontend/API_CONTRACT.md §7.4.
       execute: async () => ({ ok: true, consentCopy: captureConsentCopy(locale) }),
+    }),
+
+    // ── Home-Gym-Konfigurator only (configurator-core.mjs) ──────────────────
+    // Always built (stable type, like get_order_status), withheld via
+    // `activeTools` in api/chat unless the request carries a configurator
+    // context — so every other conversation sends exactly today's tool list.
+    // Both sit AFTER the tools-tier cache marker (show_contact_form) and after
+    // offer_email_summary, so they never change the cached tools prefix.
+    // Older widgets render nothing for them (API_CONTRACT §2, unknown tools).
+    suggest_replies: tool({
+      description: k.suggestRepliesDesc,
+      inputSchema: z.object({
+        options: z
+          .array(z.string().min(1).max(REPLY_MAX_CHARS))
+          .min(2)
+          .max(REPLY_MAX_OPTIONS)
+          .describe(k.fieldReplyOptions),
+        multiSelect: z.boolean().optional().describe(k.fieldReplyMulti),
+        topic: z.enum(REPLY_TOPICS).optional().describe(k.fieldReplyTopic),
+      }),
+      execute: async () => ({ ok: true }),
+    }),
+
+    show_gym_plan: tool({
+      description: k.showGymPlanDesc,
+      inputSchema: z.object({
+        title: z.string().max(80).describe(k.fieldPlanTitle),
+        summary: z.string().max(400).optional().describe(k.fieldPlanSummary),
+        items: z
+          .array(
+            z.object({
+              productId: z.string(),
+              quantity: z.number().int().min(1).max(20).optional(),
+              role: z.enum(PLAN_ROLES),
+              note: z.string().max(120).optional(),
+            })
+          )
+          .min(1)
+          .max(PLAN_MAX_ITEMS)
+          .describe(k.fieldPlanItems),
+        tips: z.array(z.string().max(200)).max(3).optional().describe(k.fieldPlanTips),
+      }),
+      // The widget renders the plan from the INPUT (hydrating the ids itself);
+      // the result only tells the model which lines will not show, so it can
+      // correct itself in the same turn.
+      execute: async (input) => {
+        const lines = normalizePlanItems(input);
+        const resolved = await resolveProductSelections(lines.map((l) => l.productId));
+        const known = new Map(resolved.map((r) => [r.ref, r]));
+        const unknownIds = lines.filter((l) => !known.has(l.productId)).map((l) => l.productId);
+        const soldOutIds = resolved.filter((r) => !r.available).map((r) => r.ref);
+        return unknownIds.length || soldOutIds.length
+          ? { ok: true, shownItems: lines.length - unknownIds.length, unknownIds, soldOutIds }
+          : { ok: true, shownItems: lines.length };
+      },
     }),
   };
 }
