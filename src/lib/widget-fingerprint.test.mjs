@@ -156,9 +156,26 @@ test("the round of 2026-10-08 (495fdf6) is recognised only with both new class n
   const row = WIDGET_BUILDS.find((b) => b.key === "reward-2026-10-08");
   assert.equal(row?.commit, "495fdf6");
   assert.equal(row?.acceptable, true);
-  assert.equal(WIDGET_BUILDS[0].key, "reward-2026-10-08"); // newest first
+  assert.equal(WIDGET_BUILDS[1].key, "reward-2026-10-08"); // newest first, after the configurator build
   // The new markers are counted like the others (class names, whitespace-insensitive).
   const c = countWidgetMarkers(`el.className = "ms-chat-reward-badge"; lead.className="ms-chat-vm-lead";`);
   assert.equal(c["ms-chat-reward-badge"], 1);
   assert.equal(c["ms-chat-vm-lead"], 1);
+});
+
+test("the Home-Gym-Konfigurator build (2026-10-21) is recognised only with both of its class names", () => {
+  for (const variant of ["raw", "ws", "min"]) {
+    const reward = MEASURED[variant]["495fdf6"];
+    assert.equal(classifyWidgetBuild({ ...reward, "ms-chat-root--dock": 1, "ms-chat-planhost": 29 })?.key, "konfigurator-2026-10-21", variant);
+    assert.equal(classifyWidgetBuild({ ...reward, "ms-chat-root--dock": 1 }), null, `${variant} dock only`);
+    assert.equal(classifyWidgetBuild({ ...reward, "ms-chat-planhost": 3 }), null, `${variant} plan host only`);
+    assert.equal(classifyWidgetBuild(reward)?.key, "reward-2026-10-08", `${variant} without the configurator`);
+  }
+  const row = WIDGET_BUILDS.find((b) => b.key === "konfigurator-2026-10-21");
+  assert.equal(WIDGET_BUILDS[0], row); // newest first
+  assert.equal(row?.acceptable, true);
+  assert.equal(row?.current, false); // becomes current once the upload is confirmed live
+  const c = countWidgetMarkers(`dockRoot = el('div', { class: 'ms-chat-root ms-chat-root--dock' }); wrap = el('div', { class: 'ms-chat-root ms-chat-planhost' });`);
+  assert.equal(c["ms-chat-root--dock"], 1);
+  assert.equal(c["ms-chat-planhost"], 1);
 });

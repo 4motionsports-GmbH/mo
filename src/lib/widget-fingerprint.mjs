@@ -31,6 +31,8 @@ export const WIDGET_MARKERS = Object.freeze([
   "Rabattaktionen zuerst erfahren", // widget-authored popup bullet (2026-10-01 … 2026-10-04 builds); gone with the served bullets
   "ms-chat-reward-badge", // round of 2026-10-08 (495fdf6, PR #76): served reward badge (class name)
   "ms-chat-vm-lead", // round of 2026-10-08: value-moment lead of the inline card (class name)
+  "ms-chat-root--dock", // Home-Gym-Konfigurator (2026-10-21): the docked panel (class name)
+  "ms-chat-planhost", // Home-Gym-Konfigurator (2026-10-21): the plan on the page (class name)
 ]);
 
 /** @param {string} s */
@@ -67,6 +69,15 @@ export function countWidgetMarkers(js) {
  * @type {ReadonlyArray<{ key: string, commit: string, label: string, current: boolean, acceptable: boolean, consequence: string }>}
  */
 export const WIDGET_BUILDS = Object.freeze([
+  {
+    key: "konfigurator-2026-10-21",
+    commit: "cc6c8c8",
+    label: "Widget mit dem Home-Gym-Konfigurator (cc6c8c8, 2026-10-21: angedocktes Mo, Antwort-Chips, Home-Gym-Plan)",
+    current: false,
+    acceptable: true,
+    consequence:
+      "Stand nach dem Upload vom 21.10.: alles aus 495fdf6 plus der Konfigurator — auf der Konfigurator-Seite ist Mo angedockt, führt mit Antwort-Chips und zeigt den Plan mit Warenkorb-Knopf; alle anderen Seiten unverändert (docs/CONFIGURATOR.md).",
+  },
   {
     key: "reward-2026-10-08",
     commit: "495fdf6",
@@ -178,7 +189,15 @@ export function classifyWidgetBuild(c) {
     // or it is half applied.
     const reward = n("ms-chat-reward-badge") > 0;
     const valueMoment = n("ms-chat-vm-lead") > 0;
-    if (reward && valueMoment) return build("reward-2026-10-08");
+    if (reward && valueMoment) {
+      // On top of it, the Home-Gym-Konfigurator (2026-10-21): both of its class
+      // names, or it is half applied.
+      const dock = n("ms-chat-root--dock") > 0;
+      const planHost = n("ms-chat-planhost") > 0;
+      if (dock && planHost) return build("konfigurator-2026-10-21");
+      if (dock || planHost) return null;
+      return build("reward-2026-10-08");
+    }
     if (reward || valueMoment) return null;
     return build("tasks-2026-10-05");
   }
