@@ -139,6 +139,9 @@ export const SERVER_ONLY_EVENTS = Object.freeze([
   "page_context_answered",
   "consent_ask_eligible",
   "consent_copy_served",
+  // Home-Gym-Konfigurator (configurator-core.mjs): written by /api/chat.
+  "configurator_chat_started",
+  "configurator_plan_shown",
 ]);
 
 const SERVER_ONLY = new Set(SERVER_ONLY_EVENTS);
