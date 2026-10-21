@@ -44,6 +44,7 @@ import {
   getOrderStatusKpis,
   getPageContextKpis,
 } from "./kpi-store";
+import { getConfiguratorSummary } from "./configurator-store";
 import { getMoRevenueData } from "./mo-revenue-store";
 import { getJourneyCounts } from "./kpi-journey-store";
 import { getAiCostMetrics } from "./ai-usage-store";
@@ -430,6 +431,7 @@ async function collectPeriod(range: KpiRange, sql: Sql | null) {
     journey,
     reportKpis,
     pageContext,
+    configurator,
     locales,
     loginGate,
     account,
@@ -452,6 +454,7 @@ async function collectPeriod(range: KpiRange, sql: Sql | null) {
     safe("journey", () => getJourneyCounts(range)),
     safe("reportKpis", () => getReportKpis(range.from, range.to)),
     safe("pageContext", () => getPageContextKpis(range)),
+    safe("configurator", () => getConfiguratorSummary(range)),
     safe("locales", () => getLocaleSplit(range)),
     safe("loginGate", () => getLoginGateFunnel(range)),
     safe("account", () => getAccountActivity(range)),
@@ -475,6 +478,7 @@ async function collectPeriod(range: KpiRange, sql: Sql | null) {
     journey,
     reportKpis,
     pageContext,
+    configurator,
     locales,
     loginGate,
     account,

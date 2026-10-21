@@ -9,7 +9,7 @@ export const SAMPLE_PERIOD = { from: "2026-08-10", to: "2026-09-08", days: 30, l
 export const SAMPLE_PREVIOUS = { from: "2026-07-11", to: "2026-08-09", days: 30, label: "11.07.2026 – 09.08.2026" };
 
 /** One mo_orders ledger row as mo-revenue-store RevenueLedgerOrder. */
-function order(day, total, tier, source, { codes = [], overlap = null, status = "PAID" } = {}) {
+function order(day, total, tier, source, { codes = [], overlap = null, status = "PAID", viaConfigurator = false } = {}) {
   return {
     processedAt: `${day}T10:00:00.000Z`,
     total,
@@ -19,6 +19,7 @@ function order(day, total, tier, source, { codes = [], overlap = null, status = 
     source,
     discountCodes: codes,
     overlap,
+    viaConfigurator,
   };
 }
 
@@ -27,7 +28,7 @@ function order(day, total, tier, source, { codes = [], overlap = null, status = 
 //   Beraten & gekauft 3 / 1 890 · Beraten, anderes 5 / 4 210,50 · Direkt 14 / 9 120,40
 //   (Set 4 / 5 120 · Kampagne 4 / 1 340,40 · Marketing 4 / 1 450 · Zusammenfassung 2 / 1 210)
 const CURRENT_ORDERS = [
-  order("2026-08-12", 720, "assisted", "widget", { overlap: true }),
+  order("2026-08-12", 720, "assisted", "widget", { overlap: true, viaConfigurator: true }),
   order("2026-08-19", 650, "assisted", "widget", { overlap: true }),
   order("2026-09-02", 520, "assisted", "widget", { overlap: true }),
   order("2026-08-11", 1200, "influenced", "widget", { overlap: false }),
@@ -142,6 +143,21 @@ export const SAMPLE_CAMPAIGN_CODES = [
 ];
 
 /** getJourneyCounts(range) — kpi-journey-store JourneyCounts. */
+/** configurator-store ConfiguratorSummary. */
+function configurator(o) {
+  return {
+    sessions: { viewed: 0, started: o.started, handover: o.handover, chats: o.handover, plans: o.plans, carts: o.carts, orders: o.orders },
+    plansShown: o.plans,
+    chipClicks: 0,
+    planEdits: 0,
+    cartAdds: o.carts,
+    cartUnits: o.carts * 3,
+    cartValue: o.cartValue,
+    orders: o.orders,
+    revenue: o.revenue,
+  };
+}
+
 function journey(o) {
   return {
     chats: o.chats,
@@ -250,6 +266,7 @@ export const SAMPLE_SNAPSHOT_RAW = {
     journey: journey({ chats: 88, shown: 61, clicked: 30, cart: 9, ordered: 5, orderedAny: 8, revenue: 6100.5, productClicks: 58, cartClicks: 9 }),
     reportKpis: { conversations: 96, analyzed: 74, withError: 3, emailCaptured: 18, cartUsed: 7, checkoutOffered: 61 },
     pageContext: { sessions: 34, resolved: 29, byLocale: {}, pcts: [0], arms: {}, excluded: {}, primary: null, progress: null },
+    configurator: configurator({ started: 14, handover: 11, plans: 8, carts: 3, cartValue: 4180, orders: 1, revenue: 720 }),
     locales: { chats: [{ locale: "de", count: 88 }, { locale: "en", count: 8 }], captures: [] },
     loginGate: { shown: 140, clicked: 31, declined: 52, dismissed: 40, signedIn: 22, linked: 17, rates: {}, startsBySource: { login_gate: 31, other: 12 } },
     account: account({ signins: 44, signin: 21, shop: 9, refused: 2, exports: 1, erasures: 0, contact: 6, recognised: 15, withCode: 12, redeemed: 9 }),
@@ -328,6 +345,7 @@ export const SAMPLE_SNAPSHOT_RAW = {
     journey: journey({ chats: 66, shown: 40, clicked: 20, cart: 5, ordered: 3, orderedAny: 6, revenue: 3890, productClicks: 37, cartClicks: 5 }),
     reportKpis: { conversations: 71, analyzed: 66, withError: 4, emailCaptured: 15, cartUsed: 4, checkoutOffered: 40 },
     pageContext: null,
+    configurator: null,
     locales: { chats: [{ locale: "de", count: 67 }, { locale: "en", count: 4 }], captures: [] },
     loginGate: { shown: 120, clicked: 22, declined: 50, dismissed: 38, signedIn: 15, linked: 9, rates: {}, startsBySource: { login_gate: 22, other: 10 } },
     account: account({ signins: 30, signin: 12, shop: 0, refused: 3, exports: 0, erasures: 1, contact: 4, recognised: 4, withCode: 3, redeemed: 2 }),

@@ -598,6 +598,15 @@ function revenueSection(raw, d) {
     metric("revenue.withMoCode", "davon mit Mo-Rabattcode (MS5-/MK-)", "eur", s?.withMoCode?.revenue, ps?.withMoCode?.revenue, {
       hint: s ? `${num(s.withMoCode.orders)} Bestellung(en) — ein Querschnitt über die Wege, nicht zusätzlich` : undefined,
     }),
+    metric("revenue.viaConfigurator", "davon über den Home-Gym-Konfigurator", "eur", s?.viaConfigurator?.revenue, ps?.viaConfigurator?.revenue, {
+      hint: s
+        ? `${num(s.viaConfigurator.orders)} Bestellung(en), deren letzte Beratung ein Konfigurator-Gespräch war — ein Querschnitt, nicht zusätzlich`
+        : undefined,
+    }),
+    metric("revenue.refunded", "Erstattet oder storniert", "count", s?.refunded?.orders, ps?.refunded?.orders, {
+      good: "none",
+      hint: s && s.refunded.orders > 0 ? "zählt nicht zum Umsatz (Shopify meldet Erstattungen seit dem 21.10.2026)" : undefined,
+    }),
     metric("revenue.unrealised", "Erfasst, (noch) nicht bezahlt", "count", s?.unrealised?.orders, ps?.unrealised?.orders, {
       good: "none",
       hint: s && s.unrealised.orders > 0 ? `${eur(s.unrealised.revenue)} — zählt nicht zum Umsatz` : undefined,
@@ -707,6 +716,15 @@ function chatSection(raw, d) {
       good: "none",
       base: sum((c.locales?.chats ?? []).map((r) => r.count)),
       previousBase: sum((p.locales?.chats ?? []).map((r) => r.count)),
+    }),
+    // Home-Gym-Konfigurator (configurator-store getConfiguratorSummary); its
+    // orders are revenue.viaConfigurator.
+    metric("chat.configuratorHandover", "Home-Gym-Konfigurator: an Mo übergeben (Sitzungen)", "count", c.configurator?.sessions?.handover, p.configurator?.sessions?.handover, {
+      hint: c.configurator ? `${num(c.configurator.sessions.started)} Sitzungen haben den Konfigurator begonnen` : undefined,
+    }),
+    metric("chat.configuratorPlans", "Home-Gym-Konfigurator: Plan erstellt (Sitzungen)", "count", c.configurator?.sessions?.plans, p.configurator?.sessions?.plans),
+    metric("chat.configuratorCarts", "Home-Gym-Konfigurator: Plan in den Warenkorb (Sitzungen)", "count", c.configurator?.sessions?.carts, p.configurator?.sessions?.carts, {
+      hint: c.configurator ? `${eur(c.configurator.cartValue)} Warenkorbwert laut Plan — kein Umsatz` : undefined,
     }),
   ];
   // „Vom Chat zur Bestellung“ (kpi-journey): sessions with a chat started in
@@ -1657,6 +1675,12 @@ export const SNAPSHOT_RAW_FIELDS = Object.freeze({
     // kpi-store getPageContextKpis, getLocaleSplit
     "pageContext.sessions",
     "pageContext.resolved",
+    // configurator-store getConfiguratorSummary
+    "configurator.sessions.started",
+    "configurator.sessions.handover",
+    "configurator.sessions.plans",
+    "configurator.sessions.carts",
+    "configurator.cartValue",
     "locales.chats[].locale",
     "locales.chats[].count",
     // kpi-store getLoginGateFunnel
@@ -1802,6 +1826,7 @@ export const SNAPSHOT_RAW_FIELDS = Object.freeze({
     "orders[].source",
     "orders[].discountCodes",
     "orders[].overlap",
+    "orders[].viaConfigurator",
     "previous",
     "previousOrders[].total",
     "previousOrders[].currency",
@@ -1810,6 +1835,7 @@ export const SNAPSHOT_RAW_FIELDS = Object.freeze({
     "previousOrders[].source",
     "previousOrders[].discountCodes",
     "previousOrders[].overlap",
+    "previousOrders[].viaConfigurator",
     "ledgerCodes",
     "ledgerOrderNames",
     "unresolved.unknownToken",
