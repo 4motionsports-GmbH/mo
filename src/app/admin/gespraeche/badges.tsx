@@ -4,7 +4,8 @@
 // cached-analysis badges, one table each so list rows and the detail header
 // never drift apart. Identity guardrail: a tier is a label, never a person.
 
-import { AlertTriangle, Mail, ShoppingCart, Wrench } from "lucide-react";
+import { AlertTriangle, Dumbbell, Mail, ShoppingCart, Wrench } from "lucide-react";
+import { isConfiguratorThread } from "@/lib/configurator-core.mjs";
 import { ARCHETYPE_META } from "@/lib/persona";
 import type { PersonaArchetype } from "@/lib/types";
 import {
@@ -26,6 +27,8 @@ export const TOOL_LABELS: Record<string, string> = {
   show_contact_form: "Kontakt",
   offer_email_summary: "E-Mail",
   get_order_status: "Bestellung",
+  suggest_replies: "Antwort-Chips",
+  show_gym_plan: "Home-Gym-Plan",
 };
 
 const TIER_TONE: Record<AdminTier, StatusTone> = {
@@ -109,7 +112,9 @@ export function OutcomeChips({
         chip("success", <ShoppingCart />, "Cart genutzt", "Warenkorb-/Checkout-Link geklickt")}
       {!item.cartUsed &&
         item.checkoutOffered &&
-        chip("neutral", <ShoppingCart />, "Cart angeboten", "Warenkorb-Button angeboten (add_to_cart)")}
+        chip("neutral", <ShoppingCart />, "Cart angeboten", "Warenkorb-Button oder Home-Gym-Plan angeboten (add_to_cart, show_gym_plan)")}
+      {isConfiguratorThread(item.toolsFired) &&
+        chip("accent", <Dumbbell />, "Konfigurator", "Beratung aus dem Home-Gym-Konfigurator (Antwort-Chips oder Home-Gym-Plan)")}
       {item.emailCaptured && chip("info", <Mail />, "E-Mail", "E-Mail erfasst")}
       {item.toolsFired.length > 0 &&
         chip("neutral", <Wrench />, `${item.toolsFired.length} Tool${item.toolsFired.length === 1 ? "" : "s"}`, tools)}

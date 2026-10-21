@@ -28,6 +28,9 @@ import {
 } from "./ai-pricing.mjs";
 import { classifyTier, CATEGORY_LABELS, QUALITY_LABELS } from "./conversation-analysis-core.mjs";
 import { CART_PATTERNS } from "./kpi-event-patterns.mjs";
+import { CONFIGURATOR_PLAN_TOOL, parseStoredGymPlan } from "./configurator-core.mjs";
+import { resolveProductSelections } from "./product-catalog";
+import { isVariantRef, variantDisplayName } from "./product-ref.mjs";
 
 /** Conversations per list page. */
 export const PAGE_SIZE = 25;
@@ -59,7 +62,7 @@ export interface AdminConversationListItem {
   tier: AdminTier;
   personaLabel: string | null;
   toolsFired: string[];
-  /** A checkout/cart button was OFFERED (add_to_cart fired). */
+  /** A checkout/cart button was OFFERED (add_to_cart or a Home-Gym plan fired). */
   checkoutOffered: boolean;
   /** A cart/checkout link was actually USED (clicked) — session-grained. */
   cartUsed: boolean;
@@ -98,6 +101,75 @@ export interface AdminConversationDetail {
     noReply: boolean;
   };
   analysis: CachedAnalysis | null;
+  /** The latest Home-Gym plan Mo showed in this conversation (configurator), or null. */
+  gymPlan: AdminGymPlan | null;
+}
+
+/** A configurator plan as Gespräche shows it — names and prices from today's catalog. */
+export interface AdminGymPlan {
+  title: string;
+  summary: string;
+  tips: string[];
+  shownAt: string;
+  lines: Array<{
+    ref: string;
+    name: string;
+    quantity: number;
+    roleLabel: string;
+    note: string | null;
+    /** Today's catalog price of the chosen variant; null when the product is unknown now. */
+    unitPrice: number | null;
+    available: boolean | null;
+  }>;
+  /** Sum over the lines with a price (today's catalog), null when none has one. */
+  total: number | null;
+}
+
+/**
+ * The latest show_gym_plan row of a conversation, resolved against the catalog.
+ * Null when there is none or it is unreadable. A catalog failure keeps the plan
+ * with ids instead of names. Throws only on the DB read (caller's try/catch).
+ */
+async function loadGymPlan(conversationId: number, sql: Sql): Promise<AdminGymPlan | null> {
+  const rows = (await sql`
+    SELECT content, created_at
+      FROM messages
+     WHERE conversation_id = ${conversationId} AND tool_name = ${CONFIGURATOR_PLAN_TOOL}
+     ORDER BY created_at DESC, id DESC
+     LIMIT 1
+  `) as Array<{ content: string | null; created_at: unknown }>;
+  const plan = parseStoredGymPlan(rows[0]?.content ?? null);
+  if (!plan) return null;
+  const byRef = new Map<string, Awaited<ReturnType<typeof resolveProductSelections>>[number]>();
+  try {
+    for (const r of await resolveProductSelections(plan.items.map((i) => i.productId))) byRef.set(r.ref, r);
+  } catch (err) {
+    reportError(err, { route: "lib/admin-conversations", phase: "gymPlan.catalog" });
+  }
+  const lines = plan.items.map((i) => {
+    const r = byRef.get(i.productId);
+    const shown = r?.display ?? null;
+    const price = shown ? (typeof shown.salePrice === "number" && shown.salePrice > 0 ? shown.salePrice : shown.price) : null;
+    return {
+      ref: i.productId,
+      // The variant's title only when Mo pinned one (a bare id shows the product).
+      name: r ? (isVariantRef(i.productId) && variantDisplayName(r.product, r.variant)) || r.product.name : i.productId,
+      quantity: i.quantity,
+      roleLabel: i.roleLabel,
+      note: i.note,
+      unitPrice: typeof price === "number" && Number.isFinite(price) ? price : null,
+      available: r ? r.available : null,
+    };
+  });
+  const priced = lines.filter((l) => l.unitPrice != null);
+  return {
+    title: plan.title,
+    summary: plan.summary,
+    tips: plan.tips,
+    shownAt: toIso(rows[0].created_at),
+    lines,
+    total: priced.length ? Math.round(priced.reduce((sum, l) => sum + (l.unitPrice ?? 0) * l.quantity, 0) * 100) / 100 : null,
+  };
 }
 
 export interface CategoryCount {
@@ -526,6 +598,8 @@ export async function getAdminConversationDetail(
 
     const session = meta.session_id;
     const { emailed, carted } = await loadSessionSignals(session ? [session] : [], sql);
+    const toolsFired = Array.isArray(toolRows[0]?.tools) ? (toolRows[0].tools as string[]) : [];
+    const gymPlan = toolsFired.includes(CONFIGURATOR_PLAN_TOOL) ? await loadGymPlan(conversationId, sql) : null;
 
     const transcript: AdminTranscriptTurn[] = turnRows.map((t) => ({
       role: t.role,
@@ -548,7 +622,7 @@ export async function getAdminConversationDetail(
       messageCount: transcript.length,
       transcript,
       outcomes: {
-        toolsFired: Array.isArray(toolRows[0]?.tools) ? (toolRows[0].tools as string[]) : [],
+        toolsFired,
         checkoutOffered:
           Array.isArray(meta.selected_product_ids) && meta.selected_product_ids.length > 0,
         cartUsed: session ? carted.has(session) : false,
@@ -556,6 +630,7 @@ export async function getAdminConversationDetail(
         noReply: userTurns > 0 && assistantTurns === 0,
       },
       analysis: rowToAnalysis(meta),
+      gymPlan,
     };
   } catch (err) {
     reportError(err, { route: "lib/admin-conversations", phase: "detail" });

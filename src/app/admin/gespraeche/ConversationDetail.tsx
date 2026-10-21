@@ -1,8 +1,9 @@
 "use client";
 
 // The selected conversation: header (tier, persona, outcome signals), the
-// cached KI-Analyse with its on-demand (re)run, and the transcript through the
-// shared TranscriptView. Fetched on selection via POST
+// cached KI-Analyse with its on-demand (re)run, the latest Home-Gym plan of a
+// configurator consultation, and the transcript through the shared
+// TranscriptView. Fetched on selection via POST
 // /api/admin/conversations/detail; the analysis runs via
 // /api/admin/conversations/analyze (same payloads as before).
 
@@ -10,7 +11,7 @@ import * as React from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { MessagesSquare, Sparkles, UserRound } from "lucide-react";
-import type { AdminConversationDetail } from "@/lib/admin-conversations";
+import type { AdminConversationDetail, AdminGymPlan } from "@/lib/admin-conversations";
 import { ADMIN_DATE_TIME_SHORT, formatAdmin } from "@/lib/admin-datetime.mjs";
 import { eur, num, plural } from "@/lib/admin-format.mjs";
 import { adminTabHref } from "@/lib/admin-tabs.mjs";
@@ -19,6 +20,7 @@ import {
   Callout,
   Card,
   CardContent,
+  Disclosure,
   EmptyState,
   InfoTip,
   Skeleton,
@@ -224,11 +226,78 @@ export function ConversationDetail({ conversationId }: { conversationId: number 
           )}
         </div>
 
+        {detail.gymPlan && <GymPlan plan={detail.gymPlan} />}
+
         <div>
           <div className="mb-2 text-sm font-semibold text-foreground">Transkript</div>
           <TranscriptView turns={detail.transcript} showTimes />
         </div>
       </CardContent>
     </Card>
+  );
+}
+
+/** The latest plan Mo built in a configurator consultation (names and prices from today's catalog). */
+function GymPlan({ plan }: { plan: AdminGymPlan }) {
+  const units = plan.lines.reduce((n, l) => n + l.quantity, 0);
+  return (
+    <Disclosure
+      defaultOpen
+      title="Home-Gym-Plan"
+      actions={
+        <InfoTip label="Was der Plan zeigt">
+          Der letzte Plan, den Mo in diesem Gespräch gezeigt hat (show_gym_plan) — Namen und Preise aus dem heutigen
+          Katalog, ohne die Änderungen der Kundin oder des Kunden auf der Seite (Menge, Variante, Entfernen).
+        </InfoTip>
+      }
+      meta={`${plural(plan.lines.length, "Position", "Positionen")} · ${plural(units, "Artikel", "Artikel")}${
+        plan.total != null ? ` · ${eur(plan.total, 0)}` : ""
+      } · ${formatAdmin(plan.shownAt, ADMIN_DATE_TIME_SHORT)}`}
+    >
+      <div className="flex flex-col gap-3 text-sm">
+        {(plan.title || plan.summary) && (
+          <div className="flex flex-col gap-0.5">
+            {plan.title && <strong className="text-foreground">{plan.title}</strong>}
+            {plan.summary && <p className="text-muted-foreground">{plan.summary}</p>}
+          </div>
+        )}
+        <ul className="flex flex-col divide-y divide-border rounded-md border border-border">
+          {plan.lines.map((l) => (
+            <li key={l.ref} className="flex items-start gap-3 px-3 py-2">
+              <span className="w-8 shrink-0 tabular-nums text-muted-foreground">{num(l.quantity)}×</span>
+              <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+                <span className="flex flex-wrap items-center gap-1.5">
+                  <span className="font-medium text-foreground">{l.name}</span>
+                  <StatusBadge tone="neutral" dot={false}>
+                    {l.roleLabel}
+                  </StatusBadge>
+                  {l.available === false && (
+                    <StatusBadge tone="warning" dot={false}>
+                      nicht lieferbar
+                    </StatusBadge>
+                  )}
+                  {l.available === null && (
+                    <StatusBadge tone="warning" dot={false}>
+                      nicht im Katalog
+                    </StatusBadge>
+                  )}
+                </span>
+                {l.note && <span className="text-xs text-muted-foreground">{l.note}</span>}
+              </span>
+              <span className="shrink-0 tabular-nums text-muted-foreground">
+                {l.unitPrice != null ? eur(l.unitPrice * l.quantity, 0) : "—"}
+              </span>
+            </li>
+          ))}
+        </ul>
+        {plan.tips.length > 0 && (
+          <ul className="list-disc pl-5 text-xs text-muted-foreground">
+            {plan.tips.map((t) => (
+              <li key={t}>{t}</li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </Disclosure>
   );
 }
