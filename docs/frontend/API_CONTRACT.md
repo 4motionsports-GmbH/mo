@@ -70,6 +70,7 @@ fresh within 300 s. **Bucket:** see "Rate limits" below.
 | --- | --- | --- | --- | --- |
 | POST | `/api/chat` | secret | `chat` | §2 |
 | GET | `/api/products` | origin | `products` | §3 |
+| GET | `/api/configurator/assortment` (configurator page only) | origin | `products` | §3a |
 | POST | `/api/contact` | secret | `chat` + `contact-ip` | §4 |
 | POST | `/api/kpi` | origin | `kpi` | §5 |
 | POST | `/api/capture-email` | secret | `chat` + `capture-recipient` | §7.1 |
@@ -363,22 +364,29 @@ changed answer or an edited plan reaches Mo with the next message.
   "source": "configurator",
   "configurator": {
     "v": 1,
-    "persona": "busy",          // busy | ambitious | health | family | best_ager
+    "persona": "strength_focused", // Mo's personas: pragmatic_beginner | ambitious_home_athlete | strength_focused | cardio_focused | design_lifestyle | weight_loss
     "location": "apartment",    // house | apartment | garage
     "space": "xs",              // xs (≤ 6 m²) | s (6–10) | m (10–20) | l (> 20)
     "training": ["free_weights", "cardio"],  // free_weights | machines | cardio | functional (0–4)
     "level": "rookie",          // rookie | intermediate | pro
-    "goal": "muscle",           // muscle | fitness | health | endurance | athletic
     "budget": "b2",             // optional: b1 (≤ 1.000 €) … b5 (> 10.000 €)
     "wishes": ["quiet"],        // optional: assembly | fast_delivery | quiet | no_drilling | foldable | floor_protection | showroom
     "partner": "mh",            // optional: mh | wh (Men's / Women's Health landing page)
-    "plan": [{ "id": "atx-rack~4400000", "qty": 2 }]  // optional: the plan as it stands on the page (≤ 20, ids or variant refs, qty 1–20)
+    "plan": [                   // optional: the plan as it stands on the page (≤ 20, ids or variant refs, qty 1–20)
+      { "id": "atx-rack~4400000", "qty": 2 },
+      { "id": "atx-scheiben~4400012", "qty": 2, "added": true }  // added: the visitor put it in („+ Produkt hinzufügen“ / „+ Gewichtsstufe“)
+    ]
   }
 }
 ```
 
 - The vocabulary is `src/lib/configurator-core.mjs` (`CONFIGURATOR_FIELDS`). Unknown values are dropped;
   a context with no known answer is no configurator context. **Ignored gracefully**, never an error.
+- `persona` is one of Mo's personas („Typ / Trainingsfokus“, since 2026-10-22) and becomes the thread's
+  archetype directly. The first version's values still parse: persona `busy` / `ambitious` / `health` /
+  `family` / `best_ager` and — without a persona — `goal` `muscle` / `fitness` / `health` / `endurance` /
+  `athletic` map onto today's personas ([CONFIGURATOR.md](../CONFIGURATOR.md) §3). `goal` is no longer
+  part of the shape.
 - Used only while the configurator is on (admin „Konfigurator“, admin setting, default on). Then Mo gets
   the configurator section in its prompt (answers, guide, curated assortment, team notes, the plan), the
   answers fill the profile fields the conversation has not set, and the two configurator tools
@@ -856,7 +864,7 @@ Input schema:
 {
   title: string;            // ≤ 80
   summary?: string;         // ≤ 400
-  items: Array<{            // 1–12
+  items: Array<{            // 1–16 (1–12 before 2026-10-22)
     productId: string;      // catalog id or variant ref
     quantity?: number;      // 1–20, default 1
     role: "base" | "accessory" | "weights" | "cardio" | "flooring" | "extra";
@@ -869,7 +877,9 @@ Output: `{ ok: true, shownItems, unknownIds?, soldOutIds? }` — for the model o
 plan in the same turn); the widget renders from the input. Widget action: hydrate the ids with
 `GET /api/products` (variant fields of §3) and render a plan card (lines, total, „Alles in den
 Warenkorb“); on the configurator page also the editable plan in `[data-ms-chat-plan]` (quantities,
-variants, remove/restore). The newest plan of the thread is the active one. „Alles in den Warenkorb“
+variants, remove/restore; since 2026-10-22 „+ Gewichtsstufe“ on weights lines, the weights hint and
+„+ Produkt hinzufügen“ from `GET /api/configurator/assortment`, §3a — the visitor's own lines go back
+in `context.configurator.plan` with `added: true`). The newest plan of the thread is the active one. „Alles in den Warenkorb“
 adds the available lines through the shop's `POST /cart/add.js` (same origin), stamps the attribution
 marker first (§10, consent-gated) and opens the cart drawer. A plan counts as a consultation
 (attribution token, `MO_CONSULT_PARTS`); its products enter the conversation's discussed products.
@@ -1107,6 +1117,38 @@ Response is cacheable for 60 s (`Cache-Control: public, max-age=60, stale-while-
 ### Rate-limit response (429)
 
 Same shape as `/api/chat`. Bucket: `products`, 60 req / 60 s per session/IP.
+
+---
+
+## 3a. `GET /api/configurator/assortment` (since 2026-10-22)
+
+The curated Home-Gym-Konfigurator assortment for the plan's „+ Produkt hinzufügen“
+([CONFIGURATOR.md](../CONFIGURATOR.md) §4). No secret, only an allowlisted origin (`products` bucket);
+`Cache-Control: public, max-age=300` — the widget fetches it once per page.
+
+```jsonc
+{
+  "ok": true,
+  "products": [            // sorted by role (base, accessory, weights, cardio, flooring, extra), then name; [] when the configurator is off
+    {
+      "id": "atx-scheiben",
+      "name": "ATX Hantelscheiben Guss 30 mm",
+      "category": "Weight Plates",
+      "role": "weights",   // base | accessory | weights | cardio | flooring | extra (from the catalog category)
+      "price": 4, "salePrice": 3.5, "priceMin": 4, "priceMax": 90,   // salePrice / priceMin / priceMax optional
+      "images": ["https://cdn.shopify.com/…"],  // 0–1
+      "shopifyUrl": "https://motionsports.de/products/…",
+      "inStock": true,
+      "variants": [        // optional: the variants with an id
+        { "id": "4400011", "title": "0,5 kg", "price": 4, "salePrice": 3.5, "available": true, "isDefault": true }
+      ]
+    }
+  ]
+}
+```
+
+A picked product is hydrated through `GET /api/products` as usual before it enters the plan. Errors:
+the envelope of §1 (`500 internal_error`, `429` rate limit).
 
 ---
 
@@ -1386,10 +1428,10 @@ only `configurator_*` names and flat ids/enums/numbers). Read by the admin scree
 | --- | --- | --- |
 | `configurator_viewed` | the page was shown — **only with Shopify analytics consent**, once per tab session | `{ partner }` (`mh` \| `wh` \| `""`) |
 | `configurator_started` | once per configurator run: the first answer picked, or the handover when the link prefilled the answers; „Neu starten“ begins a new run (since the follow-up of 2026-10-21) | `{ partner, prefilled }` |
-| `configurator_handover` | „Weiter – Mo berät mich“ (after the new thread started) | `{ persona, location, space, training, level, goal, partner, prefilled }` — ids; `training` comma list |
+| `configurator_handover` | „Weiter – Mo berät mich“ (after the new thread started) | `{ persona, location, space, training, level, partner, prefilled }` — ids; `training` comma list (`goal` until 2026-10-22) |
 | `configurator_answers_changed` | changed answers sent to Mo after the handover | `{ fields }` — comma list of field keys |
 | `configurator_chip_clicked` | an answer chip of `suggest_replies` was sent | `{ topic, multi, count }` |
-| `configurator_plan_edited` | quantity, variant, remove or restore in the plan | `{ action }` — `qty` \| `variant` \| `remove` \| `restore` |
+| `configurator_plan_edited` | quantity, variant, remove or restore in the plan; since 2026-10-22 also an added product or weight step | `{ action }` — `qty` \| `variant` \| `remove` \| `restore` \| `add` \| `add_step` |
 | `configurator_cart_added` | „Alles in den Warenkorb“ landed (matches `%cart%`: counts as an add-to-cart click) | `{ items, units, value, partial }` — `value` = whole EUR of the lines that landed (plan prices; since the follow-up of 2026-10-21 — before, the plan total) |
 
 ### Server-emitted lifecycle events (canonical names)
@@ -1417,7 +1459,7 @@ server-side capture-funnel names above, but does not store them:
 | `page_context_answered`    | `POST /api/chat` — when that turn finished (2026-10-05) | `{ kind, productCards, otherCards }` — card tool calls in the answer (`show_product`, `compare_products`, `add_to_cart`); `otherCards` leaves out a `show_product` of the open page's product. Counts only, no ids. Session-keyed. |
 | `consent_ask_eligible`     | `GET /api/auth/me` when it answers `marketing.optInActionable: true` — at most once per session per 24 h (2026-10-08). Only there: the App Proxy whoami never writes it | `{ variant, mode, locale }` — `variant` = the sign-in copy variant this session is assigned (the same pick as `/api/consent-copy?surface=signin` with this `x-ms-session`); `mode` `popup` \| `value_moment` (`value_moment` only when that copy carries an approved, valid `valueMoment`); `locale` `de` \| `en` (`?locale=` / `x-ms-locale`, §12). Session-keyed. The base of the welcome-voucher test (AD §5.7). |
 | `consent_copy_served`      | `GET /api/consent-copy?surface=signin` with `x-ms-session`, only while more than one variant is active (the `private, no-store` answer, §7.4) — at most once per session per 24 h, written after the answer (2026-10-08) | `{ variant, locale, reward, valueMoment }` — the variant served; `reward` / `valueMoment` = whether the served copy carries an approved, valid one (what the widget would render). Session-keyed, anonymous sessions included. |
-| `configurator_chat_started` | `POST /api/chat` — the fresh open (`messages: []`) of a configurator thread, at request time (2026-10-21) | `{ persona, location, space, training, level, goal, budget, wishes, partner, locale }` — answer ids (comma lists for `training` / `wishes`, `""` when open). Session-keyed. |
+| `configurator_chat_started` | `POST /api/chat` — the fresh open (`messages: []`) of a configurator thread, at request time (2026-10-21) | `{ persona, location, space, training, level, budget, wishes, partner, locale }` — answer ids (`goal` until 2026-10-22) (comma lists for `training` / `wishes`, `""` when open). Session-keyed. |
 | `configurator_plan_shown` | `POST /api/chat` — one per `show_gym_plan` call the widget renders (valid input, at least one known line), when the turn finished (2026-10-21) | `{ planNumber, items, units, productIds }` — catalog handles of the known lines (no variant ids, no names). Session-keyed. |
 
 Which admin KPI section reads which event: backend doc `ADMIN_DASHBOARD.md` §5.
@@ -2363,3 +2405,4 @@ section that holds the fact; this table repeats none of the detail.
 | 2026-10-11 | Copy `v6` on every surface (framing only; every `consentTextShown` unchanged). `surface=signin` may carry `reward` (variants `b`/`c`, `CONSENT_REWARD_ENABLED`) and `valueMoment` (variant `c`, `CONSENT_VALUE_MOMENT_ENABLED`), German and English; both switches default off in code, so nothing changes until the owner turns them on. The widget of 2026-10-08 renders them; no widget change. | §7.4, §5, §12.3; CONSENT_CONTRACT.md §1, §3 |
 | 2026-10-21 | Home-Gym-Konfigurator: `context.type: "configurator"` (the page's answers + plan, on every turn of the thread); configurator-only tools `suggest_replies` (answer chips) and `show_gym_plan` (plan card + the page's editable plan, cart via `/cart/add.js`); widget events `configurator_*`, server-only `configurator_chat_started` / `configurator_plan_shown`. Additive: an older widget never sends the context and renders nothing for the tools. | §2 "`context.type: "configurator"`", "Tools the widget MUST render"; §5 |
 | 2026-10-21 (follow-up) | KPI accuracy, no shape change: `configurator_started` once per run (also for a prefilled handover and after „Neu starten“), `configurator_cart_added.value` = the lines that landed, `chat_opened` after a session rotation in an open panel, the plan thumbnail sends `product_cta_clicked`, an attribution token minted for a session that rotated meanwhile is dropped — the new session mints its own only once it is consulted (lazy); `configurator_plan_shown` only for rendered plans. | §5 |
+| 2026-10-22 | Konfigurator round after the partner feedback: `configurator.persona` is one of Mo's personas (six, two new: `design_lifestyle`, `weight_loss`) and sets the thread's archetype; `goal` dropped (old values still parse); plan items may carry `added: true`; `show_gym_plan` up to 16 items; new `GET /api/configurator/assortment`; `configurator_plan_edited.action` adds `add` / `add_step`. Additive for the widget: the 2026-10-21 build keeps working (its persona/goal ids map). | §1, §2 "`context.type: "configurator"`", `show_gym_plan`, §3a, §5 |

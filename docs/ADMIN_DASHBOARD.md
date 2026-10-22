@@ -1399,8 +1399,9 @@ one pass), client `konfigurator/KonfiguratorWorkspace` and `KonfiguratorRange` (
   §6, the same orders as the KPI screen's cross-cut row, §5.16); the
   funnel „Vom ersten Klick zur Bestellung“ (`FunnelBars`, each stage = distinct sessions on its own,
   because the handover starts a fresh thread); „So antworten die Besucher“ (one `BarList` per answer —
-  fields with nothing but „ohne Angabe“ are hidden — plus „Herkunft“ Men's Health / Women's Health /
-  direct); „Produkte in Mos Plänen“ (top 12 by sessions); „Antwort-Chips“ (by topic, plus chip clicks and
+  fields with nothing but „ohne Angabe“ are hidden; „Typ / Trainingsfokus“ lists Mo's six personas and
+  counts answers of the first version under the mapped persona, the goal card is gone since 22.10.2026 —
+  plus „Herkunft“ Men's Health / Women's Health / direct); „Produkte in Mos Plänen“ (top 12 by sessions); „Antwort-Chips“ (by topic, plus chip clicks and
   plan edits); „Letzte Konfigurator-Beratungen“ (12 newest with answers, plans, result badge and a link
   `?tab=gespraeche&gid=`).
 - **Mo im Konfigurator**: „Geführte Beratung“ Aktiv/Aus, „Sortiments-Fokus“ (bevorzugen / nur
@@ -1622,8 +1623,10 @@ live (Men's Health / Women's Health)“ (`home-gym-konfigurator`: plan cart adds
 as the conversation's selection, popups wait for the plan in configurator threads, a new chat in an open
 panel counts as opened; section note on §5.22) and „Bestell-Zuordnung: Varianten und Erstattungen“
 (`attribution-variants-refunds`: variant refs count as their product, refunds reach the ledger — §5.5,
-§5.16) — seventeen entries in all; the six of 06.10., the one of 08.10. and the second of 21.10. add no
-section note. The
+§5.16), and on 22.10.2026 „Konfigurator: Trainingsfokus = Mos Personas“ (`konfigurator-personas`: the
+persona card, two new personas, no goal card, weight steps and the visitor's own plan lines — behaviour,
+no counting change) — eighteen entries in all; the six of 06.10., the one of 08.10., the second of 21.10.
+and the one of 22.10. add no section note. The
 affected sections add a note when the period starts earlier: Anmelde-Popup,
 Einwilligung, Kundenkonto and „Chat gestartet“ of the Kampagnen-Funnel are
 „erst ab dem 04.10.2026 aussagekräftig“, the two widget tiers of
