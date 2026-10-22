@@ -266,9 +266,10 @@ Fitnesslösungen für den optimalen Einstieg.“, „Vielseitige Fitnessgeräte 
 same texts as `subDe` in `configurator-core.mjs`, which Mo reads in the answers line.
 
 Screenshots (local harness: the real section and widget, Mo's dialogue mocked, placeholder seals):
-[`screenshots/konfigurator/`](./screenshots/konfigurator/) — storefront after the round of 22.10.2026
-(light design, persona card, handover on the phone, plan with weight steps and own lines,
-„+ Produkt hinzufügen“, „Starke Partner“; 1440 / 1024 / 390 px), admin 1440 / 1024 px in light and
+[`screenshots/konfigurator/`](./screenshots/konfigurator/) — storefront after the second round of
+22.10.2026 (homepage structure, persona card, Mo's panel, handover on the phone, plan with weight
+steps and own lines, „+ Produkt hinzufügen“, „So funktioniert's“, „Starke Partner“; 1440 / 1024 /
+390 px), admin 1440 / 1024 px in light and
 dark (the persona distribution with first-version answers mapped); the KPI integration (`kpi-section-*`, `kpi-umsatz-wege-*`,
 `kpi-bestellungen-*`, `gespraeche-plan-*`) on local seed data.
 
