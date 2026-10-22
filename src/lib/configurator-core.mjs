@@ -67,8 +67,9 @@ export const CONFIGURATOR_LIMITS = Object.freeze({
    * customer's own, „+ Produkt hinzufügen“ / „+ Gewichtsstufe“). */
   planItems: 20,
   planQuantityMax: 20,
-  /** Variants (weight steps) listed per multi-variant product in the prompt. */
-  promptVariants: 12,
+  /** Variants (weight steps) listed per multi-variant product in the prompt —
+   * a longer series is listed as a spread from the lightest to the heaviest. */
+  promptVariants: 16,
 });
 
 // ---------------------------------------------------------------------------
@@ -411,11 +412,10 @@ export function personaAnswer(rawPersona, rawGoal) {
   const current = singleAnswer("persona", rawPersona);
   if (current) return current;
   const key = (/** @type {unknown} */ v) => (typeof v === "string" ? v.trim().toLowerCase() : "");
-  return (
-    /** @type {Record<string, string>} */ (LEGACY_PERSONA)[key(rawPersona)] ??
-    /** @type {Record<string, string>} */ (LEGACY_GOAL_PERSONA)[key(rawGoal)] ??
-    null
-  );
+  // Own keys only — "constructor" / "__proto__" must not resolve.
+  const own = (/** @type {Record<string, string>} */ map, /** @type {string} */ k) =>
+    Object.prototype.hasOwnProperty.call(map, k) ? map[k] : null;
+  return own(LEGACY_PERSONA, key(rawPersona)) ?? own(LEGACY_GOAL_PERSONA, key(rawGoal));
 }
 
 /**
@@ -814,7 +814,7 @@ function assortmentLine(p, locale) {
   if (desc) line += ` — ${desc}`;
   const acc = (p.compatibleWith ?? []).slice(0, 3);
   if (acc.length) line += en ? ` | Accessories: ${acc.join(", ")}` : ` | Zubehör: ${acc.join(", ")}`;
-  const steps = variantSteps(p);
+  const steps = variantSteps(p, locale);
   if (steps) line += en ? ` | Variants: ${steps}` : ` | Varianten: ${steps}`;
   return line;
 }
@@ -822,11 +822,12 @@ function assortmentLine(p, locale) {
 /**
  * The orderable variants of a multi-variant product as „title `~id`“ — Mo
  * needs the ids to plan concrete weight steps (the plan otherwise falls back
- * to the default variant, often the smallest plate). Capped; null for a
- * single-variant product.
- * @param {AssortmentProduct} p
+ * to the default variant, often the smallest plate). A series longer than the
+ * cap is listed as an even spread that keeps the lightest and the heaviest
+ * step; null for a single-variant product.
+ * @param {AssortmentProduct} p @param {"de" | "en"} locale
  */
-function variantSteps(p) {
+function variantSteps(p, locale) {
   const variants = /** @type {Array<{ id?: unknown, title?: unknown, available?: unknown }>} */ (
     productVariants(p)
   );
@@ -835,11 +836,17 @@ function variantSteps(p) {
     (v) => isVariantAvailable(p, v) && normalizeVariantId(v.id) && String(v.title ?? "").trim()
   );
   if (!usable.length) return null;
-  const shown = usable
-    .slice(0, CONFIGURATOR_LIMITS.promptVariants)
-    .map((v) => `${clip(v.title, 24)} \`~${normalizeVariantId(v.id)}\``);
+  const cap = CONFIGURATOR_LIMITS.promptVariants;
+  const picked =
+    usable.length <= cap
+      ? usable
+      : [...new Set(Array.from({ length: cap }, (_, k) => Math.round((k * (usable.length - 1)) / (cap - 1))))].map(
+          (i) => usable[i]
+        );
+  const shown = picked.map((v) => `${clip(v.title, 24)} \`~${normalizeVariantId(v.id)}\``);
   const more = usable.length - shown.length;
-  return shown.join(", ") + (more > 0 ? ` (+${more})` : "");
+  if (more <= 0) return shown.join(", ");
+  return `${shown.join(", ")} (${locale === "en" ? `+${more} steps in between` : `+${more} Stufen dazwischen`})`;
 }
 
 // ---------------------------------------------------------------------------
@@ -902,8 +909,8 @@ function renderPlan(plan, locale) {
     .map((p) => `- ${p.qty}× ${p.name ? `${p.name} ` : ""}(\`${p.id}\`)${p.added ? mark : ""}`)
     .join("\n");
   return en
-    ? `\n\n### The plan as it stands on the page now (the customer may have changed quantities, variants, removed items or added products)\n${lines}\nBuild on this state — never silently re-add what the customer removed, and keep the items the customer added in every new plan unless they want them gone.`
-    : `\n\n### Der Plan, wie er jetzt auf der Seite steht (der Kunde kann Mengen, Varianten geändert, Positionen entfernt oder Produkte ergänzt haben)\n${lines}\nBaue auf diesem Stand auf — füge nie stillschweigend wieder hinzu, was der Kunde entfernt hat, und übernimm die vom Kunden ergänzten Positionen in jeden neuen Plan, solange er sie nicht loswerden will.`;
+    ? `\n\n### The plan as it stands on the page now (the customer may have changed quantities, variants, removed items or added products)\n${lines}\nBuild on this state — never silently re-add what the customer removed, and keep the items the customer added in every new plan unless they want them gone. A plan has at most ${PLAN_MAX_ITEMS} lines including the customer's own; if it would get longer, ask what can go.`
+    : `\n\n### Der Plan, wie er jetzt auf der Seite steht (der Kunde kann Mengen, Varianten geändert, Positionen entfernt oder Produkte ergänzt haben)\n${lines}\nBaue auf diesem Stand auf — füge nie stillschweigend wieder hinzu, was der Kunde entfernt hat, und übernimm die vom Kunden ergänzten Positionen in jeden neuen Plan, solange er sie nicht loswerden will. Ein Plan hat höchstens ${PLAN_MAX_ITEMS} Positionen, die des Kunden eingeschlossen; würde er länger, frag, was wegfallen kann.`;
 }
 
 /**
@@ -952,18 +959,18 @@ If the customer changes them on the page, you get the new version here.${hints ?
    c) At most 1–2 detail questions that really change the recommendation (e.g. ceiling height for racks/pull-ups, training frequency, equipment they already own).
    Skip what you already know. Never ask more than 4 questions before showing a plan. If the customer says "just show me something", build the plan right away.
 3. **The plan:** put together ONE coherent set with \`show_gym_plan\`: base unit(s) first, then matching accessories (prefer the base unit's "Accessories" ids), weights, a cardio machine if it fits the training focus, floor protection where it makes sense. It must fit training focus, space, level and budget — total within the budget (if it is up to ~10 % above, say so openly). Explain in 2–3 sentences why the set fits. Show at most ONE \`show_product\` card, for the central base unit — the plan itself shows all items.
-   **Weights** (plates, dumbbells, kettlebells) always as concrete weight steps: one line per step with its variant ref from the list below (\`id~variantId\`), plates in pairs (quantity 2 per step), matching the bar's diameter (30/50 mm) in the plan. Size the steps to level and training focus — enough load for real progression (beginners at the barbell e.g. 2× 5 kg, 2× 10 kg plus small steps; advanced users heavier). Never only the smallest step, never a weights line without a variant.
+   **Weights with several steps** (plates, dumbbells, kettlebells whose line lists "Variants", below or in the retrieved-products block) always as concrete weight steps: one line per step with its variant ref — the product id, \`~\`, the variant id, e.g. \`atx-plates~4711\` —, plates in pairs (quantity 2 per step), matching the bar's diameter (30/50 mm) in the plan. Size the steps to level and training focus — enough load for real progression (beginners at the barbell e.g. 2× 5 kg, 2× 10 kg plus small steps; advanced users heavier). Never only the smallest step, never such a line without its variant, never an invented variant id (search_products returns none). If the step you want is not listed ("+N steps in between"), take the nearest listed step — the customer can pick others in the plan. Weights without variants (adjustable dumbbells, sets, single kettlebells) go in with their product id, role "weights".
 4. **After the plan:** offer swaps (cheaper/premium, more compact) and answer questions. Mention once that the customer can adjust quantities and variants in the plan, add further weight steps with "+ Gewichtsstufe" and further products with "+ Produkt hinzufügen", and put everything into the cart with one click. After every change call \`show_gym_plan\` again with the COMPLETE new plan (not just the change).
 
 ### Assortment (focus)
 ${strict ? "Recommend ONLY products from the configurator assortment below. Leave it only when the customer explicitly asks for a specific product outside it — then via search_products." : "Work primarily with the configurator assortment below (curated home-gym products). Other shop products (e.g. a gym ball) are fine when the customer asks for them or the assortment has nothing suitable — then via search_products."}
-Recommend only what is in stock. Variants (weight, colour) via \`id~variantId\` — the ids are listed below under "Variants", otherwise in the retrieved-products block or search_products. If you don't know the variant of a non-weight product, use the product id — the customer picks the variant in the plan.
+Recommend only what is in stock. Variants (weight, colour) via \`id~variantId\` — the ids are listed below under "Variants" or in the retrieved-products block; search_products returns no variant ids. For other products with variants (colour, size) whose variant you don't know, use the product id — the customer picks the variant in the plan.
 
 ${assortmentBlock}
 
 ### Rules in the configurator
 - \`suggest_replies\`: 2–6 short answers (max. 40 characters each) that the customer can tap; no \`suggest_replies\` for open questions without sensible presets.
-- The rule "max. 2–3 products per answer" does not apply to \`show_gym_plan\` (up to ${PLAN_MAX_ITEMS} items) — it does apply to \`show_product\` cards.
+- Per-answer product limits ("max. 2–3 products per answer" and the consulting mode's, e.g. "at most 1–2 products") do not apply to \`show_gym_plan\` (up to ${PLAN_MAX_ITEMS} items, the customer's own included) — they do apply to \`show_product\` cards.
 - The whole set goes into the cart through the plan's cart button — use \`add_to_cart\` only when the customer explicitly wants to order a single product directly.
 - Assembly service, delivery date: answer from the product data (delivery time) and the additional knowledge; for an assembly service the shop does not offer as a product, or for large projects (budget > €10,000), offer \`show_contact_form\` (reason "general").${notes ? `\n\n### Notes from the motion sports team for the configurator (follow them)\n${notes}` : ""}${renderPlan(plan, locale)}`;
   }
@@ -987,18 +994,18 @@ ${renderAnswers(answers, locale)}
    c) Höchstens 1–2 Detailfragen, die die Empfehlung wirklich ändern (z. B. Deckenhöhe bei Racks/Klimmzügen, Trainingshäufigkeit, vorhandenes Equipment).
    Überspringe, was du schon weißt. Stell insgesamt nie mehr als 4 Fragen, bevor du einen Plan zeigst. Sagt der Kunde „zeig mir einfach was“, erstelle sofort den Plan.
 3. **Der Plan:** Stell mit \`show_gym_plan\` EIN stimmiges Set zusammen: zuerst das/die Basisgerät(e), dann passendes Zubehör (bevorzugt die „Zubehör“-IDs des Basisgeräts), Gewichte, ein Cardio-Gerät, wenn es zum Trainingsfokus passt, und Bodenschutz, wo sinnvoll. Es muss zu Trainingsfokus, Platz, Niveau und Budget passen — Gesamtsumme im Budget (liegt sie bis ~10 % darüber, sag es offen). Erkläre in 2–3 Sätzen, warum das Set passt. Zeig höchstens EINE \`show_product\`-Karte, für das zentrale Basisgerät — der Plan selbst zeigt alle Positionen.
-   **Gewichte** (Hantelscheiben, Hanteln, Kettlebells) immer als konkrete Gewichtsstufen: je Stufe eine Position mit ihrer Varianten-Ref aus der Liste unten (\`id~VariantenID\`), Hantelscheiben paarweise (quantity 2 je Stufe), passend zum Durchmesser (30/50 mm) der Stange im Plan. Bemiss die Stufen nach Niveau und Trainingsfokus — genug Gewicht für echten Fortschritt (Einsteiger an der Langhantel z. B. 2× 5 kg, 2× 10 kg plus kleine Stufen; Fortgeschrittene schwerer). Nie nur die kleinste Stufe, nie eine Gewichte-Position ohne Variante.
+   **Gewichte mit mehreren Gewichtsstufen** (Hantelscheiben, Hanteln, Kettlebells, deren Zeile „Varianten“ nennt — unten oder im Block der vorretrieveten Produkte) immer als konkrete Gewichtsstufen: je Stufe eine Position mit ihrer Varianten-Ref — Produkt-ID, \`~\`, VariantenID, z. B. \`atx-hantelscheiben~4711\` —, Hantelscheiben paarweise (quantity 2 je Stufe), passend zum Durchmesser (30/50 mm) der Stange im Plan. Bemiss die Stufen nach Niveau und Trainingsfokus — genug Gewicht für echten Fortschritt (Einsteiger an der Langhantel z. B. 2× 5 kg, 2× 10 kg plus kleine Stufen; Fortgeschrittene schwerer). Nie nur die kleinste Stufe, nie eine solche Position ohne ihre Variante, nie eine erfundene VariantenID (search_products liefert keine). Steht die gewünschte Stufe nicht in der Liste („+N Stufen dazwischen“), nimm die nächstliegende gelistete — weitere wählt der Kunde im Plan. Gewichte ohne Varianten (verstellbare Hanteln, Sets, einzelne Kettlebells) nimmst du mit ihrer Produkt-ID, role "weights".
 4. **Nach dem Plan:** Biete Tausch-Optionen an (günstiger/hochwertiger, kompakter) und beantworte Fragen. Erwähne einmal, dass der Kunde im Plan Mengen und Varianten anpassen, mit „+ Gewichtsstufe“ weitere Gewichtsstufen und mit „+ Produkt hinzufügen“ weitere Produkte ergänzen und alles mit einem Klick in den Warenkorb legen kann. Rufe nach jeder Änderung \`show_gym_plan\` erneut mit dem VOLLSTÄNDIGEN neuen Plan auf (nicht nur die Änderung).
 
 ### Sortiment (Fokus)
 ${strict ? "Empfiehl AUSSCHLIESSLICH Produkte aus dem Konfigurator-Sortiment unten. Verlass es nur, wenn der Kunde ausdrücklich nach einem bestimmten Produkt außerhalb fragt — dann über search_products." : "Bewege dich primär im Konfigurator-Sortiment unten (kuratierte Home-Gym-Produkte). Andere Produkte aus dem Shop (z. B. ein Gymnastikball) sind in Ordnung, wenn der Kunde danach fragt oder das Sortiment nichts Passendes hat — dann über search_products."}
-Empfiehl nur, was auf Lager ist. Varianten (Gewicht, Farbe) über \`id~VariantenID\` — die IDs stehen unten unter „Varianten“, sonst im Block der vorretrieveten Produkte oder in search_products. Kennst du bei einem Produkt ohne Gewichtsstufen die Variante nicht, nimm die Produkt-ID — der Kunde wählt die Variante im Plan.
+Empfiehl nur, was auf Lager ist. Varianten (Gewicht, Farbe) über \`id~VariantenID\` — die IDs stehen unten unter „Varianten“ oder im Block der vorretrieveten Produkte; search_products liefert keine VariantenIDs. Kennst du bei anderen Produkten mit Varianten (Farbe, Größe) die Variante nicht, nimm die Produkt-ID — der Kunde wählt die Variante im Plan.
 
 ${assortmentBlock}
 
 ### Regeln im Konfigurator
 - \`suggest_replies\`: 2–6 kurze Antworten (max. 40 Zeichen), die der Kunde antippen kann; kein \`suggest_replies\` bei offenen Fragen ohne sinnvolle Vorgaben.
-- Die Regel „Maximal 2-3 Produkte pro Antwort“ gilt nicht für \`show_gym_plan\` (bis zu ${PLAN_MAX_ITEMS} Positionen) — für \`show_product\`-Karten gilt sie weiter.
+- Produktgrenzen pro Antwort („Maximal 2-3 Produkte pro Antwort“ und die des Beratungsmodus, z. B. „maximal 1-2 Produkte“) gelten nicht für \`show_gym_plan\` (bis zu ${PLAN_MAX_ITEMS} Positionen, die des Kunden eingeschlossen) — für \`show_product\`-Karten gelten sie weiter.
 - Das ganze Set kommt über den Warenkorb-Button des Plans in den Warenkorb — \`add_to_cart\` nur, wenn der Kunde ausdrücklich ein einzelnes Produkt direkt bestellen will.
 - Aufbau-/Montageservice, Liefertermin: beantworte aus den Produktdaten (Lieferzeit) und dem Zusatzwissen; für einen Aufbauservice, den der Shop nicht als Produkt führt, oder bei großen Projekten (Budget über 10.000 €) biete \`show_contact_form\` an (reason "general").${notes ? `\n\n### Hinweise des motion sports Teams zum Konfigurator (befolge sie)\n${notes}` : ""}${renderPlan(plan, locale)}`;
 }
@@ -1062,8 +1069,10 @@ export const PLAN_ROLE_LABELS = Object.freeze({
   extra: { de: "Extra", en: "Extra" },
 });
 
-/** Lines of one show_gym_plan call (a weights set alone takes 3–5 steps). */
-export const PLAN_MAX_ITEMS = 16;
+/** Lines of one show_gym_plan call (a weights set alone takes 3–5 steps) — the
+ * same as the page plan's limit (CONFIGURATOR_LIMITS.planItems), so Mo can
+ * keep every line the customer added. */
+export const PLAN_MAX_ITEMS = 20;
 export const REPLY_MAX_OPTIONS = 6;
 export const REPLY_MAX_CHARS = 60;
 
@@ -1079,7 +1088,7 @@ export function configuratorToolCopy(locale) {
 Call it once the guided questions are answered (or the customer wants to see something right away), and again after every change — always with the COMPLETE plan. Only real catalog ids (or variant refs id~variantId) of products in stock; base units first.`,
       fieldPlanTitle: "Short title of the plan, e.g. 'Your strength corner for 6 m²'.",
       fieldPlanSummary: "1–2 sentences on why this set fits the customer (training focus, space, level, budget).",
-      fieldPlanItems: `The items (1–${PLAN_MAX_ITEMS}): productId (catalog id or variant ref), quantity (default 1), role and an optional short note (max. 80 characters) on why it belongs in the set. Weights: one line per weight step with its variant ref (plates in pairs, quantity 2).`,
+      fieldPlanItems: `The items (1–${PLAN_MAX_ITEMS}): productId (catalog id or variant ref), quantity (default 1), role and an optional short note (max. 80 characters) on why it belongs in the set. Weights with several steps: one line per step with its variant ref (plates in pairs, quantity 2); weights without variants by product id.`,
       fieldPlanTips: "Optional, up to 3 short tips for setup or training (one sentence each).",
     };
   }
@@ -1092,7 +1101,7 @@ Call it once the guided questions are answered (or the customer wants to see som
 Rufe es auf, sobald die Leitfragen beantwortet sind (oder der Kunde sofort etwas sehen will), und nach jeder Änderung erneut — immer mit dem VOLLSTÄNDIGEN Plan. Nur echte Katalog-IDs (oder Varianten-Refs id~VariantenID) verfügbarer Produkte; Basisgeräte zuerst.`,
     fieldPlanTitle: "Kurzer Titel des Plans, z. B. „Deine Kraftecke für 6 m²“.",
     fieldPlanSummary: "1–2 Sätze, warum dieses Set zum Kunden passt (Trainingsfokus, Platz, Niveau, Budget).",
-    fieldPlanItems: `Die Positionen (1–${PLAN_MAX_ITEMS}): productId (Katalog-ID oder Varianten-Ref), quantity (Standard 1), role und eine optionale kurze note (max. 80 Zeichen), warum sie ins Set gehört. Gewichte: je Gewichtsstufe eine Position mit ihrer Varianten-Ref (Hantelscheiben paarweise, quantity 2).`,
+    fieldPlanItems: `Die Positionen (1–${PLAN_MAX_ITEMS}): productId (Katalog-ID oder Varianten-Ref), quantity (Standard 1), role und eine optionale kurze note (max. 80 Zeichen), warum sie ins Set gehört. Gewichte mit mehreren Stufen: je Stufe eine Position mit ihrer Varianten-Ref (Hantelscheiben paarweise, quantity 2); Gewichte ohne Varianten per Produkt-ID.`,
     fieldPlanTips: "Optional, bis zu 3 kurze Tipps zu Aufbau oder Training (je ein Satz).",
   };
 }

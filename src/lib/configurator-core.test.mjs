@@ -103,6 +103,13 @@ test("personas: answers of the first version map onto today's personas", () => {
   assert.equal(personaAnswer("family", "muscle"), "pragmatic_beginner", "the persona wins over the goal");
   assert.equal(personaAnswer("weight_loss", "muscle"), "weight_loss");
   assert.equal(personaAnswer("x", "y"), null);
+  // own keys only — prototype names never resolve
+  for (const k of ["constructor", "__proto__", "toString", "hasOwnProperty"]) {
+    assert.equal(personaAnswer(k), null, `persona ${k}`);
+    assert.equal(personaAnswer(undefined, k), null, `goal ${k}`);
+  }
+  assert.equal(parseConfiguratorContext(ctx({ persona: "constructor" })), null);
+  assert.equal(parseConfiguratorContext(ctx({ goal: "__proto__" })), null);
   assert.equal(parseConfiguratorContext(ctx({ goal: "endurance" })).persona, "cardio_focused");
 });
 
@@ -261,9 +268,13 @@ test("renderConfiguratorSection (de): answers, open fields, cues, assortment, fo
   assert.match(out, /### Hinweise des motion sports Teams zum Konfigurator \(befolge sie\)\nAktion: 10 % auf Racks\./);
   assert.match(out, /- 1× Rack \(`rack`\)\n- 1× Ball \(`ball`\) — vom Kunden ergänzt/);
   assert.match(out, /übernimm die vom Kunden ergänzten Positionen in jeden neuen Plan/);
-  assert.match(out, /\*\*Gewichte\*\* \(Hantelscheiben, Hanteln, Kettlebells\) immer als konkrete Gewichtsstufen/);
+  assert.match(out, /\*\*Gewichte mit mehreren Gewichtsstufen\*\* \(Hantelscheiben, Hanteln, Kettlebells, deren Zeile „Varianten“ nennt/);
+  assert.match(out, /Gewichte ohne Varianten \(verstellbare Hanteln, Sets, einzelne Kettlebells\) nimmst du mit ihrer Produkt-ID/);
+  assert.match(out, /nie eine erfundene VariantenID \(search_products liefert keine\)/);
+  assert.match(out, /Produktgrenzen pro Antwort \(„Maximal 2-3 Produkte pro Antwort“ und die des Beratungsmodus/);
+  assert.match(out, /Ein Plan hat höchstens 20 Positionen, die des Kunden eingeschlossen/);
   assert.match(out, /„\+ Gewichtsstufe“ weitere Gewichtsstufen und mit „\+ Produkt hinzufügen“/);
-  assert.match(out, /bis zu 16 Positionen/);
+  assert.match(out, /bis zu 20 Positionen, die des Kunden eingeschlossen/);
   assert.match(out, /`suggest_replies`/);
   assert.match(out, /`show_gym_plan`/);
   assert.doesNotMatch(out, /undefined|null/);
@@ -298,6 +309,7 @@ test("renderConfiguratorSection lists the orderable weight steps with their vari
   assert.match(out, /- `atx-scheiben` ATX Hantelscheiben Guss 30 mm — Weight Plates · 4–90 € — Gusseiserne Hantelscheiben \| Varianten: 0\.5 `~11`, 5 kg `~12`, 20 kg `~14`$/m);
   // a single-variant product lists none
   assert.match(out, /- `rack` Rack — Racks · 900 €$/m);
+  // a long series: an even spread that keeps the lightest and the heaviest step
   const steps = Array.from({ length: 20 }, (_, i) => ({ id: String(100 + i), title: `${i + 1} kg`, price: i + 1, available: true }));
   const capped = renderConfiguratorSection({
     answers: parseConfiguratorContext(ctx(fullAnswers)),
@@ -305,7 +317,16 @@ test("renderConfiguratorSection lists the orderable weight steps with their vari
     settings: { focus: "prefer", notes: "" },
     locale: "en",
   });
-  assert.match(capped, new RegExp(`\\| Variants: 1 kg \`~100\`.*12 kg \`~111\` \\(\\+${20 - CONFIGURATOR_LIMITS.promptVariants}\\)$`, "m"));
+  const listed = capped.match(/\| Variants: (.*)$/m)[1];
+  assert.equal((listed.match(/`~\d+`/g) ?? []).length, CONFIGURATOR_LIMITS.promptVariants);
+  assert.match(listed, /^1 kg `~100`, 2 kg `~101`, /);
+  assert.match(listed, /, 20 kg `~119` \(\+4 steps in between\)$/);
+  const de = renderConfiguratorSection({
+    answers: parseConfiguratorContext(ctx(fullAnswers)),
+    assortment: [{ ...scheiben, variants: steps }],
+    settings: { focus: "prefer", notes: "" },
+  });
+  assert.match(de, /20 kg `~119` \(\+4 Stufen dazwischen\)$/m);
 });
 
 test("assortment cards: role per category/name, public fields, variants, sorted by role then name", () => {
@@ -407,7 +428,8 @@ test("normalizePlanItems: roles, quantities, duplicates merged, capped", () => {
   assert.deepEqual(normalizePlanItems(null), []);
   const many = { items: Array.from({ length: 30 }, (_, i) => ({ productId: `p${i}`, role: "extra" })) };
   assert.equal(normalizePlanItems(many).length, PLAN_MAX_ITEMS);
-  assert.equal(PLAN_MAX_ITEMS, 16);
+  // the page plan's limit, so Mo can keep every line the customer added
+  assert.equal(PLAN_MAX_ITEMS, CONFIGURATOR_LIMITS.planItems);
 });
 
 test("KPI payloads carry ids, enums and counts only; server names are server-only", () => {
