@@ -9,7 +9,7 @@ import * as React from "react";
 import Link from "next/link";
 import { ExternalLink } from "lucide-react";
 import type { ConfiguratorKpis } from "@/lib/configurator-store";
-import { configuratorFunnel, configuratorLabel } from "@/lib/configurator-core.mjs";
+import { configuratorFunnel, configuratorLabel, personaAnswer } from "@/lib/configurator-core.mjs";
 import { eur, num, ratio } from "@/lib/admin-format.mjs";
 import { ADMIN_DATE_TIME_SHORT, formatAdmin } from "@/lib/admin-datetime.mjs";
 import { adminTabHref } from "@/lib/admin-tabs.mjs";
@@ -296,7 +296,9 @@ function answersSummary(a: Record<string, string>): string {
       .map((id) => configuratorLabel(key, id.trim()))
       .filter(Boolean)
       .join(", ");
-  for (const text of [one("persona"), one("location"), one("space"), many("training"), one("level"), one("goal"), one("budget")]) {
+  // Consultations of the first version carry the old persona/goal ids.
+  const persona = personaAnswer(a.persona, a.goal);
+  for (const text of [persona ? configuratorLabel("persona", persona) : "", one("location"), one("space"), many("training"), one("level"), one("budget")]) {
     if (text) parts.push(text);
   }
   return parts.join(" · ") || "—";

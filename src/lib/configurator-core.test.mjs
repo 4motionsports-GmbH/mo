@@ -4,8 +4,11 @@ import {
   CONFIGURATOR_FIELDS,
   CONFIGURATOR_LIMITS,
   DEFAULT_CONFIGURATOR_SETTINGS,
+  PLAN_MAX_ITEMS,
   answerDistribution,
+  assortmentCards,
   chatStartedEventData,
+  configuratorArchetype,
   configuratorFunnel,
   configuratorGreetingTrigger,
   configuratorLabel,
@@ -22,6 +25,8 @@ import {
   parseConfiguratorSettings,
   parseProductIdList,
   parseStoredGymPlan,
+  personaAnswer,
+  planRoleForProduct,
   planShownEventData,
   planShownEvents,
   renderConfiguratorSection,
@@ -31,19 +36,26 @@ import {
 } from "./configurator-core.mjs";
 import { buildSystemPrompt } from "./system-prompt-core.mjs";
 import { SERVER_ONLY_EVENTS } from "./kpi-widget-events.mjs";
+import { PROFILE_PERSONAS } from "./customer-profile-core.mjs";
 
 const ctx = (configurator) => ({ type: "configurator", source: "configurator", configurator });
 
 const fullAnswers = {
   v: 1,
-  persona: "busy",
+  persona: "strength_focused",
   location: "apartment",
   space: "xs",
   training: ["cardio", "free_weights", "nope"],
   level: "rookie",
-  goal: "muscle",
   partner: "MH",
-  plan: [{ id: "atx-rack~123", qty: 2 }, { id: "bank", qty: 99 }, { id: "bank", qty: 1 }, { id: "bad id" }],
+  plan: [
+    { id: "atx-rack~123", qty: 2 },
+    { id: "bank", qty: 99 },
+    { id: "bank", qty: 1 },
+    { id: "bad id" },
+    { id: "plates~7", qty: 2, added: true },
+    { id: "ball", added: "yes" },
+  ],
 };
 
 test("vocabulary: unique snake_case ids and both labels on every option", () => {
@@ -66,10 +78,38 @@ test("vocabulary: unique snake_case ids and both labels on every option", () => 
   assert.equal(configuratorLabel("space", "nope"), "");
 });
 
+test("personas: the configurator's „Trainingsfokus“ is Mo's persona set", () => {
+  const persona = CONFIGURATOR_FIELDS.find((f) => f.key === "persona");
+  assert.deepEqual(
+    persona.options.map((o) => o.id),
+    ["pragmatic_beginner", "ambitious_home_athlete", "strength_focused", "cardio_focused", "design_lifestyle", "weight_loss"]
+  );
+  // every option is a persona the AI customer profile knows (customer-profile-core)
+  for (const o of persona.options) assert.ok(PROFILE_PERSONAS.includes(o.id), o.id);
+  for (const o of persona.options) assert.ok(o.subDe && o.subEn, `${o.id} subtitle`);
+  assert.equal(configuratorLabel("persona", "design_lifestyle"), "Design und Lifestyle leben");
+  assert.ok(!CONFIGURATOR_FIELDS.some((f) => f.key === "goal"), "the goal card is gone");
+  assert.equal(configuratorArchetype(parseConfiguratorContext(ctx({ persona: "weight_loss" }))), "weight_loss");
+  assert.equal(configuratorArchetype(parseConfiguratorContext(ctx({ space: "m" }))), null);
+  assert.equal(configuratorArchetype(null), null);
+});
+
+test("personas: answers of the first version map onto today's personas", () => {
+  assert.equal(personaAnswer("busy"), "pragmatic_beginner");
+  assert.equal(personaAnswer(" Ambitious "), "ambitious_home_athlete");
+  assert.equal(personaAnswer("best_ager"), "cardio_focused");
+  assert.equal(personaAnswer("", "muscle"), "strength_focused");
+  assert.equal(personaAnswer(undefined, "fitness"), "weight_loss");
+  assert.equal(personaAnswer("family", "muscle"), "pragmatic_beginner", "the persona wins over the goal");
+  assert.equal(personaAnswer("weight_loss", "muscle"), "weight_loss");
+  assert.equal(personaAnswer("x", "y"), null);
+  assert.equal(parseConfiguratorContext(ctx({ goal: "endurance" })).persona, "cardio_focused");
+});
+
 test("parseConfiguratorContext: known values only, vocabulary order, plan bounded", () => {
   const a = parseConfiguratorContext(ctx(fullAnswers));
   assert.ok(a);
-  assert.equal(a.persona, "busy");
+  assert.equal(a.persona, "strength_focused");
   assert.equal(a.location, "apartment");
   assert.deepEqual(a.training, ["free_weights", "cardio"]);
   assert.equal(a.partner, "mh");
@@ -78,11 +118,14 @@ test("parseConfiguratorContext: known values only, vocabulary order, plan bounde
   assert.deepEqual(a.plan, [
     { id: "atx-rack~123", qty: 2 },
     { id: "bank", qty: CONFIGURATOR_LIMITS.planQuantityMax },
+    { id: "plates~7", qty: 2, added: true },
+    { id: "ball", qty: 1 },
   ]);
+  assert.equal("goal" in a, false);
   // comma text for multi answers, case-insensitive ids
-  const b = parseConfiguratorContext(ctx({ goal: " Health ", training: "cardio,functional", wishes: ["quiet", "x"] }));
+  const b = parseConfiguratorContext(ctx({ persona: " Cardio_Focused ", training: "cardio,functional", wishes: ["quiet", "x"] }));
   assert.deepEqual(b.training, ["cardio", "functional"]);
-  assert.equal(b.goal, "health");
+  assert.equal(b.persona, "cardio_focused");
   assert.deepEqual(b.wishes, ["quiet"]);
 });
 
@@ -93,7 +136,7 @@ test("parseConfiguratorContext: not a configurator context or nothing known → 
   assert.equal(parseConfiguratorContext(ctx({ persona: "x", budget: "b2" })), null);
   assert.equal(parseConfiguratorContext(ctx([])), null);
   const many = Array.from({ length: 40 }, (_, i) => ({ id: `p${i}`, qty: 1 }));
-  assert.equal(parseConfiguratorContext(ctx({ goal: "muscle", plan: many })).plan.length, CONFIGURATOR_LIMITS.planItems);
+  assert.equal(parseConfiguratorContext(ctx({ persona: "weight_loss", plan: many })).plan.length, CONFIGURATOR_LIMITS.planItems);
 });
 
 const emptyProfile = () => ({
@@ -125,11 +168,18 @@ test("mergeConfiguratorProfile fills only what the conversation has not set", ()
   assert.deepEqual(kept.budgetEUR, { min: null, max: 800 });
   assert.equal(kept.segment, "studio");
   assert.equal(mergeConfiguratorProfile(own, null), own);
-  // house → house_basement_garage; endurance goal → cardio focus
-  const h = mergeConfiguratorProfile(emptyProfile(), parseConfiguratorContext(ctx({ location: "garage", goal: "endurance" })));
+  // house → house_basement_garage; weight-loss persona → cardio focus
+  const h = mergeConfiguratorProfile(emptyProfile(), parseConfiguratorContext(ctx({ location: "garage", persona: "weight_loss" })));
   assert.equal(h.housing, "house_basement_garage");
   assert.equal(h.trainingFocus, "cardio");
   assert.equal(h.noiseSensitive, "unknown");
+  // the persona fills level and focus when the page left them open
+  const beginner = mergeConfiguratorProfile(emptyProfile(), parseConfiguratorContext(ctx({ persona: "pragmatic_beginner" })));
+  assert.equal(beginner.experienceLevel, "beginner");
+  assert.equal(beginner.trainingFocus, "unknown");
+  const strong = mergeConfiguratorProfile(emptyProfile(), parseConfiguratorContext(ctx({ persona: "strength_focused", level: "pro" })));
+  assert.equal(strong.experienceLevel, "advanced");
+  assert.equal(strong.trainingFocus, "strength");
 });
 
 test("settings: fail-soft parse and strict validation", () => {
@@ -159,6 +209,26 @@ const catalog = [
   { id: "plates", name: "Scheiben", category: "Bänke", price: 100, priceMin: 50, priceMax: 400, inStock: false, tags: [] },
 ];
 
+const scheiben = {
+  id: "atx-scheiben",
+  name: "ATX Hantelscheiben Guss 30 mm",
+  category: "Weight Plates",
+  price: 4,
+  priceMin: 4,
+  priceMax: 90,
+  inStock: true,
+  images: ["https://cdn/a.jpg", "https://cdn/b.jpg"],
+  shopifyUrl: "https://motionsports.de/products/atx-scheiben",
+  tags: ["home-gym-konfigurator"],
+  shortDescription: "Gusseiserne Hantelscheiben",
+  variants: [
+    { id: "gid://shopify/ProductVariant/11", title: "0.5", price: 4, available: true, isDefault: true, options: [] },
+    { id: "12", title: "5 kg", price: 20, available: true, isDefault: false, options: [] },
+    { id: "13", title: "10 kg", price: 38, salePrice: 34, available: false, isDefault: false, options: [] },
+    { id: "14", title: "20 kg", price: 90, available: true, isDefault: false, options: [] },
+  ],
+};
+
 test("assortment: tag (case-insensitive) plus extra list, sorted by category then price", () => {
   assert.equal(hasConfiguratorTag(catalog[0], "home-gym-konfigurator"), true);
   assert.equal(hasConfiguratorTag(catalog[2], "home-gym-konfigurator"), false);
@@ -175,20 +245,25 @@ test("renderConfiguratorSection (de): answers, open fields, cues, assortment, fo
     answers,
     assortment,
     settings: { focus: "prefer", notes: "Aktion: 10 % auf Racks." },
-    plan: [{ id: "rack", qty: 1, name: "Rack" }],
+    plan: [{ id: "rack", qty: 1, name: "Rack" }, { id: "ball", qty: 1, name: "Ball", added: true }],
   });
   assert.match(out, /^## Home-Gym-Konfigurator/);
-  assert.match(out, /- Ich bin: Berufstätig & wenig Zeit/);
+  assert.match(out, /- Typ \/ Trainingsfokus: Kraft und Muskeln aufbauen \(Gezielt und progressiv stärker werden\.\)/);
   assert.match(out, /- Trainingsort: Wohnung \(Mietobjekt\) — Platz: bis 6 m²/);
   assert.match(out, /- Trainingsart: Freie Gewichte, Cardio — Niveau: Einsteiger:in/);
   assert.match(out, /- Budget: noch offen — erfragen/);
   assert.match(out, /- Individuelle Wünsche: noch offen — erfragen/);
-  assert.match(out, /Beratungsimpulse zu diesen Angaben:\n- Berufstätig & wenig Zeit: zeiteffizientes/);
+  assert.match(out, /Beratungsimpulse zu diesen Angaben:\n- Wohnung \(Mietobjekt\): leise Geräte/);
+  assert.doesNotMatch(out, /Ziel|Ich will/);
   assert.match(out, /- `plates` Scheiben — Bänke · 50–400 € · AUSVERKAUFT/);
   assert.match(out, /- `rack` Rack — Racks · 900 €/);
   assert.match(out, /Bewege dich primär im Konfigurator-Sortiment/);
   assert.match(out, /### Hinweise des motion sports Teams zum Konfigurator \(befolge sie\)\nAktion: 10 % auf Racks\./);
-  assert.match(out, /- 1× Rack \(`rack`\)/);
+  assert.match(out, /- 1× Rack \(`rack`\)\n- 1× Ball \(`ball`\) — vom Kunden ergänzt/);
+  assert.match(out, /übernimm die vom Kunden ergänzten Positionen in jeden neuen Plan/);
+  assert.match(out, /\*\*Gewichte\*\* \(Hantelscheiben, Hanteln, Kettlebells\) immer als konkrete Gewichtsstufen/);
+  assert.match(out, /„\+ Gewichtsstufe“ weitere Gewichtsstufen und mit „\+ Produkt hinzufügen“/);
+  assert.match(out, /bis zu 16 Positionen/);
   assert.match(out, /`suggest_replies`/);
   assert.match(out, /`show_gym_plan`/);
   assert.doesNotMatch(out, /undefined|null/);
@@ -205,12 +280,75 @@ test("renderConfiguratorSection caps the listed assortment and points to search_
     id: `p${i}`, name: `P${i}`, category: "X", price: i, inStock: true,
   }));
   const out = renderConfiguratorSection({
-    answers: parseConfiguratorContext(ctx({ goal: "muscle" })),
+    answers: parseConfiguratorContext(ctx({ persona: "strength_focused" })),
     assortment: many,
     settings: { focus: "prefer", notes: "" },
   });
   assert.equal((out.match(/^- `p\d+`/gm) ?? []).length, CONFIGURATOR_LIMITS.promptProducts);
   assert.match(out, /\+5 weitere — über search_products finden/);
+});
+
+test("renderConfiguratorSection lists the orderable weight steps with their variant ids", () => {
+  const out = renderConfiguratorSection({
+    answers: parseConfiguratorContext(ctx(fullAnswers)),
+    assortment: [scheiben, catalog[0]],
+    settings: { focus: "prefer", notes: "" },
+  });
+  // sold-out step (10 kg) left out; GID normalised to the number
+  assert.match(out, /- `atx-scheiben` ATX Hantelscheiben Guss 30 mm — Weight Plates · 4–90 € — Gusseiserne Hantelscheiben \| Varianten: 0\.5 `~11`, 5 kg `~12`, 20 kg `~14`$/m);
+  // a single-variant product lists none
+  assert.match(out, /- `rack` Rack — Racks · 900 €$/m);
+  const steps = Array.from({ length: 20 }, (_, i) => ({ id: String(100 + i), title: `${i + 1} kg`, price: i + 1, available: true }));
+  const capped = renderConfiguratorSection({
+    answers: parseConfiguratorContext(ctx(fullAnswers)),
+    assortment: [{ ...scheiben, variants: steps }],
+    settings: { focus: "prefer", notes: "" },
+    locale: "en",
+  });
+  assert.match(capped, new RegExp(`\\| Variants: 1 kg \`~100\`.*12 kg \`~111\` \\(\\+${20 - CONFIGURATOR_LIMITS.promptVariants}\\)$`, "m"));
+});
+
+test("assortment cards: role per category/name, public fields, variants, sorted by role then name", () => {
+  assert.equal(planRoleForProduct({ category: "Free Weight Storage Racks", name: "Scheibenständer" }), "accessory");
+  assert.equal(planRoleForProduct({ category: "Weight Bar Collars" }), "accessory");
+  assert.equal(planRoleForProduct({ category: "Power Racks" }), "base");
+  assert.equal(planRoleForProduct({ category: "Smith Machines" }), "base");
+  assert.equal(planRoleForProduct({ category: "Kettlebells" }), "weights");
+  assert.equal(planRoleForProduct({ category: "Rowing Machines" }), "cardio");
+  assert.equal(planRoleForProduct({ category: "Floor Protection Mats" }), "flooring");
+  assert.equal(planRoleForProduct({ category: "", name: "Laufband TX 2" }), "cardio");
+  assert.equal(planRoleForProduct({ category: "Yoga Mats" }), "extra");
+  assert.equal(planRoleForProduct({}), "extra");
+
+  const cards = assortmentCards([
+    { id: "mat", name: "Bodenschutzmatte", category: "Floor Protection Mats", price: 49, inStock: true, images: [], shopifyUrl: "u" },
+    scheiben,
+    { id: "rack", name: "Power Rack", category: "Power Racks", price: 900, salePrice: 799, inStock: false, shopifyUrl: "r", shopifyVariantId: "55", description: "lang", sku: "X" },
+    { id: "", name: "kaputt" },
+  ]);
+  assert.deepEqual(cards.map((c) => [c.id, c.role]), [["rack", "base"], ["atx-scheiben", "weights"], ["mat", "flooring"]]);
+  assert.deepEqual(cards[0], {
+    id: "rack",
+    name: "Power Rack",
+    category: "Power Racks",
+    role: "base",
+    price: 900,
+    salePrice: 799,
+    images: [],
+    shopifyUrl: "r",
+    inStock: false,
+    variants: [{ id: "55", title: "", price: 900, salePrice: 799, available: false, isDefault: true }],
+  });
+  assert.deepEqual(cards[1].images, ["https://cdn/a.jpg"]);
+  assert.equal(cards[1].priceMin, 4);
+  assert.deepEqual(cards[1].variants.map((v) => [v.id, v.title, v.available]), [
+    ["11", "0.5", true],
+    ["12", "5 kg", true],
+    ["13", "10 kg", false],
+    ["14", "20 kg", true],
+  ]);
+  assert.equal(cards[1].variants[2].salePrice, 34);
+  assert.equal(cards[2].variants, undefined, "no variant id, no variants");
 });
 
 test("renderConfiguratorSection (en) is English", () => {
@@ -221,7 +359,7 @@ test("renderConfiguratorSection (en) is English", () => {
     locale: "en",
   });
   assert.match(out, /^## Home-gym configurator/);
-  assert.match(out, /- I am: Busy, with little time/);
+  assert.match(out, /- Type \/ training focus: Build strength and muscle \(/);
   assert.match(out, /Recommend ONLY products from the configurator assortment/);
   assert.doesNotMatch(out, /Beratungsimpulse|noch offen|Leitfaden/);
   assert.match(configuratorGreetingTrigger("en"), /^\[System: /);
@@ -245,7 +383,7 @@ test("system prompt: the configurator block sits after the opening sentence; abs
 
 test("retrieval query and tool copy", () => {
   const q = configuratorRetrievalQuery(parseConfiguratorContext(ctx(fullAnswers)));
-  assert.match(q, /^Home Gym Freie Gewichte Cardio Muskeln & Kraft aufbauen platzsparend kompakt Wohnung leise$/);
+  assert.match(q, /^Home Gym Freie Gewichte Cardio Krafttraining Muskelaufbau Rack Hanteln platzsparend kompakt Wohnung leise$/);
   const de = configuratorToolCopy("de");
   const en = configuratorToolCopy("en");
   assert.deepEqual(Object.keys(de), Object.keys(en));
@@ -268,18 +406,18 @@ test("normalizePlanItems: roles, quantities, duplicates merged, capped", () => {
   ]);
   assert.deepEqual(normalizePlanItems(null), []);
   const many = { items: Array.from({ length: 30 }, (_, i) => ({ productId: `p${i}`, role: "extra" })) };
-  assert.equal(normalizePlanItems(many).length, 12);
+  assert.equal(normalizePlanItems(many).length, PLAN_MAX_ITEMS);
+  assert.equal(PLAN_MAX_ITEMS, 16);
 });
 
 test("KPI payloads carry ids, enums and counts only; server names are server-only", () => {
   const a = parseConfiguratorContext(ctx({ ...fullAnswers, wishes: ["quiet", "assembly"] }));
   assert.deepEqual(chatStartedEventData(a, "de"), {
-    persona: "busy",
+    persona: "strength_focused",
     location: "apartment",
     space: "xs",
     training: "free_weights,cardio",
     level: "rookie",
-    goal: "muscle",
     budget: "",
     wishes: "assembly,quiet",
     partner: "mh",
@@ -308,6 +446,16 @@ test("answerDistribution: every option in vocabulary order, multi fields count e
   const training = answerDistribution("training", [{ value: "cardio,free_weights", n: 3 }, { value: "cardio", n: 1 }]);
   assert.deepEqual(training.map((r) => r.count), [3, 0, 4, 0]);
   assert.deepEqual(answerDistribution("nope", []), []);
+  // consultations of the first version count under today's persona
+  const persona = answerDistribution("persona", [{ value: "busy", n: 2 }, { value: "family", n: 1 }, { value: "weight_loss", n: 4 }]);
+  assert.deepEqual(persona.map((r) => [r.key, r.count]), [
+    ["pragmatic_beginner", 3],
+    ["ambitious_home_athlete", 0],
+    ["strength_focused", 0],
+    ["cardio_focused", 0],
+    ["design_lifestyle", 0],
+    ["weight_loss", 4],
+  ]);
 });
 
 test("configuratorFunnel: stage order and rates (null without a base)", () => {

@@ -305,7 +305,6 @@ export async function getConfiguratorKpis(range: KpiRange, sql: Sql | null = get
            ('space', e.data->>'space'),
            ('training', e.data->>'training'),
            ('level', e.data->>'level'),
-           ('goal', e.data->>'goal'),
            ('budget', e.data->>'budget'),
            ('wishes', e.data->>'wishes'),
            ('partner', e.data->>'partner')

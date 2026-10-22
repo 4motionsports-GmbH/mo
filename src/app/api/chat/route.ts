@@ -50,6 +50,7 @@ import { recordCampaignChatStarted } from "@/lib/campaign-store";
 import { isOrderStatusEnabledFor } from "@/lib/order-status";
 import {
   chatStartedEventData,
+  configuratorArchetype,
   configuratorGreetingTrigger,
   configuratorRetrievalQuery,
   CONFIGURATOR_TOOLS,
@@ -62,6 +63,7 @@ import {
   renderConfiguratorSection,
 } from "@/lib/configurator-core.mjs";
 import { getCachedConfiguratorSettings, loadConfiguratorAssortment } from "@/lib/configurator-store";
+import { resolveProductRef, variantDisplayName } from "@/lib/product-ref.mjs";
 import {
   KPI_EMAIL_CAPTURE_ASK_SHOWN,
   KPI_PAGE_CONTEXT_ANSWERED,
@@ -335,7 +337,10 @@ export async function POST(req: Request) {
     const boostIds = assortment ? new Set(assortment.products.map((p) => p.id)) : undefined;
 
     const profile = mergeConfiguratorProfile(extractProfile(messages), configurator);
-    archetype = deriveArchetype(profile);
+    // The configurator page lets the visitor pick one of Mo's personas („Welcher
+    // Typ bist du?“) — that choice IS the archetype, no need to derive it.
+    archetype =
+      (configuratorArchetype(configurator) as PersonaArchetype | null) ?? deriveArchetype(profile);
     const latestUserText = getLatestUserText(messages);
 
     // Customer memory — PRIVACY GATE (two paths, both fail-closed):
@@ -475,14 +480,15 @@ export async function POST(req: Request) {
     // visible without a tool roundtrip. Context products lead; semantic hits
     // follow, deduped.
     // A configurator thread also grounds the plan as it stands on the page
-    // (capped — the curated assortment is listed compactly in its section).
-    const configuratorPlan = configurator ? configurator.plan.slice(0, 8) : [];
+    // (capped at 8 products — the curated assortment is listed compactly in its
+    // section; the plan itself is listed in full there).
+    const configuratorPlan = configurator ? configurator.plan : [];
     const configuratorPlanProducts =
       configuratorPlan.length > 0 ? await getProductsByIds(configuratorPlan.map((p) => p.id)) : [];
     const contextProductIds = [
       ...(productContext ? [productContext.id] : []),
       ...(browsingContext?.products.map((p) => p.id) ?? []),
-      ...configuratorPlanProducts.map((p) => p.id),
+      ...[...new Set(configuratorPlanProducts.map((p) => p.id))].slice(0, 8),
     ];
     const contextProducts =
       contextProductIds.length > 0 ? await getProductsByIds(contextProductIds) : [];
@@ -566,8 +572,9 @@ export async function POST(req: Request) {
             assortment: assortment.products,
             settings: configuratorSettings,
             plan: configuratorPlan.flatMap((line) => {
-              const p = configuratorPlanProducts.find((x) => x.id === line.id.split("~")[0]);
-              return p ? [{ ...line, name: p.name }] : [];
+              const hit = resolveProductRef(new Map(configuratorPlanProducts.map((p) => [p.id, p])), line.id);
+              if (!hit || hit.missingVariant) return [];
+              return [{ ...line, name: variantDisplayName(hit.product, hit.variant) }];
             }),
             locale,
           })

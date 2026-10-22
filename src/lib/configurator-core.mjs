@@ -1,6 +1,7 @@
 // Home-Gym-Konfigurator (Men's Health / Women's Health cooperation) — pure,
-// no I/O. The storefront page lets a visitor pick a few basic answers („Ich
-// bin … / ich will …“) and hands the conversation to Mo, which then leads the
+// no I/O. The storefront page lets a visitor pick a few basic answers (the
+// „Trainingsfokus“ — one of Mo's personas — space, training, level) and hands
+// the conversation to Mo, which then leads the
 // rest of the consultation (budget, wishes) and builds a home-gym plan.
 //
 // This file owns everything both sides must agree on and everything testable:
@@ -21,6 +22,8 @@
 //     admin screen „Konfigurator“.
 //
 // docs/CONFIGURATOR.md is the owner document.
+
+import { isVariantAvailable, normalizeVariantId, productVariants } from "./product-ref.mjs";
 
 /** The admin_settings key (migration 0078). */
 export const CONFIGURATOR_SETTINGS_KEY = "configurator";
@@ -60,9 +63,12 @@ export const CONFIGURATOR_LIMITS = Object.freeze({
   notesMax: 1500,
   /** Products of the assortment listed in the prompt (the rest: search_products). */
   promptProducts: 60,
-  /** Plan lines the widget may echo back in the context. */
+  /** Plan lines the widget may echo back in the context (Mo's lines plus the
+   * customer's own, „+ Produkt hinzufügen“ / „+ Gewichtsstufe“). */
   planItems: 20,
   planQuantityMax: 20,
+  /** Variants (weight steps) listed per multi-variant product in the prompt. */
+  promptVariants: 12,
 });
 
 // ---------------------------------------------------------------------------
@@ -70,53 +76,65 @@ export const CONFIGURATOR_LIMITS = Object.freeze({
 // ---------------------------------------------------------------------------
 
 /**
- * @typedef {{ id: string, de: string, en: string, hintDe?: string, hintEn?: string }} ConfiguratorOption
+ * @typedef {{ id: string, de: string, en: string, subDe?: string, subEn?: string, hintDe?: string, hintEn?: string }} ConfiguratorOption
  * @typedef {{ key: string, multi: boolean, required: boolean, de: string, en: string, options: ConfiguratorOption[] }} ConfiguratorField
  */
 
 /** @type {ReadonlyArray<ConfiguratorField>} */
 export const CONFIGURATOR_FIELDS = Object.freeze([
   {
+    // Mo's own customer personas (persona.ts / PersonaArchetype), in the
+    // wording of the Men's Health / Women's Health „Trainingsfokus“ set: the
+    // visitor picks one, so Mo's consulting mode is set without asking
+    // (configuratorArchetype). The consulting cues live in Mo's persona
+    // addendum (system-prompt-core getPersonaAddendum), not here.
     key: "persona",
     multi: false,
     required: true,
-    de: "Ich bin",
-    en: "I am",
+    de: "Typ / Trainingsfokus",
+    en: "Type / training focus",
     options: [
       {
-        id: "busy",
-        de: "Berufstätig & wenig Zeit",
-        en: "Busy, with little time",
-        hintDe: "zeiteffizientes Ganzkörpertraining, schnelle Umbauten (z. B. verstellbare Hanteln), wenig Rüstzeit",
-        hintEn: "time-efficient full-body training, quick changeovers (e.g. adjustable dumbbells), little setup time",
+        id: "pragmatic_beginner",
+        de: "Pragmatisch starten",
+        en: "Start pragmatically",
+        subDe: "Kompakte Fitnesslösungen für Einsteiger und begrenzten Platz.",
+        subEn: "Compact fitness solutions for beginners and limited space.",
       },
       {
-        id: "ambitious",
-        de: "Sportlich ambitioniert",
-        en: "Ambitious about sport",
-        hintDe: "belastbare, erweiterbare Geräte mit Progressionsreserve statt Einstiegslösungen",
-        hintEn: "sturdy, expandable equipment with room to progress instead of entry-level solutions",
+        id: "ambitious_home_athlete",
+        de: "Ambitioniert trainieren",
+        en: "Train ambitiously",
+        subDe: "Facettenreiche Fitnessgeräte in Studioqualität für zu Hause.",
+        subEn: "Versatile studio-quality equipment for your home.",
       },
       {
-        id: "health",
-        de: "Gesundheitsbewusst",
-        en: "Health-conscious",
-        hintDe: "gelenkschonend, Rücken und Mobilität, sichere geführte Bewegungen",
-        hintEn: "joint-friendly, back and mobility, safe guided movements",
+        id: "strength_focused",
+        de: "Kraft und Muskeln aufbauen",
+        en: "Build strength and muscle",
+        subDe: "Gezielt und progressiv stärker werden.",
+        subEn: "Get stronger, step by step.",
       },
       {
-        id: "family",
-        de: "Zu zweit / als Familie",
-        en: "Training as a couple / family",
-        hintDe: "mehrere Nutzer mit unterschiedlichem Level und Körpergröße: schnell verstellbar, sicher, vielseitig",
-        hintEn: "several users of different level and height: quick to adjust, safe, versatile",
+        id: "cardio_focused",
+        de: "Gesundheit und Ausdauer fördern",
+        en: "Boost health and endurance",
+        subDe: "Fit und aktiv bleiben.",
+        subEn: "Stay fit and active.",
       },
       {
-        id: "best_ager",
-        de: "Aktiv mit 50+",
-        en: "Active at 50+",
-        hintDe: "gelenkschonend, niedriger Einstieg, Stabilität und Sicherheit vor Maximalgewicht",
-        hintEn: "joint-friendly, easy access, stability and safety before maximum load",
+        id: "design_lifestyle",
+        de: "Design und Lifestyle leben",
+        en: "Live design and lifestyle",
+        subDe: "Stilvolle Fitnessgeräte Zuhause integrieren.",
+        subEn: "Integrate stylish fitness equipment at home.",
+      },
+      {
+        id: "weight_loss",
+        de: "Abnehmen und fit bleiben",
+        en: "Lose weight and stay fit",
+        subDe: "Mit Cardiotraining das Wohlbefinden steigern.",
+        subEn: "Boost your well-being with cardio.",
       },
     ],
   },
@@ -190,7 +208,7 @@ export const CONFIGURATOR_FIELDS = Object.freeze([
   {
     key: "training",
     multi: true,
-    required: true,
+    required: false,
     de: "Trainingsart",
     en: "Training style",
     options: [
@@ -222,20 +240,6 @@ export const CONFIGURATOR_FIELDS = Object.freeze([
         hintDe: "hohe Belastbarkeit, Studioqualität, Erweiterbarkeit",
         hintEn: "high load capacity, commercial quality, expandability",
       },
-    ],
-  },
-  {
-    key: "goal",
-    multi: false,
-    required: true,
-    de: "Ziel",
-    en: "Goal",
-    options: [
-      { id: "muscle", de: "Muskeln & Kraft aufbauen", en: "Build muscle & strength" },
-      { id: "fitness", de: "Fitter werden & abnehmen", en: "Get fitter & lose weight" },
-      { id: "health", de: "Rücken & Gesundheit stärken", en: "Strengthen back & health" },
-      { id: "endurance", de: "Ausdauer steigern", en: "Improve endurance" },
-      { id: "athletic", de: "Athletik & Performance", en: "Athleticism & performance" },
     ],
   },
   {
@@ -321,11 +325,10 @@ export function configuratorLabel(key, id, locale = "de") {
  *   space: string | null,
  *   training: string[],
  *   level: string | null,
- *   goal: string | null,
  *   budget: string | null,
  *   wishes: string[],
  *   partner: "mh" | "wh" | null,
- *   plan: Array<{ id: string, qty: number }>,
+ *   plan: Array<{ id: string, qty: number, added?: boolean }>,
  * }} ConfiguratorAnswers
  */
 
@@ -359,10 +362,10 @@ function multiAnswer(key, raw) {
 
 const PRODUCT_REF_RE = /^[^\s,]{1,255}$/;
 
-/** @param {unknown} raw @returns {Array<{ id: string, qty: number }>} */
+/** @param {unknown} raw @returns {Array<{ id: string, qty: number, added?: boolean }>} */
 function parsePlan(raw) {
   if (!Array.isArray(raw)) return [];
-  /** @type {Array<{ id: string, qty: number }>} */
+  /** @type {Array<{ id: string, qty: number, added?: boolean }>} */
   const out = [];
   for (const entry of raw.slice(0, 40)) {
     const e = asRecord(entry);
@@ -371,10 +374,48 @@ function parsePlan(raw) {
     if (!PRODUCT_REF_RE.test(id) || out.some((x) => x.id === id)) continue;
     const q = Number(e.qty);
     const qty = Number.isInteger(q) && q >= 1 ? Math.min(q, CONFIGURATOR_LIMITS.planQuantityMax) : 1;
-    out.push({ id, qty });
+    // added: a line the customer put into the plan himself („+ Produkt hinzufügen“).
+    out.push(e.added === true ? { id, qty, added: true } : { id, qty });
     if (out.length >= CONFIGURATOR_LIMITS.planItems) break;
   }
   return out;
+}
+
+/**
+ * Answers of the first configurator version (before 2026-10-22) → today's
+ * persona: the page's own types and the removed „Ich will …“ goal. Lets a
+ * page still cached in a browser, or an old link, keep working.
+ */
+const LEGACY_PERSONA = Object.freeze({
+  busy: "pragmatic_beginner",
+  ambitious: "ambitious_home_athlete",
+  health: "cardio_focused",
+  family: "pragmatic_beginner",
+  best_ager: "cardio_focused",
+});
+const LEGACY_GOAL_PERSONA = Object.freeze({
+  muscle: "strength_focused",
+  fitness: "weight_loss",
+  health: "cardio_focused",
+  endurance: "cardio_focused",
+  athletic: "ambitious_home_athlete",
+});
+
+/**
+ * The persona id of a context or a recorded configurator_chat_started event:
+ * today's id, else the mapped id of the first version's persona or goal.
+ * @param {unknown} rawPersona @param {unknown} [rawGoal]
+ * @returns {string | null}
+ */
+export function personaAnswer(rawPersona, rawGoal) {
+  const current = singleAnswer("persona", rawPersona);
+  if (current) return current;
+  const key = (/** @type {unknown} */ v) => (typeof v === "string" ? v.trim().toLowerCase() : "");
+  return (
+    /** @type {Record<string, string>} */ (LEGACY_PERSONA)[key(rawPersona)] ??
+    /** @type {Record<string, string>} */ (LEGACY_GOAL_PERSONA)[key(rawGoal)] ??
+    null
+  );
 }
 
 /**
@@ -392,12 +433,11 @@ export function parseConfiguratorContext(context) {
   if (!c) return null;
   /** @type {ConfiguratorAnswers} */
   const answers = {
-    persona: singleAnswer("persona", c.persona),
+    persona: personaAnswer(c.persona, c.goal),
     location: singleAnswer("location", c.location),
     space: singleAnswer("space", c.space),
     training: multiAnswer("training", c.training),
     level: singleAnswer("level", c.level),
-    goal: singleAnswer("goal", c.goal),
     budget: singleAnswer("budget", c.budget),
     wishes: multiAnswer("wishes", c.wishes),
     partner:
@@ -407,7 +447,7 @@ export function parseConfiguratorContext(context) {
     plan: parsePlan(c.plan),
   };
   const known =
-    answers.persona || answers.location || answers.space || answers.training.length || answers.level || answers.goal;
+    answers.persona || answers.location || answers.space || answers.training.length || answers.level;
   return known ? answers : null;
 }
 
@@ -439,11 +479,14 @@ export function mergeConfiguratorProfile(profile, answers) {
   if (unknown(next.experienceLevel) && answers.level) {
     next.experienceLevel =
       answers.level === "rookie" ? "beginner" : answers.level === "pro" ? "advanced" : "intermediate";
+  } else if (unknown(next.experienceLevel) && answers.persona === "pragmatic_beginner") {
+    next.experienceLevel = "beginner";
   }
   if (unknown(next.trainingFocus)) {
     const t = answers.training;
-    const strength = t.includes("free_weights") || t.includes("machines");
-    const cardio = t.includes("cardio") || answers.goal === "endurance";
+    const p = answers.persona;
+    const strength = t.includes("free_weights") || t.includes("machines") || p === "strength_focused";
+    const cardio = t.includes("cardio") || p === "cardio_focused" || p === "weight_loss";
     if (strength && cardio) next.trainingFocus = "mixed";
     else if (cardio) next.trainingFocus = "cardio";
     else if (strength || t.includes("functional")) next.trainingFocus = "strength";
@@ -454,6 +497,28 @@ export function mergeConfiguratorProfile(profile, answers) {
   return /** @type {P} */ (next);
 }
 
+/** The search words of each persona for the greeting's retrieval. */
+const PERSONA_QUERY = Object.freeze({
+  pragmatic_beginner: "Einsteiger kompakt platzsparend",
+  ambitious_home_athlete: "Studioqualität Rack Komplettsystem",
+  strength_focused: "Krafttraining Muskelaufbau Rack Hanteln",
+  cardio_focused: "Ausdauer Gesundheit Cardio gelenkschonend",
+  design_lifestyle: "Design hochwertig Holz wohnraumtauglich",
+  weight_loss: "Cardio Abnehmen Laufband Crosstrainer Ergometer",
+});
+
+/**
+ * Mo's persona for a configurator thread: the visitor chose it on the page,
+ * so it replaces the derived archetype (persona.ts deriveArchetype) — Mo does
+ * not have to find out who he is talking to. Null without a choice.
+ * @param {ConfiguratorAnswers | null | undefined} answers
+ * @returns {string | null}
+ */
+export function configuratorArchetype(answers) {
+  const id = answers?.persona;
+  return id && configuratorOption("persona", id) ? id : null;
+}
+
 /**
  * The retrieval query of a configurator turn without user text (the greeting):
  * the answers in words, so the first prompt already carries matching products.
@@ -462,7 +527,7 @@ export function mergeConfiguratorProfile(profile, answers) {
 export function configuratorRetrievalQuery(answers) {
   const parts = ["Home Gym"];
   for (const id of answers.training) parts.push(configuratorLabel("training", id));
-  if (answers.goal) parts.push(configuratorLabel("goal", answers.goal));
+  if (answers.persona) parts.push(PERSONA_QUERY[/** @type {keyof typeof PERSONA_QUERY} */ (answers.persona)] ?? "");
   if (answers.space === "xs" || answers.space === "s") parts.push("platzsparend kompakt");
   if (answers.location === "apartment") parts.push("Wohnung leise");
   return parts.join(" ");
@@ -624,6 +689,87 @@ export function selectAssortment(catalog, settings) {
   return out;
 }
 
+// The plan role of an assortment product, for „+ Produkt hinzufügen“ on the
+// page (GET /api/configurator/assortment). First match wins: storage racks and
+// bar collars are accessories although they say "Rack"/"Weight".
+const ROLE_RULES = /** @type {ReadonlyArray<readonly [string, RegExp]>} */ ([
+  ["flooring", /floor protection|gym mats?|bodenschutz|bodenmatte|puzzlematte|schutzmatte|unterlegmatte/i],
+  ["accessory", /storage|ablage|st[äa]nder|collar|verschl[üu]ss|bench|hantelbank|\bbank\b|barbell|weightlifting bars?|langhantel|stange|handles?|griff|accessor|zubeh[öo]r|klimmzug|pull.?up bar|belt|g[üu]rtel|resistance bands?|widerstandsb[äa]nder?|\bbands?\b/i],
+  ["weights", /weight plates?|hantelscheibe|dumbbells?|kurzhantel|kettlebell|gewichtsscheibe|\bplates?\b|scheiben/i],
+  ["cardio", /treadmill|laufband|bikes?|ergometer|rowing|rudergerät|rower|elliptical|crosstrainer|cross.?trainer|stepper|stair|spinning|indoor.?cycl|cardio|walking.?pad/i],
+  ["base", /power racks?|half racks?|squat racks?|weight lifting (machines|racks)|smith|multipresse|power towers?|kraftstation|equipment sets|multi.?gym|cable|kabelzug|functional trainer|\brack\b|machines?/i],
+]);
+
+/**
+ * Plan role (PLAN_ROLES) of a catalog product, from its category, else its
+ * name; "extra" when nothing matches.
+ * @param {{ category?: unknown, name?: unknown }} p
+ * @returns {"base" | "accessory" | "weights" | "cardio" | "flooring" | "extra"}
+ */
+export function planRoleForProduct(p) {
+  for (const text of [String(p?.category ?? ""), String(p?.name ?? "")]) {
+    if (!text.trim()) continue;
+    for (const [role, re] of ROLE_RULES) {
+      if (re.test(text)) return /** @type {any} */ (role);
+    }
+  }
+  return "extra";
+}
+
+/**
+ * @typedef {{
+ *   id: string, name: string, category: string,
+ *   role: "base" | "accessory" | "weights" | "cardio" | "flooring" | "extra",
+ *   price: number, salePrice?: number, priceMin?: number, priceMax?: number,
+ *   images: string[], shopifyUrl: string, inStock: boolean,
+ *   variants?: Array<{ id: string, title: string, price: number, salePrice?: number, available: boolean, isDefault: boolean }>,
+ * }} AssortmentCard
+ */
+
+/**
+ * The public cards of the curated assortment — what the page's „+ Produkt
+ * hinzufügen“ picker lists (public storefront fields only, first image, the
+ * variants with an id). Sorted by plan role (PLAN_ROLES order), then name.
+ * @param {ReadonlyArray<AssortmentProduct & { images?: string[], shopifyUrl?: string }>} products
+ * @returns {AssortmentCard[]}
+ */
+export function assortmentCards(products) {
+  /** @type {AssortmentCard[]} */
+  const out = [];
+  for (const p of products ?? []) {
+    if (!p || typeof p.id !== "string" || !p.id) continue;
+    const variants = /** @type {Array<{ id?: unknown, title?: unknown, price?: unknown, salePrice?: unknown, isDefault?: unknown }>} */ (
+      productVariants(p)
+    )
+      .filter((v) => normalizeVariantId(v.id))
+      .map((v) => ({
+        id: /** @type {string} */ (normalizeVariantId(v.id)),
+        title: String(v.title ?? "").trim(),
+        price: Number(v.price) || 0,
+        ...(typeof v.salePrice === "number" && v.salePrice > 0 ? { salePrice: v.salePrice } : {}),
+        available: isVariantAvailable(p, v),
+        isDefault: v.isDefault === true,
+      }));
+    out.push({
+      id: p.id,
+      name: String(p.name ?? ""),
+      category: String(p.category ?? ""),
+      role: planRoleForProduct(p),
+      price: Number(p.price) || 0,
+      ...(typeof p.salePrice === "number" && p.salePrice > 0 ? { salePrice: p.salePrice } : {}),
+      ...(typeof p.priceMin === "number" ? { priceMin: p.priceMin } : {}),
+      ...(typeof p.priceMax === "number" ? { priceMax: p.priceMax } : {}),
+      images: Array.isArray(p.images) ? p.images.filter((u) => typeof u === "string" && u).slice(0, 1) : [],
+      shopifyUrl: String(p.shopifyUrl ?? ""),
+      inStock: p.inStock !== false,
+      ...(variants.length ? { variants } : {}),
+    });
+  }
+  const order = /** @type {readonly string[]} */ (PLAN_ROLES);
+  out.sort((a, b) => order.indexOf(a.role) - order.indexOf(b.role) || a.name.localeCompare(b.name, "de"));
+  return out;
+}
+
 /** Extra handles that match no catalog product (shown as a warning in the admin). */
 export function unknownExtraIds(/** @type {Array<{ id: string }>} */ catalog, /** @type {string[]} */ extraIds) {
   const ids = new Set(catalog.map((p) => p.id));
@@ -668,7 +814,32 @@ function assortmentLine(p, locale) {
   if (desc) line += ` — ${desc}`;
   const acc = (p.compatibleWith ?? []).slice(0, 3);
   if (acc.length) line += en ? ` | Accessories: ${acc.join(", ")}` : ` | Zubehör: ${acc.join(", ")}`;
+  const steps = variantSteps(p);
+  if (steps) line += en ? ` | Variants: ${steps}` : ` | Varianten: ${steps}`;
   return line;
+}
+
+/**
+ * The orderable variants of a multi-variant product as „title `~id`“ — Mo
+ * needs the ids to plan concrete weight steps (the plan otherwise falls back
+ * to the default variant, often the smallest plate). Capped; null for a
+ * single-variant product.
+ * @param {AssortmentProduct} p
+ */
+function variantSteps(p) {
+  const variants = /** @type {Array<{ id?: unknown, title?: unknown, available?: unknown }>} */ (
+    productVariants(p)
+  );
+  if (variants.length < 2) return null;
+  const usable = variants.filter(
+    (v) => isVariantAvailable(p, v) && normalizeVariantId(v.id) && String(v.title ?? "").trim()
+  );
+  if (!usable.length) return null;
+  const shown = usable
+    .slice(0, CONFIGURATOR_LIMITS.promptVariants)
+    .map((v) => `${clip(v.title, 24)} \`~${normalizeVariantId(v.id)}\``);
+  const more = usable.length - shown.length;
+  return shown.join(", ") + (more > 0 ? ` (+${more})` : "");
 }
 
 // ---------------------------------------------------------------------------
@@ -683,21 +854,23 @@ function renderAnswers(a, locale) {
     id ? configuratorLabel(key, id, locale) : open;
   const list = (/** @type {string} */ key, /** @type {string[]} */ ids) =>
     ids.length ? ids.map((id) => configuratorLabel(key, id, locale)).join(", ") : open;
+  const persona = a.persona ? configuratorOption("persona", a.persona) : null;
+  const focus = persona
+    ? `${en ? persona.en : persona.de} (${en ? persona.subEn : persona.subDe})`
+    : open;
   if (en) {
     return [
-      `- I am: ${label("persona", a.persona)}`,
+      `- Type / training focus: ${focus}`,
       `- Training location: ${label("location", a.location)} — space: ${label("space", a.space)}`,
       `- Training style: ${list("training", a.training)} — level: ${label("level", a.level)}`,
-      `- Goal ("I want to …"): ${label("goal", a.goal)}`,
       `- Budget: ${label("budget", a.budget)}`,
       `- Individual wishes: ${list("wishes", a.wishes)}`,
     ].join("\n");
   }
   return [
-    `- Ich bin: ${label("persona", a.persona)}`,
+    `- Typ / Trainingsfokus: ${focus}`,
     `- Trainingsort: ${label("location", a.location)} — Platz: ${label("space", a.space)}`,
     `- Trainingsart: ${list("training", a.training)} — Niveau: ${label("level", a.level)}`,
-    `- Ziel („Ich will …“): ${label("goal", a.goal)}`,
     `- Budget: ${label("budget", a.budget)}`,
     `- Individuelle Wünsche: ${list("wishes", a.wishes)}`,
   ].join("\n");
@@ -718,15 +891,19 @@ function renderHints(a, locale) {
 }
 
 /**
- * @param {Array<{ id: string, qty: number, name?: string }>} plan
+ * @param {Array<{ id: string, qty: number, name?: string, added?: boolean }>} plan
  * @param {"de" | "en"} locale
  */
 function renderPlan(plan, locale) {
   if (!plan.length) return "";
-  const lines = plan.map((p) => `- ${p.qty}× ${p.name ? `${p.name} ` : ""}(\`${p.id}\`)`).join("\n");
-  return locale === "en"
-    ? `\n\n### The plan as it stands on the page now (the customer may have changed quantities, variants or removed items)\n${lines}\nBuild on this state — never silently re-add what the customer removed.`
-    : `\n\n### Der Plan, wie er jetzt auf der Seite steht (der Kunde kann Mengen, Varianten geändert oder Positionen entfernt haben)\n${lines}\nBaue auf diesem Stand auf — füge nie stillschweigend wieder hinzu, was der Kunde entfernt hat.`;
+  const en = locale === "en";
+  const mark = en ? " — added by the customer" : " — vom Kunden ergänzt";
+  const lines = plan
+    .map((p) => `- ${p.qty}× ${p.name ? `${p.name} ` : ""}(\`${p.id}\`)${p.added ? mark : ""}`)
+    .join("\n");
+  return en
+    ? `\n\n### The plan as it stands on the page now (the customer may have changed quantities, variants, removed items or added products)\n${lines}\nBuild on this state — never silently re-add what the customer removed, and keep the items the customer added in every new plan unless they want them gone.`
+    : `\n\n### Der Plan, wie er jetzt auf der Seite steht (der Kunde kann Mengen, Varianten geändert, Positionen entfernt oder Produkte ergänzt haben)\n${lines}\nBaue auf diesem Stand auf — füge nie stillschweigend wieder hinzu, was der Kunde entfernt hat, und übernimm die vom Kunden ergänzten Positionen in jeden neuen Plan, solange er sie nicht loswerden will.`;
 }
 
 /**
@@ -741,7 +918,7 @@ function renderPlan(plan, locale) {
  *   assortment: AssortmentProduct[],
  *   assortmentTotal?: number,
  *   settings: Pick<ConfiguratorSettings, "focus" | "notes">,
- *   plan?: Array<{ id: string, qty: number, name?: string }>,
+ *   plan?: Array<{ id: string, qty: number, name?: string, added?: boolean }>,
  *   locale?: "de" | "en",
  * }} opts
  * @returns {string}
@@ -774,18 +951,19 @@ If the customer changes them on the page, you get the new version here.${hints ?
    b) Individual wishes (assembly service, delivery date, noise, floor protection, no drilling, test in the showroom) → topic "wishes", multiSelect true.
    c) At most 1–2 detail questions that really change the recommendation (e.g. ceiling height for racks/pull-ups, training frequency, equipment they already own).
    Skip what you already know. Never ask more than 4 questions before showing a plan. If the customer says "just show me something", build the plan right away.
-3. **The plan:** put together ONE coherent set with \`show_gym_plan\`: base unit(s) first, then matching accessories (prefer the base unit's "Accessories" ids), weights, a cardio machine if it fits the goal, floor protection where it makes sense. It must fit space, goal, level and budget — total within the budget (if it is up to ~10 % above, say so openly). Explain in 2–3 sentences why the set fits. Show at most ONE \`show_product\` card, for the central base unit — the plan itself shows all items.
-4. **After the plan:** offer swaps (cheaper/premium, more compact) and answer questions. Mention once that the customer can adjust quantities and variants in the plan and put everything into the cart with one click. After every change call \`show_gym_plan\` again with the COMPLETE new plan (not just the change).
+3. **The plan:** put together ONE coherent set with \`show_gym_plan\`: base unit(s) first, then matching accessories (prefer the base unit's "Accessories" ids), weights, a cardio machine if it fits the training focus, floor protection where it makes sense. It must fit training focus, space, level and budget — total within the budget (if it is up to ~10 % above, say so openly). Explain in 2–3 sentences why the set fits. Show at most ONE \`show_product\` card, for the central base unit — the plan itself shows all items.
+   **Weights** (plates, dumbbells, kettlebells) always as concrete weight steps: one line per step with its variant ref from the list below (\`id~variantId\`), plates in pairs (quantity 2 per step), matching the bar's diameter (30/50 mm) in the plan. Size the steps to level and training focus — enough load for real progression (beginners at the barbell e.g. 2× 5 kg, 2× 10 kg plus small steps; advanced users heavier). Never only the smallest step, never a weights line without a variant.
+4. **After the plan:** offer swaps (cheaper/premium, more compact) and answer questions. Mention once that the customer can adjust quantities and variants in the plan, add further weight steps with "+ Gewichtsstufe" and further products with "+ Produkt hinzufügen", and put everything into the cart with one click. After every change call \`show_gym_plan\` again with the COMPLETE new plan (not just the change).
 
 ### Assortment (focus)
 ${strict ? "Recommend ONLY products from the configurator assortment below. Leave it only when the customer explicitly asks for a specific product outside it — then via search_products." : "Work primarily with the configurator assortment below (curated home-gym products). Other shop products (e.g. a gym ball) are fine when the customer asks for them or the assortment has nothing suitable — then via search_products."}
-Recommend only what is in stock. Variants (weight, colour) via \`id~variantId\` from the retrieved-products block or search_products; if you don't know the variant, use the product id — the customer picks the variant in the plan.
+Recommend only what is in stock. Variants (weight, colour) via \`id~variantId\` — the ids are listed below under "Variants", otherwise in the retrieved-products block or search_products. If you don't know the variant of a non-weight product, use the product id — the customer picks the variant in the plan.
 
 ${assortmentBlock}
 
 ### Rules in the configurator
 - \`suggest_replies\`: 2–6 short answers (max. 40 characters each) that the customer can tap; no \`suggest_replies\` for open questions without sensible presets.
-- The rule "max. 2–3 products per answer" does not apply to \`show_gym_plan\` (up to 12 items) — it does apply to \`show_product\` cards.
+- The rule "max. 2–3 products per answer" does not apply to \`show_gym_plan\` (up to ${PLAN_MAX_ITEMS} items) — it does apply to \`show_product\` cards.
 - The whole set goes into the cart through the plan's cart button — use \`add_to_cart\` only when the customer explicitly wants to order a single product directly.
 - Assembly service, delivery date: answer from the product data (delivery time) and the additional knowledge; for an assembly service the shop does not offer as a product, or for large projects (budget > €10,000), offer \`show_contact_form\` (reason "general").${notes ? `\n\n### Notes from the motion sports team for the configurator (follow them)\n${notes}` : ""}${renderPlan(plan, locale)}`;
   }
@@ -808,18 +986,19 @@ ${renderAnswers(answers, locale)}
    b) Individuelle Wünsche (Aufbau-/Montageservice, Liefertermin, Lautstärke, Bodenschutz, ohne Bohren, vorher im Showroom testen) → topic "wishes", multiSelect true.
    c) Höchstens 1–2 Detailfragen, die die Empfehlung wirklich ändern (z. B. Deckenhöhe bei Racks/Klimmzügen, Trainingshäufigkeit, vorhandenes Equipment).
    Überspringe, was du schon weißt. Stell insgesamt nie mehr als 4 Fragen, bevor du einen Plan zeigst. Sagt der Kunde „zeig mir einfach was“, erstelle sofort den Plan.
-3. **Der Plan:** Stell mit \`show_gym_plan\` EIN stimmiges Set zusammen: zuerst das/die Basisgerät(e), dann passendes Zubehör (bevorzugt die „Zubehör“-IDs des Basisgeräts), Gewichte, ein Cardio-Gerät, wenn es zum Ziel passt, und Bodenschutz, wo sinnvoll. Es muss zu Platz, Ziel, Niveau und Budget passen — Gesamtsumme im Budget (liegt sie bis ~10 % darüber, sag es offen). Erkläre in 2–3 Sätzen, warum das Set passt. Zeig höchstens EINE \`show_product\`-Karte, für das zentrale Basisgerät — der Plan selbst zeigt alle Positionen.
-4. **Nach dem Plan:** Biete Tausch-Optionen an (günstiger/hochwertiger, kompakter) und beantworte Fragen. Erwähne einmal, dass der Kunde im Plan Mengen und Varianten anpassen und alles mit einem Klick in den Warenkorb legen kann. Rufe nach jeder Änderung \`show_gym_plan\` erneut mit dem VOLLSTÄNDIGEN neuen Plan auf (nicht nur die Änderung).
+3. **Der Plan:** Stell mit \`show_gym_plan\` EIN stimmiges Set zusammen: zuerst das/die Basisgerät(e), dann passendes Zubehör (bevorzugt die „Zubehör“-IDs des Basisgeräts), Gewichte, ein Cardio-Gerät, wenn es zum Trainingsfokus passt, und Bodenschutz, wo sinnvoll. Es muss zu Trainingsfokus, Platz, Niveau und Budget passen — Gesamtsumme im Budget (liegt sie bis ~10 % darüber, sag es offen). Erkläre in 2–3 Sätzen, warum das Set passt. Zeig höchstens EINE \`show_product\`-Karte, für das zentrale Basisgerät — der Plan selbst zeigt alle Positionen.
+   **Gewichte** (Hantelscheiben, Hanteln, Kettlebells) immer als konkrete Gewichtsstufen: je Stufe eine Position mit ihrer Varianten-Ref aus der Liste unten (\`id~VariantenID\`), Hantelscheiben paarweise (quantity 2 je Stufe), passend zum Durchmesser (30/50 mm) der Stange im Plan. Bemiss die Stufen nach Niveau und Trainingsfokus — genug Gewicht für echten Fortschritt (Einsteiger an der Langhantel z. B. 2× 5 kg, 2× 10 kg plus kleine Stufen; Fortgeschrittene schwerer). Nie nur die kleinste Stufe, nie eine Gewichte-Position ohne Variante.
+4. **Nach dem Plan:** Biete Tausch-Optionen an (günstiger/hochwertiger, kompakter) und beantworte Fragen. Erwähne einmal, dass der Kunde im Plan Mengen und Varianten anpassen, mit „+ Gewichtsstufe“ weitere Gewichtsstufen und mit „+ Produkt hinzufügen“ weitere Produkte ergänzen und alles mit einem Klick in den Warenkorb legen kann. Rufe nach jeder Änderung \`show_gym_plan\` erneut mit dem VOLLSTÄNDIGEN neuen Plan auf (nicht nur die Änderung).
 
 ### Sortiment (Fokus)
 ${strict ? "Empfiehl AUSSCHLIESSLICH Produkte aus dem Konfigurator-Sortiment unten. Verlass es nur, wenn der Kunde ausdrücklich nach einem bestimmten Produkt außerhalb fragt — dann über search_products." : "Bewege dich primär im Konfigurator-Sortiment unten (kuratierte Home-Gym-Produkte). Andere Produkte aus dem Shop (z. B. ein Gymnastikball) sind in Ordnung, wenn der Kunde danach fragt oder das Sortiment nichts Passendes hat — dann über search_products."}
-Empfiehl nur, was auf Lager ist. Varianten (Gewicht, Farbe) über \`id~VariantenID\` aus dem Block der vorretrieveten Produkte oder aus search_products; kennst du die Variante nicht, nimm die Produkt-ID — der Kunde wählt die Variante im Plan.
+Empfiehl nur, was auf Lager ist. Varianten (Gewicht, Farbe) über \`id~VariantenID\` — die IDs stehen unten unter „Varianten“, sonst im Block der vorretrieveten Produkte oder in search_products. Kennst du bei einem Produkt ohne Gewichtsstufen die Variante nicht, nimm die Produkt-ID — der Kunde wählt die Variante im Plan.
 
 ${assortmentBlock}
 
 ### Regeln im Konfigurator
 - \`suggest_replies\`: 2–6 kurze Antworten (max. 40 Zeichen), die der Kunde antippen kann; kein \`suggest_replies\` bei offenen Fragen ohne sinnvolle Vorgaben.
-- Die Regel „Maximal 2-3 Produkte pro Antwort“ gilt nicht für \`show_gym_plan\` (bis zu 12 Positionen) — für \`show_product\`-Karten gilt sie weiter.
+- Die Regel „Maximal 2-3 Produkte pro Antwort“ gilt nicht für \`show_gym_plan\` (bis zu ${PLAN_MAX_ITEMS} Positionen) — für \`show_product\`-Karten gilt sie weiter.
 - Das ganze Set kommt über den Warenkorb-Button des Plans in den Warenkorb — \`add_to_cart\` nur, wenn der Kunde ausdrücklich ein einzelnes Produkt direkt bestellen will.
 - Aufbau-/Montageservice, Liefertermin: beantworte aus den Produktdaten (Lieferzeit) und dem Zusatzwissen; für einen Aufbauservice, den der Shop nicht als Produkt führt, oder bei großen Projekten (Budget über 10.000 €) biete \`show_contact_form\` an (reason "general").${notes ? `\n\n### Hinweise des motion sports Teams zum Konfigurator (befolge sie)\n${notes}` : ""}${renderPlan(plan, locale)}`;
 }
@@ -883,7 +1062,8 @@ export const PLAN_ROLE_LABELS = Object.freeze({
   extra: { de: "Extra", en: "Extra" },
 });
 
-export const PLAN_MAX_ITEMS = 12;
+/** Lines of one show_gym_plan call (a weights set alone takes 3–5 steps). */
+export const PLAN_MAX_ITEMS = 16;
 export const REPLY_MAX_OPTIONS = 6;
 export const REPLY_MAX_CHARS = 60;
 
@@ -898,8 +1078,8 @@ export function configuratorToolCopy(locale) {
       showGymPlanDesc: `Shows the customer's home-gym plan (home-gym configurator only): a card with all items, prices and the total — plus the plan view on the configurator page, where the customer adjusts quantities/variants, removes items and puts everything into the cart with one click.
 Call it once the guided questions are answered (or the customer wants to see something right away), and again after every change — always with the COMPLETE plan. Only real catalog ids (or variant refs id~variantId) of products in stock; base units first.`,
       fieldPlanTitle: "Short title of the plan, e.g. 'Your strength corner for 6 m²'.",
-      fieldPlanSummary: "1–2 sentences on why this set fits the customer (space, goal, level, budget).",
-      fieldPlanItems: "The items (1–12): productId (catalog id or variant ref), quantity (default 1), role and an optional short note (max. 80 characters) on why it belongs in the set.",
+      fieldPlanSummary: "1–2 sentences on why this set fits the customer (training focus, space, level, budget).",
+      fieldPlanItems: `The items (1–${PLAN_MAX_ITEMS}): productId (catalog id or variant ref), quantity (default 1), role and an optional short note (max. 80 characters) on why it belongs in the set. Weights: one line per weight step with its variant ref (plates in pairs, quantity 2).`,
       fieldPlanTips: "Optional, up to 3 short tips for setup or training (one sentence each).",
     };
   }
@@ -911,8 +1091,8 @@ Call it once the guided questions are answered (or the customer wants to see som
     showGymPlanDesc: `Zeigt den Home-Gym-Plan des Kunden (nur im Home-Gym-Konfigurator): eine Karte mit allen Positionen, Preisen und der Gesamtsumme — plus die Plan-Ansicht auf der Konfigurator-Seite, in der der Kunde Mengen/Varianten anpasst, Positionen entfernt und alles mit einem Klick in den Warenkorb legt.
 Rufe es auf, sobald die Leitfragen beantwortet sind (oder der Kunde sofort etwas sehen will), und nach jeder Änderung erneut — immer mit dem VOLLSTÄNDIGEN Plan. Nur echte Katalog-IDs (oder Varianten-Refs id~VariantenID) verfügbarer Produkte; Basisgeräte zuerst.`,
     fieldPlanTitle: "Kurzer Titel des Plans, z. B. „Deine Kraftecke für 6 m²“.",
-    fieldPlanSummary: "1–2 Sätze, warum dieses Set zum Kunden passt (Platz, Ziel, Niveau, Budget).",
-    fieldPlanItems: "Die Positionen (1–12): productId (Katalog-ID oder Varianten-Ref), quantity (Standard 1), role und eine optionale kurze note (max. 80 Zeichen), warum sie ins Set gehört.",
+    fieldPlanSummary: "1–2 Sätze, warum dieses Set zum Kunden passt (Trainingsfokus, Platz, Niveau, Budget).",
+    fieldPlanItems: `Die Positionen (1–${PLAN_MAX_ITEMS}): productId (Katalog-ID oder Varianten-Ref), quantity (Standard 1), role und eine optionale kurze note (max. 80 Zeichen), warum sie ins Set gehört. Gewichte: je Gewichtsstufe eine Position mit ihrer Varianten-Ref (Hantelscheiben paarweise, quantity 2).`,
     fieldPlanTips: "Optional, bis zu 3 kurze Tipps zu Aufbau oder Training (je ein Satz).",
   };
 }
@@ -1017,7 +1197,6 @@ export function chatStartedEventData(a, locale) {
     space: a.space ?? "",
     training: a.training.join(","),
     level: a.level ?? "",
-    goal: a.goal ?? "",
     budget: a.budget ?? "",
     wishes: a.wishes.join(","),
     partner: a.partner ?? "",
@@ -1115,7 +1294,7 @@ export function answerDistribution(key, rows) {
     const n = Number(row.n) || 0;
     const ids = String(row.value ?? "")
       .split(",")
-      .map((s) => s.trim())
+      .map((s) => (key === "persona" ? (personaAnswer(s) ?? "") : s.trim()))
       .filter((s) => counts.has(s));
     if (!ids.length) {
       none += n;
