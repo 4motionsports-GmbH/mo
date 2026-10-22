@@ -146,8 +146,9 @@ Prefilled answers are only preselected — the visitor still confirms with „We
   weights — „Mo empfiehlt zu deinem Setup Hantelscheiben. Bitte prüfe eigenständig, welche
   Gewichtsstufen du benötigst …“ (the first sentence only for Mo's own weights lines; Hanteln /
   Kettlebells / Gewichte by the products' names) — and a „+ Gewichtsstufe“ button on weights lines
-  with several variants (adds the next free variant of the same product; disabled when every variant
-  is in the plan or the plan has 20 lines).
+  with several variants (adds the next heavier free step after the line's own weight, lighter ones only
+  when nothing heavier is free; disabled when every variant is in the plan — at 20 lines it explains
+  the limit).
 - **The visitor's own lines:** „+ Produkt hinzufügen“ under the plan lists the configurator assortment
   (`GET /api/configurator/assortment`: public cards sorted by plan role then name — the role from the
   catalog category, `planRoleForProduct`; empty when the configurator is off; origin allowlist +
@@ -255,8 +256,10 @@ on phones) and drops the old ones (`eyebrow`, `subheading`, `usp_1…3`, `seal_l
 re-uploaded — that would reset the uploaded seals.
 
 Screenshots (local harness: the real section and widget, Mo's dialogue mocked, placeholder seals):
-[`screenshots/konfigurator/`](./screenshots/konfigurator/) — storefront 1440 / 1024 / 390 px, admin
-1440 / 1024 px in light and dark; the KPI integration (`kpi-section-*`, `kpi-umsatz-wege-*`,
+[`screenshots/konfigurator/`](./screenshots/konfigurator/) — storefront after the round of 22.10.2026
+(light design, persona card, handover on the phone, plan with weight steps and own lines,
+„+ Produkt hinzufügen“, „Starke Partner“; 1440 / 1024 / 390 px), admin 1440 / 1024 px in light and
+dark (the persona distribution with first-version answers mapped); the KPI integration (`kpi-section-*`, `kpi-umsatz-wege-*`,
 `kpi-bestellungen-*`, `gespraeche-plan-*`) on local seed data.
 
 ## 8. Limits
