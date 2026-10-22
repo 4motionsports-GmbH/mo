@@ -66,6 +66,16 @@ export const ARCHETYPE_META: Record<PersonaArchetype, ArchetypeMeta> = {
     label: "Cardio / Gesundheit",
     shortLabel: "Cardio",
   },
+  design_lifestyle: {
+    id: "design_lifestyle",
+    label: "Design & Lifestyle",
+    shortLabel: "Lifestyle",
+  },
+  weight_loss: {
+    id: "weight_loss",
+    label: "Abnehmen & Fitness",
+    shortLabel: "Abnehmen",
+  },
   studio_operator: {
     id: "studio_operator",
     label: "Studiobetreiber",

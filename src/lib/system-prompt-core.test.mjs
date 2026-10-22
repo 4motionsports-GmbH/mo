@@ -221,6 +221,8 @@ test("persona addendum localises every archetype (en has no German heading)", ()
     "ambitious_home_athlete",
     "strength_focused",
     "cardio_focused",
+    "design_lifestyle",
+    "weight_loss",
     "studio_operator",
     "physio",
     "public_sector",

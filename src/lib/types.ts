@@ -201,6 +201,10 @@ export type PersonaArchetype =
   | "ambitious_home_athlete" // 2
   | "strength_focused" // 3a
   | "cardio_focused" // 3b
+  // The Men's Health / Women's Health „Trainingsfokus“ set (Home-Gym-Konfigurator,
+  // 2026-10-22): chosen by the customer there, or set by the AI customer profile.
+  | "design_lifestyle" // 3c
+  | "weight_loss" // 3d
   | "studio_operator" // 4
   | "physio" // 5
   | "public_sector" // 6

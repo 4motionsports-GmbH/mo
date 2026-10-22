@@ -15,6 +15,8 @@ export const PROFILE_PERSONAS = [
   "ambitious_home_athlete",
   "strength_focused",
   "cardio_focused",
+  "design_lifestyle",
+  "weight_loss",
   "studio_operator",
   "physio",
   "public_sector",

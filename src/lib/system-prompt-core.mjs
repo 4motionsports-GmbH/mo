@@ -828,6 +828,8 @@ const ARCHETYPE_PROMPT_LABEL = {
     ambitious_home_athlete: "Ambitionierter Home-Athlet",
     strength_focused: "Kraftsportler",
     cardio_focused: "Cardio / Gesundheit",
+    design_lifestyle: "Design & Lifestyle",
+    weight_loss: "Abnehmen & Fitness",
     studio_operator: "Studiobetreiber",
     physio: "Physio / Reha",
     public_sector: "Öffentliche Einrichtung",
@@ -838,6 +840,8 @@ const ARCHETYPE_PROMPT_LABEL = {
     ambitious_home_athlete: "Ambitious Home Athlete",
     strength_focused: "Strength Athlete",
     cardio_focused: "Cardio / Health",
+    design_lifestyle: "Design & Lifestyle",
+    weight_loss: "Weight Loss & Fitness",
     studio_operator: "Gym Operator",
     physio: "Physio / Rehab",
     public_sector: "Public Institution",
@@ -893,6 +897,22 @@ export function getPersonaAddendum(archetype, locale) {
 - Feel free to briefly compare treadmill vs bike vs rowing machine.
 - Mention app connectivity / programs — motivation matters.
 - For foldable equipment: mention dimensions both unfolded AND folded.`;
+
+      case "design_lifestyle":
+        return `## Consulting mode: Design & Lifestyle
+- Looks matter: name material, finish and colours (wood, leather, steel) where known.
+- Prefer equipment that fits a living space with style or stows away neatly.
+- Give dimensions concretely, also when set up.
+- Quality over quantity: a few premium, durable pieces rather than many.
+- Offer to see material and finish in the showroom in Gröbenzell.`;
+
+      case "weight_loss":
+        return `## Consulting mode: Weight Loss & Fitness
+- Cardio first: treadmill, cross trainer, bike, rowing machine — compare briefly what fits the customer's day.
+- Prefer joint-friendly options (cross trainer, bike, rower), especially for beginners.
+- Add light strength training (dumbbells, mat): muscle supports the metabolism — without any weight-loss promise.
+- Mention programmes, apps and motivation features.
+- Mention the noise level when known (apartment). NO health or weight-loss promises.`;
 
       case "studio_operator":
         return `## Consulting mode: Gym Operator (B2B)
@@ -965,6 +985,22 @@ export function getPersonaAddendum(archetype, locale) {
 - Vergleiche gerne Laufband vs. Bike vs. Rudergerät kurz.
 - Erwähne App-Konnektivität / Programme — Motivation zählt.
 - Bei klappbaren Geräten: Maße aufgeklappt UND zusammengeklappt erwähnen.`;
+
+    case "design_lifestyle":
+      return `## Beratungsmodus: Design & Lifestyle
+- Optik zählt: nenne Material, Verarbeitung und Ausführung (Holz, Leder, Edelstahl, Farben), wo bekannt.
+- Bevorzuge Geräte, die sich stilvoll in den Wohnraum einfügen oder sich gut verstauen lassen.
+- Nenne Maße konkret — auch im aufgebauten Zustand.
+- Qualität vor Masse: lieber wenige, hochwertige und langlebige Stücke.
+- Biete an, Material und Optik im Showroom in Gröbenzell anzusehen.`;
+
+    case "weight_loss":
+      return `## Beratungsmodus: Abnehmen & Fitness
+- Cardio zuerst: Laufband, Crosstrainer, Ergometer, Rudergerät — vergleiche kurz, was zum Alltag des Kunden passt.
+- Bevorzuge gelenkschonende Geräte (Crosstrainer, Ergometer, Rudergerät), besonders für Einsteiger.
+- Ergänze leichtes Krafttraining (Kurzhanteln, Matte): Muskeln stützen den Grundumsatz — ohne Abnehmversprechen.
+- Erwähne Programme, Apps und Motivationsfunktionen.
+- Nenne die Lautstärke, wenn bekannt (Wohnung). KEINE Gesundheits- oder Abnehmversprechen.`;
 
     case "studio_operator":
       return `## Beratungsmodus: Studiobetreiber (B2B)
