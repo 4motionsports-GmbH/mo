@@ -255,7 +255,7 @@ test("renderConfiguratorSection (de): answers, open fields, cues, assortment, fo
     plan: [{ id: "rack", qty: 1, name: "Rack" }, { id: "ball", qty: 1, name: "Ball", added: true }],
   });
   assert.match(out, /^## Home-Gym-Konfigurator/);
-  assert.match(out, /- Typ \/ Trainingsfokus: Kraft und Muskeln aufbauen \(Gezielt und progressiv stärker werden\.\)/);
+  assert.match(out, /- Typ \/ Trainingsfokus: Kraft und Muskeln aufbauen \(Stärke gezielt und progressiv weiterentwickeln\.\)/);
   assert.match(out, /- Trainingsort: Wohnung \(Mietobjekt\) — Platz: bis 6 m²/);
   assert.match(out, /- Trainingsart: Freie Gewichte, Cardio — Niveau: Einsteiger:in/);
   assert.match(out, /- Budget: noch offen — erfragen/);
