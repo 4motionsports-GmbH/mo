@@ -65,7 +65,8 @@ home-gym-konfigurator“ can still be created in Shopify for the storefront — 
 - **What Mo sees:** the assortment as a compact list in the configurator section of the prompt (handle,
   name, category, price or price range, footprint, sold out, short description, up to three accessory
   handles from „Ergänzende Produkte“, and for a product with several variants its orderable variants
-  with their ids — the weight steps, at most 12) — at most 60 lines, the rest through `search_products`; plus a
+  with their ids — the weight steps; a series longer than 16 as an even spread that keeps the lightest
+  and the heaviest step, „+N Stufen dazwischen“) — at most 60 lines, the rest through `search_products`; plus a
   retrieval bonus for assortment products (`retrieval.ts` `boostIds`, +0.08 on the score), so the
   detailed product block of each turn prefers them. Sold-out products are never put into a plan.
 - An empty assortment is not an error: Mo then plans from the whole shop.
@@ -130,24 +131,32 @@ Prefilled answers are only preselected — the visitor still confirms with „We
   work from the greeting on; Mo's own `update_customer_profile` always wins.
 - **Greeting:** a fresh open gets its own trigger turn and a retrieval query built from the answers.
 - **Tools:** `suggest_replies` (2–6 chips; `topic` budget/wishes/frequency/space/equipment/other) and
-  `show_gym_plan` (title, summary, 1–16 items with role base/accessory/weights/cardio/flooring/extra,
+  `show_gym_plan` (title, summary, 1–20 items with role base/accessory/weights/cardio/flooring/extra,
   quantity, note, ≤ 3 tips). Both are built always and withheld via `activeTools` outside a
   configurator thread, after the tools-tier cache marker — every other conversation's tool list and
   cached prefix are unchanged. The plan tool answers the model with unknown / sold-out ids so it can
   correct itself in the same turn.
-- **Weights** (Anna's feedback: the first plans held a single 0,5 kg plate): the guide asks for
-  concrete weight steps — one line per step with its variant ref from the assortment list, plates in
-  pairs (quantity 2), matching the bar's diameter, sized to level and focus, never only the smallest
-  step and never a weights line without a variant. The page adds the hint „Mo empfiehlt zu deinem
-  Setup Hantelscheiben. Bitte prüfe eigenständig, welche Gewichtsstufen du benötigst …“ under the
-  weights and a „+ Gewichtsstufe“ button on every weights line (another variant of the same product).
+- **Weights** (Anna's feedback: the first plans held a single 0,5 kg plate): for weights with
+  several steps the guide asks for concrete steps — one line per step with its variant ref (product
+  id + `~` + variant id, from the assortment list or the retrieved-products block; never an invented
+  id — `search_products` returns none), plates in pairs (quantity 2), matching the bar's diameter,
+  sized to level and focus, never only the smallest step; a step that is not listed is replaced by
+  the nearest listed one. Weights without variants (adjustable dumbbells, sets, single kettlebells)
+  go in with their product id. The page shows one hint above the plan lines when the plan has
+  weights — „Mo empfiehlt zu deinem Setup Hantelscheiben. Bitte prüfe eigenständig, welche
+  Gewichtsstufen du benötigst …“ (the first sentence only for Mo's own weights lines; Hanteln /
+  Kettlebells / Gewichte by the products' names) — and a „+ Gewichtsstufe“ button on weights lines
+  with several variants (adds the next free variant of the same product; disabled when every variant
+  is in the plan or the plan has 20 lines).
 - **The visitor's own lines:** „+ Produkt hinzufügen“ under the plan lists the configurator assortment
   (`GET /api/configurator/assortment`: public cards sorted by plan role then name — the role from the
   catalog category, `planRoleForProduct`; empty when the configurator is off; origin allowlist +
   `products` rate limit, cached 5 min) with search and role chips. Added lines and extra weight steps
   are marked „Von dir ergänzt“, go back to Mo as plan items with `added: true` and are listed in the
   prompt as „vom Kunden ergänzt“ — Mo keeps them in every new plan unless the visitor wants them gone.
-  The page keeps at most 20 lines (Mo's plan up to 16 plus own lines).
+  Mo's plan and the visitor's own lines share one limit of 20 lines (`PLAN_MAX_ITEMS` =
+  `CONFIGURATOR_LIMITS.planItems`); over it, Mo asks what can go. The per-answer product limits (also
+  a persona's, e.g. „maximal 1-2 Produkte“) do not apply to the plan.
 - **Cart:** the whole plan goes into the shop cart through the plan's button (`/cart/add.js`);
   `add_to_cart` (direct checkout) only when the visitor wants a single product right away.
 - **Switch:** Konfigurator → „Geführte Beratung“ (admin setting, default on). Off: the page still works,
@@ -240,8 +249,9 @@ template not in „ausgeschlossene Vorlagen“). Seals: upload the PNGs of Anna 
 **Texts and the live template.** Shopify stores the section settings (texts, seal images) in the live
 template JSON, so a changed default only reaches the page under a new setting id. The round of
 22.10.2026 therefore uses new ids for every changed text (`hero_intro`, `seal_caption`,
-`partners_label`, `partners_text`) and drops the old ones (`eyebrow`, `subheading`, `usp_1…3`,
-`seal_label`, `coop_eyebrow`, `coop_text`); `templates/page.home-gym-mo.json` must **not** be
+`partners_label`, `partners_text`, `mo_intro` — the Mo panel's intro without „links“, which was wrong
+on phones) and drops the old ones (`eyebrow`, `subheading`, `usp_1…3`, `seal_label`, `coop_eyebrow`,
+`coop_text`, `mo_text`); `templates/page.home-gym-mo.json` must **not** be
 re-uploaded — that would reset the uploaded seals.
 
 Screenshots (local harness: the real section and widget, Mo's dialogue mocked, placeholder seals):

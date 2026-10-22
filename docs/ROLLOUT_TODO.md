@@ -205,8 +205,10 @@ lawyer ready to send, the Shopify steps and the frontend prompt: [`WELCOME_VOUCH
       Gespräche, refunds and cancellations into „Umsatz durch Mo“, ordered by Shopify's `updated_at`).
       The deploy also brings the round of 22.10. (Anna's feedback): the persona card's six types are
       Mo's personas (two new: „Design & Lifestyle“, „Abnehmen & Fitness“), weight steps in Mo's plans,
-      `GET /api/configurator/assortment`. The live page keeps working before the theme upload (its
-      persona/goal ids are mapped); only a plan with more than 12 lines shows 12 until step 2.
+      `GET /api/configurator/assortment`. **Do step 2 right after the deploy** (same sitting): the live
+      page keeps working with the new backend (its persona/goal ids are mapped), but until the upload
+      its widget shows and sends back only 12 of Mo's plan lines (Mo would read the rest as removed),
+      and Mo already mentions „+ Produkt hinzufügen“ / „+ Gewichtsstufe“, which the old page lacks.
    2. **Theme upload — the round of 22.10.** (theme repo `MANIFEST.md`, entry „2026-10-22“; it includes
       the follow-up of 21.10.): replace `sections/ms-home-gym-configurator.liquid`,
       `assets/ms-home-gym-configurator.js`, `assets/ms-home-gym-configurator.css`,
