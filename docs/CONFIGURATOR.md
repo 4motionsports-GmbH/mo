@@ -238,7 +238,7 @@ and booleans only — never a name, text or e-mail.
 | File | What |
 | --- | --- |
 | `sections/ms-home-gym-configurator.liquid` | the landing page: hero with the partner seals, configurator (persona card with the seals), Mo dock, plan host, „So funktioniert's“, „Starke Partner“; all texts and the seals are section settings |
-| `assets/ms-home-gym-configurator.js` / `.css` | page logic (answer cards, prefill, partner, handover, edit, stepper, KPI) and styles — light design after the Performance campaign mail (white, accent light blue `#008ccb`, primary button red `#e30613`) |
+| `assets/ms-home-gym-configurator.js` / `.css` | page logic (answer cards, prefill, partner, handover, edit, stepper, KPI) and styles — light design after the Performance campaign mail (accent light blue `#008ccb`, primary button red `#e30613`) in the homepage's structure: sections alternate `#ffffff` / `#f9f9f9`, headings as a blue kicker over a regular-weight headline („Darf in keinem Gym fehlen. / Bestseller.“), no divider lines (second round of 22.10.2026) |
 | `templates/page.home-gym-mo.json` | the page template (assign it to a page, or open any page with `?view=home-gym-mo`) |
 | `assets/ms-chat-widget.js` / `.css` | docked mode (`[data-ms-chat-dock]`), `window.MS_CHAT.configurator` (`start`, `update`, `restart`, `track`, `state`), the `ms-chat:configurator` events, chips, plan card, plan host („+ Produkt hinzufügen“, „+ Gewichtsstufe“, weights hint), cart add |
 
@@ -252,8 +252,18 @@ template JSON, so a changed default only reaches the page under a new setting id
 22.10.2026 therefore uses new ids for every changed text (`hero_intro`, `seal_caption`,
 `partners_label`, `partners_text`, `mo_intro` — the Mo panel's intro without „links“, which was wrong
 on phones) and drops the old ones (`eyebrow`, `subheading`, `usp_1…3`, `seal_label`, `coop_eyebrow`,
-`coop_text`, `mo_text`); `templates/page.home-gym-mo.json` must **not** be
-re-uploaded — that would reset the uploaded seals.
+`coop_text`, `mo_text`); the second round of the same day the same way: `seal_note` („… das
+Empfehlungssiegel **von** Men's und Women's Health“) for `seal_caption`, `mo_hello` („Hallo, ich bin
+Mo.“) and `mo_lead` (one sentence) for `mo_title` / `mo_intro` — the panel's three checkmark lines are
+gone —, plus the checkbox `hero_intro_caps` („Einleitung in Großbuchstaben“, off: the blue line stays
+in mixed case, as the client preferred for the long sentence). `templates/page.home-gym-mo.json` must
+**not** be re-uploaded — that would reset the uploaded seals.
+
+**Persona tiles:** every title on two lines (a fixed break, `|` in the page's vocabulary — hidden on
+phones, where each tile is one row), the subtitles of the client (second round: „Platzsparende
+Fitnesslösungen für den optimalen Einstieg.“, „Vielseitige Fitnessgeräte in erstklassiger Qualität.“,
+„Stärke gezielt und progressiv weiterentwickeln.“, „Langfristig fit, gesund und aktiv bleiben.“) — the
+same texts as `subDe` in `configurator-core.mjs`, which Mo reads in the answers line.
 
 Screenshots (local harness: the real section and widget, Mo's dialogue mocked, placeholder seals):
 [`screenshots/konfigurator/`](./screenshots/konfigurator/) — storefront after the round of 22.10.2026
