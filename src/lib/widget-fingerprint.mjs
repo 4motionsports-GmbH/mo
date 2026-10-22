@@ -33,6 +33,7 @@ export const WIDGET_MARKERS = Object.freeze([
   "ms-chat-vm-lead", // round of 2026-10-08: value-moment lead of the inline card (class name)
   "ms-chat-root--dock", // Home-Gym-Konfigurator (2026-10-21): the docked panel (class name)
   "ms-chat-planhost", // Home-Gym-Konfigurator (2026-10-21): the plan on the page (class name)
+  "ms-chat-planpick", // Konfigurator round of 2026-10-22: „+ Produkt hinzufügen“ in the plan (class name)
 ]);
 
 /** @param {string} s */
@@ -70,6 +71,15 @@ export function countWidgetMarkers(js) {
  * @type {ReadonlyArray<{ key: string, commit: string, label: string, current: boolean, acceptable: boolean, consequence: string }>}
  */
 export const WIDGET_BUILDS = Object.freeze([
+  {
+    key: "konfigurator-2026-10-22",
+    commit: "THEME_COMMIT",
+    label: "Widget mit der Konfigurator-Runde vom 22.10. (THEME_COMMIT: Produkt hinzufügen, Gewichtsstufen, helles Design)",
+    current: false,
+    acceptable: true,
+    consequence:
+      "Wie der Stand vom 21.10., dazu im Plan auf der Konfigurator-Seite „+ Produkt hinzufügen“ (Konfigurator-Sortiment), „+ Gewichtsstufe“ mit Hinweis und das helle Performance-Design von Plan und angedocktem Mo; alle anderen Seiten unverändert (docs/CONFIGURATOR.md).",
+  },
   {
     key: "konfigurator-2026-10-21",
     commit: "cc6c8c8",
@@ -195,7 +205,8 @@ export function classifyWidgetBuild(c) {
       // names, or it is half applied.
       const dock = n("ms-chat-root--dock") > 0;
       const planHost = n("ms-chat-planhost") > 0;
-      if (dock && planHost) return build("konfigurator-2026-10-21");
+      // The round of 2026-10-22 adds the product picker to the plan.
+      if (dock && planHost) return build(n("ms-chat-planpick") > 0 ? "konfigurator-2026-10-22" : "konfigurator-2026-10-21");
       if (dock || planHost) return null;
       return build("reward-2026-10-08");
     }

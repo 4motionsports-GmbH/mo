@@ -150,6 +150,10 @@ export const RELEASE_EFFECTS = Object.freeze({
   // cancellations after payment reach the ledger (revenue of every order,
   // the campaign channel included).
   "attribution-variants-refunds": { measurement: [...ATTRIBUTION, "campaigns.revenue", "campaigns.orders"], product: [] },
+  // Configurator round of 2026-10-22: persona choice instead of the goal,
+  // weight steps and customer-added plan lines — behaviour of the configurator
+  // threads (plans, cart value), nothing counted differently.
+  "konfigurator-personas": { measurement: [], product: ["chat", "journey"] },
 });
 
 /** What flipping a switch changes (switch keys of business-snapshot snapshotSwitches). */

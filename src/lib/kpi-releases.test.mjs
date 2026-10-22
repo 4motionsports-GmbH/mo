@@ -10,7 +10,7 @@ test("release keys are unique and dates ascend", () => {
 });
 
 test("releases are ordered and dated as documented", () => {
-  assert.deepEqual(KPI_RELEASES.map((r) => r.date), ["2026-10-01", "2026-10-03", "2026-10-04", "2026-10-05", "2026-10-05", "2026-10-05", "2026-10-05", "2026-10-05", "2026-10-06", "2026-10-06", "2026-10-06", "2026-10-06", "2026-10-06", "2026-10-06", "2026-10-08", "2026-10-21", "2026-10-21"]);
+  assert.deepEqual(KPI_RELEASES.map((r) => r.date), ["2026-10-01", "2026-10-03", "2026-10-04", "2026-10-05", "2026-10-05", "2026-10-05", "2026-10-05", "2026-10-05", "2026-10-06", "2026-10-06", "2026-10-06", "2026-10-06", "2026-10-06", "2026-10-06", "2026-10-08", "2026-10-21", "2026-10-21", "2026-10-22"]);
   assert.deepEqual(SIGNIN_OUTAGE, { from: "2026-10-03", to: "2026-10-04" });
   assert.equal(germanDay("2026-10-04"), "04.10.2026");
 });
@@ -87,8 +87,9 @@ test("releasesInRange is inclusive on both ends", () => {
   assert.deepEqual(releasesInRange({ from: "2026-10-09", to: "2026-10-30" }).map((r) => r.key), [
     "home-gym-konfigurator",
     "attribution-variants-refunds",
+    "konfigurator-personas",
   ]);
-  assert.deepEqual(releasesInRange({ from: "2026-10-22", to: "2026-10-30" }), []);
+  assert.deepEqual(releasesInRange({ from: "2026-10-23", to: "2026-10-30" }), []);
   assert.deepEqual(releasesInRange({ from: "bad", to: "2026-10-30" }), []);
 });
 

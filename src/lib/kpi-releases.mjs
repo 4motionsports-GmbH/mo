@@ -129,6 +129,13 @@ export const KPI_RELEASES = Object.freeze([
     detail:
       "Ein Produkt, das Mo mit Variante empfohlen hat (z. B. das Gewicht im Home-Gym-Plan), zählt beim Kauf als „Beraten & gekauft“ statt „Beraten, anderes gekauft“. Erstattungen und Stornierungen nach der Zahlung erreichen jetzt die Zuordnung — „Umsatz durch Mo“ (auch der Kampagnen-Umsatz) sinkt um zurückgegebene Beträge, auch für ältere Bestellungen, sobald Shopify sie ändert; erstattete Bestellungen stehen nicht mehr unter „noch nicht bezahlt“. Bereits erfasste Stufen bleiben unverändert.",
   },
+  {
+    date: "2026-10-22",
+    key: "konfigurator-personas",
+    title: "Konfigurator: Trainingsfokus = Mos Personas",
+    detail:
+      "Auf der Konfigurator-Seite wählen Besucher:innen ihren Trainingsfokus aus sechs Typen — das sind Mos Personas, zwei davon neu („Design & Lifestyle“, „Abnehmen & Fitness“); die Wahl setzt Mos Beratungsmodus direkt. Die Frage „Ich will …“ (Ziel) entfällt; ältere Angaben zählen unter dem passenden Typ. Im Plan können Besucher:innen selbst Produkte und Gewichtsstufen ergänzen (Widget-Upload nötig).",
+  },
 ]);
 
 /** First day the opt-in events carry source and outcome (OI1). */
