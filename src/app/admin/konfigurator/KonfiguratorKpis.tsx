@@ -10,7 +10,7 @@ import Link from "next/link";
 import { ExternalLink } from "lucide-react";
 import type { ConfiguratorKpis } from "@/lib/configurator-store";
 import { configuratorFunnel, configuratorLabel, personaAnswer } from "@/lib/configurator-core.mjs";
-import { eur, num, plural, ratio } from "@/lib/admin-format.mjs";
+import { eur, num, ratio } from "@/lib/admin-format.mjs";
 import { ADMIN_DATE_TIME_SHORT, formatAdmin } from "@/lib/admin-datetime.mjs";
 import { adminTabHref } from "@/lib/admin-tabs.mjs";
 import {
@@ -245,7 +245,7 @@ export function KonfiguratorKpis({
             <KpiSection
               id="konfigurator-sitzungen"
               title="Letzte Konfigurator-Beratungen"
-              info="Die 12 neuesten Beratungen aus dem Konfigurator im Zeitraum, mit ihren Angaben. „Gespräch“ öffnet das Transkript in Gespräche."
+              info="Die 12 neuesten Beratungen aus dem Konfigurator im Zeitraum, mit ihren Angaben, Mos Plänen und den gewählten Optionen. „Gespräch“ öffnet das Transkript in Gespräche."
               empty={kpis.recent.length === 0 ? "Keine Beratung im Zeitraum." : null}
             >
               <Card>
@@ -254,7 +254,7 @@ export function KonfiguratorKpis({
                     <TableRow>
                       <TableHead>Start</TableHead>
                       <TableHead>Angaben</TableHead>
-                      <TableHead className="text-right">Pläne</TableHead>
+                      <TableHead className="whitespace-nowrap text-right">Pläne / Auswahlen</TableHead>
                       <TableHead>Ergebnis</TableHead>
                       <TableHead className="text-right">Gespräch</TableHead>
                     </TableRow>
@@ -266,13 +266,8 @@ export function KonfiguratorKpis({
                           {formatAdmin(r.startedAt, ADMIN_DATE_TIME_SHORT)}
                         </TableCell>
                         <TableCell className="text-xs text-muted-foreground">{answersSummary(r.answers)}</TableCell>
-                        <TableCell className="text-right tabular-nums">
-                          {num(r.plans)}
-                          {r.picks > 0 ? (
-                            <span className="block text-2xs text-muted-foreground">
-                              {plural(r.picks, "Auswahl", "Auswahlen")}
-                            </span>
-                          ) : null}
+                        <TableCell className="whitespace-nowrap text-right tabular-nums">
+                          {num(r.plans)} / {num(r.picks)}
                         </TableCell>
                         <TableCell>
                           <div className="flex flex-wrap gap-1">
