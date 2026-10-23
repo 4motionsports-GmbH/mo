@@ -892,8 +892,23 @@ test("planAccessoryBases: the most expensive strength base first, add-ons relate
   assert.deepEqual(planAccessoryBases([jhooks5, landmine, fold]).map((p) => p.id), ["fold", "jhooks5"]);
   // the new rack lists every add-on picked before: it is the only base
   assert.deepEqual(planAccessoryBases([jhooks5, landmine, { ...fold, compatibleWith: [...fold.compatibleWith, "jhooks5"] }]).map((p) => p.id), ["fold"]);
-  // sale price counts; equal prices keep roots first, then plan order
-  assert.deepEqual(planAccessoryBases([{ ...jammer, price: 2000, salePrice: 400 }, prx780]).map((p) => p.id), ["prx780"]);
+  // an add-on dearer than its rack (Latzug-Option with its weight stack, 3D Jammer Arms) still
+  // ranks behind it — mutual and one-way, in either plan order; „Rack mit Latzug-Option“ is a rack
+  const lto = { id: "lto780", name: "ATX® Latzug Option LTO-780 - 125 kg", category: "Power Racks", price: 1199, compatibleWith: ["prx780", "handles"] };
+  assert.deepEqual(planAccessoryBases([prx780, lto]).map((p) => p.id), ["prx780"]);
+  assert.deepEqual(planAccessoryBases([lto, prx780]).map((p) => p.id), ["prx780"]);
+  const ltoMutual = { ...prx780, compatibleWith: [...prx780.compatibleWith, "lto780"] };
+  assert.deepEqual(planAccessoryBases([lto, ltoMutual]).map((p) => p.id), ["prx780"]);
+  assert.deepEqual(planAccessoryBases([{ ...jammer, price: 1999 }, prx780]).map((p) => p.id), ["prx780"]);
+  const rackWithLat = { id: "pr520lat", name: "ATX® Power Rack 520 mit Latzug-Option", category: "Power Racks", price: 1499, compatibleWith: ["jhooks5"] };
+  assert.deepEqual(planAccessoryBases([jhooks5, rackWithLat]).map((p) => p.id), ["pr520lat"]);
+  // sale price counts
+  assert.deepEqual(planAccessoryBases([{ ...rack, id: "dear", compatibleWith: ["cheap"], price: 2000, salePrice: 400 }, { ...rack, id: "cheap", compatibleWith: [], price: 900 }]).map((p) => p.id), ["cheap"]);
+  // equal prices: the root (no other base lists it) before the one it lists, then plan order
+  const ra = { id: "ra", name: "Rack A", category: "Power Racks", price: 500 };
+  const rb = { id: "rb", name: "Rack B", category: "Power Racks", price: 500, compatibleWith: ["ra"] };
+  assert.deepEqual(planAccessoryBases([ra, rb]).map((p) => p.id), ["rb"]);
+  assert.deepEqual(planAccessoryBases([rb, ra]).map((p) => p.id), ["rb"]);
   // the cardio machine is the base only without a strength base
   assert.deepEqual(planAccessoryBases([rower, plates]).map((p) => p.id), ["rower"]);
   assert.deepEqual(planAccessoryBases([rower, rack]).map((p) => p.id), ["rack"]);

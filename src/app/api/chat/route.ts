@@ -585,7 +585,7 @@ export async function POST(req: Request) {
     // Step-by-step flow: the accessories („Ergänzende Produkte“, in stock) of
     // the base units in the plan — what Mo offers in the step „Zubehör“
     // (configurator-core planAccessoryBases / planAccessories: strength base
-    // units, else the cardio machine, the most expensive first; add-ons related
+    // units, else the cardio machine, racks before add-ons, the most expensive first; add-ons related
     // to a kept base are no base of their own; weights, floor protection and cardio machines
     // left out; products already in the plan named, not offered).
     const planById = new Map(configuratorPlanProducts.map((p) => [p.id, p]));

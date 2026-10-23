@@ -1148,16 +1148,21 @@ function renderAccessories(accessories, locale) {
 /** The accessory block: base units listed, „Ergänzende Produkte“ refs read per base, accessories listed per base. */
 export const ACCESSORY_LIMITS = Object.freeze({ bases: 3, scan: 20, items: 10 });
 
+// planAccessoryBases: add-ons for a rack by their name (not „Rack mit …“).
+const ADD_ON_NAME = /options?\b|optionen|anbauoption|jammer|j-?hooks|j-?cups|landmine|spotter|extension|attachment|aufsatz|monolift/i;
+const INCLUDES_NAME = /\b(?:mit|inkl\.?|with)\s/i;
+
 /**
  * The base units whose „Ergänzende Produkte“ go into the accessory block: the
  * base units (role base) — without a strength base the cardio machines (the
  * base unit for „Gesundheit und Ausdauer fördern“ / „Abnehmen und fit
- * bleiben“). The most expensive first (the rack, not the add-on picked for it;
- * equal prices: roots — the ones no other base in the plan lists — then plan
- * order), and a base related to an already kept one — it lists it, or is
- * listed by it — is no base of its own: J-Hooks, Landmine, Jammer Arms or the
- * Latzug-Option picked in the step „Zubehör“, in either direction, also after
- * a swap of the base unit (the widget appends the new rack AFTER the add-ons
+ * bleiben“). Add-ons by name (Latzug-Option, Jammer Arms, J-Hooks, Landmine,
+ * Spotter … — not „Rack mit Latzug-Option“) after every other base, then the
+ * most expensive first (a Latzug-Option with its weight stack can cost more
+ * than the rack), then roots — the ones no other base in the plan lists —,
+ * then plan order; a base related to an already kept one — it lists it, or is
+ * listed by it — is no base of its own, in either direction, also after a
+ * swap of the base unit (the widget appends the new rack AFTER the add-ons
  * picked for the old one). At most ACCESSORY_LIMITS.bases.
  * @template {{ id: string, name?: unknown, category?: unknown, compatibleWith?: string[], price?: unknown, salePrice?: unknown }} P
  * @param {ReadonlyArray<P>} planProducts the plan's catalog products in plan order, each once
@@ -1165,6 +1170,10 @@ export const ACCESSORY_LIMITS = Object.freeze({ bases: 3, scan: 20, items: 10 })
  */
 export function planAccessoryBases(planProducts) {
   const list = planProducts ?? [];
+  const addOn = (/** @type {P} */ p) => {
+    const name = String(p.name ?? "");
+    return ADD_ON_NAME.test(name) && !INCLUDES_NAME.test(name) ? 1 : 0;
+  };
   const strength = list.filter((p) => planRoleForProduct(p) === "base");
   const pool = strength.length ? strength : list.filter((p) => planRoleForProduct(p) === "cardio");
   const lists = (/** @type {P} */ a, /** @type {P} */ b) => (a.compatibleWith ?? []).some((ref) => baseId(String(ref)) === b.id);
@@ -1175,7 +1184,10 @@ export function planAccessoryBases(planProducts) {
     return Number.isFinite(n) && n > 0 ? n : 0;
   };
   const order = [...pool.filter((b) => !listedBy(b)), ...pool.filter(listedBy)];
-  const ranked = order.map((p, i) => ({ p, i })).sort((a, b) => price(b.p) - price(a.p) || a.i - b.i).map((x) => x.p);
+  const ranked = order
+    .map((p, i) => ({ p, i, a: addOn(p) }))
+    .sort((x, y) => x.a - y.a || price(y.p) - price(x.p) || x.i - y.i)
+    .map((x) => x.p);
   /** @type {P[]} */
   const kept = [];
   for (const p of ranked) {

@@ -177,8 +177,10 @@ Prefilled answers are only preselected — the visitor still confirms with „We
   mats belong to their own steps. For the accessory step the prompt
   lists the „Ergänzende Produkte“ (`compatibleWith`) of the base units in the plan („Zubehör zu den
   Basisgeräten im Plan“, `planAccessoryBases` / `planAccessories` → `renderAccessories`): the strength
-  base units, the most expensive first (the rack, not an add-on picked for it — also after a swap,
-  when the widget appends the new base unit behind the add-ons picked for the old one); a base related
+  base units — add-ons by their name (Latzug-Option, Jammer Arms, J-Hooks, Landmine, Spotter …, not
+  „Rack mit Latzug-Option“) after the racks, then the most expensive first (the rack, not an add-on
+  picked for it — also after a swap, when the widget appends the new base unit behind the add-ons
+  picked for the old one; checked on all 215 rack × add-on pairs of the catalog); a base related
   to an already kept one — it lists it or is listed by it (J-Hooks, Landmine, Jammer Arms,
   Latzug-Option picked as accessories) — is no base of its own; an add-on that fits no base in the
   plan still counts as one (the plan context carries no pick step) —, without a strength base the cardio machine
