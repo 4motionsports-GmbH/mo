@@ -74,8 +74,8 @@ export function countWidgetMarkers(js) {
 export const WIDGET_BUILDS = Object.freeze([
   {
     key: "konfigurator-2026-10-23",
-    commit: "THEME_COMMIT",
-    label: "Widget mit der Konfigurator-Runde vom 23.10. (THEME_COMMIT: Schritt-für-Schritt-Auswahl, Shop-Suche im Plan, Buttons wie die Startseite)",
+    commit: "7cf0c7d",
+    label: "Widget mit der Konfigurator-Runde vom 23.10. (7cf0c7d: Schritt-für-Schritt-Auswahl, Shop-Suche im Plan, Buttons wie die Startseite)",
     current: false,
     acceptable: true,
     consequence:
