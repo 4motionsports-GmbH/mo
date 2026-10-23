@@ -18,7 +18,7 @@ import { isUndefinedColumnError } from "./db-errors.mjs";
 import { ensureConversationStarted as ensureConversationStartedCore } from "./conversation-create.mjs";
 import {
   collectDiscussedProductIds,
-  latestSelectedProductIds,
+  turnSelection,
 } from "./recommended-products.mjs";
 
 // Keep stored content bounded — tool inputs and messages are small, but never
@@ -55,8 +55,10 @@ export interface PersistTurnInput {
   /**
    * Home-Gym-Konfigurator, step-by-step flow (2026-10-23): the plan as it
    * stands on the page (ids / variant refs, sent with every turn). When
-   * present and non-empty it IS the selection — the visitor built it from
-   * Mo's options — instead of the latest add_to_cart / show_gym_plan call.
+   * present it IS the selection — the visitor built it from Mo's options —
+   * unless this turn's own add_to_cart / show_gym_plan replaces it; an empty
+   * plan clears it down to the latest direct add_to_cart, if any
+   * (recommended-products turnSelection).
    */
   planSelection?: string[] | null;
   /** Stable id for the assistant turn (provider response id). */
@@ -303,10 +305,9 @@ export async function persistTurn(input: PersistTurnInput): Promise<boolean> {
     // scratch each turn — the widget re-sends the whole history — so the
     // stored value always mirrors the latest selection state, including a
     // switch to an alternative (replacement, not accumulation).
-    const selection =
-      input.planSelection && input.planSelection.length > 0
-        ? [...new Set(input.planSelection)]
-        : latestSelectedProductIds(allToolCalls);
+    // Step-by-step configurator: this turn's own add_to_cart / show_gym_plan
+    // still wins; else the page plan IS the selection, an emptied plan clears it.
+    const selection = turnSelection(input.assistantToolCalls, allToolCalls, input.planSelection);
 
     // Count includes the assistant turn we're about to write.
     const messageCount = input.history.length + 1;

@@ -16,6 +16,7 @@ import {
   configuratorToolCopy,
   normalizeOfferOptions,
   normalizePlanItems,
+  offerOptionsResult,
 } from "./configurator-core.mjs";
 import type { Locale } from "./locale";
 import type { CustomerProfile } from "./types";
@@ -364,13 +365,16 @@ export function buildChatTools(
     // The step-by-step choice (2026-10-23): offered only when the widget
     // renders it (configurator.features "options"); withheld via activeTools
     // otherwise. Same id check as show_gym_plan; an option counts as shown
-    // when one of its items is known.
+    // only when every item is known and available (the widget's rule).
+    // The texts accept twice the documented length (the description keeps the
+    // documented limits): a slightly long pro must not invalidate the whole
+    // call — normalizeOfferOptions and the widget clip to OPTIONS_LIMITS.
     offer_plan_options: tool({
       description: k.offerOptionsDesc,
       inputSchema: z.object({
         step: z.enum(OPTION_STEPS).describe(k.fieldOptionsStep),
-        title: z.string().max(OPTIONS_LIMITS.titleChars).describe(k.fieldOptionsTitle),
-        intro: z.string().max(OPTIONS_LIMITS.introChars).optional().describe(k.fieldOptionsIntro),
+        title: z.string().max(OPTIONS_LIMITS.titleChars * 2).describe(k.fieldOptionsTitle),
+        intro: z.string().max(OPTIONS_LIMITS.introChars * 2).optional().describe(k.fieldOptionsIntro),
         multiSelect: z.boolean().optional().describe(k.fieldOptionsMulti),
         options: z
           .array(
@@ -384,10 +388,10 @@ export function buildChatTools(
                 )
                 .min(1)
                 .max(OPTIONS_LIMITS.items),
-              label: z.string().max(OPTIONS_LIMITS.labelChars).optional(),
-              badge: z.string().max(OPTIONS_LIMITS.badgeChars).optional(),
-              pros: z.array(z.string().max(OPTIONS_LIMITS.pointChars)).max(OPTIONS_LIMITS.pros).optional(),
-              cons: z.array(z.string().max(OPTIONS_LIMITS.pointChars)).max(OPTIONS_LIMITS.cons).optional(),
+              label: z.string().max(OPTIONS_LIMITS.labelChars * 2).optional(),
+              badge: z.string().max(OPTIONS_LIMITS.badgeChars * 2).optional(),
+              pros: z.array(z.string().max(OPTIONS_LIMITS.pointChars * 2)).max(OPTIONS_LIMITS.pros).optional(),
+              cons: z.array(z.string().max(OPTIONS_LIMITS.pointChars * 2)).max(OPTIONS_LIMITS.cons).optional(),
             })
           )
           .min(1)
@@ -398,13 +402,7 @@ export function buildChatTools(
         const { options } = normalizeOfferOptions(input);
         const refs = [...new Set(options.flatMap((o) => o.items.map((it) => it.productId)))];
         const resolved = await resolveProductSelections(refs);
-        const known = new Map(resolved.map((r) => [r.ref, r]));
-        const unknownIds = refs.filter((ref) => !known.has(ref));
-        const soldOutIds = resolved.filter((r) => !r.available).map((r) => r.ref);
-        const shownOptions = options.filter((o) => o.items.some((it) => known.has(it.productId))).length;
-        return unknownIds.length || soldOutIds.length
-          ? { ok: true, shownOptions, unknownIds, soldOutIds }
-          : { ok: true, shownOptions };
+        return offerOptionsResult(options, resolved);
       },
     }),
   };

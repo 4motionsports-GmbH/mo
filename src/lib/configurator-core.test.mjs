@@ -6,14 +6,19 @@ import {
   CONFIGURATOR_PLAN_TOOLS,
   CONFIGURATOR_TOOLS,
   DEFAULT_CONFIGURATOR_SETTINGS,
+  ACCESSORY_LIMITS,
   OPTION_STEPS,
   OPTION_STEP_ROLE,
   PLAN_MAX_ITEMS,
   PLAN_ROLES,
   configuratorHasOptions,
   normalizeOfferOptions,
+  offerOptionsResult,
   optionStepRows,
   optionsShownEvents,
+  planAccessories,
+  planAccessoryBases,
+  planAccessoryIds,
   searchCatalogCards,
   answerDistribution,
   assortmentCards,
@@ -350,6 +355,13 @@ test("assortment cards: role per category/name, public fields, variants, sorted 
   assert.equal(planRoleForProduct({ category: "", name: "Laufband TX 2" }), "cardio");
   assert.equal(planRoleForProduct({ category: "Yoga Mats" }), "extra");
   assert.equal(planRoleForProduct({}), "extra");
+  // a strength machine that says "Plate Load" is a base unit, not a weight plate;
+  // cardio machines stay cardio; plates stay weights
+  assert.equal(planRoleForProduct({ category: "Uncategorized", name: "Hip Thruster Machine Plate Load - Vision Fitness" }), "base");
+  assert.equal(planRoleForProduct({ category: "", name: "Latzugmaschine Physio - Zugapparat Vertikal" }), "base");
+  assert.equal(planRoleForProduct({ category: "Cardio Machines", name: "Concept2 SkiErg Skitrainer" }), "cardio");
+  assert.equal(planRoleForProduct({ category: "", name: "ATX® Gym Bumper Plate Hantelscheiben - 5 bis 25 kg" }), "weights");
+  assert.equal(planRoleForProduct({ category: "Weight Plates", name: "Olympic Plates" }), "weights");
 
   const cards = assortmentCards([
     { id: "mat", name: "Bodenschutzmatte", category: "Floor Protection Mats", price: 49, inStock: true, images: [], shopifyUrl: "u" },
@@ -619,21 +631,71 @@ test("normalizeOfferOptions: known step, bounded options and items, merged dupli
   assert.deepEqual(normalizeOfferOptions(null), { step: "extra", multiSelect: false, options: [] });
 });
 
-test("optionsShownEvents: one per rendered call, unknown items left out", () => {
+test("optionsShownEvents: one per rendered call; options with an unknown or sold-out item left out", () => {
   const calls = [
     { toolCallId: "a", toolName: "offer_plan_options", input: { step: "base", options: [{ items: [{ productId: "rack" }] }, { items: [{ productId: "ghost" }] }] } },
     { toolCallId: "b", toolName: "offer_plan_options", input: { step: "bench", options: [{ items: [{ productId: "ghost" }] }] } },
     { toolCallId: "c", toolName: "offer_plan_options", invalid: true, input: { step: "base", options: [{ items: [{ productId: "rack" }] }] } },
     { toolCallId: "d", toolName: "show_gym_plan", input: { items: [{ productId: "rack" }] } },
+    // a mixed option (one good, one unknown item), a sold-out option, a sold-out bundle line, one clean bundle
+    {
+      toolCallId: "e",
+      toolName: "offer_plan_options",
+      input: {
+        step: "weights",
+        options: [
+          { items: [{ productId: "plates~5", quantity: 2 }, { productId: "plates~999" }] },
+          { items: [{ productId: "soldout" }] },
+          { items: [{ productId: "bar" }, { productId: "plates~10", quantity: 2 }, { productId: "plates~5", quantity: 2 }] },
+          { items: [{ productId: "plates~20", quantity: 2 }, { productId: "soldout" }] },
+        ],
+      },
+    },
   ];
   const results = new Map([
-    ["a", { ok: true, shownOptions: 1, unknownIds: ["ghost"] }],
-    ["b", { ok: true, shownOptions: 0, unknownIds: ["ghost"] }],
+    ["a", { ok: true, shownOptions: 1, unknownIds: ["ghost"], soldOutIds: [] }],
+    ["b", { ok: true, shownOptions: 0, unknownIds: ["ghost"], soldOutIds: [] }],
     ["c", { ok: true, shownOptions: 1 }],
     ["d", { ok: true, shownItems: 1 }],
+    ["e", { ok: true, shownOptions: 1, unknownIds: ["plates~999"], soldOutIds: ["soldout", 7] }],
   ]);
-  assert.deepEqual(optionsShownEvents(calls, results), [{ step: "base", options: 1, items: 1, multi: false, productIds: ["rack"] }]);
+  assert.deepEqual(optionsShownEvents(calls, results), [
+    { step: "base", options: 1, items: 1, multi: false, productIds: ["rack"] },
+    { step: "weights", options: 1, items: 3, multi: false, productIds: ["bar", "plates"] },
+  ]);
+  // a result that says shown but whose every option has a bad id → no event
+  assert.deepEqual(
+    optionsShownEvents([calls[4]], new Map([["e", { ok: true, shownOptions: 1, unknownIds: ["plates~999", "bar"], soldOutIds: ["soldout"] }]])),
+    []
+  );
   assert.deepEqual(optionsShownEvents(null, new Map()), []);
+});
+
+test("offerOptionsResult: shown = every item known and available; a vanished variant is unknown", () => {
+  const options = normalizeOfferOptions({
+    step: "weights",
+    options: [
+      { items: [{ productId: "plates~5" }, { productId: "plates~999" }] },
+      { items: [{ productId: "bench" }] },
+      { items: [{ productId: "rack" }, { productId: "ghost" }] },
+      { items: [{ productId: "rack" }, { productId: "bar" }] },
+    ],
+  }).options;
+  const resolved = [
+    { ref: "plates~5", available: true, missingVariant: false },
+    { ref: "plates~999", available: false, missingVariant: true },
+    { ref: "bench", available: false, missingVariant: false },
+    { ref: "rack", available: true, missingVariant: false },
+    { ref: "bar", available: true, missingVariant: false },
+  ];
+  assert.deepEqual(offerOptionsResult(options, resolved), {
+    ok: true,
+    shownOptions: 1,
+    unknownIds: ["plates~999", "ghost"],
+    soldOutIds: ["bench"],
+  });
+  assert.deepEqual(offerOptionsResult(options.slice(3), resolved), { ok: true, shownOptions: 1 });
+  assert.deepEqual(offerOptionsResult([], []), { ok: true, shownOptions: 0 });
 });
 
 test("searchCatalogCards: every word matches, umlauts and plurals folded, hidden left out, in stock first", () => {
@@ -656,6 +718,62 @@ test("searchCatalogCards: every word matches, umlauts and plurals folded, hidden
   const card = searchCatalogCards(cat, "bodenschutz")[0];
   assert.deepEqual(Object.keys(card).sort(), ["category", "id", "images", "inStock", "name", "price", "role", "shopifyUrl"]);
   assert.equal(card.role, "flooring");
+});
+
+test("searchCatalogCards: a whole name word before a prefix; -er plurals, short plurals, ae/oe/ue and variant SKUs", () => {
+  const cat = [
+    { id: "ablage", name: "ATX® Kurzhantelablage doppelstufig", category: "Free Weight Storage Racks", price: 300, inStock: true },
+    { id: "dumbbells", name: "Urethan Dumbbells ATX® Kurzhanteln – 2,5 bis 60 kg", category: "Dumbbells", price: 20, inStock: true },
+    { id: "treadmill", name: "Horizon Fitness Paragon X Laufband", category: "Treadmills", price: 2000, inStock: true },
+    { id: "flat", name: "ATX® Flachbank mit Optionsaufnahme", category: "Exercise Benches", price: 199, inStock: true },
+    { id: "rower", name: "Concept2 RowErg Rudergerät", category: "Rowing Machines", price: 1100, inStock: true },
+    {
+      id: "plates",
+      name: "ATX® 2-Grip Hantelscheiben Guss - 30 mm",
+      category: "Weight Plates",
+      price: 4,
+      inStock: true,
+      sku: "MS-30-GXA-0050",
+      variants: [
+        { id: "1", title: "0,5 kg", price: 4, sku: "MS-30-GXA-0050", isDefault: true, available: true },
+        { id: "2", title: "1,25 kg", price: 8, sku: "MS-30-GXA-0125", available: true },
+        { id: "3", title: "2,5 kg", price: 12, available: true },
+      ],
+    },
+    { id: "bt", name: "Bluetooth Herzfrequenz-Gurt", category: "Accessories", price: 49, inStock: true },
+  ];
+  // the exact word („Kurzhanteln“) and its singular before the storage rack's prefix match
+  assert.deepEqual(searchCatalogCards(cat, "Kurzhanteln").map((c) => c.id), ["dumbbells", "ablage"]);
+  assert.deepEqual(searchCatalogCards(cat, "kurzhantel").map((c) => c.id), ["dumbbells", "ablage"]);
+  assert.deepEqual(searchCatalogCards(cat, "Laufbänder").map((c) => c.id), ["treadmill"]);
+  assert.deepEqual(searchCatalogCards(cat, "Bänke").map((c) => c.id), ["flat"]);
+  assert.deepEqual(searchCatalogCards(cat, "rudergeraet").map((c) => c.id), ["rower"]);
+  assert.deepEqual(searchCatalogCards(cat, "hantelscheibe").map((c) => c.id), ["plates"]);
+  assert.deepEqual(searchCatalogCards(cat, "MS-30-GXA-0125").map((c) => c.id), ["plates"]);
+  assert.deepEqual(searchCatalogCards(cat, "bluetooth").map((c) => c.id), ["bt"]);
+  // repeated queries reuse the folded fields and give the same answer
+  assert.deepEqual(searchCatalogCards(cat, "Kurzhanteln").map((c) => c.id), ["dumbbells", "ablage"]);
+});
+
+test("searchCatalogCards: an „-er“ stem finds only the exact word („Ständer“, „Halter“, „Hocker“ are no plurals)", () => {
+  const cat = [
+    { id: "free-stands", name: "ATX® Free Stands 510", category: "Squat Racks", price: 399, inStock: true },
+    { id: "plate-stand", name: "ATX® Hantelscheibenständer", category: "Free Weight Storage Racks", price: 149, inStock: true },
+    { id: "kb-stand", name: "Kettlebell-Ständer mit 2 Ablagen", category: "Free Weight Storage Racks", price: 99, inStock: true },
+    { id: "shock", name: "ATX® Shock Absorption Dropping Plate", category: "Floor Protection", price: 99, inStock: true },
+    { id: "posture", name: "Haltungstrainer Motion Pro", category: "Strength Machines", price: 999, inStock: true },
+    { id: "wall", name: "Wandhalter Hantelscheiben 30 mm", category: "Free Weight Storage Racks", price: 59, inStock: true },
+    { id: "loop", name: "ATX® Loop Band", category: "Resistance Bands", price: 19, inStock: true },
+    { id: "minis", name: "ATX® Mini Loop Bänder", category: "Resistance Bands", price: 29, inStock: true },
+  ];
+  // the whole word, then the compound — never the stem „stand“ of „Stands“
+  assert.deepEqual(searchCatalogCards(cat, "Ständer").map((c) => c.id), ["kb-stand", "plate-stand"]);
+  // never the prefix „halt“ („Haltungstrainer“) or the substring „hock“ („Shock“)
+  assert.deepEqual(searchCatalogCards(cat, "Halter").map((c) => c.id), ["wall"]);
+  assert.deepEqual(searchCatalogCards(cat, "Hocker"), []);
+  // a real „-er“ plural still finds the singular word, and the other way round
+  assert.deepEqual(searchCatalogCards(cat, "Bänder").map((c) => c.id), ["loop", "minis"]);
+  assert.deepEqual(searchCatalogCards(cat, "Band").map((c) => c.id), ["loop", "minis"]);
 });
 
 test("optionStepRows: guide order, only types with counts, German labels", () => {
@@ -682,18 +800,37 @@ test("renderConfiguratorSection: the step guide only with the widget's options, 
     { id: "plates~5", qty: 2, name: "Hantelscheibe – 5 kg", price: 15 },
   ];
   const accessories = [
-    { baseId: "rack", baseName: "Power Rack", items: [{ id: "dip", name: "Dip Bar", price: 229 }, { id: "lat", name: "Latzug-Option", price: 399 }] },
+    { baseId: "rack", baseName: "Power Rack", items: [{ id: "dip", name: "Dip Bar", price: 229 }, { id: "lat", name: "Latzug-Option", price: 399 }], inPlan: [] },
     { baseId: "station", baseName: "Kraftstation", items: [] },
   ];
   const de = renderConfiguratorSection({ answers: withOptions, assortment: catalog, settings: { focus: "prefer", notes: "" }, plan, accessories });
   assert.match(de, /3\. \*\*Schritt für Schritt statt eines fertigen Sets:\*\*/);
   assert.match(de, /Pro Schritt rufst du `offer_plan_options` auf: 2–3 Optionen \(höchstens 4\)/);
   assert.match(de, /„Diesen Schritt überspringe ich“\*\* → direkt zum nächsten Schritt/);
-  assert.match(de, /- `offer_plan_options`: ein Aufruf pro Antwort und kein `suggest_replies` dazu/);
+  assert.match(de, /- `offer_plan_options`: ein Aufruf pro Antwort \(plus der Ersatz für nicht gezeigte Optionen\) und kein `suggest_replies` dazu/);
+  // swaps (a pick replaces the step's earlier pick; accessories / extras add), the retry for options not shown, the barbell
+  assert.match(de, /\*\*Tausch\*\* \(„Ich nehme stattdessen: …“\): Eine Wahl in einer Einzelauswahl ersetzt die frühere Wahl DESSELBEN Schritts/);
+  assert.match(de, /In den Schritten "accessory" und "extra" und bei multiSelect kommt eine Wahl aus einer späteren Gruppe dazu/);
+  assert.match(de, /Nach einem Tausch des Basisgeräts prüf, ob das schon gewählte Zubehör noch zum neuen Basisgerät passt/);
+  assert.match(de, /\*\*Nicht gezeigte Optionen:\*\* Meldet das Ergebnis von `offer_plan_options` weniger shownOptions als angebotene Optionen/);
+  assert.match(de, /Braucht das Basisgerät eine Langhantel .* und ist keine im Plan, gehört sie in jede Option dieses Schritts/);
+  assert.match(de, /Bänke, Hantelscheiben und Matten gehören in ihre eigenen Schritte/);
   assert.match(de, /zeig sofort die ersten Optionen \(Basisgerät\)/);
   assert.doesNotMatch(de, /3\. \*\*Der Plan:\*\*/);
   assert.match(de, /- 1× Power Rack \(`rack`\) — 899\.9 € je Stück — vom Kunden ergänzt\n- 2× Hantelscheibe – 5 kg \(`plates~5`\) — 15 € je Stück\nZwischensumme: 929\.9 €/);
   assert.match(de, /### Zubehör zu den Basisgeräten im Plan \(für den Schritt „Zubehör“\)\n- Zu Power Rack \(`rack`\): `dip` Dip Bar — 229 € · `lat` Latzug-Option — 399 €\n- Zu Kraftstation \(`station`\): keins hinterlegt/);
+  assert.match(de, /passt \(was passt, steht unten in „Zubehör zu den Basisgeräten im Plan“ unter „schon im Plan“\)/);
+  // accessories already in the plan: named per base, „keins hinterlegt“ only when the base lists nothing
+  const swapped = [
+    { baseId: "fold", baseName: "Fold Back Rack", items: [{ id: "dip", name: "Dip Bar", price: 229 }], inPlan: ["Landmine", "J-Hooks"] },
+    { baseId: "station", baseName: "Kraftstation", items: [], inPlan: ["Latzug-Option"] },
+  ];
+  const deSwap = renderConfiguratorSection({ answers: withOptions, assortment: [], settings: { focus: "prefer", notes: "" }, plan, accessories: swapped });
+  assert.match(deSwap, /- Zu Fold Back Rack \(`fold`\): `dip` Dip Bar — 229 €; schon im Plan: Landmine, J-Hooks\n- Zu Kraftstation \(`station`\): schon im Plan: Latzug-Option — weiteres Zubehör mit search_products suchen/);
+  assert.doesNotMatch(deSwap, /keins hinterlegt/);
+  const enSwap = renderConfiguratorSection({ answers: withOptions, assortment: [], settings: { focus: "prefer", notes: "" }, plan, accessories: swapped, locale: "en" });
+  assert.match(enSwap, /- For Fold Back Rack \(`fold`\): `dip` Dip Bar — 229 €; already in the plan: Landmine, J-Hooks\n- For Kraftstation \(`station`\): already in the plan: Latzug-Option — find further accessories with search_products/);
+  assert.match(enSwap, /\(the fitting ones are named under "already in the plan" in "Accessories for the base units in the plan" below\)/);
   assert.match(de, /\*\*Gewichte mit mehreren Gewichtsstufen\*\*/);
 
   const en = renderConfiguratorSection({ answers: withOptions, assortment: catalog, settings: { focus: "prefer", notes: "" }, plan, accessories, locale: "en" });
@@ -701,16 +838,111 @@ test("renderConfiguratorSection: the step guide only with the widget's options, 
   assert.match(en, /Subtotal: 929\.9 €/);
   assert.match(en, /### Accessories for the base units in the plan/);
   assert.doesNotMatch(en, /Schritt für Schritt|Zwischensumme/);
+  // the English page's button labels, never the German ones
+  assert.match(en, /point to "Add everything to cart" in the plan/);
+  assert.match(en, /add weight steps with "\+ Weight step" and further products with "\+ Add a product"/);
+  assert.doesNotMatch(en, /Alles in den Warenkorb|Gewichtsstufe|Produkt hinzufügen/);
+  assert.match(en, /\*\*Swap\*\* \("Instead I'll take: …"\)/);
+  assert.match(en, /\*\*Options not shown:\*\* if the result of `offer_plan_options` reports fewer shownOptions/);
+  assert.match(en, /If the base unit needs a barbell/);
 
   // an old widget (no "options"): the one-plan guide, no accessories block, no options rule
   const old = renderConfiguratorSection({ answers: parseConfiguratorContext(ctx(fullAnswers)), assortment: catalog, settings: { focus: "prefer", notes: "" }, plan, accessories });
   assert.match(old, /3\. \*\*Der Plan:\*\* Stell mit `show_gym_plan` EIN stimmiges Set zusammen/);
   assert.doesNotMatch(old, /offer_plan_options|Zubehör zu den Basisgeräten/);
   assert.match(old, /Zwischensumme: 929\.9 €/);
+  // … in English with the English page's buttons too
+  const oldEn = renderConfiguratorSection({ answers: parseConfiguratorContext(ctx(fullAnswers)), assortment: catalog, settings: { focus: "prefer", notes: "" }, plan, accessories, locale: "en" });
+  assert.match(oldEn, /3\. \*\*The plan:\*\* put together ONE coherent set with `show_gym_plan`/);
+  assert.match(oldEn, /add further weight steps with "\+ Weight step" and further products with "\+ Add a product"/);
+  assert.doesNotMatch(oldEn, /Gewichtsstufe|Produkt hinzufügen/);
   // a line without a price: no subtotal
   const partial = renderConfiguratorSection({ answers: withOptions, assortment: [], settings: { focus: "prefer", notes: "" }, plan: [{ id: "rack", qty: 1, name: "Rack" }] });
   assert.doesNotMatch(partial, /Zwischensumme: /);
   assert.match(partial, /- 1× Rack \(`rack`\)$/m);
+});
+
+test("planAccessoryBases: the most expensive strength base first, add-ons related to a kept base left out, else the cardio machine", () => {
+  const rack = { id: "rack", name: "Power Rack 520", category: "Power Racks", price: 1500, compatibleWith: ["mat", "jhooks", "lat~5", "bench"] };
+  const jhooks = { id: "jhooks", name: "J-Hooks Type 5", category: "Power Racks", price: 120, compatibleWith: ["smith"] };
+  const lat = { id: "lat", name: "Latzug-Option LTO-II", category: "Power Racks", price: 600, compatibleWith: ["rack"] };
+  const station = { id: "station", name: "Kraftstation", category: "Kraftstation", price: 2000, compatibleWith: ["rack"] };
+  const rower = { id: "rower", name: "Concept2 RowErg Rudergerät", category: "Rowing Machines", price: 1000, compatibleWith: ["c2-mat", "slides", "skierg"] };
+  const plates = { id: "plates", name: "Hantelscheiben", category: "Weight Plates", price: 50 };
+  // J-Hooks / Latzug-Option picked as accessories are no bases of their own
+  assert.deepEqual(planAccessoryBases([rack, jhooks, plates, lat]).map((p) => p.id), ["rack"]);
+  // related bases: the more expensive one stays, in either plan order and either direction
+  assert.deepEqual(planAccessoryBases([station, rack]).map((p) => p.id), ["station"]);
+  assert.deepEqual(planAccessoryBases([rack, station]).map((p) => p.id), ["station"]);
+  const mutual = { ...rack, compatibleWith: [...rack.compatibleWith, "station"] };
+  assert.deepEqual(planAccessoryBases([mutual, station]).map((p) => p.id), ["station"]);
+  // an add-on that lists the rack one-way (Jammer Arms) never pushes the rack out
+  const prx780 = { id: "prx780", name: "Power Rack PRX-780", category: "Power Racks", price: 1299, compatibleWith: ["dip", "landmine"] };
+  const jammer = { id: "jammer", name: "3D Jammer Arms RRL-700", category: "Power Racks", price: 459, compatibleWith: ["prx780", "prx-other", "half-rack"] };
+  assert.deepEqual(planAccessoryBases([prx780, jammer]).map((p) => p.id), ["prx780"]);
+  assert.deepEqual(planAccessoryBases([jammer, prx780]).map((p) => p.id), ["prx780"]);
+  // a swap of the base unit: the widget appends the new rack AFTER the add-ons picked for
+  // the old one — the Landmine the new rack lists is no base of its own (the J-Hooks 500 fit
+  // no base in the plan and stay one: the plan context carries no pick step)
+  const pr520 = { id: "pr520", name: "Power Rack 520 mit Latzug", category: "Power Racks", price: 1800, compatibleWith: ["jhooks5", "dip500", "landmine"] };
+  const jhooks5 = { id: "jhooks5", name: "J-Hooks Type 5 / Serie 500", category: "Power Racks", price: 150, compatibleWith: ["storage", "smith", "prx520"] };
+  const landmine = { id: "landmine", name: "Core Trainer Landmine", category: "Power Racks", price: 100, compatibleWith: ["bar", "row-grip"] };
+  const fold = { id: "fold", name: "Fold Back Rack 750", category: "Power Racks", price: 1300, compatibleWith: ["dip700", "landmine~3", "jammer"] };
+  assert.deepEqual(planAccessoryBases([pr520, jhooks5, landmine]).map((p) => p.id), ["pr520"]);
+  assert.deepEqual(planAccessoryBases([jhooks5, landmine, fold]).map((p) => p.id), ["fold", "jhooks5"]);
+  // the new rack lists every add-on picked before: it is the only base
+  assert.deepEqual(planAccessoryBases([jhooks5, landmine, { ...fold, compatibleWith: [...fold.compatibleWith, "jhooks5"] }]).map((p) => p.id), ["fold"]);
+  // sale price counts; equal prices keep roots first, then plan order
+  assert.deepEqual(planAccessoryBases([{ ...jammer, price: 2000, salePrice: 400 }, prx780]).map((p) => p.id), ["prx780"]);
+  // the cardio machine is the base only without a strength base
+  assert.deepEqual(planAccessoryBases([rower, plates]).map((p) => p.id), ["rower"]);
+  assert.deepEqual(planAccessoryBases([rower, rack]).map((p) => p.id), ["rack"]);
+  assert.deepEqual(planAccessoryBases([plates]), []);
+  assert.deepEqual(planAccessoryBases([]), []);
+  const many = Array.from({ length: 5 }, (_, i) => ({ id: `r${i}`, name: `Rack ${i}`, category: "Power Racks" }));
+  assert.equal(planAccessoryBases(many).length, ACCESSORY_LIMITS.bases);
+  assert.deepEqual(planAccessoryBases(many).map((p) => p.id), ["r0", "r1", "r2"]);
+  // the ids to load: the first ACCESSORY_LIMITS.scan of each base, variant refs folded, once
+  const long = { id: "big", name: "Big Rack", category: "Power Racks", compatibleWith: Array.from({ length: 30 }, (_, i) => `a${i}~1`) };
+  assert.equal(planAccessoryIds([long]).length, ACCESSORY_LIMITS.scan);
+  assert.deepEqual(planAccessoryIds([rack, { compatibleWith: ["mat", "dip"] }]), ["mat", "jhooks", "lat", "bench", "dip"]);
+});
+
+test("planAccessories: in stock, without weights, floor protection and cardio, capped; what is already in the plan named, not offered", () => {
+  const byId = new Map(
+    [
+      { id: "mat", name: "Bodenschutzmatte Excellence", category: "Floor Protection Mats", price: 49, inStock: true },
+      { id: "dip", name: "Dip Bar", category: "Power Rack Accessories", price: 229, salePrice: 199, inStock: true },
+      { id: "plates", name: "Hantelscheiben Guss", category: "Weight Plates", price: 4, inStock: true },
+      { id: "lat", name: "Latzug-Option", category: "Power Racks", price: 399, inStock: true },
+      { id: "gone", name: "Landmine", category: "Power Rack Accessories", price: 99, inStock: false },
+      { id: "bench", name: "Flachbank", category: "Exercise Benches", price: 199, inStock: true },
+      { id: "skierg", name: "Concept2 SkiErg", category: "Cardio Machines", price: 1200, inStock: true },
+      { id: "slides", name: "Concept2 Slide - Paar", category: "Rowing Machine Accessories & Parts", price: 300, inStock: true },
+    ].map((p) => [p.id, p])
+  );
+  const rack = { id: "rack", name: "Power Rack", compatibleWith: ["mat", "dip~7", "plates", "lat", "gone", "bench", "ghost", "dip"] };
+  const rower = { id: "rower", name: "RowErg", compatibleWith: ["mat", "skierg", "slides"] };
+  assert.deepEqual(planAccessories([rack, rower], byId, ["rack", "lat~3", "gone", "mat", "skierg"]), [
+    {
+      baseId: "rack",
+      baseName: "Power Rack",
+      items: [
+        { id: "dip", name: "Dip Bar", price: 199 },
+        { id: "bench", name: "Flachbank", price: 199 },
+      ],
+      // in the plan (a sold-out one too): named, not offered; weights / floor / cardio never
+      inPlan: ["Latzug-Option", "Landmine"],
+    },
+    { baseId: "rower", baseName: "RowErg", items: [{ id: "slides", name: "Concept2 Slide - Paar", price: 300 }], inPlan: [] },
+  ]);
+  const many = new Map(Array.from({ length: 15 }, (_, i) => [`d${i}`, { id: `d${i}`, name: `Dip ${i}`, category: "Accessories", price: 10, inStock: true }]));
+  assert.equal(planAccessories([{ id: "x", name: "X", compatibleWith: [...many.keys()] }], many, []).at(0)?.items.length, ACCESSORY_LIMITS.items);
+  // the cap counts offers only: a plan product after it is still named
+  const capped = planAccessories([{ id: "x", name: "X", compatibleWith: [...many.keys()] }], many, ["d14"]).at(0);
+  assert.equal(capped?.items.length, ACCESSORY_LIMITS.items);
+  assert.deepEqual(capped?.inPlan, ["Dip 14"]);
+  assert.deepEqual(planAccessories([], byId, []), []);
 });
 
 test("tool copy of offer_plan_options exists in both locales", () => {

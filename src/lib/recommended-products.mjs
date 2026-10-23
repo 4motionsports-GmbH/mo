@@ -125,6 +125,32 @@ export function latestSelectedProductIds(toolCalls) {
 }
 
 /**
+ * The selection a turn stores (conversations.selected_product_ids): this
+ * turn's own add_to_cart / show_gym_plan wins; else, in the configurator's
+ * step-by-step flow, the plan as it stands on the page (`planSelection`, ids /
+ * variant refs) — when the visitor EMPTIED it, the plan-derived selection is
+ * cleared but a single product Mo put into the cart directly stays (the latest
+ * add_to_cart of the conversation, never an old show_gym_plan); else (no page
+ * plan) the latest selection of the whole conversation. null = no selection
+ * signal (the stored value is kept).
+ *
+ * @param {ReadonlyArray<{ toolName?: string, input?: unknown }>} ownToolCalls this turn's calls
+ * @param {ReadonlyArray<{ toolName?: string, input?: unknown }>} allToolCalls history + this turn, chronological
+ * @param {ReadonlyArray<string> | null | undefined} planSelection the page plan (step flow only), else null
+ * @returns {string[] | null}
+ */
+export function turnSelection(ownToolCalls, allToolCalls, planSelection) {
+  const own = latestSelectedProductIds(ownToolCalls);
+  if (own) return own;
+  if (Array.isArray(planSelection)) {
+    const ids = dedupe(planSelection.filter((id) => typeof id === "string" && id));
+    if (ids.length > 0) return ids;
+    return latestSelectedProductIds((allToolCalls ?? []).filter((inv) => inv?.toolName === "add_to_cart")) ?? [];
+  }
+  return latestSelectedProductIds(allToolCalls);
+}
+
+/**
  * RECOMMENDATION cards in order: the ids Mo explicitly put forward as cards via
  * show_product, in call order (= the order it recommends them in its prose),
  * de-duped. This is the declaration the widget renders — NOT the retrieval set,

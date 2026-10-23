@@ -60,7 +60,9 @@ import {
   CONFIGURATOR_OPTIONS_TOOL,
   configuratorHasOptions,
   optionsShownEvents,
-  planRoleForProduct,
+  planAccessories,
+  planAccessoryBases,
+  planAccessoryIds,
   mergeConfiguratorProfile,
   parseConfiguratorContext,
   planShownEvents,
@@ -91,6 +93,10 @@ import {
 export const maxDuration = 300;
 
 const MAX_MESSAGES_PER_CONVERSATION = 40;
+// Home-Gym-Konfigurator, step by step (features "options", configurator on):
+// every pick, swap, skip and „Andere Vorschläge“ is a user turn, so a full
+// consultation needs about twice the room of a normal chat (API_CONTRACT §2).
+const MAX_MESSAGES_CONFIGURATOR_OPTIONS = 80;
 
 // The chat model id — referenced both in the streamText call and when recording
 // token usage for the cost KPI, so the two can never drift apart. The chat tier
@@ -318,24 +324,30 @@ export async function POST(req: Request) {
       return errorResponse("bad_request", "messages must be an array", 400, cors);
     }
     messageCount = messages.length;
-    if (messages.length > MAX_MESSAGES_PER_CONVERSATION) {
-      return errorResponse(
-        "payload_too_large",
-        `Conversation too long (max ${MAX_MESSAGES_PER_CONVERSATION} messages). Please start a new chat.`,
-        400,
-        cors
-      );
-    }
-
     // Home-Gym-Konfigurator (configurator-core.mjs): the page sends its
     // answers (and the plan as it stands) with every turn of a configurator
     // thread. Used only while the feature is on in Konfigurator (admin
     // setting, default on); an unknown or empty context is simply no
     // configurator conversation. The answers fill the profile fields the
     // conversation has not set yet, so the retrieval's gates apply from the
-    // greeting on.
+    // greeting on. Parsed (with the cached settings) before the cap: the
+    // step-by-step flow gets more room — only while the configurator is on, so
+    // a claimed context cannot double the history of any other chat.
     const configuratorAnswers = parseConfiguratorContext(body.context);
     const configuratorSettings = configuratorAnswers ? await getCachedConfiguratorSettings() : null;
+    const maxMessages =
+      configuratorHasOptions(configuratorAnswers) && configuratorSettings?.enabled
+        ? MAX_MESSAGES_CONFIGURATOR_OPTIONS
+        : MAX_MESSAGES_PER_CONVERSATION;
+    if (messages.length > maxMessages) {
+      return errorResponse(
+        "payload_too_large",
+        `Conversation too long (max ${maxMessages} messages). Please start a new chat.`,
+        400,
+        cors
+      );
+    }
+
     const configurator = configuratorAnswers && configuratorSettings?.enabled ? configuratorAnswers : null;
     const assortment =
       configurator && configuratorSettings ? await loadConfiguratorAssortment(configuratorSettings) : null;
@@ -571,15 +583,15 @@ export async function POST(req: Request) {
         : null;
     const gymPlansBefore = configurator ? countGymPlans(messages) : 0;
     // Step-by-step flow: the accessories („Ergänzende Produkte“, in stock) of
-    // the base units in the plan — what Mo offers in the step „Zubehör“.
+    // the base units in the plan — what Mo offers in the step „Zubehör“
+    // (configurator-core planAccessoryBases / planAccessories: strength base
+    // units, else the cardio machine, the most expensive first; add-ons related
+    // to a kept base are no base of their own; weights, floor protection and cardio machines
+    // left out; products already in the plan named, not offered).
     const planById = new Map(configuratorPlanProducts.map((p) => [p.id, p]));
-    const planBases = configurator && configuratorHasOptions(configurator)
-      ? [...planById.values()].filter((p) => planRoleForProduct(p) === "base").slice(0, 3)
-      : [];
-    const accessoryProducts =
-      planBases.length > 0
-        ? await getProductsByIds([...new Set(planBases.flatMap((b) => (b.compatibleWith ?? []).slice(0, 10)))])
-        : [];
+    const planBases =
+      configurator && configuratorHasOptions(configurator) ? planAccessoryBases([...planById.values()]) : [];
+    const accessoryProducts = planBases.length > 0 ? await getProductsByIds(planAccessoryIds(planBases)) : [];
     const accessoryById = new Map(accessoryProducts.map((p) => [p.id, p]));
     const configuratorBlock =
       configurator && configuratorSettings && assortment
@@ -594,14 +606,7 @@ export async function POST(req: Request) {
               const price = (hit.variant ? effectiveVariantPrice(hit.variant) : null) ?? base?.salePrice ?? base?.price;
               return [{ ...line, name: variantDisplayName(hit.product, hit.variant), ...(typeof price === "number" ? { price } : {}) }];
             }),
-            accessories: planBases.map((b) => ({
-              baseId: b.id,
-              baseName: b.name,
-              items: (b.compatibleWith ?? []).slice(0, 10).flatMap((id) => {
-                const a = accessoryById.get(id.split("~")[0]);
-                return a && a.inStock ? [{ id: a.id, name: a.name, price: a.salePrice ?? a.price }] : [];
-              }),
-            })),
+            accessories: planAccessories(planBases, accessoryById, configuratorPlan.map((line) => line.id)),
             locale,
           })
         : "";

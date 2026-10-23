@@ -8,6 +8,7 @@ import {
   recommendedCardIdsInOrder,
   guardRecommendedCardIds,
   selectRecommendedCards,
+  turnSelection,
 } from "./recommended-products.mjs";
 
 // Tiny catalog: `omega` (the named/recommended product) + two retrieved-but-
@@ -158,4 +159,25 @@ test("offer_plan_options: every offered item counts as discussed, never as the s
   // not a buy selection and not a recommendation card
   assert.equal(latestSelectedProductIds([offer]), null);
   assert.deepEqual(recommendedCardIdsInOrder([offer]), []);
+});
+
+test("turnSelection: this turn's own call wins, then the page plan (an empty plan clears all but an add_to_cart), else the history", () => {
+  const plan = (ids) => ({ toolName: "show_gym_plan", input: { title: "Set", items: ids.map((productId) => ({ productId, role: "base" })) } });
+  const history = [plan(["rack", "bank~42"])];
+  // step flow, no selection call this turn: the page plan as sent (deduped)
+  assert.deepEqual(turnSelection([show("a")], [...history, show("a")], ["rack", "plates~5", "rack"]), ["rack", "plates~5"]);
+  // step flow, the visitor emptied the plan: the selection is cleared on purpose
+  assert.deepEqual(turnSelection([], history, []), []);
+  // … but a single product Mo put into the cart directly (add_to_cart) stays — the
+  // latest one, never the show_gym_plan after it
+  assert.deepEqual(turnSelection([], [cart(["kb"])], []), ["kb"]);
+  assert.deepEqual(turnSelection([], [cart(["kb"]), cart(["kb~2", "rope"]), ...history], []), ["kb~2", "rope"]);
+  assert.deepEqual(turnSelection([show("a")], [...history, cart(["kb"]), show("a")], [null, ""]), ["kb"]);
+  // step flow, Mo's show_gym_plan / add_to_cart of THIS turn replaces the pre-turn page plan
+  assert.deepEqual(turnSelection([plan(["rack", "matte"])], [...history, plan(["rack", "matte"])], ["rack"]), ["rack", "matte"]);
+  assert.deepEqual(turnSelection([cart(["kb~2"])], [...history, cart(["kb~2"])], []), ["kb~2"]);
+  // no page plan (the one-plan flow, every other chat): the latest selection of the conversation, as before
+  assert.deepEqual(turnSelection([], history, null), ["rack", "bank~42"]);
+  assert.deepEqual(turnSelection([], [show("a")], undefined), null);
+  assert.deepEqual(turnSelection([cart(["omega"])], [...history, cart(["omega"])], null), ["omega"]);
 });
