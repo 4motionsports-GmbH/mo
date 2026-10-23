@@ -156,7 +156,7 @@ test("the round of 2026-10-08 (495fdf6) is recognised only with both new class n
   const row = WIDGET_BUILDS.find((b) => b.key === "reward-2026-10-08");
   assert.equal(row?.commit, "495fdf6");
   assert.equal(row?.acceptable, true);
-  assert.equal(WIDGET_BUILDS[2].key, "reward-2026-10-08"); // newest first, after the two configurator builds
+  assert.equal(WIDGET_BUILDS[3].key, "reward-2026-10-08"); // newest first, after the three configurator builds
   // The new markers are counted like the others (class names, whitespace-insensitive).
   const c = countWidgetMarkers(`el.className = "ms-chat-reward-badge"; lead.className="ms-chat-vm-lead";`);
   assert.equal(c["ms-chat-reward-badge"], 1);
@@ -172,7 +172,7 @@ test("the Home-Gym-Konfigurator build (2026-10-21) is recognised only with both 
     assert.equal(classifyWidgetBuild(reward)?.key, "reward-2026-10-08", `${variant} without the configurator`);
   }
   const row = WIDGET_BUILDS.find((b) => b.key === "konfigurator-2026-10-21");
-  assert.equal(WIDGET_BUILDS[1], row); // newest first, after the round of 2026-10-22
+  assert.equal(WIDGET_BUILDS[2], row); // newest first, after the rounds of 2026-10-22 and 2026-10-23
   assert.equal(row?.acceptable, true);
   assert.equal(row?.current, true); // live since 2026-10-21 (M's upload, page tested)
   const c = countWidgetMarkers(`dockRoot = el('div', { class: 'ms-chat-root ms-chat-root--dock' }); wrap = el('div', { class: 'ms-chat-root ms-chat-planhost' });`);
@@ -187,8 +187,22 @@ test("the Konfigurator round of 2026-10-22 is recognised by its product picker",
     assert.equal(classifyWidgetBuild(configurator)?.key, "konfigurator-2026-10-21", `${variant} without the picker`);
   }
   const row = WIDGET_BUILDS.find((b) => b.key === "konfigurator-2026-10-22");
+  assert.equal(WIDGET_BUILDS[1], row); // newest first, after the round of 2026-10-23
+  assert.equal(row?.acceptable, true);
+  assert.equal(countWidgetMarkers(`wrap.className = 'ms-chat-planpick';`)["ms-chat-planpick"], 1);
+});
+
+test("the Konfigurator round of 2026-10-23 is recognised by its product options", () => {
+  for (const variant of ["raw", "ws", "min"]) {
+    const planpick = { ...MEASURED[variant]["495fdf6"], "ms-chat-root--dock": 1, "ms-chat-planhost": 29, "ms-chat-planpick": 4 };
+    assert.equal(classifyWidgetBuild({ ...planpick, "ms-chat-offer": 9 })?.key, "konfigurator-2026-10-23", variant);
+    assert.equal(classifyWidgetBuild(planpick)?.key, "konfigurator-2026-10-22", `${variant} without the options`);
+    // the options marker alone, without the picker, is not this build
+    assert.equal(classifyWidgetBuild({ ...planpick, "ms-chat-planpick": 0, "ms-chat-offer": 9 })?.key, "konfigurator-2026-10-21", `${variant} offer without planpick`);
+  }
+  const row = WIDGET_BUILDS.find((b) => b.key === "konfigurator-2026-10-23");
   assert.equal(WIDGET_BUILDS[0], row); // newest first
   assert.equal(row?.acceptable, true);
   assert.equal(row?.current, false); // until M uploads it
-  assert.equal(countWidgetMarkers(`wrap.className = 'ms-chat-planpick';`)["ms-chat-planpick"], 1);
+  assert.equal(countWidgetMarkers(`group.className = 'ms-chat-offer';`)["ms-chat-offer"], 1);
 });

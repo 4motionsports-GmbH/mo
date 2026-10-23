@@ -34,6 +34,7 @@ export const WIDGET_MARKERS = Object.freeze([
   "ms-chat-root--dock", // Home-Gym-Konfigurator (2026-10-21): the docked panel (class name)
   "ms-chat-planhost", // Home-Gym-Konfigurator (2026-10-21): the plan on the page (class name)
   "ms-chat-planpick", // Konfigurator round of 2026-10-22: „+ Produkt hinzufügen“ in the plan (class name)
+  "ms-chat-offer", // Konfigurator round of 2026-10-23: Mo's step-by-step product options (class name)
 ]);
 
 /** @param {string} s */
@@ -71,6 +72,15 @@ export function countWidgetMarkers(js) {
  * @type {ReadonlyArray<{ key: string, commit: string, label: string, current: boolean, acceptable: boolean, consequence: string }>}
  */
 export const WIDGET_BUILDS = Object.freeze([
+  {
+    key: "konfigurator-2026-10-23",
+    commit: "THEME_COMMIT",
+    label: "Widget mit der Konfigurator-Runde vom 23.10. (THEME_COMMIT: Schritt-für-Schritt-Auswahl, Shop-Suche im Plan, Buttons wie die Startseite)",
+    current: false,
+    acceptable: true,
+    consequence:
+      "Wie der Stand vom 22.10., dazu wählt der Besucher auf der Konfigurator-Seite Mos Produkt-Optionen Schritt für Schritt in seinen Plan, „+ Produkt hinzufügen“ sucht im ganzen Shop und Plan und angedocktes Mo tragen die Buttons der Startseite; alle anderen Seiten unverändert (docs/CONFIGURATOR.md).",
+  },
   {
     key: "konfigurator-2026-10-22",
     commit: "902f8eb",
@@ -206,7 +216,11 @@ export function classifyWidgetBuild(c) {
       const dock = n("ms-chat-root--dock") > 0;
       const planHost = n("ms-chat-planhost") > 0;
       // The round of 2026-10-22 adds the product picker to the plan.
-      if (dock && planHost) return build(n("ms-chat-planpick") > 0 ? "konfigurator-2026-10-22" : "konfigurator-2026-10-21");
+      if (dock && planHost) {
+        if (n("ms-chat-planpick") === 0) return build("konfigurator-2026-10-21");
+        // The round of 2026-10-23 adds Mo's product options to it.
+        return build(n("ms-chat-offer") > 0 ? "konfigurator-2026-10-23" : "konfigurator-2026-10-22");
+      }
       if (dock || planHost) return null;
       return build("reward-2026-10-08");
     }
