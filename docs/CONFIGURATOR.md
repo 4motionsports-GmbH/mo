@@ -155,15 +155,41 @@ Prefilled answers are only preselected — the visitor still confirms with „We
   withheld via `activeTools` outside a configurator thread, after the tools-tier cache marker — every
   other conversation's tool list and cached prefix are unchanged; `offer_plan_options` additionally
   only when the widget declares `features: ["options"]` (`configuratorHasOptions`). The plan and the
-  options tool answer the model with unknown / sold-out ids so it can correct itself in the same turn.
+  options tool answer the model with unknown / sold-out ids so it can correct itself in the same turn;
+  the options tool counts an option as shown only when **every** item is known and available — the
+  widget's rule (`offerOptionsResult`; a vanished variant is reported as unknown). Its texts are
+  accepted at twice the documented length (title 160, intro 480, label 120, badge 48, pros / cons
+  180 each) while the tool descriptions ask for the documented one (pros / cons ≤ 90, a short title,
+  label and badge) — `normalizeOfferOptions` and the widget clip, so a slightly long pro never
+  invalidates the whole call.
 - **Step guide** (with `features: ["options"]`, `STEP_GUIDE_*` / `STEP_AFTER_*`): Mo announces the
   steps, offers one type per answer (one `offer_plan_options` call, no chips, no `show_product` for the
-  offered products), pros and cons only from the product data, and waits for the pick. For the
-  accessory step the prompt lists the „Ergänzende Produkte“ (`compatibleWith`) of the base units in
-  the plan („Zubehör zu den Basisgeräten im Plan“, `renderAccessories`, at most three bases with ten
-  products each); without any Mo searches for matching accessories. The plan block carries each line's
-  price („— 229 € je Stück“) and, when every line is priced, the subtotal („Zwischensumme“) Mo compares
-  with the budget. `show_gym_plan` only when the visitor explicitly wants a complete set.
+  offered products), pros and cons only from the product data, and waits for the pick. When the tool
+  reports fewer `shownOptions` than offered (unknown / sold-out ids), Mo calls it once more in the
+  same answer with replacements for those options and never talks about an option that is not shown.
+  **Swaps** (the widget's rule, stated for Mo in German and English): a pick in a single-select group
+  replaces the earlier pick of the same step — from this group or an earlier one of that step,
+  „Ich nehme stattdessen: …“; in the steps accessory and extra and with `multiSelect` a later group
+  adds. After a swap of the base unit Mo checks whether the accessories already picked still fit (the
+  ones the accessory block names „schon im Plan“ for the new base do) and says which to remove. When
+  the base unit needs a barbell (rack, half rack, free stands) and none is in the plan, the weights
+  step puts it into every option (its own line, plates matching its diameter); benches, plates and
+  mats belong to their own steps. For the accessory step the prompt
+  lists the „Ergänzende Produkte“ (`compatibleWith`) of the base units in the plan („Zubehör zu den
+  Basisgeräten im Plan“, `planAccessoryBases` / `planAccessories` → `renderAccessories`): the strength
+  base units, the most expensive first (the rack, not an add-on picked for it — also after a swap,
+  when the widget appends the new base unit behind the add-ons picked for the old one); a base related
+  to an already kept one — it lists it or is listed by it (J-Hooks, Landmine, Jammer Arms,
+  Latzug-Option picked as accessories) — is no base of its own; an add-on that fits no base in the
+  plan still counts as one (the plan context carries no pick step) —, without a strength base the cardio machine
+  (training focus endurance / weight loss); per base the first 20 refs, in stock, without weights,
+  floor protection and cardio machines, at most ten products, at most three bases; products already in
+  the plan are not offered again but named per base („schon im Plan: …“ / "already in the plan: …");
+  without any Mo searches for matching accessories. The plan block carries each line's price („— 229 €
+  je Stück“) and, when every line is priced, the subtotal („Zwischensumme“) Mo compares with the
+  budget. `show_gym_plan` only when the visitor explicitly wants a complete set. The
+  English guides (the step guide and an old widget's one-plan guide) name the English page's buttons
+  („Add everything to cart“, „+ Weight step“, „+ Add a product“).
 - **Weights** (Anna's feedback: the first plans held a single 0,5 kg plate): for weights with
   several steps the guide asks for concrete steps — one line per step with its variant ref (product
   id + `~` + variant id, from the assortment list or the retrieved-products block; never an invented
@@ -179,13 +205,20 @@ Prefilled answers are only preselected — the visitor still confirms with „We
   the limit).
 - **The visitor's own lines:** „+ Produkt hinzufügen“ under the plan lists the configurator assortment
   (`GET /api/configurator/assortment`: public cards sorted by plan role then name — the role from the
-  catalog category, `planRoleForProduct`; empty when the configurator is off; origin allowlist +
+  catalog category, else the name, `planRoleForProduct`; a strength machine that says „Plate Load“ is a
+  base unit, not weights; empty when the configurator is off; origin allowlist +
   `products` rate limit, cached 5 min) with role chips and a search field that is always there and
   searches the **whole shop** (`GET /api/configurator/search?q=`, third round — before, the search only
   filtered the curated list and was gone when that list was empty): every word must match name, brand,
-  category, tags or SKU (case, umlauts / ß and simple plurals folded, `searchCatalogCards`), name
-  prefixes first, in-stock before sold-out, hidden products never, at most 12 cards in the assortment's
-  card shape; origin allowlist + `products` rate limit, cached 60 s. No embeddings — free per keystroke. Added lines and extra weight steps
+  category, tags or a SKU — every variant's too (folded on both sides: case, umlauts / ß, the ae / oe /
+  ue spellings, plurals incl. „-er“ and short ones like „Bänke“; `searchCatalogCards`); a whole name
+  word (or its singular / plural) first — „Kurzhanteln“ before „Kurzhantelablage“ —, then name
+  prefixes (an „-er“ stem only finds the exact word: „Laufbänder“ → „Laufband“, but „Ständer“,
+  „Halter“, „Hocker“ never „Stands“, „Haltungstrainer“, „Shock“), in-stock before sold-out, hidden
+  products never, at most 12 cards in the assortment's card shape; origin allowlist + `products` rate limit, cached 60 s. No embeddings — free per keystroke
+  (about 1 ms per query on the full catalog; the folded fields are built once per catalog product).
+  A weights card with more than one variant (plates, dumbbells in steps) goes in as a pair (2×, a
+  repeat adds 2), every other card as one. Added lines and extra weight steps
   are marked „Von dir ergänzt“, picked options „Von dir gewählt“; both go back to Mo as plan items with `added: true` and are listed in the
   prompt as „vom Kunden ergänzt“ — Mo keeps them in every new plan unless the visitor wants them gone.
   Mo's plan and the visitor's own lines share one limit of 20 lines (`PLAN_MAX_ITEMS` =
@@ -261,14 +294,20 @@ and booleans only — never a name, text or e-mail.
   and the summary cart. A pinned variant (`id~variantId`) counts as its product for „Beraten & gekauft“.
   In the step flow the options' products are discussed products and `offer_plan_options` anchors the
   window like the plan; the selection is the **plan on the page** as the widget sent it with the turn
-  (Mo's lines and the visitor's picks — `planSelection` in `persistTurn`), not the offered options.
+  (Mo's lines and the visitor's picks — `planSelection` in `persistTurn`), not the offered options —
+  unless Mo's own `show_gym_plan` / `add_to_cart` of that turn replaces it; a plan the visitor emptied
+  clears the selection down to the latest direct `add_to_cart`, if any (`turnSelection` in
+  `recommended-products.mjs`).
 - **Plans shown** = `show_gym_plan` calls the widget renders: a call that failed the schema or whose
   lines are all unknown is not counted (`planShownEvents`); unknown lines are left out of the products.
   The funnel stage „Plan erstellt“ counts sessions with a shown plan **or** a picked option.
 - **Options shown** = `offer_plan_options` calls with at least one renderable option
-  (`optionsShownEvents`, `configurator_options_shown` {step, options, items}); „Schritt für Schritt“
-  sets them against the widget's picks (`rank` = the option's position, Mo's recommendation is 1),
-  skips and „Andere Vorschläge“ per step.
+  (`optionsShownEvents`, `configurator_options_shown` {step, options, items}) — counted with the
+  widget's rule: an option counts only when **every** item is known and available; an option with an
+  unknown or sold-out id is left out, and items / products come from the kept options only.
+  „Schritt für Schritt“ sets them against the widget's picks (`rank` = the option's position in Mo's
+  list, Mo's recommendation is 1 — options the widget left out count too), skips and „Andere
+  Vorschläge“ per step.
 - **Cart value** = the plan price of the lines that actually landed in the cart (not the plan total).
 - `configurator_cart_added` matches `%cart%`, so it also counts as an add-to-cart click on the KPI
   screen (tested in `kpi-widget-events.test.mjs`); no other configurator event matches a click pattern.
@@ -320,7 +359,10 @@ copy and the seals on white. Without a photo the white hero of the second round 
 **Step by step on the page:** Mo's options appear as cards in the docked chat (picture, name, price,
 the lines of a bundle, badge, ✓ pros and – cons); a pick puts the lines into the plan on the page —
 also when Mo showed no plan yet (the plan then starts as „Dein Home-Gym-Plan“ of the visitor's
-lines) — and a later pick in the same step replaces the earlier one. The sign-in and e-mail popups wait
+lines) — and a pick in a single-select group replaces the earlier pick of the same step, also from an
+earlier group („Ich nehme stattdessen: …“; accessories, extras and multi-select groups add). In a
+configurator thread continued on another shop page (no plan host) a pick shows the visitor's plan as a
+plan card in the chat. The sign-in and e-mail popups wait
 in a configurator thread until Mo shows a complete plan, so in the step flow they do not interrupt
 (the header's „Anmelden“ / „Per E-Mail teilen“ stay available).
 
@@ -346,3 +388,6 @@ and own lines, „So funktioniert's“, „Starke Partner“), admin 1440 / 1024
 - Budget and wishes are learned in the conversation (chips are text); only `configurator_chip_clicked`
   records the topic. The answer distribution covers the page's answers.
 - Page views need analytics consent; without it the funnel starts at „Konfigurator begonnen“.
+- A configurator thread with the step flow (`features: ["options"]`, the configurator switched on in
+  Konfigurator) takes up to 80 messages per request (40 elsewhere, API_CONTRACT §2) — every pick, swap, skip and „Andere Vorschläge“ is a user
+  turn. Beyond that the widget offers a new chat.

@@ -46,7 +46,7 @@ Every widget change keeps all of these. They are referenced as "§0 rule n".
 21. **The campaign token stays session-less:** read from `mo_c`, kept in sessionStorage, sent once as `campaignToken`; never in KPI, localStorage, cookies or logs (§2 "Optional `campaignToken`").
 22. **Tone:** proactive copy references the page or category, never the visitor's behaviour; the nudge never asks for an e-mail.
 23. **Sign-in is a top-level redirect** (no popup window, no XHR login) and counts only after the one-time code was redeemed (ACCOUNT_CONTRACT.md §2, §2a).
-24. **Shared limits move together:** 40 messages per `/api/chat` request, 10 ids per `/api/products`, trail ≤ 3 products + 2 categories, campaign token `^[A-Za-z0-9_-]{16,64}$`, one-time code 10 min, `benefits` 1–4 strings of ≤ 200 chars, 20 Q&A entries per product (`QA_MAX_PER_PRODUCT` vs the PDP snippet's `limit: 20`), TTS chunking mirrors `splitIntoTtsChunks()` (§8).
+24. **Shared limits move together:** 40 messages per `/api/chat` request (80 in a configurator thread with `features: ["options"]`, §2), 10 ids per `/api/products`, trail ≤ 3 products + 2 categories, campaign token `^[A-Za-z0-9_-]{16,64}$`, one-time code 10 min, `benefits` 1–4 strings of ≤ 200 chars, 20 Q&A entries per product (`QA_MAX_PER_PRODUCT` vs the PDP snippet's `limit: 20`), TTS chunking mirrors `splitIntoTtsChunks()` (§8).
 25. **Theme ownership:** `custom.*` metafields belong to merchandising except `custom.qa` (written by the backend; its `a_html` is pre-sanitised by the backend and output raw on the PDP); theme settings and editor-owned templates (e.g. the „MO only“ CTA block) are changed in the theme editor, not in code.
 
 ---
@@ -124,7 +124,7 @@ A defense-in-depth combination, since the widget runs on a public storefront:
   (`/api/products`, `/api/kpi`, `/api/consent-copy`) do not require it; they expose only
   storefront-visible data or accept only pseudonymous telemetry.
 - **Rate limits** per bucket (below).
-- **Caps.** At most 40 messages per `/api/chat` request (§2). The provider-side monthly spend caps
+- **Caps.** At most 40 messages per `/api/chat` request — 80 in the configurator's step flow (§2). The provider-side monthly spend caps
   are an operator setting, not code.
 
 ### Rate limits
@@ -217,7 +217,7 @@ advertises `POST, OPTIONS` and `Content-Type, x-ms-chat-key, x-ms-session, x-ms-
 
 | Field | Type | Notes |
 | --- | --- | --- |
-| `messages` | `UIMessage[]` | Required, the **entire** conversation of this thread on every turn (≤ 40, below). |
+| `messages` | `UIMessage[]` | Required, the **entire** conversation of this thread on every turn (≤ 40 — ≤ 80 in a configurator thread with `features: ["options"]`; below). |
 | `conversationKey` | string? | Which thread the turn belongs to (below). |
 | `context` | object? | Product page / browsing trail / page facts (below). |
 | `customer` | `{ email }`? | Returning-customer memory after an in-session capture (below). |
@@ -469,7 +469,13 @@ that value back:
   shop without it.
 
 **40-message cap.** The cap is per request — the history of one thread. If `messages.length > 40` the
-route returns:
+route returns the error below. **Configurator step flow** (since 2026-10-23): a request whose
+`context.configurator` declares `features: ["options"]` may carry up to **80** messages while the
+configurator is switched on (admin Konfigurator; off → 40) — every pick, swap, „Überspringen“ and
+„Andere Vorschläge“ is a user turn, so a full step-by-step consultation needs about twice the room;
+the message then names 80. The widget's stored history (the last 40,
+[07-feature-and-kpi-playbook.md](./07-feature-and-kpi-playbook.md) §5 rule 8) is unchanged — after a
+reload such a thread simply goes on with fewer messages.
 
 ```http
 HTTP/1.1 400 Bad Request
@@ -898,22 +904,30 @@ Input schema:
 ```ts
 {
   step: "base" | "accessory" | "bench" | "weights" | "flooring" | "cardio" | "extra";
-  title: string;            // ≤ 80, e.g. „Schritt 1 · Dein Basisgerät“
-  intro?: string;           // ≤ 240
+  title: string;            // ≤ 80, e.g. „Schritt 1 · Dein Basisgerät“ (accepted up to 160, clipped to 80)
+  intro?: string;           // ≤ 240 (accepted up to 480, clipped)
   multiSelect?: boolean;    // true = several options can be picked, then „Übernehmen“ (accessories)
   options: Array<{          // 1–4, Mo's recommendation first
     items: Array<{          // 1–6; more than one = a bundle (weights: one line per step, e.g. 2× 5 kg + 2× 10 kg)
       productId: string;    // catalog id or variant ref
       quantity?: number;    // 1–20, default 1
     }>;
-    label?: string;         // ≤ 60 — the option's name (bundles); else the first item's name
-    badge?: string;         // ≤ 24, e.g. „Mos Empfehlung“
-    pros?: string[];        // ≤ 3, ≤ 90 each
-    cons?: string[];        // ≤ 2, ≤ 90 each
+    label?: string;         // ≤ 60 — the option's name (bundles); else the first item's name (accepted up to 120, clipped)
+    badge?: string;         // ≤ 24, e.g. „Mos Empfehlung“ (accepted up to 48, clipped)
+    pros?: string[];        // ≤ 3, ≤ 90 each (accepted up to 180 each, clipped)
+    cons?: string[];        // ≤ 2, ≤ 90 each (accepted up to 180 each, clipped)
   }>;
 }
 ```
-Output: `{ ok: true, shownOptions, unknownIds?, soldOutIds? }` — for the model only. Widget action:
+The tool descriptions ask for the documented texts (pros / cons „≤ 90 characters“, a short title,
+label and badge); the schema accepts twice the text lengths so a slightly long pro never invalidates
+the whole call — the backend (`normalizeOfferOptions`) and the widget clip every text to the
+documented limit (with „…“).
+
+Output: `{ ok: true, shownOptions, unknownIds?, soldOutIds? }` — for the model only. `shownOptions`
+counts with the widget's rule: options whose **every** item is known and available; a ref whose
+pinned variant does not exist is listed under `unknownIds`. When it is lower than the options offered,
+Mo calls the tool once more in the same answer with replacements (a second card group). Widget action:
 hydrate the ids with `GET /api/products` (max 10 per request — chunk) and render a card group
 (`ms-chat-offer`): title, intro, one card per option — thumbnail, name (label, else the first item's
 name with its variant), total price (items × quantity, sale-price aware), the item list for a bundle,
@@ -925,8 +939,13 @@ bitte andere Vorschläge für diesen Schritt.“. A pick puts the option's lines
 the role of the step (`bench` → `accessory`, the others their own role) as `added: true` lines
 („Von dir gewählt“; editable like the visitor's own lines; a first pick creates the plan view when Mo
 showed no plan) and sends „Ich nehme: <Name>.“ (several: „Ich nehme: A, B.“; EN „I'll take: …“) with
-the updated plan in the context; a different option of the same group later replaces that group's
-lines („Ich nehme stattdessen: …“). Options count as a consultation like the plan (attribution
+the updated plan in the context. **Swaps:** a pick in a single-select group replaces the lines of
+every earlier pick of the SAME step — from this group or an earlier group of that step — and sends
+„Ich nehme stattdessen: <Name>.“ (EN „Instead I'll take: …“); in the steps `accessory` and `extra`, and
+in `multiSelect` groups, a pick in a later group is added (only a re-pick in the same group replaces
+that group's own earlier pick). Without the page's plan host (a configurator thread continued on
+another shop page) a pick shows the visitor's plan as a plan card in the chat under the latest group,
+also after a reload. Options count as a consultation like the plan (attribution
 anchor, discussed products). KPI: `configurator_option_picked` / `_skipped` / `_more` (§5); the server
 records `configurator_options_shown`. Only offered when the request declares `features: ["options"]`.
 
@@ -986,7 +1005,7 @@ warten“ hint.
 | Status | Code           | When                                                  |
 | ------ | -------------- | ----------------------------------------------------- |
 | 400    | `bad_request`  | Body isn't valid JSON / `messages` not an array.      |
-| 400    | `payload_too_large` | More than 40 messages (above).                   |
+| 400    | `payload_too_large` | More than 40 messages (80 in the configurator's step flow; above). |
 | 401    | `unauthorized` | Missing or wrong `x-ms-chat-key`.                     |
 | 403    | `forbidden`    | Cross-origin request from an origin not in allowlist. |
 | 429    | `rate_limited` | `chat` bucket (20 req / 60 s).                        |
@@ -1191,8 +1210,11 @@ The curated Home-Gym-Konfigurator assortment for the plan's „+ Produkt hinzuf�
 }
 ```
 
-A picked product is hydrated through `GET /api/products` as usual before it enters the plan. Errors:
-the envelope of §1 (`500 internal_error`, `429` rate limit).
+A picked product is hydrated through `GET /api/products` as usual before it enters the plan — a
+`weights` card with more than one variant (plates, dumbbells in steps) as a pair (2×, a repeat adds 2),
+every other card as one. `role` comes from the catalog category, else the name; a strength machine
+that says „Plate Load“ is `base` (since 2026-10-23), not `weights`. Errors: the envelope of §1
+(`500 internal_error`, `429` rate limit).
 
 ## 3b. `GET /api/configurator/search?q=…&limit=…` (since 2026-10-23)
 
@@ -1200,12 +1222,15 @@ The search field of „+ Produkt hinzufügen“ — over the **whole shop**, not
 ([CONFIGURATOR.md](../CONFIGURATOR.md) §4). No secret, only an allowlisted origin (`products` bucket,
 send `x-ms-session` like §3); `Cache-Control: public, max-age=60, stale-while-revalidate=300`.
 
-- `q` — 2–80 characters (trimmed); every word must match the name, brand, category, tags or SKU
-  (case, umlauts / ß and simple plurals folded). Missing or shorter → `400 bad_request`.
+- `q` — 2–80 characters (trimmed); every word must match the name, brand, category, tags or a SKU
+  (every variant's too), folded on both sides: case, umlauts / ß, the ae / oe / ue spellings
+  („rudergeraet“) and plurals (also „-er“: „Laufbänder“ — only the exact word, so „Ständer“ never
+  finds „Stands“ —, and short ones: „Bänke“). Missing or shorter → `400 bad_request`.
 - `limit` — 1–12, default 8.
 
 Response: `{ "ok": true, "products": Card[] }` — the card shape of §3a (role included), best matches
-first (name prefix before substring before brand / category / tags), in-stock before sold-out; hidden
+first (a whole name word — also its singular / plural — before a name word's prefix, before a
+substring of the name, before brand / category / tags), in-stock before sold-out; hidden
 products never; `[]` for no match. Independent of the configurator switch. Errors: §1 envelope.
 
 ---
@@ -1491,7 +1516,7 @@ only `configurator_*` names and flat ids/enums/numbers). Read by the admin scree
 | `configurator_chip_clicked` | an answer chip of `suggest_replies` was sent | `{ topic, multi, count }` |
 | `configurator_plan_edited` | quantity, variant, remove or restore in the plan; since 2026-10-22 also an added product or weight step | `{ action }` — `qty` \| `variant` \| `remove` \| `restore` \| `add` \| `add_step` |
 | `configurator_cart_added` | „Alles in den Warenkorb“ landed (matches `%cart%`: counts as an add-to-cart click) | `{ items, units, value, partial }` — `value` = whole EUR of the lines that landed (plan prices; since the follow-up of 2026-10-21 — before, the plan total) |
-| `configurator_option_picked` | an option of `offer_plan_options` went into the plan („Auswählen“ / „Übernehmen“; since 2026-10-23) | `{ step, rank, items, multi, count }` — `rank` = 1-based position of the (first) picked option in its group, `items` = its item lines, `count` = options picked in this action |
+| `configurator_option_picked` | an option of `offer_plan_options` went into the plan („Auswählen“ / „Übernehmen“; since 2026-10-23) | `{ step, rank, items, multi, count }` — `rank` = 1-based position of the (first) picked option in Mo's list (the tool input — 1 = Mo's first option, his recommendation; positions count the options the widget left out too), `items` = its item lines, `count` = options picked in this action |
 | `configurator_option_skipped` | „Überspringen“ under an option group (2026-10-23) | `{ step }` |
 | `configurator_option_more` | „Andere Vorschläge“ under an option group (2026-10-23) | `{ step }` |
 
@@ -1522,7 +1547,7 @@ server-side capture-funnel names above, but does not store them:
 | `consent_copy_served`      | `GET /api/consent-copy?surface=signin` with `x-ms-session`, only while more than one variant is active (the `private, no-store` answer, §7.4) — at most once per session per 24 h, written after the answer (2026-10-08) | `{ variant, locale, reward, valueMoment }` — the variant served; `reward` / `valueMoment` = whether the served copy carries an approved, valid one (what the widget would render). Session-keyed, anonymous sessions included. |
 | `configurator_chat_started` | `POST /api/chat` — the fresh open (`messages: []`) of a configurator thread, at request time (2026-10-21) | `{ persona, location, space, training, level, budget, wishes, partner, locale, steps }` — answer ids (`goal` until 2026-10-22) (comma lists for `training` / `wishes`, `""` when open); `steps` (2026-10-23) = the widget declared `features: ["options"]`. Session-keyed. |
 | `configurator_plan_shown` | `POST /api/chat` — one per `show_gym_plan` call the widget renders (valid input, at least one known line), when the turn finished (2026-10-21) | `{ planNumber, items, units, productIds }` — catalog handles of the known lines (no variant ids, no names). Session-keyed. |
-| `configurator_options_shown` | `POST /api/chat` — one per `offer_plan_options` call with at least one renderable option, when the turn finished (2026-10-23) | `{ step, options, items, multi, productIds }` — options and item lines left after unknown ids; catalog handles only. Session-keyed. |
+| `configurator_options_shown` | `POST /api/chat` — one per `offer_plan_options` call with at least one renderable option, when the turn finished (2026-10-23) | `{ step, options, items, multi, productIds }` — only options whose every item is known and available (the widget's rule: an option with an unknown or sold-out id is left out); `items` and `productIds` come from those options; catalog handles only. Session-keyed. |
 
 Which admin KPI section reads which event: backend doc `ADMIN_DASHBOARD.md` §5.
 
@@ -1581,7 +1606,7 @@ What the backend keys by it:
   starts a new id (ACCOUNT_CONTRACT.md §5.1).
 - A new conversation is a fresh `conversationKey`, not a new session id. Anonymous and e-mail-only
   visitors MAY also rotate the id when they start a new chat.
-- The 40-message cap (§2) is per request — the history of one thread. After `payload_too_large` the
+- The 40-message cap (§2; 80 in the configurator's step flow) is per request — the history of one thread. After `payload_too_large` the
   widget starts a new thread (fresh `conversationKey`, empty `messages`); it does not need a new id.
 
 ---
@@ -2468,4 +2493,4 @@ section that holds the fact; this table repeats none of the detail.
 | 2026-10-21 | Home-Gym-Konfigurator: `context.type: "configurator"` (the page's answers + plan, on every turn of the thread); configurator-only tools `suggest_replies` (answer chips) and `show_gym_plan` (plan card + the page's editable plan, cart via `/cart/add.js`); widget events `configurator_*`, server-only `configurator_chat_started` / `configurator_plan_shown`. Additive: an older widget never sends the context and renders nothing for the tools. | §2 "`context.type: "configurator"`", "Tools the widget MUST render"; §5 |
 | 2026-10-21 (follow-up) | KPI accuracy, no shape change: `configurator_started` once per run (also for a prefilled handover and after „Neu starten“), `configurator_cart_added.value` = the lines that landed, `chat_opened` after a session rotation in an open panel, the plan thumbnail sends `product_cta_clicked`, an attribution token minted for a session that rotated meanwhile is dropped — the new session mints its own only once it is consulted (lazy); `configurator_plan_shown` only for rendered plans. | §5 |
 | 2026-10-22 | Konfigurator round after the partner feedback: `configurator.persona` is one of Mo's personas (six, two new: `design_lifestyle`, `weight_loss`) and sets the thread's archetype; `goal` dropped (old values still parse); plan items may carry `added: true`; `show_gym_plan` up to 20 items (the page plan's limit, the visitor's own lines included); new `GET /api/configurator/assortment`; `configurator_plan_edited.action` adds `add` / `add_step`. Additive for the widget: the 2026-10-21 build keeps working (its persona/goal ids map) — but it renders and echoes only 12 of Mo's lines and has no „+ Produkt hinzufügen“ / „+ Gewichtsstufe“, which Mo now mentions; upload the theme right after the deploy. | §1, §2 "`context.type: "configurator"`", `show_gym_plan`, §3a, §5 |
-| 2026-10-23 | Konfigurator step by step (third feedback round): `configurator.features` (`["options"]`) declares the new widget; then the configurator-only tool `offer_plan_options` (2–4 options per product type with pros / cons, picked into the page plan as `added: true` lines) is offered and Mo goes through the types one by one; new `GET /api/configurator/search` (whole-shop search for „+ Produkt hinzufügen“); widget events `configurator_option_picked` / `_skipped` / `_more`, server-only `configurator_options_shown`, `configurator_chat_started.steps`. Additive: a widget without `features` keeps the one-plan flow and never gets the tool. | §1, §2 "`context.type: "configurator"`", `offer_plan_options`, §3b, §5 |
+| 2026-10-23 | Konfigurator step by step (third feedback round): `configurator.features` (`["options"]`) declares the new widget; then the configurator-only tool `offer_plan_options` (2–4 options per product type with pros / cons, picked into the page plan as `added: true` lines) is offered and Mo goes through the types one by one; new `GET /api/configurator/search` (whole-shop search for „+ Produkt hinzufügen“); widget events `configurator_option_picked` / `_skipped` / `_more`, server-only `configurator_options_shown`, `configurator_chat_started.steps`. Additive: a widget without `features` keeps the one-plan flow and never gets the tool. Same day, after the review: up to 80 messages per request in the step flow; an option counts as shown only when every item is known and available (`shownOptions`, `configurator_options_shown`); `rank` = the position in Mo's list; a pick replaces the earlier pick of the same step (accessory / extra / multiSelect add); option texts accepted at twice the documented length; the search folds ae/oe/ue and „-er“ plurals and finds variant SKUs; „Plate Load“ machines are `base`. | §1, §2 "`context.type: "configurator"`", `offer_plan_options`, §3a, §3b, §5 |
