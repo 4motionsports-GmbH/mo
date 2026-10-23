@@ -771,9 +771,47 @@ test("searchCatalogCards: an „-er“ stem finds only the exact word („Ständ
   // never the prefix „halt“ („Haltungstrainer“) or the substring „hock“ („Shock“)
   assert.deepEqual(searchCatalogCards(cat, "Halter").map((c) => c.id), ["wall"]);
   assert.deepEqual(searchCatalogCards(cat, "Hocker"), []);
-  // a real „-er“ plural still finds the singular word, and the other way round
-  assert.deepEqual(searchCatalogCards(cat, "Bänder").map((c) => c.id), ["loop", "minis"]);
+  // a real „-er“ plural still finds the singular word, and the other way round (the exact word first)
+  assert.deepEqual(searchCatalogCards(cat, "Bänder").map((c) => c.id), ["minis", "loop"]);
   assert.deepEqual(searchCatalogCards(cat, "Band").map((c) => c.id), ["loop", "minis"]);
+});
+
+test("searchCatalogCards: the plan role the query names first, then the exact word, the shorter name, the name", () => {
+  // Small copies of the real catalog: before, equal scores sorted by name, so
+  // „Hanteln“ showed the dumbbell racks, „Rudergerät“ the strength machines
+  // and „Bank“ the „Curl Bank“ machine first.
+  const cat = [
+    { id: "aerobic-rack", name: "Aerobic Hantel Rack - für bis zu 60 Trainingshanteln", category: "Uncategorized", price: 499, inStock: true },
+    { id: "half-rack", name: "ATX® Half Rack - Hantel Rack - Kniebeugen-Rack - H 210 cm", category: "Power Racks", price: 899, inStock: true },
+    { id: "pyramid", name: "Hantelpyramide - für 10 Paar Hanteln - schwarz", category: "Free Weight Storage Racks", price: 129, inStock: true },
+    { id: "hexagon", name: "Hexagon Hanteln – Hantelsätze Gummi 5 bis 50 kg", category: "Dumbbells", price: 30, inStock: true },
+    { id: "hex", name: "Hex Hanteln Gummi - 1 bis 50 kg", category: "Dumbbells", price: 10, inStock: true },
+    { id: "swing", name: "NOHrD Swing Hantel Paar", category: "Dumbbells", price: 300, inStock: true },
+    { id: "lateral-row", name: "ATX® Lateral Row Machine - Rudergerät", category: "Weight Lifting Machines & Racks", price: 1999, inStock: true },
+    { id: "t-bar", name: "ATX® T-Bar Row Rudergerät", category: "Weight Lifting Machines & Racks", price: 899, inStock: true },
+    { id: "concept2", name: "Concept2 RowErg Rudergerät", category: "Rowing Machines", price: 1100, inStock: true },
+    { id: "waterrower", name: "Rudergerät WaterRower A1", category: "Rowing Machines", price: 999, inStock: true },
+    { id: "waterrower-club", name: "Rudergerät WaterRower Club", category: "Rowing Machines", price: 1499, inStock: false },
+    { id: "curl-bank", name: "ATX® Bizeps Maschine - Curl Bank", category: "Weight Lifting Machines & Racks", price: 799, inStock: true },
+    { id: "flat", name: "ATX® Flachbank mit Optionsaufnahme", category: "Weight Benches", price: 199, inStock: true },
+    { id: "foldable", name: "ATX® Hantelbank - klappbar - schwarz", category: "Weight Benches", price: 149, inStock: true },
+    { id: "gun-rack", name: "Langhantelablage / Gun Rack - zur Wandbefestigung", category: "Free Weight Storage Racks", price: 89, inStock: true },
+  ];
+  const ids = (/** @type {string} */ q) => searchCatalogCards(cat, q, 12).map((c) => c.id);
+  // „Hanteln“ names weights: the dumbbells first — the exact word before its
+  // singular („Hantel“), even with a shorter name —, then the racks, then prefixes and substrings
+  assert.deepEqual(ids("Hanteln"), ["hex", "hexagon", "swing", "pyramid", "aerobic-rack", "half-rack", "foldable", "gun-rack"]);
+  // „Rudergerät“ names cardio: the rowers before the strength line's rowing machines; sold-out last
+  assert.deepEqual(ids("Rudergerät"), ["waterrower", "concept2", "t-bar", "lateral-row", "waterrower-club"]);
+  assert.deepEqual(ids("rudergeraet"), ["waterrower", "concept2", "t-bar", "lateral-row", "waterrower-club"]);
+  // „Bank“ / „Bänke“ name accessories: the benches before the „Curl Bank“ machine with the exact word
+  assert.deepEqual(ids("Bank"), ["flat", "foldable", "curl-bank"]);
+  assert.deepEqual(ids("Bänke"), ["flat", "foldable", "curl-bank"]);
+  // the role counts for name matches only: a base unit that says „Rack“ only in
+  // its category stays behind the storage rack with the word in its name
+  assert.deepEqual(ids("Rack"), ["aerobic-rack", "half-rack", "gun-rack", "t-bar", "curl-bank", "lateral-row", "pyramid"]);
+  // a query naming no role: exact word, then the shorter name
+  assert.deepEqual(ids("Paar"), ["swing", "pyramid"]);
 });
 
 test("optionStepRows: guide order, only types with counts, German labels", () => {

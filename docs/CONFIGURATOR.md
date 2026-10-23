@@ -213,11 +213,14 @@ Prefilled answers are only preselected — the visitor still confirms with „We
   searches the **whole shop** (`GET /api/configurator/search?q=`, third round — before, the search only
   filtered the curated list and was gone when that list was empty): every word must match name, brand,
   category, tags or a SKU — every variant's too (folded on both sides: case, umlauts / ß, the ae / oe /
-  ue spellings, plurals incl. „-er“ and short ones like „Bänke“; `searchCatalogCards`); a whole name
-  word (or its singular / plural) first — „Kurzhanteln“ before „Kurzhantelablage“ —, then name
+  ue spellings, plurals incl. „-er“ and short ones like „Bänke“; `searchCatalogCards`); the exact name
+  word first, then its singular / plural — „Kurzhanteln“ before „Kurzhantelablage“ —, then name
   prefixes (an „-er“ stem only finds the exact word: „Laufbänder“ → „Laufband“, but „Ständer“,
-  „Halter“, „Hocker“ never „Stands“, „Haltungstrainer“, „Shock“), in-stock before sold-out, hidden
-  products never, at most 12 cards in the assortment's card shape; origin allowlist + `products` rate limit, cached 60 s. No embeddings — free per keystroke
+  „Halter“, „Hocker“ never „Stands“, „Haltungstrainer“, „Shock“); in-stock before sold-out, then the
+  name matches of the plan role the query itself names (`planRoleForProduct` of the query:
+  „Rudergerät“ → the rowers before the strength line's rowing machines, „Bank“ → the benches before the
+  „Curl Bank“, „Hanteln“ → the dumbbells before the dumbbell racks), then that score, the shorter name,
+  the name; hidden products never, at most 12 cards in the assortment's card shape; origin allowlist + `products` rate limit, cached 60 s. No embeddings — free per keystroke
   (about 1 ms per query on the full catalog; the folded fields are built once per catalog product).
   A weights card with more than one variant (plates, dumbbells in steps) goes in as a pair (2×, a
   repeat adds 2), every other card as one. Added lines and extra weight steps

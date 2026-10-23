@@ -720,9 +720,9 @@ export function selectAssortment(catalog, settings) {
 const ROLE_RULES = /** @type {ReadonlyArray<readonly [string, RegExp]>} */ ([
   ["flooring", /floor protection|gym mats?|bodenschutz|bodenmatte|puzzlematte|schutzmatte|unterlegmatte/i],
   ["accessory", /storage|ablage|st[äa]nder|collar|verschl[üu]ss|bench|hantelbank|\bbank\b|barbell|weightlifting bars?|langhantel|stange|handles?|griff|accessor|zubeh[öo]r|klimmzug|pull.?up bar|belt|g[üu]rtel|resistance bands?|widerstandsb[äa]nder?|\bbands?\b/i],
-  ["cardio", /treadmill|laufband|bikes?|ergometer|rowing|rudergerät|rower|elliptical|crosstrainer|cross.?trainer|stepper|stair|spinning|indoor.?cycl|cardio|walking.?pad/i],
+  ["cardio", /treadmill|laufband|bikes?|ergometer|rowing|ruderger[äa]t|rower|elliptical|crosstrainer|cross.?trainer|stepper|stair|spinning|indoor.?cycl|cardio|walking.?pad/i],
   ["base", /\bmachines?\b|maschine|plate.?load/i],
-  ["weights", /weight plates?|hantelscheibe|dumbbells?|kurzhantel|kettlebell|gewichtsscheibe|\bplates?\b|scheiben/i],
+  ["weights", /weight plates?|hantelscheibe|dumbbells?|kurzhantel|\bhanteln\b|kettlebell|gewichtsscheibe|\bgewichte\b|\bplates?\b|scheiben/i],
   ["base", /power racks?|half racks?|squat racks?|weight lifting (machines|racks)|smith|multipresse|power towers?|kraftstation|equipment sets|multi.?gym|cable|kabelzug|functional trainer|\brack\b|machines?/i],
 ]);
 
@@ -857,7 +857,7 @@ export const SEARCH_LIMITS = Object.freeze({ queryMin: 2, queryMax: 80, results:
 /**
  * The folded search fields of a catalog product, built once per product object
  * (the catalog is cached per instance, so every later query reuses them).
- * @type {WeakMap<object, { name: string, nameWords: Array<{ word: string, forms: string[], er: string }>, other: Array<readonly [string, number]> }>}
+ * @type {WeakMap<object, { name: string, nameWords: Array<{ word: string, forms: string[], er: string }>, other: Array<readonly [string, number]>, role: string }>}
  */
 const SEARCH_INDEX = new WeakMap();
 
@@ -878,6 +878,10 @@ function searchEntry(p) {
       [foldText([p.sku, ...variantSkus].filter(Boolean).join(" ")), 2],
       [foldText(p.id), 1],
     ],
+    role: planRoleForProduct(p),
+    // The role its own name names („Kettlebell-Ständer“ → accessory, filed
+    // under the category „Kettlebells“).
+    nameRole: planRoleForProduct({ name: p.name }),
   };
   SEARCH_INDEX.set(p, e);
   return e;
@@ -887,40 +891,62 @@ function searchEntry(p) {
  * The whole-shop search of the plan's „+ Produkt hinzufügen“ (GET
  * /api/configurator/search): a keyword match over name, brand, category,
  * tags and SKUs (the variants' too) — every query word must match somewhere
- * (folded: umlauts, ae/oe/ue, plurals). A whole name word counts most
- * („Kurzhanteln“ before „Kurzhantelablage“), then a name word's prefix, then
- * anywhere in the name; hidden products left out, in-stock before sold-out,
- * then by score and name. Pure and free (no embeddings).
+ * (folded: umlauts, ae/oe/ue, plurals). The exact name word counts most, then
+ * its singular / plural („Kurzhanteln“ before „Kurzhantelablage“), then a name
+ * word's prefix, then anywhere in the name; hidden products left out. Order:
+ * in-stock before sold-out, then name matches of the plan role the query
+ * itself names („Rudergerät“ → cardio: the rowers before the rowing machines
+ * of the strength line, „Bank“ → the benches before the „Curl Bank“, „Hanteln“
+ * → the dumbbells before the dumbbell racks; not a product whose own name
+ * names another role — the „Kettlebell-Ständer“), then score, the shorter name,
+ * the name. Pure and free (no embeddings).
  * @param {ReadonlyArray<AssortmentProduct & { images?: string[], shopifyUrl?: string, brand?: string, sku?: string, hideFromSearch?: boolean }>} catalog
  * @param {unknown} query
  * @param {number} [limit]
  * @returns {AssortmentCard[]}
  */
 export function searchCatalogCards(catalog, query, limit = SEARCH_LIMITS.defaultResults) {
-  const words = foldText(String(query ?? "").slice(0, SEARCH_LIMITS.queryMax))
+  const rawQuery = String(query ?? "").slice(0, SEARCH_LIMITS.queryMax);
+  const words = foldText(rawQuery)
     .split(/[^a-z0-9]+/)
     .filter((w) => w.length >= 2);
   if (!words.length) return [];
   const forms = words.map(wordForms);
   const max = Math.max(1, Math.min(SEARCH_LIMITS.results, Number.isInteger(limit) ? limit : SEARCH_LIMITS.defaultResults));
-  /** @type {Array<{ p: any, score: number }>} */
+  // The plan role the query itself names, as typed or folded / singular
+  // („Rudergerät“ → cardio, „Bänke“ → accessory, „Hanteln“ → weights); none
+  // for „extra“.
+  const named = planRoleForProduct({ name: [rawQuery, ...forms.flatMap((f) => f.forms)].join(" ") });
+  const queryRole = named === "extra" ? null : named;
+  /** @type {Array<{ p: any, score: number, roleHit: boolean }>} */
   const hits = [];
   for (const p of catalog ?? []) {
     if (!p || typeof p.id !== "string" || p.hideFromSearch === true) continue;
-    const { name, nameWords, other } = searchEntry(p);
+    const { name, nameWords, other, role, nameRole } = searchEntry(p);
     let score = 0;
     let all = true;
+    let inName = true;
     for (const wf of forms) {
       let best = 0;
-      // A German plural („Hantelbänke“, „Matten“, „Laufbänder“) also finds
-      // the singular, and the other way round (word forms on both sides).
-      if (nameWords.some((nw) => sameWord(wf, nw))) best = 4;
-      else {
-        for (const c of wf.forms) {
-          if (best < 3 && nameWords.some((nw) => nw.word.startsWith(c))) best = 3;
-          else if (best < 2 && name.includes(c)) best = 2;
-          for (const [text, weight] of other) {
-            if (best < weight && text.includes(c)) best = weight;
+      // The exact word first; a German plural („Hantelbänke“, „Matten“,
+      // „Laufbänder“) also finds the singular, and the other way round (word
+      // forms on both sides).
+      for (const nw of nameWords) {
+        if (nw.word === wf.word) {
+          best = 5;
+          break;
+        }
+        if (best < 4 && sameWord(wf, nw)) best = 4;
+      }
+      if (!best) {
+        if (wf.forms.some((c) => nameWords.some((nw) => nw.word.startsWith(c)))) best = 3;
+        else if (wf.forms.some((c) => name.includes(c))) best = 2;
+        else {
+          inName = false;
+          for (const c of wf.forms) {
+            for (const [text, weight] of other) {
+              if (best < weight && text.includes(c)) best = weight;
+            }
           }
         }
       }
@@ -930,12 +956,17 @@ export function searchCatalogCards(catalog, query, limit = SEARCH_LIMITS.default
       }
       score += best;
     }
-    if (all) hits.push({ p, score });
+    // The role boost needs the category's role — and a name that names no
+    // other one (the stand of the kettlebells is no kettlebell).
+    const roleHit = inName && queryRole !== null && role === queryRole && (nameRole === queryRole || nameRole === "extra");
+    if (all) hits.push({ p, score, roleHit });
   }
   hits.sort(
     (a, b) =>
       Number(b.p.inStock !== false) - Number(a.p.inStock !== false) ||
+      Number(b.roleHit) - Number(a.roleHit) ||
       b.score - a.score ||
+      String(a.p.name ?? "").length - String(b.p.name ?? "").length ||
       String(a.p.name ?? "").localeCompare(String(b.p.name ?? ""), "de")
   );
   return /** @type {AssortmentCard[]} */ (hits.slice(0, max).map((h) => assortmentCard(h.p)).filter(Boolean));
