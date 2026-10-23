@@ -57,7 +57,7 @@ export function KonfiguratorSection({
           <Stat
             label="Plan erstellt"
             value={num(s.plans)}
-            hint={`${num(summary.plansShown)} Pläne · ${f.planRate == null ? "—" : ratio(f.planRate)} der Beratungen`}
+            hint={`${num(summary.plansShown)} Pläne · ${num(summary.optionsPicked)} Auswahlen · ${f.planRate == null ? "—" : ratio(f.planRate)} der Beratungen`}
             info={STAGE_INFO.plans}
           />
           <Stat

@@ -10,7 +10,7 @@ import Link from "next/link";
 import { ExternalLink } from "lucide-react";
 import type { ConfiguratorKpis } from "@/lib/configurator-store";
 import { configuratorFunnel, configuratorLabel, personaAnswer } from "@/lib/configurator-core.mjs";
-import { eur, num, ratio } from "@/lib/admin-format.mjs";
+import { eur, num, plural, ratio } from "@/lib/admin-format.mjs";
 import { ADMIN_DATE_TIME_SHORT, formatAdmin } from "@/lib/admin-datetime.mjs";
 import { adminTabHref } from "@/lib/admin-tabs.mjs";
 import {
@@ -37,14 +37,14 @@ export const STAGE_INFO: Record<string, string> = {
   started: "Sitzungen, die einen Durchgang auf der Konfigurator-Seite begonnen haben — die erste Antwort gewählt oder, mit vorausgefüllten Angaben aus dem Link, direkt übergeben; „Neu starten“ beginnt einen neuen Durchgang (configurator_started).",
   handover: "Klick auf „Mo berät mich“ — die Angaben gehen an Mo (configurator_handover).",
   chats: "Mo hat die Beratung mit den Angaben gestartet (serverseitig, configurator_chat_started). Weniger als „übergeben“, wenn der Chat nicht antworten konnte (z. B. Rate-Limit).",
-  plans: "Mo hat mindestens einen Home-Gym-Plan gezeigt (show_gym_plan, serverseitig gezählt).",
+  plans: "Mo hat einen Home-Gym-Plan gezeigt (show_gym_plan, serverseitig gezählt) oder der Besucher hat eine von Mos Optionen in seinen Plan gewählt (Schritt für Schritt, configurator_option_picked).",
   carts: "„Alles in den Warenkorb“ im Plan wurde geklickt und der Warenkorb hat die Produkte angenommen (configurator_cart_added).",
-  orders: "Sitzungen mit einer bezahlten Bestellung im Zeitraum, deren letzte Beratung vor dem Kauf ein Konfigurator-Gespräch mit Home-Gym-Plan war (mo_orders; braucht die Analyse-Einwilligung im Shop für die Warenkorb-Markierung).",
+  orders: "Sitzungen mit einer bezahlten Bestellung im Zeitraum, deren letzte Beratung vor dem Kauf ein Konfigurator-Gespräch mit Home-Gym-Plan oder Mos Produkt-Optionen war (mo_orders; braucht die Analyse-Einwilligung im Shop für die Warenkorb-Markierung).",
 };
 
 /** The order rule, shared by the Konfigurator screen and the KPI screen. */
 export const ORDERS_INFO =
-  "Bezahlte Bestellungen im Zeitraum (nach Bestelldatum, wie „Umsatz durch Mo“), deren letzte Beratung vor dem Kauf ein Konfigurator-Gespräch mit Home-Gym-Plan war — sie sind in „Umsatz durch Mo“ enthalten, nicht zusätzlich; Erstattungen mindern den Umsatz.";
+  "Bezahlte Bestellungen im Zeitraum (nach Bestelldatum, wie „Umsatz durch Mo“), deren letzte Beratung vor dem Kauf ein Konfigurator-Gespräch mit Home-Gym-Plan oder Mos Produkt-Optionen war — sie sind in „Umsatz durch Mo“ enthalten, nicht zusätzlich; Erstattungen mindern den Umsatz.";
 
 /** What the cart figure is. */
 export const CART_INFO =
@@ -59,7 +59,7 @@ export const FUNNEL_INFO = (
     </p>
     <p>
       Seitenaufrufe zählen nur mit Analyse-Einwilligung im Shop. Bestellungen: bezahlte Bestellungen im Zeitraum, deren
-      letzte Beratung vor dem Kauf ein Konfigurator-Gespräch mit Home-Gym-Plan war — dieselben wie „davon über den
+      letzte Beratung vor dem Kauf ein Konfigurator-Gespräch mit Home-Gym-Plan oder Mos Produkt-Optionen war — dieselben wie „davon über den
       Home-Gym-Konfigurator“ in „Wie der Umsatz entstand“ (docs/CONFIGURATOR.md §6).
     </p>
   </div>
@@ -104,7 +104,7 @@ export function KonfiguratorKpis({
           <Stat
             label="Plan erstellt"
             value={num(s.plans)}
-            hint={`${num(kpis.plansShown)} Pläne · ${f.planRate == null ? "—" : ratio(f.planRate)} der Beratungen`}
+            hint={`${num(kpis.plansShown)} Pläne · ${num(kpis.optionsPicked)} Auswahlen · ${f.planRate == null ? "—" : ratio(f.planRate)} der Beratungen`}
           />
           <Stat
             label="Warenkorb"
@@ -177,9 +177,9 @@ export function KonfiguratorKpis({
             <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
               <KpiSection
                 id="konfigurator-produkte"
-                title="Produkte in Mos Plänen"
-                info="Wie viele Beratungen das Produkt in mindestens einem Plan hatten (Top 12)."
-                empty={kpis.topProducts.length === 0 ? "Noch kein Plan im Zeitraum." : null}
+                title="Produkte in Mos Plänen und Optionen"
+                info="Wie viele Beratungen das Produkt in mindestens einem Plan oder einer Produkt-Option von Mo hatten (Top 12)."
+                empty={kpis.topProducts.length === 0 ? "Noch kein Plan und keine Option im Zeitraum." : null}
               >
                 <Card>
                   <CardContent className="p-5">
@@ -211,6 +211,38 @@ export function KonfiguratorKpis({
             </div>
 
             <KpiSection
+              id="konfigurator-schritte"
+              title="Schritt für Schritt"
+              info="Mos Produkt-Optionen je Produktart (seit 23.10.2026): wie oft Mo Optionen gezeigt hat, wie oft Besucher eine Option in ihren Plan gewählt, den Schritt übersprungen oder andere Vorschläge verlangt haben. Gezählt werden Ereignisse, nicht Sitzungen."
+              empty={kpis.steps.length === 0 ? "Im Zeitraum hat Mo noch keine Produkt-Optionen gezeigt." : null}
+            >
+              <Card>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Produktart</TableHead>
+                      <TableHead className="text-right">Gezeigt</TableHead>
+                      <TableHead className="text-right">Gewählt</TableHead>
+                      <TableHead className="text-right">Übersprungen</TableHead>
+                      <TableHead className="text-right">Andere Vorschläge</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {kpis.steps.map((r) => (
+                      <TableRow key={r.step}>
+                        <TableCell className="font-medium">{r.label}</TableCell>
+                        <TableCell className="text-right tabular-nums">{num(r.shown)}</TableCell>
+                        <TableCell className="text-right tabular-nums">{num(r.picked)}</TableCell>
+                        <TableCell className="text-right tabular-nums">{num(r.skipped)}</TableCell>
+                        <TableCell className="text-right tabular-nums">{num(r.more)}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </Card>
+            </KpiSection>
+
+            <KpiSection
               id="konfigurator-sitzungen"
               title="Letzte Konfigurator-Beratungen"
               info="Die 12 neuesten Beratungen aus dem Konfigurator im Zeitraum, mit ihren Angaben. „Gespräch“ öffnet das Transkript in Gespräche."
@@ -234,14 +266,21 @@ export function KonfiguratorKpis({
                           {formatAdmin(r.startedAt, ADMIN_DATE_TIME_SHORT)}
                         </TableCell>
                         <TableCell className="text-xs text-muted-foreground">{answersSummary(r.answers)}</TableCell>
-                        <TableCell className="text-right tabular-nums">{num(r.plans)}</TableCell>
+                        <TableCell className="text-right tabular-nums">
+                          {num(r.plans)}
+                          {r.picks > 0 ? (
+                            <span className="block text-2xs text-muted-foreground">
+                              {plural(r.picks, "Auswahl", "Auswahlen")}
+                            </span>
+                          ) : null}
+                        </TableCell>
                         <TableCell>
                           <div className="flex flex-wrap gap-1">
                             {r.ordered ? (
                               <StatusBadge tone="success">Bestellt</StatusBadge>
                             ) : r.cart ? (
                               <StatusBadge tone="accent">Warenkorb</StatusBadge>
-                            ) : r.plans > 0 ? (
+                            ) : r.plans > 0 || r.picks > 0 ? (
                               <StatusBadge tone="info">Plan</StatusBadge>
                             ) : (
                               <StatusBadge tone="neutral">Beratung</StatusBadge>

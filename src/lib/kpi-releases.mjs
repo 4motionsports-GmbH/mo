@@ -136,6 +136,13 @@ export const KPI_RELEASES = Object.freeze([
     detail:
       "Auf der Konfigurator-Seite wählen Besucher:innen ihren Trainingsfokus aus sechs Typen — das sind Mos Personas, zwei davon neu („Design & Lifestyle“, „Abnehmen & Fitness“); die Wahl setzt Mos Beratungsmodus direkt. Die Frage „Ich will …“ (Ziel) entfällt; ältere Angaben zählen unter dem passenden Typ. Im Plan können Besucher:innen selbst Produkte und Gewichtsstufen ergänzen (Widget-Upload nötig).",
   },
+  {
+    date: "2026-10-23",
+    key: "konfigurator-schritt-fuer-schritt",
+    title: "Konfigurator: Mo geht die Produktarten Schritt für Schritt durch",
+    detail:
+      "Mit dem neuen Widget zeigt Mo im Konfigurator je Produktart (Basisgerät, Zubehör, Hantelbank, Gewichte, Bodenschutz) bis zu vier Optionen mit Vor- und Nachteilen; Besucher:innen wählen in ihren Plan, überspringen oder verlangen andere Vorschläge — statt eines fertigen Sets. „Plan erstellt“ zählt seitdem auch Sitzungen mit einer gewählten Option; Mos Produkt-Optionen zählen als Beratung für die Bestell-Zuordnung und machen ein Gespräch zu „über den Konfigurator“. Im Plan sucht „+ Produkt hinzufügen“ im ganzen Shop.",
+  },
 ]);
 
 /** First day the opt-in events carry source and outcome (OI1). */

@@ -17,14 +17,16 @@ import { REALISED_FINANCIAL_STATUSES } from "./kpi-revenue-core.mjs";
 import { CONSULTATION_ANCHOR_TOOLS } from "./order-attribution.mjs";
 import {
   CONFIGURATOR_FIELDS,
-  CONFIGURATOR_PLAN_TOOL,
+  CONFIGURATOR_PLAN_TOOLS,
   CONFIGURATOR_SETTINGS_KEY,
   CONFIGURATOR_TOOLS,
   CONFIGURATOR_WIDGET_EVENTS,
   DEFAULT_CONFIGURATOR_SETTINGS,
   KPI_CONFIGURATOR_CHAT_STARTED,
+  KPI_CONFIGURATOR_OPTIONS_SHOWN,
   KPI_CONFIGURATOR_PLAN_SHOWN,
   answerDistribution,
+  optionStepRows,
   parseConfiguratorSettings,
   selectAssortment,
   unknownExtraIds,
@@ -32,6 +34,10 @@ import {
 } from "./configurator-core.mjs";
 import type { KpiRange } from "./kpi-range";
 import type { Product } from "./types";
+
+// A thread with a Home-Gym plan or the step-by-step product options — the rule
+// „über den Konfigurator“ (configurator-core CONFIGURATOR_PLAN_TOOLS).
+const CONFIGURATOR_THREAD_TOOLS = [...CONFIGURATOR_PLAN_TOOLS];
 
 export type { ConfiguratorSettings };
 
@@ -154,6 +160,9 @@ export interface ConfiguratorSummary {
     orders: number;
   };
   plansShown: number;
+  /** Step-by-step flow (2026-10-23): option groups Mo showed, options the visitors picked. */
+  optionsShown: number;
+  optionsPicked: number;
   chipClicks: number;
   planEdits: number;
   cartAdds: number;
@@ -169,12 +178,16 @@ export interface ConfiguratorKpis extends ConfiguratorSummary {
   distributions: Array<{ key: string; label: string; rows: Array<{ key: string; label: string; count: number }> }>;
   partners: Array<{ key: string; label: string; count: number }>;
   chipTopics: Array<{ key: string; count: number }>;
+  /** Step-by-step flow per product type: option groups shown, picks, skips, „Andere Vorschläge“. */
+  steps: Array<{ step: string; label: string; shown: number; picked: number; skipped: number; more: number }>;
   topProducts: Array<{ id: string; name: string; count: number; inStock: boolean | null }>;
   recent: Array<{
     sessionId: string;
     startedAt: string;
     answers: Record<string, string>;
     plans: number;
+    /** Options of Mo the visitor picked into the plan (step-by-step flow). */
+    picks: number;
     cart: boolean;
     ordered: boolean;
     conversationId: number | null;
@@ -201,9 +214,12 @@ async function queryConfiguratorSummary(range: KpiRange, sql: Sql): Promise<Conf
         count(DISTINCT session_id) FILTER (WHERE event = ${W.started})::int AS started,
         count(DISTINCT session_id) FILTER (WHERE event = ${W.handover})::int AS handover,
         count(DISTINCT session_id) FILTER (WHERE event = ${KPI_CONFIGURATOR_CHAT_STARTED})::int AS chats,
-        count(DISTINCT session_id) FILTER (WHERE event = ${KPI_CONFIGURATOR_PLAN_SHOWN})::int AS plans,
+        count(DISTINCT session_id) FILTER (WHERE event = ${KPI_CONFIGURATOR_PLAN_SHOWN}
+                                              OR event = ${W.optionPicked})::int AS plans,
         count(DISTINCT session_id) FILTER (WHERE event = ${W.cartAdded})::int AS carts,
         count(*) FILTER (WHERE event = ${KPI_CONFIGURATOR_PLAN_SHOWN})::int AS plans_shown,
+        count(*) FILTER (WHERE event = ${KPI_CONFIGURATOR_OPTIONS_SHOWN})::int AS options_shown,
+        count(*) FILTER (WHERE event = ${W.optionPicked})::int AS options_picked,
         count(*) FILTER (WHERE event = ${W.chipClicked})::int AS chip_clicks,
         count(*) FILTER (WHERE event = ${W.planEdited})::int AS plan_edits,
         count(*) FILTER (WHERE event = ${W.cartAdded})::int AS cart_adds,
@@ -213,7 +229,8 @@ async function queryConfiguratorSummary(range: KpiRange, sql: Sql): Promise<Conf
                           THEN (data->>'value')::numeric ELSE 0 END), 0)::float AS cart_value
         FROM kpi_events
        WHERE event IN (${W.viewed}, ${W.started}, ${W.handover}, ${KPI_CONFIGURATOR_CHAT_STARTED},
-                       ${KPI_CONFIGURATOR_PLAN_SHOWN}, ${W.cartAdded}, ${W.chipClicked}, ${W.planEdited})
+                       ${KPI_CONFIGURATOR_PLAN_SHOWN}, ${W.cartAdded}, ${W.chipClicked}, ${W.planEdited},
+                       ${KPI_CONFIGURATOR_OPTIONS_SHOWN}, ${W.optionPicked})
          AND session_id IS NOT NULL
          AND session_id NOT LIKE 'livecheck-%'
          AND created_at >= ${range.from}::date
@@ -230,7 +247,7 @@ async function queryConfiguratorSummary(range: KpiRange, sql: Sql): Promise<Conf
          AND o.session_id IS NOT NULL
          AND EXISTS (
            SELECT 1 FROM messages g
-            WHERE g.tool_name = ${CONFIGURATOR_PLAN_TOOL}
+            WHERE g.tool_name = ANY(${CONFIGURATOR_THREAD_TOOLS}::text[])
               AND g.created_at <= o.processed_at
               AND g.conversation_id = (
                 SELECT m.conversation_id FROM messages m
@@ -255,6 +272,8 @@ async function queryConfiguratorSummary(range: KpiRange, sql: Sql): Promise<Conf
       orders: Number(o.sessions ?? 0),
     },
     plansShown: Number(s.plans_shown ?? 0),
+    optionsShown: Number(s.options_shown ?? 0),
+    optionsPicked: Number(s.options_picked ?? 0),
     chipClicks: Number(s.chip_clicks ?? 0),
     planEdits: Number(s.plan_edits ?? 0),
     cartAdds: Number(s.cart_adds ?? 0),
@@ -294,7 +313,7 @@ export async function getConfiguratorKpis(range: KpiRange, sql: Sql | null = get
   const configuratorTools = [...CONFIGURATOR_TOOLS];
   const W = CONFIGURATOR_WIDGET_EVENTS;
   try {
-    const [summary, distRows, chipRows, productRows, recentRows] = await Promise.all([
+    const [summary, distRows, chipRows, productRows, recentRows, stepRows] = await Promise.all([
       queryConfiguratorSummary(range, sql),
       sql`
         SELECT f.key, COALESCE(f.value, '') AS value, count(*)::int AS n
@@ -331,7 +350,7 @@ export async function getConfiguratorKpis(range: KpiRange, sql: Sql | null = get
          CROSS JOIN LATERAL jsonb_array_elements_text(
            CASE WHEN jsonb_typeof(e.data->'productIds') = 'array' THEN e.data->'productIds' ELSE '[]'::jsonb END
          ) AS pid
-         WHERE e.event = ${KPI_CONFIGURATOR_PLAN_SHOWN}
+         WHERE e.event IN (${KPI_CONFIGURATOR_PLAN_SHOWN}, ${KPI_CONFIGURATOR_OPTIONS_SHOWN})
            AND e.created_at >= ${range.from}::date
            AND e.created_at < (${range.to}::date + 1)
          GROUP BY pid
@@ -361,6 +380,9 @@ export async function getConfiguratorKpis(range: KpiRange, sql: Sql | null = get
                (SELECT count(*)::int FROM kpi_events p
                  WHERE p.session_id = l.session_id AND p.event = ${KPI_CONFIGURATOR_PLAN_SHOWN}
                    AND p.created_at >= l.created_at) AS plans,
+               (SELECT count(*)::int FROM kpi_events p
+                 WHERE p.session_id = l.session_id AND p.event = ${W.optionPicked}
+                   AND p.created_at >= l.created_at) AS picks,
                EXISTS (SELECT 1 FROM kpi_events k
                         WHERE k.session_id = l.session_id AND k.event = ${W.cartAdded}
                           AND k.created_at >= l.created_at) AS cart,
@@ -369,7 +391,7 @@ export async function getConfiguratorKpis(range: KpiRange, sql: Sql | null = get
                           AND upper(COALESCE(o.financial_status, '')) = ANY(${realised}::text[])
                           AND EXISTS (
                             SELECT 1 FROM messages g
-                             WHERE g.tool_name = ${CONFIGURATOR_PLAN_TOOL}
+                             WHERE g.tool_name = ANY(${CONFIGURATOR_THREAD_TOOLS}::text[])
                                AND g.created_at <= o.processed_at
                                AND g.conversation_id = (
                                  SELECT m.conversation_id FROM messages m
@@ -388,6 +410,19 @@ export async function getConfiguratorKpis(range: KpiRange, sql: Sql | null = get
                  LIMIT 1) AS conversation_id
           FROM latest l
          ORDER BY l.created_at DESC
+      `,
+      sql`
+        SELECT CASE WHEN data->>'step' ~ '^[a-z]{1,12}$' THEN data->>'step' ELSE 'extra' END AS step,
+               count(*) FILTER (WHERE event = ${KPI_CONFIGURATOR_OPTIONS_SHOWN})::int AS shown,
+               count(*) FILTER (WHERE event = ${W.optionPicked})::int AS picked,
+               count(*) FILTER (WHERE event = ${W.optionSkipped})::int AS skipped,
+               count(*) FILTER (WHERE event = ${W.optionMore})::int AS more
+          FROM kpi_events
+         WHERE event IN (${KPI_CONFIGURATOR_OPTIONS_SHOWN}, ${W.optionPicked}, ${W.optionSkipped}, ${W.optionMore})
+           AND session_id NOT LIKE 'livecheck-%'
+           AND created_at >= ${range.from}::date
+           AND created_at < (${range.to}::date + 1)
+         GROUP BY 1
       `,
     ]);
 
@@ -433,6 +468,7 @@ export async function getConfiguratorKpis(range: KpiRange, sql: Sql | null = get
       created_at: string | Date;
       data: Record<string, unknown> | null;
       plans: number;
+      picks: number;
       cart: boolean;
       ordered: boolean;
       conversation_id: number | string | null;
@@ -444,6 +480,7 @@ export async function getConfiguratorKpis(range: KpiRange, sql: Sql | null = get
         startedAt: new Date(r.created_at).toISOString(),
         answers,
         plans: Number(r.plans) || 0,
+        picks: Number(r.picks) || 0,
         cart: Boolean(r.cart),
         ordered: Boolean(r.ordered),
         conversationId: r.conversation_id != null ? Number(r.conversation_id) : null,
@@ -455,6 +492,7 @@ export async function getConfiguratorKpis(range: KpiRange, sql: Sql | null = get
       distributions: distributions.filter((d) => d.key !== "partner"),
       partners,
       chipTopics: (chipRows as Array<{ topic: string; n: number }>).map((r) => ({ key: r.topic, count: Number(r.n) || 0 })),
+      steps: optionStepRows(stepRows as Array<{ step: string; shown: number; picked: number; skipped: number; more: number }>),
       topProducts,
       recent,
     };

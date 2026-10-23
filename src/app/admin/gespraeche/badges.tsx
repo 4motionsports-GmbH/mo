@@ -29,6 +29,7 @@ export const TOOL_LABELS: Record<string, string> = {
   get_order_status: "Bestellung",
   suggest_replies: "Antwort-Chips",
   show_gym_plan: "Home-Gym-Plan",
+  offer_plan_options: "Produkt-Optionen",
 };
 
 const TIER_TONE: Record<AdminTier, StatusTone> = {

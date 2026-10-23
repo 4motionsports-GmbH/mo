@@ -154,6 +154,14 @@ export const RELEASE_EFFECTS = Object.freeze({
   // weight steps and customer-added plan lines — behaviour of the configurator
   // threads (plans, cart value), nothing counted differently.
   "konfigurator-personas": { measurement: [], product: ["chat", "journey"] },
+  // Step-by-step choice (2026-10-23): „Plan erstellt“ also counts picks
+  // (chat.configuratorPlans), the options are a consultation anchor and widen
+  // „über den Konfigurator“ (attribution + revenue.viaConfigurator); the flow
+  // itself is behaviour.
+  "konfigurator-schritt-fuer-schritt": {
+    measurement: ["chat.configuratorPlans", "revenue.viaConfigurator", ...ATTRIBUTION],
+    product: ["chat", "journey"],
+  },
 });
 
 /** What flipping a switch changes (switch keys of business-snapshot snapshotSwitches). */
