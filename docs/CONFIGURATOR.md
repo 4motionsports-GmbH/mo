@@ -283,10 +283,10 @@ and booleans only — never a name, text or e-mail.
 
 | File | What |
 | --- | --- |
-| `sections/ms-home-gym-configurator.liquid` | the landing page: hero with the partner seals, configurator (persona card with the seals), Mo dock, plan host, „So funktioniert's“, „Starke Partner“; all texts and the seals are section settings |
-| `assets/ms-home-gym-configurator.js` / `.css` | page logic (answer cards, prefill, partner, handover, edit, stepper, KPI) and styles — light design after the Performance campaign mail (accent light blue `#008ccb`, primary button red `#e30613`) in the homepage's structure: sections alternate `#ffffff` / `#f9f9f9`, headings as a blue kicker over a regular-weight headline („Darf in keinem Gym fehlen. / Bestseller.“), no divider lines (second round of 22.10.2026) |
+| `sections/ms-home-gym-configurator.liquid` | the landing page: hero (with the photo of the setting `hero_image`, else white) with the partner seals, configurator (three cards with the badges SCHRITT 01–03, persona card with the seals), Mo dock, plan host, „So funktioniert's“, „Starke Partner“; all texts, the photo and the seals are section settings |
+| `assets/ms-home-gym-configurator.js` / `.css` | page logic (answer cards, prefill, partner, handover, edit, stepper, KPI) and styles — light design after the Performance campaign mail (accent light blue `#008ccb`) in the homepage's structure: sections alternate `#ffffff` / `#f9f9f9`, headings as a blue kicker over a regular-weight headline („Darf in keinem Gym fehlen. / Bestseller.“), no divider lines (second round of 22.10.2026); buttons like the homepage's „MOTION SPORTS – Learn more“ (black pill, blue with a lift, glow and shine on hover; blue on the photo; outline pill as secondary) — no red since the third round of 23.10.2026 |
 | `templates/page.home-gym-mo.json` | the page template (assign it to a page, or open any page with `?view=home-gym-mo`) |
-| `assets/ms-chat-widget.js` / `.css` | docked mode (`[data-ms-chat-dock]`), `window.MS_CHAT.configurator` (`start`, `update`, `restart`, `track`, `state`), the `ms-chat:configurator` events, chips, plan card, plan host („+ Produkt hinzufügen“, „+ Gewichtsstufe“, weights hint), cart add |
+| `assets/ms-chat-widget.js` / `.css` | docked mode (`[data-ms-chat-dock]`), `window.MS_CHAT.configurator` (`start`, `update`, `restart`, `track`, `state`), the `ms-chat:configurator` events, chips, plan card, Mo's option cards (`ms-chat-offer`: „Auswählen“ / „Übernehmen“, „Überspringen“ / „Andere Vorschläge“), plan host („+ Produkt hinzufügen“ with the whole-shop search, „+ Gewichtsstufe“, weights hint, picked lines „Von dir gewählt“), cart add; the homepage buttons in the page plan and the dock only — the floating widget on every other page is unchanged |
 
 The existing static guide (`templates/page.home-gym-konfigurator.json`, blocks `ai_gen_block_296597c` /
 `fc74bf0`) is left untouched. The widget must render on the page (theme setting „AI Advisor“ on, the
@@ -302,8 +302,27 @@ on phones) and drops the old ones (`eyebrow`, `subheading`, `usp_1…3`, `seal_l
 Empfehlungssiegel **von** Men's und Women's Health“) for `seal_caption`, `mo_hello` („Hallo, ich bin
 Mo.“) and `mo_lead` (one sentence) for `mo_title` / `mo_intro` — the panel's three checkmark lines are
 gone —, plus the checkbox `hero_intro_caps` („Einleitung in Großbuchstaben“, off: the blue line stays
-in mixed case, as the client preferred for the long sentence). `templates/page.home-gym-mo.json` must
-**not** be re-uploaded — that would reset the uploaded seals.
+in mixed case, as the client preferred for the long sentence). The third round (23.10.2026) adds
+`hero_image` („Bild (optional)“ — Anna's photo; the theme editor's focal point sets the crop) and
+`partners_copy` („KI-Home-Gym-Berater“ instead of „KI-Fitnessberater“) for `partners_text`; the progress
+labels („Grundeinstellungen“, „Beratung mit Mo“, „Dein Plan“, „Warenkorb“), the step-3 text of „So
+funktioniert's“, the badges and the Mo panel's line „KI-Home-Gym-Berater · kostenlos & unverbindlich“
+are in the section's code, as are the docked Mo's „Online · KI-Home-Gym-Berater“ and its footer line
+(widget, dock only). `templates/page.home-gym-mo.json` must **not** be re-uploaded — that would reset
+the uploaded seals and the photo.
+
+**Hero with the photo** (third round): from 750 px a dark banner — the photo fills it from about 30 %
+of the width to the right edge (38 % up to 989 px) and fades into the dark on the left, so the rack
+never sits under the copy (white headline, light-blue kicker, the blue button); the seals sit half on
+the photo's lower edge, the caption next to them on white. Phones: the photo on top (16:10), then the
+copy and the seals on white. Without a photo the white hero of the second round stays.
+
+**Step by step on the page:** Mo's options appear as cards in the docked chat (picture, name, price,
+the lines of a bundle, badge, ✓ pros and – cons); a pick puts the lines into the plan on the page —
+also when Mo showed no plan yet (the plan then starts as „Dein Home-Gym-Plan“ of the visitor's
+lines) — and a later pick in the same step replaces the earlier one. The sign-in and e-mail popups wait
+in a configurator thread until Mo shows a complete plan, so in the step flow they do not interrupt
+(the header's „Anmelden“ / „Per E-Mail teilen“ stay available).
 
 **Persona tiles:** every title on two lines (a fixed break, `|` in the page's vocabulary — hidden on
 phones, where each tile is one row), the subtitles of the client (second round: „Platzsparende
@@ -312,11 +331,12 @@ Fitnesslösungen für den optimalen Einstieg.“, „Vielseitige Fitnessgeräte 
 same texts as `subDe` in `configurator-core.mjs`, which Mo reads in the answers line.
 
 Screenshots (local harness: the real section and widget, Mo's dialogue mocked, placeholder seals):
-[`screenshots/konfigurator/`](./screenshots/konfigurator/) — storefront after the second round of
-22.10.2026 (homepage structure, persona card, Mo's panel, handover on the phone, plan with weight
-steps and own lines, „+ Produkt hinzufügen“, „So funktioniert's“, „Starke Partner“; 1440 / 1024 /
-390 px), admin 1440 / 1024 px in light and
-dark (the persona distribution with first-version answers mapped); the KPI integration (`kpi-section-*`, `kpi-umsatz-wege-*`,
+[`screenshots/konfigurator/`](./screenshots/konfigurator/) — storefront after the third round of
+23.10.2026 (`storefront-r3-*`: the photo hero at 1440 / 1024 / 390 px, the step badges, Mo's options
+for the base unit, accessories and weights, the plan built from picks, the whole-shop search) and the
+second round of 22.10.2026 (persona card, Mo's panel, handover on the phone, plan with weight steps
+and own lines, „So funktioniert's“, „Starke Partner“), admin 1440 / 1024 px in light and dark
+(„Schritt für Schritt“, the persona distribution with first-version answers mapped); the KPI integration (`kpi-section-*`, `kpi-umsatz-wege-*`,
 `kpi-bestellungen-*`, `gespraeche-plan-*`) on local seed data.
 
 ## 8. Limits
