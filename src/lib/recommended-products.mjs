@@ -36,6 +36,9 @@ const PRODUCT_CARD_TOOLS = new Set([
   // is a recommended product, so a plan counts like its show_product cards
   // for the summary cart and the attribution overlap.
   "show_gym_plan",
+  // The step-by-step choice (2026-10-23): every offered option's products
+  // were discussed (not a selection — the visitor's pick goes into the plan).
+  "offer_plan_options",
 ]);
 
 // The ONE tool that declares an explicit RECOMMENDATION card: Mo calls
@@ -76,6 +79,16 @@ export function productIdsFromToolCall(inv) {
   if (Array.isArray(obj.items)) {
     for (const it of obj.items) {
       if (it && typeof it === "object" && typeof it.productId === "string") out.push(it.productId);
+    }
+  }
+  // offer_plan_options: { options: [{ items: [{ productId, quantity }] }] }
+  if (Array.isArray(obj.options)) {
+    for (const o of obj.options) {
+      const items = o && typeof o === "object" ? /** @type {{ items?: unknown }} */ (o).items : null;
+      if (!Array.isArray(items)) continue;
+      for (const it of items) {
+        if (it && typeof it === "object" && typeof it.productId === "string") out.push(it.productId);
+      }
     }
   }
   return out;

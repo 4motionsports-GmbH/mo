@@ -52,6 +52,13 @@ export interface PersistTurnInput {
   assistantText: string;
   /** Tool calls the assistant fired this turn. */
   assistantToolCalls: ToolInvocation[];
+  /**
+   * Home-Gym-Konfigurator, step-by-step flow (2026-10-23): the plan as it
+   * stands on the page (ids / variant refs, sent with every turn). When
+   * present and non-empty it IS the selection — the visitor built it from
+   * Mo's options — instead of the latest add_to_cart / show_gym_plan call.
+   */
+  planSelection?: string[] | null;
   /** Stable id for the assistant turn (provider response id). */
   assistantMessageId: string;
   /**
@@ -296,7 +303,10 @@ export async function persistTurn(input: PersistTurnInput): Promise<boolean> {
     // scratch each turn — the widget re-sends the whole history — so the
     // stored value always mirrors the latest selection state, including a
     // switch to an alternative (replacement, not accumulation).
-    const selection = latestSelectedProductIds(allToolCalls);
+    const selection =
+      input.planSelection && input.planSelection.length > 0
+        ? [...new Set(input.planSelection)]
+        : latestSelectedProductIds(allToolCalls);
 
     // Count includes the assistant turn we're about to write.
     const messageCount = input.history.length + 1;

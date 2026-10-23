@@ -27,7 +27,11 @@ import { getSql, type Sql } from "./db";
 import { reportError } from "./observability";
 import { KPI_MO_ORDER_MARKER_UNRESOLVED } from "./kpi-events";
 import { CONSULTATION_ANCHOR_TOOLS, countUnresolvedMarkers } from "./order-attribution.mjs";
-import { CONFIGURATOR_PLAN_TOOL } from "./configurator-core.mjs";
+import { CONFIGURATOR_PLAN_TOOLS } from "./configurator-core.mjs";
+
+// A thread with a Home-Gym plan or the step-by-step product options
+// (configurator-core CONFIGURATOR_PLAN_TOOLS) — the rule „über den Konfigurator“.
+const CONFIGURATOR_THREAD_TOOLS = [...CONFIGURATOR_PLAN_TOOLS];
 import { isAttributionSessionAnchorEnabled } from "./platform-flags.mjs";
 import { attributionWindowDays } from "./mo-orders-store";
 import { previousPeriod } from "./mo-revenue.mjs";
@@ -173,7 +177,7 @@ export async function getMoRevenueData(range: KpiRange, sql: Sql | null = getSql
                o.attribution_source, o.discount_codes, o.recommended_overlap,
                (o.session_id IS NOT NULL AND EXISTS (
                  SELECT 1 FROM messages g
-                  WHERE g.tool_name = ${CONFIGURATOR_PLAN_TOOL}
+                  WHERE g.tool_name = ANY(${CONFIGURATOR_THREAD_TOOLS}::text[])
                     AND g.created_at <= o.processed_at
                     AND g.conversation_id = (
                       SELECT m.conversation_id FROM messages m
@@ -193,7 +197,7 @@ export async function getMoRevenueData(range: KpiRange, sql: Sql | null = getSql
                    o.attribution_source, o.discount_codes, o.recommended_overlap,
                    (o.session_id IS NOT NULL AND EXISTS (
                      SELECT 1 FROM messages g
-                      WHERE g.tool_name = ${CONFIGURATOR_PLAN_TOOL}
+                      WHERE g.tool_name = ANY(${CONFIGURATOR_THREAD_TOOLS}::text[])
                         AND g.created_at <= o.processed_at
                         AND g.conversation_id = (
                           SELECT m.conversation_id FROM messages m
@@ -219,7 +223,7 @@ export async function getMoRevenueData(range: KpiRange, sql: Sql | null = getSql
                o.line_items,
                (o.session_id IS NOT NULL AND EXISTS (
                  SELECT 1 FROM messages g
-                  WHERE g.tool_name = ${CONFIGURATOR_PLAN_TOOL}
+                  WHERE g.tool_name = ANY(${CONFIGURATOR_THREAD_TOOLS}::text[])
                     AND g.created_at <= COALESCE(o.processed_at, now())
                     AND g.conversation_id = (
                       SELECT m.conversation_id FROM messages m

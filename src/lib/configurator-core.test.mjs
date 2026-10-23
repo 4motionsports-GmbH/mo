@@ -3,8 +3,18 @@ import assert from "node:assert/strict";
 import {
   CONFIGURATOR_FIELDS,
   CONFIGURATOR_LIMITS,
+  CONFIGURATOR_PLAN_TOOLS,
+  CONFIGURATOR_TOOLS,
   DEFAULT_CONFIGURATOR_SETTINGS,
+  OPTION_STEPS,
+  OPTION_STEP_ROLE,
   PLAN_MAX_ITEMS,
+  PLAN_ROLES,
+  configuratorHasOptions,
+  normalizeOfferOptions,
+  optionStepRows,
+  optionsShownEvents,
+  searchCatalogCards,
   answerDistribution,
   assortmentCards,
   chatStartedEventData,
@@ -443,8 +453,10 @@ test("KPI payloads carry ids, enums and counts only; server names are server-onl
     budget: "",
     wishes: "assembly,quiet",
     partner: "mh",
+    steps: false,
     locale: "de",
   });
+  assert.equal(chatStartedEventData(parseConfiguratorContext(ctx({ ...fullAnswers, features: ["options"] })), "de").steps, true);
   assert.deepEqual(planShownEventData({ items: [{ productId: "rack~5", quantity: 2, role: "base" }, { productId: "bank", role: "accessory" }] }, 2), {
     planNumber: 2,
     items: 2,
@@ -561,4 +573,151 @@ test("countShownGymPlans: rendered plans of the history; an all-unknown plan doe
   ];
   assert.equal(countShownGymPlans(msgs), 2);
   assert.equal(countShownGymPlans(undefined), 0);
+});
+
+
+// ---------------------------------------------------------------------------
+// Step-by-step choice (offer_plan_options, 2026-10-23)
+// ---------------------------------------------------------------------------
+
+test("features: only known values, the step flow needs the widget's \"options\"", () => {
+  assert.deepEqual(parseConfiguratorContext(ctx({ persona: "weight_loss", features: ["Options", "x", 3] })).features, ["options"]);
+  assert.deepEqual(parseConfiguratorContext(ctx({ persona: "weight_loss" })).features, []);
+  assert.deepEqual(parseConfiguratorContext(ctx({ persona: "weight_loss", features: "options" })).features, []);
+  assert.equal(configuratorHasOptions(parseConfiguratorContext(ctx({ persona: "weight_loss", features: ["options"] }))), true);
+  assert.equal(configuratorHasOptions(parseConfiguratorContext(ctx({ persona: "weight_loss" }))), false);
+  assert.equal(configuratorHasOptions(null), false);
+  assert.ok(CONFIGURATOR_TOOLS.includes("offer_plan_options"));
+  assert.deepEqual([...CONFIGURATOR_PLAN_TOOLS], ["show_gym_plan", "offer_plan_options"]);
+  for (const step of OPTION_STEPS) assert.ok(PLAN_ROLES.includes(OPTION_STEP_ROLE[step]), step);
+  assert.equal(OPTION_STEP_ROLE.bench, "accessory");
+});
+
+test("normalizeOfferOptions: known step, bounded options and items, merged duplicates, trimmed points", () => {
+  const n = normalizeOfferOptions({
+    step: "weights",
+    multiSelect: true,
+    options: [
+      { items: [{ productId: "plates~1", quantity: 2 }, { productId: "plates~1", quantity: 2 }, { productId: "bad id" }, { productId: "plates~2", quantity: 99 }], label: "  Einsteiger-Set  ", badge: "Mos Empfehlung", pros: ["a", " ", "b", "c", "d"], cons: ["x".repeat(200), "y", "z"] },
+      { items: [] },
+      { items: [{ productId: "bar" }] },
+      { items: [{ productId: "p3" }] },
+      { items: [{ productId: "p4" }] },
+      { items: [{ productId: "p5" }] },
+    ],
+  });
+  assert.equal(n.step, "weights");
+  assert.equal(n.multiSelect, true);
+  assert.equal(n.options.length, 4);
+  assert.deepEqual(n.options[0].items, [{ productId: "plates~1", quantity: 4 }, { productId: "plates~2", quantity: CONFIGURATOR_LIMITS.planQuantityMax }]);
+  assert.equal(n.options[0].label, "Einsteiger-Set");
+  assert.deepEqual(n.options[0].pros, ["a", "b", "c"]);
+  assert.equal(n.options[0].cons.length, 2);
+  assert.ok(n.options[0].cons[0].length <= 91);
+  assert.deepEqual(n.options[1], { items: [{ productId: "bar", quantity: 1 }], label: null, badge: null, pros: [], cons: [] });
+  assert.equal(normalizeOfferOptions({ step: "nope", options: [] }).step, "extra");
+  assert.deepEqual(normalizeOfferOptions(null), { step: "extra", multiSelect: false, options: [] });
+});
+
+test("optionsShownEvents: one per rendered call, unknown items left out", () => {
+  const calls = [
+    { toolCallId: "a", toolName: "offer_plan_options", input: { step: "base", options: [{ items: [{ productId: "rack" }] }, { items: [{ productId: "ghost" }] }] } },
+    { toolCallId: "b", toolName: "offer_plan_options", input: { step: "bench", options: [{ items: [{ productId: "ghost" }] }] } },
+    { toolCallId: "c", toolName: "offer_plan_options", invalid: true, input: { step: "base", options: [{ items: [{ productId: "rack" }] }] } },
+    { toolCallId: "d", toolName: "show_gym_plan", input: { items: [{ productId: "rack" }] } },
+  ];
+  const results = new Map([
+    ["a", { ok: true, shownOptions: 1, unknownIds: ["ghost"] }],
+    ["b", { ok: true, shownOptions: 0, unknownIds: ["ghost"] }],
+    ["c", { ok: true, shownOptions: 1 }],
+    ["d", { ok: true, shownItems: 1 }],
+  ]);
+  assert.deepEqual(optionsShownEvents(calls, results), [{ step: "base", options: 1, items: 1, multi: false, productIds: ["rack"] }]);
+  assert.deepEqual(optionsShownEvents(null, new Map()), []);
+});
+
+test("searchCatalogCards: every word matches, umlauts and plurals folded, hidden left out, in stock first", () => {
+  const cat = [
+    { id: "bench-a", name: "ATX® Multi Bench Hantelbank MBX-520", brand: "ATX", category: "Exercise Benches", price: 349, inStock: true },
+    { id: "bench-b", name: "Hantelbänke Set Pro", brand: "Other", category: "Benches", price: 99, inStock: false },
+    { id: "rack", name: "Power Rack PRX-780", brand: "ATX", category: "Power Racks", price: 900, inStock: true, hideFromSearch: true },
+    { id: "mat", name: "Bodenschutzmatte Standard", brand: "Gymfloor", category: "Floor Protection Mats", price: 40, inStock: true, sku: "GF-100" },
+  ];
+  assert.deepEqual(searchCatalogCards(cat, "Hantelbank").map((c) => c.id), ["bench-a", "bench-b"]);
+  assert.deepEqual(searchCatalogCards(cat, "hantelbänke").map((c) => c.id), ["bench-a", "bench-b"]);
+  assert.deepEqual(searchCatalogCards(cat, "atx hantelbank").map((c) => c.id), ["bench-a"]);
+  assert.deepEqual(searchCatalogCards(cat, "rack"), []);
+  assert.deepEqual(searchCatalogCards(cat, "matten").map((c) => c.id), ["mat"]);
+  assert.deepEqual(searchCatalogCards(cat, "gf-100").map((c) => c.id), ["mat"]);
+  assert.deepEqual(searchCatalogCards(cat, "x"), []);
+  assert.deepEqual(searchCatalogCards(cat, ""), []);
+  assert.equal(searchCatalogCards(cat, "a", 1).length, 0);
+  assert.equal(searchCatalogCards(cat, "hantelbank", 1).length, 1);
+  const card = searchCatalogCards(cat, "bodenschutz")[0];
+  assert.deepEqual(Object.keys(card).sort(), ["category", "id", "images", "inStock", "name", "price", "role", "shopifyUrl"]);
+  assert.equal(card.role, "flooring");
+});
+
+test("optionStepRows: guide order, only types with counts, German labels", () => {
+  assert.deepEqual(
+    optionStepRows([
+      { step: "weights", shown: 2, picked: 1, skipped: 0, more: 1 },
+      { step: "base", shown: 3, picked: 2, skipped: 0, more: 0 },
+      { step: "nope", shown: 1, picked: 0, skipped: 0, more: 0 },
+      { step: "bench", shown: 0, picked: 0, skipped: 0, more: 0 },
+    ]),
+    [
+      { step: "base", label: "Basisgerät", shown: 3, picked: 2, skipped: 0, more: 0 },
+      { step: "weights", label: "Gewichte", shown: 2, picked: 1, skipped: 0, more: 1 },
+      { step: "extra", label: "Extra", shown: 1, picked: 0, skipped: 0, more: 0 },
+    ]
+  );
+  assert.deepEqual(optionStepRows([]), []);
+});
+
+test("renderConfiguratorSection: the step guide only with the widget's options, plan prices and subtotal, accessories", () => {
+  const withOptions = parseConfiguratorContext(ctx({ ...fullAnswers, features: ["options"] }));
+  const plan = [
+    { id: "rack", qty: 1, name: "Power Rack", price: 899.9, added: true },
+    { id: "plates~5", qty: 2, name: "Hantelscheibe – 5 kg", price: 15 },
+  ];
+  const accessories = [
+    { baseId: "rack", baseName: "Power Rack", items: [{ id: "dip", name: "Dip Bar", price: 229 }, { id: "lat", name: "Latzug-Option", price: 399 }] },
+    { baseId: "station", baseName: "Kraftstation", items: [] },
+  ];
+  const de = renderConfiguratorSection({ answers: withOptions, assortment: catalog, settings: { focus: "prefer", notes: "" }, plan, accessories });
+  assert.match(de, /3\. \*\*Schritt für Schritt statt eines fertigen Sets:\*\*/);
+  assert.match(de, /Pro Schritt rufst du `offer_plan_options` auf: 2–3 Optionen \(höchstens 4\)/);
+  assert.match(de, /„Diesen Schritt überspringe ich“\*\* → direkt zum nächsten Schritt/);
+  assert.match(de, /- `offer_plan_options`: ein Aufruf pro Antwort und kein `suggest_replies` dazu/);
+  assert.match(de, /zeig sofort die ersten Optionen \(Basisgerät\)/);
+  assert.doesNotMatch(de, /3\. \*\*Der Plan:\*\*/);
+  assert.match(de, /- 1× Power Rack \(`rack`\) — 899\.9 € je Stück — vom Kunden ergänzt\n- 2× Hantelscheibe – 5 kg \(`plates~5`\) — 15 € je Stück\nZwischensumme: 929\.9 €/);
+  assert.match(de, /### Zubehör zu den Basisgeräten im Plan \(für den Schritt „Zubehör“\)\n- Zu Power Rack \(`rack`\): `dip` Dip Bar — 229 € · `lat` Latzug-Option — 399 €\n- Zu Kraftstation \(`station`\): keins hinterlegt/);
+  assert.match(de, /\*\*Gewichte mit mehreren Gewichtsstufen\*\*/);
+
+  const en = renderConfiguratorSection({ answers: withOptions, assortment: catalog, settings: { focus: "prefer", notes: "" }, plan, accessories, locale: "en" });
+  assert.match(en, /3\. \*\*Step by step instead of a finished set:\*\*/);
+  assert.match(en, /Subtotal: 929\.9 €/);
+  assert.match(en, /### Accessories for the base units in the plan/);
+  assert.doesNotMatch(en, /Schritt für Schritt|Zwischensumme/);
+
+  // an old widget (no "options"): the one-plan guide, no accessories block, no options rule
+  const old = renderConfiguratorSection({ answers: parseConfiguratorContext(ctx(fullAnswers)), assortment: catalog, settings: { focus: "prefer", notes: "" }, plan, accessories });
+  assert.match(old, /3\. \*\*Der Plan:\*\* Stell mit `show_gym_plan` EIN stimmiges Set zusammen/);
+  assert.doesNotMatch(old, /offer_plan_options|Zubehör zu den Basisgeräten/);
+  assert.match(old, /Zwischensumme: 929\.9 €/);
+  // a line without a price: no subtotal
+  const partial = renderConfiguratorSection({ answers: withOptions, assortment: [], settings: { focus: "prefer", notes: "" }, plan: [{ id: "rack", qty: 1, name: "Rack" }] });
+  assert.doesNotMatch(partial, /Zwischensumme: /);
+  assert.match(partial, /- 1× Rack \(`rack`\)$/m);
+});
+
+test("tool copy of offer_plan_options exists in both locales", () => {
+  for (const locale of ["de", "en"]) {
+    const c = configuratorToolCopy(locale);
+    for (const key of ["offerOptionsDesc", "fieldOptionsStep", "fieldOptionsTitle", "fieldOptionsIntro", "fieldOptionsMulti", "fieldOptionsList"]) {
+      assert.ok(typeof c[key] === "string" && c[key].length > 20, `${locale}.${key}`);
+    }
+  }
 });

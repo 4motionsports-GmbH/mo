@@ -330,8 +330,29 @@ export function configuratorLabel(key, id, locale = "de") {
  *   wishes: string[],
  *   partner: "mh" | "wh" | null,
  *   plan: Array<{ id: string, qty: number, added?: boolean }>,
+ *   features: string[],
  * }} ConfiguratorAnswers
  */
+
+/**
+ * What the widget can render beyond the first version (`configurator.features`,
+ * sent with every request): "options" = the step-by-step product choice
+ * (offer_plan_options, 2026-10-23). Unknown values are dropped; an old widget
+ * sends none and keeps the one-plan guide.
+ */
+export const CONFIGURATOR_FEATURES = /** @type {const} */ (["options"]);
+
+/** @param {unknown} raw @returns {string[]} */
+function parseFeatures(raw) {
+  if (!Array.isArray(raw)) return [];
+  const known = /** @type {readonly string[]} */ (CONFIGURATOR_FEATURES);
+  return known.filter((f) => raw.some((x) => typeof x === "string" && x.trim().toLowerCase() === f));
+}
+
+/** Does the widget of this thread render offer_plan_options? */
+export function configuratorHasOptions(/** @type {ConfiguratorAnswers | null | undefined} */ answers) {
+  return Boolean(answers?.features?.includes("options"));
+}
 
 /** @param {unknown} v */
 function asRecord(v) {
@@ -445,6 +466,7 @@ export function parseConfiguratorContext(context) {
         ? /** @type {"mh" | "wh"} */ (c.partner.trim().toLowerCase())
         : null,
     plan: parsePlan(c.plan),
+    features: parseFeatures(c.features),
   };
   const known =
     answers.persona || answers.location || answers.space || answers.training.length || answers.level;
@@ -737,37 +759,125 @@ export function assortmentCards(products) {
   /** @type {AssortmentCard[]} */
   const out = [];
   for (const p of products ?? []) {
-    if (!p || typeof p.id !== "string" || !p.id) continue;
-    const variants = /** @type {Array<{ id?: unknown, title?: unknown, price?: unknown, salePrice?: unknown, isDefault?: unknown }>} */ (
-      productVariants(p)
-    )
-      .filter((v) => normalizeVariantId(v.id))
-      .map((v) => ({
-        id: /** @type {string} */ (normalizeVariantId(v.id)),
-        title: String(v.title ?? "").trim(),
-        price: Number(v.price) || 0,
-        ...(typeof v.salePrice === "number" && v.salePrice > 0 ? { salePrice: v.salePrice } : {}),
-        available: isVariantAvailable(p, v),
-        isDefault: v.isDefault === true,
-      }));
-    out.push({
-      id: p.id,
-      name: String(p.name ?? ""),
-      category: String(p.category ?? ""),
-      role: planRoleForProduct(p),
-      price: Number(p.price) || 0,
-      ...(typeof p.salePrice === "number" && p.salePrice > 0 ? { salePrice: p.salePrice } : {}),
-      ...(typeof p.priceMin === "number" ? { priceMin: p.priceMin } : {}),
-      ...(typeof p.priceMax === "number" ? { priceMax: p.priceMax } : {}),
-      images: Array.isArray(p.images) ? p.images.filter((u) => typeof u === "string" && u).slice(0, 1) : [],
-      shopifyUrl: String(p.shopifyUrl ?? ""),
-      inStock: p.inStock !== false,
-      ...(variants.length ? { variants } : {}),
-    });
+    const card = assortmentCard(p);
+    if (card) out.push(card);
   }
   const order = /** @type {readonly string[]} */ (PLAN_ROLES);
   out.sort((a, b) => order.indexOf(a.role) - order.indexOf(b.role) || a.name.localeCompare(b.name, "de"));
   return out;
+}
+
+/**
+ * One public card (assortmentCards, searchCatalogCards); null without an id.
+ * @param {(AssortmentProduct & { images?: string[], shopifyUrl?: string }) | null | undefined} p
+ * @returns {AssortmentCard | null}
+ */
+function assortmentCard(p) {
+  if (!p || typeof p.id !== "string" || !p.id) return null;
+  const variants = /** @type {Array<{ id?: unknown, title?: unknown, price?: unknown, salePrice?: unknown, isDefault?: unknown }>} */ (
+    productVariants(p)
+  )
+    .filter((v) => normalizeVariantId(v.id))
+    .map((v) => ({
+      id: /** @type {string} */ (normalizeVariantId(v.id)),
+      title: String(v.title ?? "").trim(),
+      price: Number(v.price) || 0,
+      ...(typeof v.salePrice === "number" && v.salePrice > 0 ? { salePrice: v.salePrice } : {}),
+      available: isVariantAvailable(p, v),
+      isDefault: v.isDefault === true,
+    }));
+  return {
+    id: p.id,
+    name: String(p.name ?? ""),
+    category: String(p.category ?? ""),
+    role: planRoleForProduct(p),
+    price: Number(p.price) || 0,
+    ...(typeof p.salePrice === "number" && p.salePrice > 0 ? { salePrice: p.salePrice } : {}),
+    ...(typeof p.priceMin === "number" ? { priceMin: p.priceMin } : {}),
+    ...(typeof p.priceMax === "number" ? { priceMax: p.priceMax } : {}),
+    images: Array.isArray(p.images) ? p.images.filter((u) => typeof u === "string" && u).slice(0, 1) : [],
+    shopifyUrl: String(p.shopifyUrl ?? ""),
+    inStock: p.inStock !== false,
+    ...(variants.length ? { variants } : {}),
+  };
+}
+
+/** Lower-case, umlauts and accents folded („Hantelbänke“ → „hantelbanke“, ß → ss). @param {unknown} s */
+function foldText(s) {
+  return String(s ?? "")
+    .toLowerCase()
+    .replace(/ß/g, "ss")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[®™©]/g, "");
+}
+
+/** A query word and, for longer words, its stem without a plural ending. @param {string} w */
+function wordForms(w) {
+  const m = w.length > 5 ? /^(.{4,}?)(en|e|n|s)$/.exec(w) : null;
+  return m ? [w, m[1]] : [w];
+}
+
+/** Search limits of GET /api/configurator/search. */
+export const SEARCH_LIMITS = Object.freeze({ queryMin: 2, queryMax: 80, results: 12, defaultResults: 8 });
+
+/**
+ * The whole-shop search of the plan's „+ Produkt hinzufügen“ (GET
+ * /api/configurator/search): a keyword match over name, brand, category,
+ * tags and SKU — every query word must match somewhere (umlaut-folded,
+ * prefix match on name words counts most), hidden products left out, in-stock
+ * before sold-out, then by score and name. Pure and free (no embeddings).
+ * @param {ReadonlyArray<AssortmentProduct & { images?: string[], shopifyUrl?: string, brand?: string, sku?: string, hideFromSearch?: boolean }>} catalog
+ * @param {unknown} query
+ * @param {number} [limit]
+ * @returns {AssortmentCard[]}
+ */
+export function searchCatalogCards(catalog, query, limit = SEARCH_LIMITS.defaultResults) {
+  const words = foldText(String(query ?? "").slice(0, SEARCH_LIMITS.queryMax))
+    .split(/[^a-z0-9]+/)
+    .filter((w) => w.length >= 2);
+  if (!words.length) return [];
+  const max = Math.max(1, Math.min(SEARCH_LIMITS.results, Number.isInteger(limit) ? limit : SEARCH_LIMITS.defaultResults));
+  /** @type {Array<{ p: any, score: number }>} */
+  const hits = [];
+  for (const p of catalog ?? []) {
+    if (!p || typeof p.id !== "string" || p.hideFromSearch === true) continue;
+    const name = foldText(p.name);
+    const nameWords = name.split(/[^a-z0-9]+/).filter(Boolean);
+    const other = [
+      [foldText(p.brand), 1.5],
+      [foldText(p.category), 1.5],
+      [foldText((p.tags ?? []).join(" ")), 1],
+      [foldText(p.sku), 2],
+      [foldText(p.id), 1],
+    ];
+    let score = 0;
+    let all = true;
+    for (const w of words) {
+      let best = 0;
+      // A German plural („Hantelbänke“, „Matten“) also finds the singular.
+      for (const c of wordForms(w)) {
+        if (nameWords.some((nw) => nw.startsWith(c))) best = Math.max(best, 3);
+        else if (name.includes(c)) best = Math.max(best, 2);
+        for (const [text, weight] of other) {
+          if (best < /** @type {number} */ (weight) && /** @type {string} */ (text).includes(c)) best = /** @type {number} */ (weight);
+        }
+      }
+      if (!best) {
+        all = false;
+        break;
+      }
+      score += best;
+    }
+    if (all) hits.push({ p, score });
+  }
+  hits.sort(
+    (a, b) =>
+      Number(b.p.inStock !== false) - Number(a.p.inStock !== false) ||
+      b.score - a.score ||
+      String(a.p.name ?? "").localeCompare(String(b.p.name ?? ""), "de")
+  );
+  return /** @type {AssortmentCard[]} */ (hits.slice(0, max).map((h) => assortmentCard(h.p)).filter(Boolean));
 }
 
 /** Extra handles that match no catalog product (shown as a warning in the admin). */
@@ -905,12 +1015,64 @@ function renderPlan(plan, locale) {
   if (!plan.length) return "";
   const en = locale === "en";
   const mark = en ? " — added by the customer" : " — vom Kunden ergänzt";
+  const each = en ? "each" : "je Stück";
+  const priced = (/** @type {{ price?: number }} */ p) => typeof p.price === "number" && Number.isFinite(p.price) && p.price > 0;
   const lines = plan
-    .map((p) => `- ${p.qty}× ${p.name ? `${p.name} ` : ""}(\`${p.id}\`)${p.added ? mark : ""}`)
+    .map(
+      (p) =>
+        `- ${p.qty}× ${p.name ? `${p.name} ` : ""}(\`${p.id}\`)${priced(p) ? ` — ${roundEur(/** @type {number} */ (p.price))} € ${each}` : ""}${p.added ? mark : ""}`
+    )
     .join("\n");
+  const sum = plan.every(priced) ? roundEur(plan.reduce((n, p) => n + /** @type {number} */ (p.price) * p.qty, 0)) : null;
+  const subtotal = sum == null ? "" : en ? `\nSubtotal: ${sum} €` : `\nZwischensumme: ${sum} €`;
   return en
-    ? `\n\n### The plan as it stands on the page now (the customer may have changed quantities, variants, removed items or added products)\n${lines}\nBuild on this state — never silently re-add what the customer removed, and keep the items the customer added in every new plan unless they want them gone. A plan has at most ${PLAN_MAX_ITEMS} lines including the customer's own; if it would get longer, ask what can go.`
-    : `\n\n### Der Plan, wie er jetzt auf der Seite steht (der Kunde kann Mengen, Varianten geändert, Positionen entfernt oder Produkte ergänzt haben)\n${lines}\nBaue auf diesem Stand auf — füge nie stillschweigend wieder hinzu, was der Kunde entfernt hat, und übernimm die vom Kunden ergänzten Positionen in jeden neuen Plan, solange er sie nicht loswerden will. Ein Plan hat höchstens ${PLAN_MAX_ITEMS} Positionen, die des Kunden eingeschlossen; würde er länger, frag, was wegfallen kann.`;
+    ? `\n\n### The plan as it stands on the page now (the customer may have changed quantities, variants, removed items or added products)\n${lines}${subtotal}\nBuild on this state — never silently re-add what the customer removed, and keep the items the customer added in every new plan unless they want them gone. A plan has at most ${PLAN_MAX_ITEMS} lines including the customer's own; if it would get longer, ask what can go.`
+    : `\n\n### Der Plan, wie er jetzt auf der Seite steht (der Kunde kann Mengen, Varianten geändert, Positionen entfernt oder Produkte ergänzt haben)\n${lines}${subtotal}\nBaue auf diesem Stand auf — füge nie stillschweigend wieder hinzu, was der Kunde entfernt hat, und übernimm die vom Kunden ergänzten Positionen in jeden neuen Plan, solange er sie nicht loswerden will. Ein Plan hat höchstens ${PLAN_MAX_ITEMS} Positionen, die des Kunden eingeschlossen; würde er länger, frag, was wegfallen kann.`;
+}
+
+// The step-by-step guide (offer_plan_options, 2026-10-23 — the client's wish:
+// base unit, its accessories, bench, weights and floor protection one by one,
+// three options each with pros and cons, the customer picks into the plan).
+const STEP_GUIDE_EN = `3. **Step by step instead of a finished set:** announce the steps once in one sentence (e.g. "1. base unit, 2. accessories, 3. bench, 4. weights, 5. floor protection" — adapt them to the training focus: for "Boost health and endurance" and "Lose weight and stay fit" the base unit is a cardio machine; leave out what does not fit space or wishes), then go through them ONE at a time. For each step call \`offer_plan_options\`: 2–3 options (at most 4) that fit space, level, training focus and the remaining budget, your recommendation first with the badge "Mo's pick"; pros and cons short and factual, ONLY from the product data (dimensions, footprint, load capacity, features, price, delivery time) — never invented. Write at most 1–2 sentences next to the cards, then WAIT for the customer's choice — no second \`offer_plan_options\` in the same answer.
+   - **The customer chooses** ("I'll take: …"): the product is already in their plan (a line "added by the customer") — confirm in one sentence and go on. After the base unit come its accessories: offer the products of "Accessories for the base units in the plan" below (step "accessory", multiSelect true, up to 4 — e.g. lat pull-down option, dip bars, hip thrust attachment), then bench, weights, floor protection, a cardio machine if it fits.
+   - **"I'll skip this step"** → straight on to the next step. **"Other suggestions"** → new options for the same step (other products, not the same ones again). If the customer writes freely (other wishes, questions), answer, search with search_products if needed and then offer fitting options.
+   - **Weights:** an option is a set of concrete weight steps (items = one variant ref per step, plates in pairs) with a label such as "Starter set 30 kg" — see the weights rule below.
+   - Keep the plan's subtotal (below) in view against the budget and say openly when it gets tight.
+   - After the last step: sum the plan up in 2–3 sentences and point to "Alles in den Warenkorb" in the plan. Do NOT call \`show_gym_plan\` to repeat the choices — the plan is already on the page. Use \`show_gym_plan\` only when the customer explicitly wants a complete set at once — then with every line already chosen.`;
+const STEP_AFTER_EN = `4. **Afterwards:** answer questions and offer swaps (again with \`offer_plan_options\` for the step concerned). Mention once that the customer can change quantities and variants in the plan, add weight steps with "+ Gewichtsstufe" and further products with "+ Produkt hinzufügen" (a search over the whole shop), and put everything into the cart with one click.`;
+const STEP_GUIDE_DE = `3. **Schritt für Schritt statt eines fertigen Sets:** Kündige die Schritte einmal in einem Satz an (z. B. „1. Basisgerät, 2. Zubehör, 3. Hantelbank, 4. Gewichte, 5. Bodenschutz“ — passe sie an den Trainingsfokus an: bei „Gesundheit und Ausdauer fördern“ und „Abnehmen und fit bleiben“ ist das Basisgerät ein Cardio-Gerät; lass weg, was nicht zu Platz oder Wünschen passt) und geh sie dann EINZELN durch. Pro Schritt rufst du \`offer_plan_options\` auf: 2–3 Optionen (höchstens 4), die zu Platz, Niveau, Trainingsfokus und dem restlichen Budget passen, deine Empfehlung zuerst mit dem badge „Mos Empfehlung“; pros und cons kurz und sachlich, NUR aus den Produktdaten (Maße, Stellfläche, Belastbarkeit, Ausstattung, Preis, Lieferzeit) — nie erfunden. Schreib höchstens 1–2 Sätze zu den Karten und WARTE dann auf die Wahl des Kunden — kein zweites \`offer_plan_options\` in derselben Antwort.
+   - **Der Kunde wählt** („Ich nehme: …“): Das Produkt steht schon in seinem Plan (Position „vom Kunden ergänzt“) — bestätige in einem Satz und mach weiter. Nach dem Basisgerät kommt sein Zubehör: biete die Produkte aus „Zubehör zu den Basisgeräten im Plan“ unten an (step "accessory", multiSelect true, bis zu 4 — z. B. Latzug-Option, Dip-Barren, Hip-Thrust-Aufsatz), dann Hantelbank, Gewichte, Bodenschutz, ein Cardio-Gerät, wenn es passt.
+   - **„Diesen Schritt überspringe ich“** → direkt zum nächsten Schritt. **„Andere Vorschläge“** → neue Optionen für denselben Schritt (andere Produkte, nicht dieselben noch einmal). Schreibt der Kunde frei (andere Wünsche, Fragen), geh darauf ein, such bei Bedarf mit search_products und biete dann passende Optionen an.
+   - **Gewichte:** Eine Option ist ein Set konkreter Gewichtsstufen (items = je Stufe eine Varianten-Ref, Hantelscheiben paarweise) mit einem label wie „Einsteiger-Set 30 kg“ — siehe die Gewichte-Regel unten.
+   - Halte die Zwischensumme des Plans (unten) gegen das Budget im Blick und sag offen, wenn es eng wird.
+   - Nach dem letzten Schritt: Fasse den Plan in 2–3 Sätzen zusammen und weise auf „Alles in den Warenkorb“ im Plan hin. Ruf \`show_gym_plan\` NICHT auf, um die Auswahl zu wiederholen — der Plan steht schon auf der Seite. \`show_gym_plan\` nur, wenn der Kunde ausdrücklich ein komplettes Set auf einmal möchte — dann mit allen schon gewählten Positionen.`;
+const STEP_AFTER_DE = `4. **Danach:** Beantworte Fragen und biete Tausch an (wieder mit \`offer_plan_options\` für den betroffenen Schritt). Erwähne einmal, dass der Kunde im Plan Mengen und Varianten ändern, mit „+ Gewichtsstufe“ weitere Gewichtsstufen und mit „+ Produkt hinzufügen“ (Suche im ganzen Shop) weitere Produkte ergänzen und alles mit einem Klick in den Warenkorb legen kann.`;
+
+/** @param {number} n */
+function roundEur(n) {
+  return Math.round(n * 100) / 100;
+}
+
+/**
+ * The accessories of the base units in the plan (their „Ergänzende Produkte“,
+ * in stock) — what Mo offers in the step „Zubehör“ of the step-by-step flow.
+ * @param {Array<{ baseId: string, baseName: string, items: Array<{ id: string, name: string, price: number }> }>} accessories
+ * @param {"de" | "en"} locale
+ */
+function renderAccessories(accessories, locale) {
+  if (!accessories.length) return "";
+  const en = locale === "en";
+  const blocks = accessories.map((a) => {
+    const items = a.items.length
+      ? a.items.map((it) => `\`${it.id}\` ${it.name} — ${roundEur(it.price)} €`).join(" · ")
+      : en
+        ? "none on record — find matching accessories with search_products"
+        : "keins hinterlegt — such passendes Zubehör mit search_products";
+    return `- ${en ? "For" : "Zu"} ${a.baseName} (\`${a.baseId}\`): ${items}`;
+  });
+  return en
+    ? `\n\n### Accessories for the base units in the plan (for the step "accessory")\n${blocks.join("\n")}`
+    : `\n\n### Zubehör zu den Basisgeräten im Plan (für den Schritt „Zubehör“)\n${blocks.join("\n")}`;
 }
 
 /**
@@ -925,13 +1087,17 @@ function renderPlan(plan, locale) {
  *   assortment: AssortmentProduct[],
  *   assortmentTotal?: number,
  *   settings: Pick<ConfiguratorSettings, "focus" | "notes">,
- *   plan?: Array<{ id: string, qty: number, name?: string, added?: boolean }>,
+ *   plan?: Array<{ id: string, qty: number, name?: string, price?: number, added?: boolean }>,
+ *   accessories?: Array<{ baseId: string, baseName: string, items: Array<{ id: string, name: string, price: number }> }>,
  *   locale?: "de" | "en",
  * }} opts
  * @returns {string}
  */
-export function renderConfiguratorSection({ answers, assortment, assortmentTotal, settings, plan = [], locale = "de" }) {
+export function renderConfiguratorSection({ answers, assortment, assortmentTotal, settings, plan = [], accessories = [], locale = "de" }) {
   const en = locale === "en";
+  // The step-by-step flow when the widget renders offer_plan_options; else the one-plan guide.
+  const steps = configuratorHasOptions(answers);
+  const extras = `${renderPlan(plan, locale)}${steps ? renderAccessories(accessories, locale) : ""}`;
   const listed = assortment.slice(0, CONFIGURATOR_LIMITS.promptProducts);
   const total = Math.max(assortmentTotal ?? assortment.length, assortment.length);
   const more = total - listed.length;
@@ -957,10 +1123,10 @@ If the customer changes them on the page, you get the new version here.${hints ?
    a) Budget, if open → topic "budget", options along the configurator's budget ranges plus "Not sure yet".
    b) Individual wishes (assembly service, delivery date, noise, floor protection, no drilling, test in the showroom) → topic "wishes", multiSelect true.
    c) At most 1–2 detail questions that really change the recommendation (e.g. ceiling height for racks/pull-ups, training frequency, equipment they already own).
-   Skip what you already know. Never ask more than 4 questions before showing a plan. If the customer says "just show me something", build the plan right away.
-3. **The plan:** put together ONE coherent set with \`show_gym_plan\`: base unit(s) first, then matching accessories (prefer the base unit's "Accessories" ids), weights, a cardio machine if it fits the training focus, floor protection where it makes sense. It must fit training focus, space, level and budget — total within the budget (if it is up to ~10 % above, say so openly). Explain in 2–3 sentences why the set fits. Show at most ONE \`show_product\` card, for the central base unit — the plan itself shows all items.
+   Skip what you already know. Never ask more than 4 questions before showing ${steps ? "the first options" : "a plan"}. ${steps ? 'If the customer says "just show me something", show the first options right away (base unit) — or, if they explicitly want a complete set at once, build the plan with \`show_gym_plan\`.' : 'If the customer says "just show me something", build the plan right away.'}
+${steps ? STEP_GUIDE_EN : '3. **The plan:** put together ONE coherent set with \`show_gym_plan\`: base unit(s) first, then matching accessories (prefer the base unit\'s "Accessories" ids), weights, a cardio machine if it fits the training focus, floor protection where it makes sense. It must fit training focus, space, level and budget — total within the budget (if it is up to ~10 % above, say so openly). Explain in 2–3 sentences why the set fits. Show at most ONE \`show_product\` card, for the central base unit — the plan itself shows all items.'}
    **Weights with several steps** (plates, dumbbells, kettlebells whose line lists "Variants", below or in the retrieved-products block) always as concrete weight steps: one line per step with its variant ref — the product id, \`~\`, the variant id, e.g. \`atx-plates~4711\` —, plates in pairs (quantity 2 per step), matching the bar's diameter (30/50 mm) in the plan. Size the steps to level and training focus — enough load for real progression (beginners at the barbell e.g. 2× 5 kg, 2× 10 kg plus small steps; advanced users heavier). Never only the smallest step, never such a line without its variant, never an invented variant id (search_products returns none). If the step you want is not listed ("+N steps in between"), take the nearest listed step — the customer can pick others in the plan. Weights without variants (adjustable dumbbells, sets, single kettlebells) go in with their product id, role "weights".
-4. **After the plan:** offer swaps (cheaper/premium, more compact) and answer questions. Mention once that the customer can adjust quantities and variants in the plan, add further weight steps with "+ Gewichtsstufe" and further products with "+ Produkt hinzufügen", and put everything into the cart with one click. After every change call \`show_gym_plan\` again with the COMPLETE new plan (not just the change).
+${steps ? STEP_AFTER_EN : '4. **After the plan:** offer swaps (cheaper/premium, more compact) and answer questions. Mention once that the customer can adjust quantities and variants in the plan, add further weight steps with "+ Gewichtsstufe" and further products with "+ Produkt hinzufügen", and put everything into the cart with one click. After every change call \`show_gym_plan\` again with the COMPLETE new plan (not just the change).'}
 
 ### Assortment (focus)
 ${strict ? "Recommend ONLY products from the configurator assortment below. Leave it only when the customer explicitly asks for a specific product outside it — then via search_products." : "Work primarily with the configurator assortment below (curated home-gym products). Other shop products (e.g. a gym ball) are fine when the customer asks for them or the assortment has nothing suitable — then via search_products."}
@@ -970,9 +1136,9 @@ ${assortmentBlock}
 
 ### Rules in the configurator
 - \`suggest_replies\`: 2–6 short answers (max. 40 characters each) that the customer can tap; no \`suggest_replies\` for open questions without sensible presets.
-- Per-answer product limits ("max. 2–3 products per answer" and the consulting mode's, e.g. "at most 1–2 products") do not apply to \`show_gym_plan\` (up to ${PLAN_MAX_ITEMS} items, the customer's own included) — they do apply to \`show_product\` cards.
+- Per-answer product limits ("max. 2–3 products per answer" and the consulting mode's, e.g. "at most 1–2 products") do not apply to \`show_gym_plan\` (up to ${PLAN_MAX_ITEMS} items, the customer's own included) — they do apply to \`show_product\` cards.${steps ? `\n- \`offer_plan_options\`: one call per answer and no \`suggest_replies\` with it (the cards bring "Skip" and "Other suggestions"); no \`show_product\` card for products that are in the options. The per-answer product limits do not apply to it (up to ${OPTIONS_LIMITS.options} options of up to ${OPTIONS_LIMITS.items} items).` : ""}
 - The whole set goes into the cart through the plan's cart button — use \`add_to_cart\` only when the customer explicitly wants to order a single product directly.
-- Assembly service, delivery date: answer from the product data (delivery time) and the additional knowledge; for an assembly service the shop does not offer as a product, or for large projects (budget > €10,000), offer \`show_contact_form\` (reason "general").${notes ? `\n\n### Notes from the motion sports team for the configurator (follow them)\n${notes}` : ""}${renderPlan(plan, locale)}`;
+- Assembly service, delivery date: answer from the product data (delivery time) and the additional knowledge; for an assembly service the shop does not offer as a product, or for large projects (budget > €10,000), offer \`show_contact_form\` (reason "general").${notes ? `\n\n### Notes from the motion sports team for the configurator (follow them)\n${notes}` : ""}${extras}`;
   }
 
   const assortmentBlock = listed.length
@@ -992,10 +1158,10 @@ ${renderAnswers(answers, locale)}
    a) Budget, falls offen → topic "budget", Optionen entlang der Budget-Spannen des Konfigurators plus „Weiß ich noch nicht“.
    b) Individuelle Wünsche (Aufbau-/Montageservice, Liefertermin, Lautstärke, Bodenschutz, ohne Bohren, vorher im Showroom testen) → topic "wishes", multiSelect true.
    c) Höchstens 1–2 Detailfragen, die die Empfehlung wirklich ändern (z. B. Deckenhöhe bei Racks/Klimmzügen, Trainingshäufigkeit, vorhandenes Equipment).
-   Überspringe, was du schon weißt. Stell insgesamt nie mehr als 4 Fragen, bevor du einen Plan zeigst. Sagt der Kunde „zeig mir einfach was“, erstelle sofort den Plan.
-3. **Der Plan:** Stell mit \`show_gym_plan\` EIN stimmiges Set zusammen: zuerst das/die Basisgerät(e), dann passendes Zubehör (bevorzugt die „Zubehör“-IDs des Basisgeräts), Gewichte, ein Cardio-Gerät, wenn es zum Trainingsfokus passt, und Bodenschutz, wo sinnvoll. Es muss zu Trainingsfokus, Platz, Niveau und Budget passen — Gesamtsumme im Budget (liegt sie bis ~10 % darüber, sag es offen). Erkläre in 2–3 Sätzen, warum das Set passt. Zeig höchstens EINE \`show_product\`-Karte, für das zentrale Basisgerät — der Plan selbst zeigt alle Positionen.
+   Überspringe, was du schon weißt. Stell insgesamt nie mehr als 4 Fragen, bevor du ${steps ? "die ersten Optionen" : "einen Plan"} zeigst. ${steps ? "Sagt der Kunde „zeig mir einfach was“, zeig sofort die ersten Optionen (Basisgerät) — oder, wenn er ausdrücklich ein komplettes Set auf einmal will, den Plan mit \`show_gym_plan\`." : "Sagt der Kunde „zeig mir einfach was“, erstelle sofort den Plan."}
+${steps ? STEP_GUIDE_DE : "3. **Der Plan:** Stell mit \`show_gym_plan\` EIN stimmiges Set zusammen: zuerst das/die Basisgerät(e), dann passendes Zubehör (bevorzugt die „Zubehör“-IDs des Basisgeräts), Gewichte, ein Cardio-Gerät, wenn es zum Trainingsfokus passt, und Bodenschutz, wo sinnvoll. Es muss zu Trainingsfokus, Platz, Niveau und Budget passen — Gesamtsumme im Budget (liegt sie bis ~10 % darüber, sag es offen). Erkläre in 2–3 Sätzen, warum das Set passt. Zeig höchstens EINE \`show_product\`-Karte, für das zentrale Basisgerät — der Plan selbst zeigt alle Positionen."}
    **Gewichte mit mehreren Gewichtsstufen** (Hantelscheiben, Hanteln, Kettlebells, deren Zeile „Varianten“ nennt — unten oder im Block der vorretrieveten Produkte) immer als konkrete Gewichtsstufen: je Stufe eine Position mit ihrer Varianten-Ref — Produkt-ID, \`~\`, VariantenID, z. B. \`atx-hantelscheiben~4711\` —, Hantelscheiben paarweise (quantity 2 je Stufe), passend zum Durchmesser (30/50 mm) der Stange im Plan. Bemiss die Stufen nach Niveau und Trainingsfokus — genug Gewicht für echten Fortschritt (Einsteiger an der Langhantel z. B. 2× 5 kg, 2× 10 kg plus kleine Stufen; Fortgeschrittene schwerer). Nie nur die kleinste Stufe, nie eine solche Position ohne ihre Variante, nie eine erfundene VariantenID (search_products liefert keine). Steht die gewünschte Stufe nicht in der Liste („+N Stufen dazwischen“), nimm die nächstliegende gelistete — weitere wählt der Kunde im Plan. Gewichte ohne Varianten (verstellbare Hanteln, Sets, einzelne Kettlebells) nimmst du mit ihrer Produkt-ID, role "weights".
-4. **Nach dem Plan:** Biete Tausch-Optionen an (günstiger/hochwertiger, kompakter) und beantworte Fragen. Erwähne einmal, dass der Kunde im Plan Mengen und Varianten anpassen, mit „+ Gewichtsstufe“ weitere Gewichtsstufen und mit „+ Produkt hinzufügen“ weitere Produkte ergänzen und alles mit einem Klick in den Warenkorb legen kann. Rufe nach jeder Änderung \`show_gym_plan\` erneut mit dem VOLLSTÄNDIGEN neuen Plan auf (nicht nur die Änderung).
+${steps ? STEP_AFTER_DE : "4. **Nach dem Plan:** Biete Tausch-Optionen an (günstiger/hochwertiger, kompakter) und beantworte Fragen. Erwähne einmal, dass der Kunde im Plan Mengen und Varianten anpassen, mit „+ Gewichtsstufe“ weitere Gewichtsstufen und mit „+ Produkt hinzufügen“ weitere Produkte ergänzen und alles mit einem Klick in den Warenkorb legen kann. Rufe nach jeder Änderung \`show_gym_plan\` erneut mit dem VOLLSTÄNDIGEN neuen Plan auf (nicht nur die Änderung)."}
 
 ### Sortiment (Fokus)
 ${strict ? "Empfiehl AUSSCHLIESSLICH Produkte aus dem Konfigurator-Sortiment unten. Verlass es nur, wenn der Kunde ausdrücklich nach einem bestimmten Produkt außerhalb fragt — dann über search_products." : "Bewege dich primär im Konfigurator-Sortiment unten (kuratierte Home-Gym-Produkte). Andere Produkte aus dem Shop (z. B. ein Gymnastikball) sind in Ordnung, wenn der Kunde danach fragt oder das Sortiment nichts Passendes hat — dann über search_products."}
@@ -1005,9 +1171,9 @@ ${assortmentBlock}
 
 ### Regeln im Konfigurator
 - \`suggest_replies\`: 2–6 kurze Antworten (max. 40 Zeichen), die der Kunde antippen kann; kein \`suggest_replies\` bei offenen Fragen ohne sinnvolle Vorgaben.
-- Produktgrenzen pro Antwort („Maximal 2-3 Produkte pro Antwort“ und die des Beratungsmodus, z. B. „maximal 1-2 Produkte“) gelten nicht für \`show_gym_plan\` (bis zu ${PLAN_MAX_ITEMS} Positionen, die des Kunden eingeschlossen) — für \`show_product\`-Karten gelten sie weiter.
+- Produktgrenzen pro Antwort („Maximal 2-3 Produkte pro Antwort“ und die des Beratungsmodus, z. B. „maximal 1-2 Produkte“) gelten nicht für \`show_gym_plan\` (bis zu ${PLAN_MAX_ITEMS} Positionen, die des Kunden eingeschlossen) — für \`show_product\`-Karten gelten sie weiter.${steps ? `\n- \`offer_plan_options\`: ein Aufruf pro Antwort und kein \`suggest_replies\` dazu (die Karten bringen „Überspringen“ und „Andere Vorschläge“ mit); keine \`show_product\`-Karte für Produkte, die in den Optionen stehen. Die Produktgrenzen pro Antwort gelten dafür nicht (bis zu ${OPTIONS_LIMITS.options} Optionen mit je bis zu ${OPTIONS_LIMITS.items} Positionen).` : ""}
 - Das ganze Set kommt über den Warenkorb-Button des Plans in den Warenkorb — \`add_to_cart\` nur, wenn der Kunde ausdrücklich ein einzelnes Produkt direkt bestellen will.
-- Aufbau-/Montageservice, Liefertermin: beantworte aus den Produktdaten (Lieferzeit) und dem Zusatzwissen; für einen Aufbauservice, den der Shop nicht als Produkt führt, oder bei großen Projekten (Budget über 10.000 €) biete \`show_contact_form\` an (reason "general").${notes ? `\n\n### Hinweise des motion sports Teams zum Konfigurator (befolge sie)\n${notes}` : ""}${renderPlan(plan, locale)}`;
+- Aufbau-/Montageservice, Liefertermin: beantworte aus den Produktdaten (Lieferzeit) und dem Zusatzwissen; für einen Aufbauservice, den der Shop nicht als Produkt führt, oder bei großen Projekten (Budget über 10.000 €) biete \`show_contact_form\` an (reason "general").${notes ? `\n\n### Hinweise des motion sports Teams zum Konfigurator (befolge sie)\n${notes}` : ""}${extras}`;
 }
 
 /**
@@ -1026,7 +1192,23 @@ export function configuratorGreetingTrigger(locale) {
 // ---------------------------------------------------------------------------
 
 /** The tools only a configurator conversation gets (withheld via activeTools otherwise). */
-export const CONFIGURATOR_TOOLS = /** @type {const} */ (["suggest_replies", "show_gym_plan"]);
+export const CONFIGURATOR_TOOLS = /** @type {const} */ (["suggest_replies", "show_gym_plan", "offer_plan_options"]);
+
+/**
+ * The step-by-step product choice (2026-10-23): Mo offers 1–4 options for one
+ * product type, the visitor picks one (or several accessories) into the plan,
+ * skips the step or asks for other suggestions. Only offered when the widget
+ * sends the "options" feature (configuratorHasOptions).
+ */
+export const CONFIGURATOR_OPTIONS_TOOL = "offer_plan_options";
+
+/**
+ * The tools that make a thread a configurator consultation with products for
+ * the attribution rule „über den Konfigurator“ (mo-revenue-store,
+ * configurator-store): the plan, or — in the step flow, where the plan is
+ * built from the visitor's picks — the product options.
+ */
+export const CONFIGURATOR_PLAN_TOOLS = /** @type {const} */ (["show_gym_plan", "offer_plan_options"]);
 
 /**
  * The plan tool. An order counts as „über den Konfigurator“ when the latest
@@ -1076,6 +1258,38 @@ export const PLAN_MAX_ITEMS = 20;
 export const REPLY_MAX_OPTIONS = 6;
 export const REPLY_MAX_CHARS = 60;
 
+/** offer_plan_options steps, in the guide's order, and the plan role of each. */
+export const OPTION_STEPS = /** @type {const} */ (["base", "accessory", "bench", "weights", "flooring", "cardio", "extra"]);
+export const OPTION_STEP_ROLE = Object.freeze({
+  base: "base",
+  accessory: "accessory",
+  bench: "accessory",
+  weights: "weights",
+  flooring: "flooring",
+  cardio: "cardio",
+  extra: "extra",
+});
+export const OPTION_STEP_LABELS = Object.freeze({
+  base: { de: "Basisgerät", en: "Base unit" },
+  accessory: { de: "Zubehör", en: "Accessories" },
+  bench: { de: "Hantelbank", en: "Bench" },
+  weights: { de: "Gewichte", en: "Weights" },
+  flooring: { de: "Bodenschutz", en: "Floor protection" },
+  cardio: { de: "Cardio", en: "Cardio" },
+  extra: { de: "Extra", en: "Extra" },
+});
+export const OPTIONS_LIMITS = Object.freeze({
+  options: 4,
+  items: 6,
+  pros: 3,
+  cons: 2,
+  pointChars: 90,
+  titleChars: 80,
+  introChars: 240,
+  labelChars: 60,
+  badgeChars: 24,
+});
+
 /** @param {"de" | "en"} locale */
 export function configuratorToolCopy(locale) {
   if (locale === "en") {
@@ -1090,6 +1304,12 @@ Call it once the guided questions are answered (or the customer wants to see som
       fieldPlanSummary: "1–2 sentences on why this set fits the customer (training focus, space, level, budget).",
       fieldPlanItems: `The items (1–${PLAN_MAX_ITEMS}): productId (catalog id or variant ref), quantity (default 1), role and an optional short note (max. 80 characters) on why it belongs in the set. Weights with several steps: one line per step with its variant ref (plates in pairs, quantity 2); weights without variants by product id.`,
       fieldPlanTips: "Optional, up to 3 short tips for setup or training (one sentence each).",
+      offerOptionsDesc: `Shows the customer 1–4 product options for ONE step of the home-gym plan (home-gym configurator only): product cards with image, price, your pros and cons and a "Choose" button, plus "Skip" and "Other suggestions". A choice goes straight into the customer's plan on the page and arrives as the customer's next message ("I'll take: …"). Use it for every step of the guide (base unit, accessories, bench, weights, floor protection, cardio); one call per answer, then wait for the choice. Only real catalog ids (or variant refs id~variantId) of products in stock.`,
+      fieldOptionsStep: "The step: base (base unit), accessory (accessories for the chosen base unit), bench, weights, flooring, cardio or extra.",
+      fieldOptionsTitle: "Short title of the step, e.g. 'Step 1 · Your base unit'.",
+      fieldOptionsIntro: "Optional, one sentence on what to look out for in this step.",
+      fieldOptionsMulti: "true = several options can be chosen together (accessories); default false.",
+      fieldOptionsList: "1–4 options, your recommendation first. Each: items (1–6 lines: productId = catalog id or variant ref, quantity; more than one line = a set, e.g. weight steps), optional label (the set's name), optional badge (e.g. 'Mo's pick'), pros (≤ 3) and cons (≤ 2), each ≤ 90 characters, factual from the product data only.",
     };
   }
   return {
@@ -1103,6 +1323,12 @@ Rufe es auf, sobald die Leitfragen beantwortet sind (oder der Kunde sofort etwas
     fieldPlanSummary: "1–2 Sätze, warum dieses Set zum Kunden passt (Trainingsfokus, Platz, Niveau, Budget).",
     fieldPlanItems: `Die Positionen (1–${PLAN_MAX_ITEMS}): productId (Katalog-ID oder Varianten-Ref), quantity (Standard 1), role und eine optionale kurze note (max. 80 Zeichen), warum sie ins Set gehört. Gewichte mit mehreren Stufen: je Stufe eine Position mit ihrer Varianten-Ref (Hantelscheiben paarweise, quantity 2); Gewichte ohne Varianten per Produkt-ID.`,
     fieldPlanTips: "Optional, bis zu 3 kurze Tipps zu Aufbau oder Training (je ein Satz).",
+    offerOptionsDesc: `Zeigt dem Kunden 1–4 Produkt-Optionen für EINEN Schritt des Home-Gym-Plans (nur im Home-Gym-Konfigurator): Produktkarten mit Bild, Preis, deinen Vor- und Nachteilen und einem „Auswählen“-Button, dazu „Überspringen“ und „Andere Vorschläge“. Eine Wahl landet direkt im Plan des Kunden auf der Seite und kommt als nächste Nachricht des Kunden an („Ich nehme: …“). Nutze es für jeden Schritt des Leitfadens (Basisgerät, Zubehör, Hantelbank, Gewichte, Bodenschutz, Cardio); ein Aufruf pro Antwort, dann auf die Wahl warten. Nur echte Katalog-IDs (oder Varianten-Refs id~VariantenID) verfügbarer Produkte.`,
+    fieldOptionsStep: "Der Schritt: base (Basisgerät), accessory (Zubehör zum gewählten Basisgerät), bench (Hantelbank), weights (Gewichte), flooring (Bodenschutz), cardio oder extra.",
+    fieldOptionsTitle: "Kurzer Titel des Schritts, z. B. „Schritt 1 · Dein Basisgerät“.",
+    fieldOptionsIntro: "Optional, ein Satz, worauf es in diesem Schritt ankommt.",
+    fieldOptionsMulti: "true = mehrere Optionen gemeinsam wählbar (Zubehör); Standard false.",
+    fieldOptionsList: "1–4 Optionen, deine Empfehlung zuerst. Je Option: items (1–6 Positionen: productId = Katalog-ID oder Varianten-Ref, quantity; mehr als eine Position = ein Set, z. B. Gewichtsstufen), optional label (Name des Sets), optional badge (z. B. „Mos Empfehlung“), pros (≤ 3) und cons (≤ 2), je ≤ 90 Zeichen, sachlich nur aus den Produktdaten.",
   };
 }
 
@@ -1132,6 +1358,92 @@ export function normalizePlanItems(input) {
     }
     out.push({ productId, quantity, role });
     if (out.length >= PLAN_MAX_ITEMS) break;
+  }
+  return out;
+}
+
+/**
+ * The model's offer_plan_options input → normalised options: known step
+ * (else "extra"), 1–4 options of 1–6 item lines each (catalog ids or variant
+ * refs, quantity clamped, duplicate lines within an option merged), points
+ * trimmed and capped. Options without a valid item are dropped. Used for the
+ * KPI and the tool result.
+ * @param {unknown} input
+ * @returns {{ step: string, multiSelect: boolean, options: Array<{ items: Array<{ productId: string, quantity: number }>, label: string | null, badge: string | null, pros: string[], cons: string[] }> }}
+ */
+export function normalizeOfferOptions(input) {
+  const rec = asRecord(input);
+  const step =
+    typeof rec?.step === "string" && /** @type {readonly string[]} */ (OPTION_STEPS).includes(rec.step) ? rec.step : "extra";
+  const text = (/** @type {unknown} */ v, /** @type {number} */ max) =>
+    typeof v === "string" && v.trim() ? clip(v, max) : null;
+  const points = (/** @type {unknown} */ v, /** @type {number} */ max) =>
+    (Array.isArray(v) ? v : [])
+      .map((x) => text(x, OPTIONS_LIMITS.pointChars))
+      .filter((x) => x !== null)
+      .slice(0, max);
+  /** @type {Array<{ items: Array<{ productId: string, quantity: number }>, label: string | null, badge: string | null, pros: string[], cons: string[] }>} */
+  const options = [];
+  for (const raw of Array.isArray(rec?.options) ? rec.options.slice(0, OPTIONS_LIMITS.options * 2) : []) {
+    const o = asRecord(raw);
+    if (!o) continue;
+    /** @type {Array<{ productId: string, quantity: number }>} */
+    const items = [];
+    for (const rawItem of Array.isArray(o.items) ? o.items.slice(0, OPTIONS_LIMITS.items * 2) : []) {
+      const it = asRecord(rawItem);
+      if (!it || typeof it.productId !== "string") continue;
+      const productId = it.productId.trim();
+      if (!PRODUCT_REF_RE.test(productId)) continue;
+      const q = Number(it.quantity);
+      const quantity = Number.isInteger(q) && q >= 1 ? Math.min(q, CONFIGURATOR_LIMITS.planQuantityMax) : 1;
+      const same = items.find((x) => x.productId === productId);
+      if (same) {
+        same.quantity = Math.min(same.quantity + quantity, CONFIGURATOR_LIMITS.planQuantityMax);
+        continue;
+      }
+      items.push({ productId, quantity });
+      if (items.length >= OPTIONS_LIMITS.items) break;
+    }
+    if (!items.length) continue;
+    options.push({
+      items,
+      label: text(o.label, OPTIONS_LIMITS.labelChars),
+      badge: text(o.badge, OPTIONS_LIMITS.badgeChars),
+      pros: points(o.pros, OPTIONS_LIMITS.pros),
+      cons: points(o.cons, OPTIONS_LIMITS.cons),
+    });
+    if (options.length >= OPTIONS_LIMITS.options) break;
+  }
+  return { step, multiSelect: rec?.multiSelect === true, options };
+}
+
+/**
+ * The configurator_options_shown events of one turn: one per valid
+ * offer_plan_options call the widget renders (its tool result shows at least
+ * one option). Options whose items are all unknown are not counted.
+ * @param {ReadonlyArray<{ toolCallId?: string, toolName?: string, input?: unknown, invalid?: boolean } | null | undefined>} calls
+ * @param {ReadonlyMap<string, unknown>} results toolCallId → tool result output
+ * @returns {Array<{ step: string, options: number, items: number, multi: boolean, productIds: string[] }>}
+ */
+export function optionsShownEvents(calls, results) {
+  /** @type {Array<{ step: string, options: number, items: number, multi: boolean, productIds: string[] }>} */
+  const out = [];
+  for (const c of calls ?? []) {
+    if (!c || c.toolName !== CONFIGURATOR_OPTIONS_TOOL || c.invalid === true) continue;
+    const output = asRecord(typeof c.toolCallId === "string" ? results?.get(c.toolCallId) : undefined);
+    if (!output || output.ok !== true || !(Number(output.shownOptions) > 0)) continue;
+    const unknown = new Set((Array.isArray(output.unknownIds) ? output.unknownIds : []).filter((x) => typeof x === "string"));
+    const norm = normalizeOfferOptions(c.input);
+    const shown = norm.options.filter((o) => o.items.some((it) => !unknown.has(it.productId)));
+    if (!shown.length) continue;
+    const ids = [...new Set(shown.flatMap((o) => o.items.filter((it) => !unknown.has(it.productId)).map((it) => baseId(it.productId))))];
+    out.push({
+      step: norm.step,
+      options: shown.length,
+      items: shown.reduce((n, o) => n + o.items.length, 0),
+      multi: norm.multiSelect,
+      productIds: ids,
+    });
   }
   return out;
 }
@@ -1183,6 +1495,8 @@ export function parseStoredGymPlan(content) {
 export const KPI_CONFIGURATOR_CHAT_STARTED = "configurator_chat_started";
 /** Server-only: Mo showed a plan (one per show_gym_plan call). */
 export const KPI_CONFIGURATOR_PLAN_SHOWN = "configurator_plan_shown";
+/** Server-only: Mo offered product options for one step (one per rendered offer_plan_options call). */
+export const KPI_CONFIGURATOR_OPTIONS_SHOWN = "configurator_options_shown";
 
 /** Widget events of the configurator page (docs/frontend/API_CONTRACT.md §5). */
 export const CONFIGURATOR_WIDGET_EVENTS = Object.freeze({
@@ -1193,6 +1507,10 @@ export const CONFIGURATOR_WIDGET_EVENTS = Object.freeze({
   answersChanged: "configurator_answers_changed",
   planEdited: "configurator_plan_edited",
   cartAdded: "configurator_cart_added",
+  /** Step-by-step choice (2026-10-23): an option picked into the plan, a step skipped, other suggestions asked for. */
+  optionPicked: "configurator_option_picked",
+  optionSkipped: "configurator_option_skipped",
+  optionMore: "configurator_option_more",
 });
 
 /**
@@ -1209,6 +1527,8 @@ export function chatStartedEventData(a, locale) {
     budget: a.budget ?? "",
     wishes: a.wishes.join(","),
     partner: a.partner ?? "",
+    // The step-by-step flow (the widget renders offer_plan_options) or the one-plan guide.
+    steps: configuratorHasOptions(a),
     locale,
   };
 }
@@ -1314,6 +1634,31 @@ export function answerDistribution(key, rows) {
   const out = field.options.map((o) => ({ key: o.id, label: o.de, count: counts.get(o.id) ?? 0 }));
   if (none > 0) out.push({ key: "", label: "ohne Angabe", count: none });
   return out;
+}
+
+/**
+ * The step-by-step table of the Konfigurator screen: one row per product type
+ * in the guide's order (OPTION_STEPS), only types with any count, German labels.
+ * @param {ReadonlyArray<{ step: string, shown?: number, picked?: number, skipped?: number, more?: number }>} rows
+ * @returns {Array<{ step: string, label: string, shown: number, picked: number, skipped: number, more: number }>}
+ */
+export function optionStepRows(rows) {
+  /** @type {Map<string, { shown: number, picked: number, skipped: number, more: number }>} */
+  const by = new Map();
+  for (const r of rows ?? []) {
+    const step = /** @type {readonly string[]} */ (OPTION_STEPS).includes(r?.step) ? r.step : "extra";
+    const cur = by.get(step) ?? { shown: 0, picked: 0, skipped: 0, more: 0 };
+    cur.shown += Number(r.shown) || 0;
+    cur.picked += Number(r.picked) || 0;
+    cur.skipped += Number(r.skipped) || 0;
+    cur.more += Number(r.more) || 0;
+    by.set(step, cur);
+  }
+  const labels = /** @type {Record<string, { de: string }>} */ (OPTION_STEP_LABELS);
+  return OPTION_STEPS.flatMap((step) => {
+    const c = by.get(step);
+    return c && c.shown + c.picked + c.skipped + c.more > 0 ? [{ step, label: labels[step].de, ...c }] : [];
+  });
 }
 
 /**

@@ -145,3 +145,17 @@ test("latestSelectedProductIds: a Home-Gym plan is the selection; a later plan o
   assert.deepEqual(latestSelectedProductIds([plan(["rack"]), cart(["kb~2"])]), ["kb~2"]);
   assert.deepEqual(latestSelectedProductIds([cart(["kb~2"]), plan(["rack"])]), ["rack"]);
 });
+
+
+test("offer_plan_options: every offered item counts as discussed, never as the selection", async () => {
+  const { productIdsFromToolCall, collectDiscussedProductIds, latestSelectedProductIds, recommendedCardIdsInOrder } = await import("./recommended-products.mjs");
+  const offer = {
+    toolName: "offer_plan_options",
+    input: { step: "weights", options: [{ items: [{ productId: "plates~5", quantity: 2 }, { productId: "plates~10" }] }, { items: [{ productId: "dumbbells" }] }, { items: "x" }, null] },
+  };
+  assert.deepEqual(productIdsFromToolCall(offer), ["plates~5", "plates~10", "dumbbells"]);
+  assert.deepEqual(collectDiscussedProductIds([offer]), ["plates~5", "plates~10", "dumbbells"]);
+  // not a buy selection and not a recommendation card
+  assert.equal(latestSelectedProductIds([offer]), null);
+  assert.deepEqual(recommendedCardIdsInOrder([offer]), []);
+});

@@ -56,6 +56,11 @@ import {
   CONFIGURATOR_TOOLS,
   KPI_CONFIGURATOR_CHAT_STARTED,
   KPI_CONFIGURATOR_PLAN_SHOWN,
+  KPI_CONFIGURATOR_OPTIONS_SHOWN,
+  CONFIGURATOR_OPTIONS_TOOL,
+  configuratorHasOptions,
+  optionsShownEvents,
+  planRoleForProduct,
   mergeConfiguratorProfile,
   parseConfiguratorContext,
   planShownEvents,
@@ -63,7 +68,7 @@ import {
   renderConfiguratorSection,
 } from "@/lib/configurator-core.mjs";
 import { getCachedConfiguratorSettings, loadConfiguratorAssortment } from "@/lib/configurator-store";
-import { resolveProductRef, variantDisplayName } from "@/lib/product-ref.mjs";
+import { effectiveVariantPrice, resolveProductRef, variantDisplayName } from "@/lib/product-ref.mjs";
 import {
   KPI_EMAIL_CAPTURE_ASK_SHOWN,
   KPI_PAGE_CONTEXT_ANSWERED,
@@ -565,6 +570,17 @@ export async function POST(req: Request) {
           })
         : null;
     const gymPlansBefore = configurator ? countGymPlans(messages) : 0;
+    // Step-by-step flow: the accessories („Ergänzende Produkte“, in stock) of
+    // the base units in the plan — what Mo offers in the step „Zubehör“.
+    const planById = new Map(configuratorPlanProducts.map((p) => [p.id, p]));
+    const planBases = configurator && configuratorHasOptions(configurator)
+      ? [...planById.values()].filter((p) => planRoleForProduct(p) === "base").slice(0, 3)
+      : [];
+    const accessoryProducts =
+      planBases.length > 0
+        ? await getProductsByIds([...new Set(planBases.flatMap((b) => (b.compatibleWith ?? []).slice(0, 10)))])
+        : [];
+    const accessoryById = new Map(accessoryProducts.map((p) => [p.id, p]));
     const configuratorBlock =
       configurator && configuratorSettings && assortment
         ? renderConfiguratorSection({
@@ -572,10 +588,20 @@ export async function POST(req: Request) {
             assortment: assortment.products,
             settings: configuratorSettings,
             plan: configuratorPlan.flatMap((line) => {
-              const hit = resolveProductRef(new Map(configuratorPlanProducts.map((p) => [p.id, p])), line.id);
+              const hit = resolveProductRef(planById, line.id);
               if (!hit || hit.missingVariant) return [];
-              return [{ ...line, name: variantDisplayName(hit.product, hit.variant) }];
+              const base = planById.get(line.id.split("~")[0]);
+              const price = (hit.variant ? effectiveVariantPrice(hit.variant) : null) ?? base?.salePrice ?? base?.price;
+              return [{ ...line, name: variantDisplayName(hit.product, hit.variant), ...(typeof price === "number" ? { price } : {}) }];
             }),
+            accessories: planBases.map((b) => ({
+              baseId: b.id,
+              baseName: b.name,
+              items: (b.compatibleWith ?? []).slice(0, 10).flatMap((id) => {
+                const a = accessoryById.get(id.split("~")[0]);
+                return a && a.inStock ? [{ id: a.id, name: a.name, price: a.salePrice ?? a.price }] : [];
+              }),
+            })),
             locale,
           })
         : "";
@@ -600,7 +626,9 @@ export async function POST(req: Request) {
       (name) =>
         (emailOfferAvailable || name !== "offer_email_summary") &&
         (orderStatusEnabled || name !== "get_order_status") &&
-        (configurator !== null || !configuratorToolNames.includes(name))
+        (configurator !== null || !configuratorToolNames.includes(name)) &&
+        // The step-by-step choice only for a widget that renders it.
+        (name !== CONFIGURATOR_OPTIONS_TOOL || configuratorHasOptions(configurator))
     ) as Array<keyof typeof tools>;
 
     // PROMPT CACHING (see docs/PROMPT_CACHING.md). Anthropic bills cached
@@ -764,6 +792,9 @@ export async function POST(req: Request) {
             locale,
             assistantText,
             assistantToolCalls: toolCalls,
+            // Step-by-step configurator: the page's plan is the selection.
+            planSelection:
+              configurator && configuratorHasOptions(configurator) ? configurator.plan.map((l) => l.id) : null,
             assistantMessageId: response.id,
             // `totalUsage` aggregates input/output tokens across all agentic
             // steps this turn (ai@6 LanguageModelUsage; fields may be undefined,
@@ -817,6 +848,10 @@ export async function POST(req: Request) {
             }
             for (const data of planShownEvents(planCalls, planResults, gymPlansBefore)) {
               await recordKpiEvent({ sessionId, event: KPI_CONFIGURATOR_PLAN_SHOWN, data });
+            }
+            // One per offer_plan_options call the widget renders (step, counts, handles).
+            for (const data of optionsShownEvents(planCalls, planResults)) {
+              await recordKpiEvent({ sessionId, event: KPI_CONFIGURATOR_OPTIONS_SHOWN, data });
             }
           }
 

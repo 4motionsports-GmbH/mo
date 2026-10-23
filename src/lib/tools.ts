@@ -6,12 +6,15 @@ import { toolCopy } from "./tool-descriptions.mjs";
 import { createOrderStatusLookup } from "./order-status";
 import { resolveProductSelections } from "./product-catalog";
 import {
+  OPTIONS_LIMITS,
+  OPTION_STEPS,
   PLAN_MAX_ITEMS,
   PLAN_ROLES,
   REPLY_MAX_CHARS,
   REPLY_MAX_OPTIONS,
   REPLY_TOPICS,
   configuratorToolCopy,
+  normalizeOfferOptions,
   normalizePlanItems,
 } from "./configurator-core.mjs";
 import type { Locale } from "./locale";
@@ -355,6 +358,53 @@ export function buildChatTools(
         return unknownIds.length || soldOutIds.length
           ? { ok: true, shownItems: lines.length - unknownIds.length, unknownIds, soldOutIds }
           : { ok: true, shownItems: lines.length };
+      },
+    }),
+
+    // The step-by-step choice (2026-10-23): offered only when the widget
+    // renders it (configurator.features "options"); withheld via activeTools
+    // otherwise. Same id check as show_gym_plan; an option counts as shown
+    // when one of its items is known.
+    offer_plan_options: tool({
+      description: k.offerOptionsDesc,
+      inputSchema: z.object({
+        step: z.enum(OPTION_STEPS).describe(k.fieldOptionsStep),
+        title: z.string().max(OPTIONS_LIMITS.titleChars).describe(k.fieldOptionsTitle),
+        intro: z.string().max(OPTIONS_LIMITS.introChars).optional().describe(k.fieldOptionsIntro),
+        multiSelect: z.boolean().optional().describe(k.fieldOptionsMulti),
+        options: z
+          .array(
+            z.object({
+              items: z
+                .array(
+                  z.object({
+                    productId: z.string(),
+                    quantity: z.number().int().min(1).max(20).optional(),
+                  })
+                )
+                .min(1)
+                .max(OPTIONS_LIMITS.items),
+              label: z.string().max(OPTIONS_LIMITS.labelChars).optional(),
+              badge: z.string().max(OPTIONS_LIMITS.badgeChars).optional(),
+              pros: z.array(z.string().max(OPTIONS_LIMITS.pointChars)).max(OPTIONS_LIMITS.pros).optional(),
+              cons: z.array(z.string().max(OPTIONS_LIMITS.pointChars)).max(OPTIONS_LIMITS.cons).optional(),
+            })
+          )
+          .min(1)
+          .max(OPTIONS_LIMITS.options)
+          .describe(k.fieldOptionsList),
+      }),
+      execute: async (input) => {
+        const { options } = normalizeOfferOptions(input);
+        const refs = [...new Set(options.flatMap((o) => o.items.map((it) => it.productId)))];
+        const resolved = await resolveProductSelections(refs);
+        const known = new Map(resolved.map((r) => [r.ref, r]));
+        const unknownIds = refs.filter((ref) => !known.has(ref));
+        const soldOutIds = resolved.filter((r) => !r.available).map((r) => r.ref);
+        const shownOptions = options.filter((o) => o.items.some((it) => known.has(it.productId))).length;
+        return unknownIds.length || soldOutIds.length
+          ? { ok: true, shownOptions, unknownIds, soldOutIds }
+          : { ok: true, shownOptions };
       },
     }),
   };
