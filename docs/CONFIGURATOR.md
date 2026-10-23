@@ -3,10 +3,12 @@
 The landing page of the Men's Health / Women's Health cooperation: the visitor picks a few basic
 answers on the left (the training focus — one of Mo's personas —, place and space, training and
 level), hands them to Mo, and Mo — docked on the right of the same page — asks for the rest (budget,
-wishes), builds a home-gym plan from a curated assortment, which the visitor can extend with own
-products and weight steps, and puts it into the cart with one click. This document owns the feature; the wire shapes are in
+wishes), then goes through the product types one by one — base unit, accessories for it, bench,
+weights, flooring — with two to three options each, from which the visitor picks into the plan on the
+page; the visitor can extend the plan with own products from the whole shop and weight steps, and puts
+it into the cart with one click. This document owns the feature; the wire shapes are in
 [`frontend/API_CONTRACT.md`](./frontend/API_CONTRACT.md) §2 (`context.type: "configurator"`, the tools
-`suggest_replies` / `show_gym_plan`) and §5 (KPI events). Live status: [`ROLLOUT_TODO.md`](./ROLLOUT_TODO.md).
+`suggest_replies` / `offer_plan_options` / `show_gym_plan`), §3b (assortment and search) and §5 (KPI events). Live status: [`ROLLOUT_TODO.md`](./ROLLOUT_TODO.md).
 
 ## 1. The flow
 
@@ -23,8 +25,10 @@ sequenceDiagram
   V->>W: taps a chip („1.000–2.500 €“) → sent as the user message (+ the same context)
   B-->>W: wishes question + suggest_replies (multiSelect)
   V->>W: picks wishes, „Übernehmen“
-  B-->>W: explanation + show_gym_plan (+ one show_product card)
-  W->>P: plan card in the chat + the editable plan in [data-ms-chat-plan]
+  B-->>W: step „Basisgerät“: offer_plan_options (2–3 options with pros / cons, Mo's pick first)
+  V->>W: „Auswählen“ → the option's lines into the plan + „Ich nehme: …“ (or „Überspringen“ / „Andere Vorschläge“)
+  W->>P: the picked lines in the editable plan in [data-ms-chat-plan]
+  B-->>W: next step: accessories for the chosen base (multiSelect), bench, weights, flooring … summary
   V->>P: adjusts quantities / variants, „+ Gewichtsstufe“, „+ Produkt hinzufügen“, „Alles in den Warenkorb“
   P->>P: POST /cart/add.js, cart drawer opens (_mo marker stamped first, consent-gated)
 ```
@@ -35,6 +39,19 @@ fourth card „Ich will …“ is gone — the training focus covers it), **4 Bu
 (assembly, delivery date, noise, floor protection, no drilling, showroom) asked by Mo with answer
 chips, at most 1–2 detail questions more (ceiling height, frequency, equipment already owned), never
 more than four questions before the first plan. „Zeig mir einfach was“ gets the plan right away.
+
+**Step by step** (third round of 23.10.2026, Lucas): instead of one complete plan Mo goes through the
+product types — **Basisgerät → Zubehör** for the chosen base (Latzug-Option, Dip-Barren,
+Hip-Thrust-Auflage … from its „Ergänzende Produkte“) **→ Hantelbank → Gewichte → Bodenschutz**
+(Cardio only when the focus or the wishes ask for it) — and offers two to three options per type
+(`offer_plan_options`, at most four), the recommendation first with the badge „Mos Empfehlung“, each
+with pros and cons from the product data. The visitor picks one („Auswählen“; accessories: several,
+then „Übernehmen“), skips the type („Überspringen“) or asks for others („Andere Vorschläge“), or types
+anything else — another product, a question —, which Mo answers (`search_products`) before going on.
+The picks land in the plan on the page („Von dir gewählt“); Mo keeps the subtotal against the budget
+in view and ends with a short summary. „Zeig mir einfach was“ starts with the base unit right away.
+The step flow needs the new widget (`configurator.features = ["options"]`, API_CONTRACT §2); an old
+cached widget keeps the one-plan flow above unchanged.
 
 **The training focus is Mo's persona.** The card „Welcher Typ bist du? Wähle deinen Trainingsfokus
 aus.“ offers six types — the four private personas Mo already derives from a conversation plus
@@ -130,12 +147,23 @@ Prefilled answers are only preselected — the visitor still confirms with „We
   `weight_loss`, else from the training answers —, budget) — the retrieval's space and budget gates
   work from the greeting on; Mo's own `update_customer_profile` always wins.
 - **Greeting:** a fresh open gets its own trigger turn and a retrieval query built from the answers.
-- **Tools:** `suggest_replies` (2–6 chips; `topic` budget/wishes/frequency/space/equipment/other) and
+- **Tools:** `suggest_replies` (2–6 chips; `topic` budget/wishes/frequency/space/equipment/other),
   `show_gym_plan` (title, summary, 1–20 items with role base/accessory/weights/cardio/flooring/extra,
-  quantity, note, ≤ 3 tips). Both are built always and withheld via `activeTools` outside a
-  configurator thread, after the tools-tier cache marker — every other conversation's tool list and
-  cached prefix are unchanged. The plan tool answers the model with unknown / sold-out ids so it can
-  correct itself in the same turn.
+  quantity, note, ≤ 3 tips) and `offer_plan_options` (step base/accessory/bench/weights/flooring/cardio/
+  extra, title, intro, `multiSelect`, 1–4 options of 1–6 lines each — a bundle for weights steps —
+  with label, badge, ≤ 3 pros, ≤ 2 cons; `normalizeOfferOptions`). All three are built always and
+  withheld via `activeTools` outside a configurator thread, after the tools-tier cache marker — every
+  other conversation's tool list and cached prefix are unchanged; `offer_plan_options` additionally
+  only when the widget declares `features: ["options"]` (`configuratorHasOptions`). The plan and the
+  options tool answer the model with unknown / sold-out ids so it can correct itself in the same turn.
+- **Step guide** (with `features: ["options"]`, `STEP_GUIDE_*` / `STEP_AFTER_*`): Mo announces the
+  steps, offers one type per answer (one `offer_plan_options` call, no chips, no `show_product` for the
+  offered products), pros and cons only from the product data, and waits for the pick. For the
+  accessory step the prompt lists the „Ergänzende Produkte“ (`compatibleWith`) of the base units in
+  the plan („Zubehör zu den Basisgeräten im Plan“, `renderAccessories`, at most three bases with ten
+  products each); without any Mo searches for matching accessories. The plan block carries each line's
+  price („— 229 € je Stück“) and, when every line is priced, the subtotal („Zwischensumme“) Mo compares
+  with the budget. `show_gym_plan` only when the visitor explicitly wants a complete set.
 - **Weights** (Anna's feedback: the first plans held a single 0,5 kg plate): for weights with
   several steps the guide asks for concrete steps — one line per step with its variant ref (product
   id + `~` + variant id, from the assortment list or the retrieved-products block; never an invented
@@ -152,8 +180,13 @@ Prefilled answers are only preselected — the visitor still confirms with „We
 - **The visitor's own lines:** „+ Produkt hinzufügen“ under the plan lists the configurator assortment
   (`GET /api/configurator/assortment`: public cards sorted by plan role then name — the role from the
   catalog category, `planRoleForProduct`; empty when the configurator is off; origin allowlist +
-  `products` rate limit, cached 5 min) with search and role chips. Added lines and extra weight steps
-  are marked „Von dir ergänzt“, go back to Mo as plan items with `added: true` and are listed in the
+  `products` rate limit, cached 5 min) with role chips and a search field that is always there and
+  searches the **whole shop** (`GET /api/configurator/search?q=`, third round — before, the search only
+  filtered the curated list and was gone when that list was empty): every word must match name, brand,
+  category, tags or SKU (case, umlauts / ß and simple plurals folded, `searchCatalogCards`), name
+  prefixes first, in-stock before sold-out, hidden products never, at most 12 cards in the assortment's
+  card shape; origin allowlist + `products` rate limit, cached 60 s. No embeddings — free per keystroke. Added lines and extra weight steps
+  are marked „Von dir ergänzt“, picked options „Von dir gewählt“; both go back to Mo as plan items with `added: true` and are listed in the
   prompt as „vom Kunden ergänzt“ — Mo keeps them in every new plan unless the visitor wants them gone.
   Mo's plan and the visitor's own lines share one limit of 20 lines (`PLAN_MAX_ITEMS` =
   `CONFIGURATOR_LIMITS.planItems`); over it, Mo asks what can go. The per-answer product limits (also
@@ -170,8 +203,9 @@ Prefilled answers are only preselected — the visitor still confirms with „We
 
 - **Wirkung** (`?kpiRange=7d|30d|90d`): page views (consent only), handovers, plans, cart value,
   orders + revenue; the funnel „Vom ersten Klick zur Bestellung“; how visitors answered (one card per
-  field), the partner split, the products in Mo's plans, chip topics, the 12 latest configurator
-  consultations with a link to the transcript in Gespräche.
+  field), the partner split, „Schritt für Schritt“ (per product type: options shown, picked, skipped,
+  „Andere Vorschläge“ — third round), the products in Mo's plans, chip topics, the 12 latest
+  configurator consultations with a link to the transcript in Gespräche.
 - **Mo im Konfigurator:** on/off, assortment focus, Shopify tag, extra products, „Hinweise für Mo“
   (≤ 1.500 characters, e.g. a running promotion or delivery times).
 - **Sortiment:** the resolved assortment with price, stock and why it is in (Tag / Liste); warnings for
@@ -185,9 +219,10 @@ Elsewhere in the admin (ADMIN_DASHBOARD.md §3.5 / §5.22 and §3.4):
 - **KPIs** → group „Beratung & Funnel“ → „Home-Gym-Konfigurator“ (handovers, plans, cart value, orders +
   revenue for any KPI period, link „Im Konfigurator öffnen“); „Wie der Umsatz entstand“ has the cross-cut
   row „davon über den Home-Gym-Konfigurator“, and the order list a „Konfigurator“ badge (§6).
-- **Gespräche:** a „Konfigurator“ badge on every configurator thread (fired `suggest_replies` or
-  `show_gym_plan`; search for `suggest_replies` lists them all), the tools as „Antwort-Chips“ /
-  „Home-Gym-Plan“, and the latest plan (lines, roles, notes, today's prices) above the transcript.
+- **Gespräche:** a „Konfigurator“ badge on every configurator thread (fired `suggest_replies`,
+  `show_gym_plan` or `offer_plan_options`; search for `suggest_replies` lists them all), the tools as
+  „Antwort-Chips“ / „Home-Gym-Plan“ / „Produkt-Optionen“, and the latest plan (lines, roles, notes,
+  today's prices) above the transcript.
 - **Komplettanalyse / Verbesserung:** `chat.configuratorHandover`, `chat.configuratorPlans`,
   `chat.configuratorCarts` and `revenue.viaConfigurator` ([`BUSINESS_SNAPSHOT.md`](./BUSINESS_SNAPSHOT.md)).
 
@@ -196,8 +231,9 @@ Elsewhere in the admin (ADMIN_DASHBOARD.md §3.5 / §5.22 and §3.4):
 Events (names and data: API_CONTRACT §5): widget `configurator_viewed` (only with Shopify analytics
 consent), `configurator_started`, `configurator_handover`, `configurator_answers_changed`,
 `configurator_chip_clicked`, `configurator_plan_edited` (`action` qty / variant / remove / restore /
-add / add_step), `configurator_cart_added`; server-only
-`configurator_chat_started`, `configurator_plan_shown` (in `SERVER_ONLY_EVENTS`). Ids, enums, counts
+add / add_step), `configurator_cart_added`, `configurator_option_picked` / `_skipped` / `_more`
+(step flow); server-only `configurator_chat_started` (`steps`: the step flow was on),
+`configurator_plan_shown`, `configurator_options_shown` (in `SERVER_ONLY_EVENTS`). Ids, enums, counts
 and booleans only — never a name, text or e-mail.
 
 - Every funnel stage counts **distinct sessions on its own**: the handover starts a fresh thread
@@ -210,7 +246,8 @@ and booleans only — never a name, text or e-mail.
   snapshot: a realised `mo_orders` row (PAID / PARTIALLY_REFUNDED) **processed in the period** (order
   date, like „Umsatz durch Mo“) whose **latest consultation row before the order** — the attribution
   anchor (`CONSULTATION_ANCHOR_TOOLS`, written by the order's session) — sits in a thread where Mo showed
-  a Home-Gym plan (`CONFIGURATOR_PLAN_TOOL`). Spelled out in `mo-revenue-store.ts` and
+  a Home-Gym plan or product options (`CONFIGURATOR_PLAN_TOOLS` = `show_gym_plan` + `offer_plan_options`
+  — in the step flow Mo may never show a complete plan). Spelled out in `mo-revenue-store.ts` and
   `configurator-store.ts` (Neon templates are not composable). A later ordinary consultation of the same
   device moves the order out; signed-in customers keep their session id across threads, so the thread,
   not the session, decides. These orders are **inside** „Umsatz durch Mo“ (mostly „Beraten & gekauft“ /
@@ -222,15 +259,24 @@ and booleans only — never a name, text or e-mail.
   **selection** (`selected_product_ids`, like `add_to_cart` — `recommended-products.mjs`): „Cart
   angeboten“ in Gespräche, „Gespräche mit Produktempfehlung“, the Eingang rule „Kaufabsicht ohne Kauf“
   and the summary cart. A pinned variant (`id~variantId`) counts as its product for „Beraten & gekauft“.
+  In the step flow the options' products are discussed products and `offer_plan_options` anchors the
+  window like the plan; the selection is the **plan on the page** as the widget sent it with the turn
+  (Mo's lines and the visitor's picks — `planSelection` in `persistTurn`), not the offered options.
 - **Plans shown** = `show_gym_plan` calls the widget renders: a call that failed the schema or whose
   lines are all unknown is not counted (`planShownEvents`); unknown lines are left out of the products.
+  The funnel stage „Plan erstellt“ counts sessions with a shown plan **or** a picked option.
+- **Options shown** = `offer_plan_options` calls with at least one renderable option
+  (`optionsShownEvents`, `configurator_options_shown` {step, options, items}); „Schritt für Schritt“
+  sets them against the widget's picks (`rank` = the option's position, Mo's recommendation is 1),
+  skips and „Andere Vorschläge“ per step.
 - **Cart value** = the plan price of the lines that actually landed in the cart (not the plan total).
 - `configurator_cart_added` matches `%cart%`, so it also counts as an add-to-cart click on the KPI
   screen (tested in `kpi-widget-events.test.mjs`); no other configurator event matches a click pattern.
 - KPI release markers `home-gym-konfigurator` and `attribution-variants-refunds` (21.10.2026,
   `kpi-releases.mjs`) name the counting changes for periods across the launch;
   `konfigurator-personas` (22.10.2026) the persona card, weight steps and own plan lines (behaviour, no
-  counting change). The answer distribution „Typ / Trainingsfokus“ counts first-version answers under
+  counting change); `konfigurator-schritt-fuer-schritt` (23.10.2026) the step flow — „Plan erstellt“
+  and the order rule now also count the options. The answer distribution „Typ / Trainingsfokus“ counts first-version answers under
   the mapped persona; the goal card has no distribution any more.
 
 ## 7. Storefront (theme repo `ms_shopify_clone`)

@@ -71,6 +71,7 @@ fresh within 300 s. **Bucket:** see "Rate limits" below.
 | POST | `/api/chat` | secret | `chat` | §2 |
 | GET | `/api/products` | origin | `products` | §3 |
 | GET | `/api/configurator/assortment` (configurator page only) | origin | `products` | §3a |
+| GET | `/api/configurator/search` (configurator page only) | origin | `products` | §3b |
 | POST | `/api/contact` | secret | `chat` + `contact-ip` | §4 |
 | POST | `/api/kpi` | origin | `kpi` | §5 |
 | POST | `/api/capture-email` | secret | `chat` + `capture-recipient` | §7.1 |
@@ -374,8 +375,9 @@ changed answer or an edited plan reaches Mo with the next message.
     "partner": "mh",            // optional: mh | wh (Men's / Women's Health landing page)
     "plan": [                   // optional: the plan as it stands on the page (≤ 20, ids or variant refs, qty 1–20)
       { "id": "atx-rack~4400000", "qty": 2 },
-      { "id": "atx-scheiben~4400012", "qty": 2, "added": true }  // added: the visitor put it in („+ Produkt hinzufügen“ / „+ Gewichtsstufe“)
-    ]
+      { "id": "atx-scheiben~4400012", "qty": 2, "added": true }  // added: the visitor put it in („+ Produkt hinzufügen“ / „+ Gewichtsstufe“ / a picked option)
+    ],
+    "features": ["options"]     // optional (since 2026-10-23): what the widget can render — "options" = offer_plan_options
   }
 }
 ```
@@ -389,8 +391,12 @@ changed answer or an edited plan reaches Mo with the next message.
   part of the shape.
 - Used only while the configurator is on (admin „Konfigurator“, admin setting, default on). Then Mo gets
   the configurator section in its prompt (answers, guide, curated assortment, team notes, the plan), the
-  answers fill the profile fields the conversation has not set, and the two configurator tools
+  answers fill the profile fields the conversation has not set, and the configurator tools
   `suggest_replies` / `show_gym_plan` are offered (below). Off: the request is a normal chat.
+- `features` (since 2026-10-23) declares what the widget renders; unknown values are dropped. With
+  `"options"` Mo goes through the product types step by step and gets the third configurator tool
+  `offer_plan_options` (below) — the plan on the page is then built from the visitor's picks. Without
+  it (a widget before 2026-10-23) Mo keeps building one complete plan with `show_gym_plan`.
 - A fresh open streams a greeting plus the first open question (`messages: []`, like the CTA/nudge path).
 - The widget prefers this context over a typed page context (`source: "page"`) while the thread is a
   configurator thread; an explicit CTA / nudge context still wins.
@@ -886,6 +892,44 @@ marker first (§10, consent-gated) and opens the cart drawer. A plan counts as a
 KPI: `configurator_plan_edited`, `configurator_cart_added` (§5); the server records
 `configurator_plan_shown`.
 
+##### `offer_plan_options` → product options for one step (configurator threads with `features: ["options"]`, since 2026-10-23)
+
+Input schema:
+```ts
+{
+  step: "base" | "accessory" | "bench" | "weights" | "flooring" | "cardio" | "extra";
+  title: string;            // ≤ 80, e.g. „Schritt 1 · Dein Basisgerät“
+  intro?: string;           // ≤ 240
+  multiSelect?: boolean;    // true = several options can be picked, then „Übernehmen“ (accessories)
+  options: Array<{          // 1–4, Mo's recommendation first
+    items: Array<{          // 1–6; more than one = a bundle (weights: one line per step, e.g. 2× 5 kg + 2× 10 kg)
+      productId: string;    // catalog id or variant ref
+      quantity?: number;    // 1–20, default 1
+    }>;
+    label?: string;         // ≤ 60 — the option's name (bundles); else the first item's name
+    badge?: string;         // ≤ 24, e.g. „Mos Empfehlung“
+    pros?: string[];        // ≤ 3, ≤ 90 each
+    cons?: string[];        // ≤ 2, ≤ 90 each
+  }>;
+}
+```
+Output: `{ ok: true, shownOptions, unknownIds?, soldOutIds? }` — for the model only. Widget action:
+hydrate the ids with `GET /api/products` (max 10 per request — chunk) and render a card group
+(`ms-chat-offer`): title, intro, one card per option — thumbnail, name (label, else the first item's
+name with its variant), total price (items × quantity, sale-price aware), the item list for a bundle,
+the badge, pros (✓) and cons (–), a button „Auswählen“ (EN „Choose“); with `multiSelect` the buttons
+toggle and one „Übernehmen (n)“ confirms. An option with an unknown or sold-out item is left out; with
+none left the group renders nothing. Under the group two answer chips „Überspringen“ / „Andere
+Vorschläge“ (EN „Skip“ / „Other suggestions“), sent as „Diesen Schritt überspringe ich.“ / „Zeig mir
+bitte andere Vorschläge für diesen Schritt.“. A pick puts the option's lines into the page plan with
+the role of the step (`bench` → `accessory`, the others their own role) as `added: true` lines
+(„Von dir gewählt“; editable like the visitor's own lines; a first pick creates the plan view when Mo
+showed no plan) and sends „Ich nehme: <Name>.“ (several: „Ich nehme: A, B.“; EN „I'll take: …“) with
+the updated plan in the context; a different option of the same group later replaces that group's
+lines („Ich nehme stattdessen: …“). Options count as a consultation like the plan (attribution
+anchor, discussed products). KPI: `configurator_option_picked` / `_skipped` / `_more` (§5); the server
+records `configurator_options_shown`. Only offered when the request declares `features: ["options"]`.
+
 #### Tools the widget MUST NOT render
 
 These background tools stream the full `tool-input-start → … → tool-output-available` chunk sequence.
@@ -1149,6 +1193,20 @@ The curated Home-Gym-Konfigurator assortment for the plan's „+ Produkt hinzuf�
 
 A picked product is hydrated through `GET /api/products` as usual before it enters the plan. Errors:
 the envelope of §1 (`500 internal_error`, `429` rate limit).
+
+## 3b. `GET /api/configurator/search?q=…&limit=…` (since 2026-10-23)
+
+The search field of „+ Produkt hinzufügen“ — over the **whole shop**, not only the curated assortment
+([CONFIGURATOR.md](../CONFIGURATOR.md) §4). No secret, only an allowlisted origin (`products` bucket,
+send `x-ms-session` like §3); `Cache-Control: public, max-age=60, stale-while-revalidate=300`.
+
+- `q` — 2–80 characters (trimmed); every word must match the name, brand, category, tags or SKU
+  (case, umlauts / ß and simple plurals folded). Missing or shorter → `400 bad_request`.
+- `limit` — 1–12, default 8.
+
+Response: `{ "ok": true, "products": Card[] }` — the card shape of §3a (role included), best matches
+first (name prefix before substring before brand / category / tags), in-stock before sold-out; hidden
+products never; `[]` for no match. Independent of the configurator switch. Errors: §1 envelope.
 
 ---
 
@@ -1433,6 +1491,9 @@ only `configurator_*` names and flat ids/enums/numbers). Read by the admin scree
 | `configurator_chip_clicked` | an answer chip of `suggest_replies` was sent | `{ topic, multi, count }` |
 | `configurator_plan_edited` | quantity, variant, remove or restore in the plan; since 2026-10-22 also an added product or weight step | `{ action }` — `qty` \| `variant` \| `remove` \| `restore` \| `add` \| `add_step` |
 | `configurator_cart_added` | „Alles in den Warenkorb“ landed (matches `%cart%`: counts as an add-to-cart click) | `{ items, units, value, partial }` — `value` = whole EUR of the lines that landed (plan prices; since the follow-up of 2026-10-21 — before, the plan total) |
+| `configurator_option_picked` | an option of `offer_plan_options` went into the plan („Auswählen“ / „Übernehmen“; since 2026-10-23) | `{ step, rank, items, multi, count }` — `rank` = 1-based position of the (first) picked option in its group, `items` = its item lines, `count` = options picked in this action |
+| `configurator_option_skipped` | „Überspringen“ under an option group (2026-10-23) | `{ step }` |
+| `configurator_option_more` | „Andere Vorschläge“ under an option group (2026-10-23) | `{ step }` |
 
 ### Server-emitted lifecycle events (canonical names)
 
@@ -1459,8 +1520,9 @@ server-side capture-funnel names above, but does not store them:
 | `page_context_answered`    | `POST /api/chat` — when that turn finished (2026-10-05) | `{ kind, productCards, otherCards }` — card tool calls in the answer (`show_product`, `compare_products`, `add_to_cart`); `otherCards` leaves out a `show_product` of the open page's product. Counts only, no ids. Session-keyed. |
 | `consent_ask_eligible`     | `GET /api/auth/me` when it answers `marketing.optInActionable: true` — at most once per session per 24 h (2026-10-08). Only there: the App Proxy whoami never writes it | `{ variant, mode, locale }` — `variant` = the sign-in copy variant this session is assigned (the same pick as `/api/consent-copy?surface=signin` with this `x-ms-session`); `mode` `popup` \| `value_moment` (`value_moment` only when that copy carries an approved, valid `valueMoment`); `locale` `de` \| `en` (`?locale=` / `x-ms-locale`, §12). Session-keyed. The base of the welcome-voucher test (AD §5.7). |
 | `consent_copy_served`      | `GET /api/consent-copy?surface=signin` with `x-ms-session`, only while more than one variant is active (the `private, no-store` answer, §7.4) — at most once per session per 24 h, written after the answer (2026-10-08) | `{ variant, locale, reward, valueMoment }` — the variant served; `reward` / `valueMoment` = whether the served copy carries an approved, valid one (what the widget would render). Session-keyed, anonymous sessions included. |
-| `configurator_chat_started` | `POST /api/chat` — the fresh open (`messages: []`) of a configurator thread, at request time (2026-10-21) | `{ persona, location, space, training, level, budget, wishes, partner, locale }` — answer ids (`goal` until 2026-10-22) (comma lists for `training` / `wishes`, `""` when open). Session-keyed. |
+| `configurator_chat_started` | `POST /api/chat` — the fresh open (`messages: []`) of a configurator thread, at request time (2026-10-21) | `{ persona, location, space, training, level, budget, wishes, partner, locale, steps }` — answer ids (`goal` until 2026-10-22) (comma lists for `training` / `wishes`, `""` when open); `steps` (2026-10-23) = the widget declared `features: ["options"]`. Session-keyed. |
 | `configurator_plan_shown` | `POST /api/chat` — one per `show_gym_plan` call the widget renders (valid input, at least one known line), when the turn finished (2026-10-21) | `{ planNumber, items, units, productIds }` — catalog handles of the known lines (no variant ids, no names). Session-keyed. |
+| `configurator_options_shown` | `POST /api/chat` — one per `offer_plan_options` call with at least one renderable option, when the turn finished (2026-10-23) | `{ step, options, items, multi, productIds }` — options and item lines left after unknown ids; catalog handles only. Session-keyed. |
 
 Which admin KPI section reads which event: backend doc `ADMIN_DASHBOARD.md` §5.
 
@@ -2406,3 +2468,4 @@ section that holds the fact; this table repeats none of the detail.
 | 2026-10-21 | Home-Gym-Konfigurator: `context.type: "configurator"` (the page's answers + plan, on every turn of the thread); configurator-only tools `suggest_replies` (answer chips) and `show_gym_plan` (plan card + the page's editable plan, cart via `/cart/add.js`); widget events `configurator_*`, server-only `configurator_chat_started` / `configurator_plan_shown`. Additive: an older widget never sends the context and renders nothing for the tools. | §2 "`context.type: "configurator"`", "Tools the widget MUST render"; §5 |
 | 2026-10-21 (follow-up) | KPI accuracy, no shape change: `configurator_started` once per run (also for a prefilled handover and after „Neu starten“), `configurator_cart_added.value` = the lines that landed, `chat_opened` after a session rotation in an open panel, the plan thumbnail sends `product_cta_clicked`, an attribution token minted for a session that rotated meanwhile is dropped — the new session mints its own only once it is consulted (lazy); `configurator_plan_shown` only for rendered plans. | §5 |
 | 2026-10-22 | Konfigurator round after the partner feedback: `configurator.persona` is one of Mo's personas (six, two new: `design_lifestyle`, `weight_loss`) and sets the thread's archetype; `goal` dropped (old values still parse); plan items may carry `added: true`; `show_gym_plan` up to 20 items (the page plan's limit, the visitor's own lines included); new `GET /api/configurator/assortment`; `configurator_plan_edited.action` adds `add` / `add_step`. Additive for the widget: the 2026-10-21 build keeps working (its persona/goal ids map) — but it renders and echoes only 12 of Mo's lines and has no „+ Produkt hinzufügen“ / „+ Gewichtsstufe“, which Mo now mentions; upload the theme right after the deploy. | §1, §2 "`context.type: "configurator"`", `show_gym_plan`, §3a, §5 |
+| 2026-10-23 | Konfigurator step by step (third feedback round): `configurator.features` (`["options"]`) declares the new widget; then the configurator-only tool `offer_plan_options` (2–4 options per product type with pros / cons, picked into the page plan as `added: true` lines) is offered and Mo goes through the types one by one; new `GET /api/configurator/search` (whole-shop search for „+ Produkt hinzufügen“); widget events `configurator_option_picked` / `_skipped` / `_more`, server-only `configurator_options_shown`, `configurator_chat_started.steps`. Additive: a widget without `features` keeps the one-plan flow and never gets the tool. | §1, §2 "`context.type: "configurator"`", `offer_plan_options`, §3b, §5 |

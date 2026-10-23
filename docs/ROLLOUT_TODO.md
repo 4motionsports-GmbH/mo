@@ -195,39 +195,48 @@ lawyer ready to send, the Shopify steps and the frontend prompt: [`WELCOME_VOUCH
    (that one wins); a new picture after „Einplanen“ sends the planned mails back for review; a test
    mail from „Prüfen & testen“ shows the SAVED picture — save first. Tell C if anything looks off (a
    screenshot is best).
-15. **Home-Gym-Konfigurator (Men's Health / Women's Health) — the second feedback round of 22.10.
-   (deploy + four theme files) + widget check + partner check (~20 min). No migration, no env var, no
-   switch in Vercel.** The first round of 22.10. is live (Done below); the feature:
+15. **Home-Gym-Konfigurator — the third feedback round of 23.10. (Anna + Lucas): deploy first, then five
+   theme files, the hero photo, widget check, partner check (~30 min). No migration, no env var, no
+   switch in Vercel.** The second round of 22.10. is live (Done below); the feature:
    [`CONFIGURATOR.md`](./CONFIGURATOR.md).
-   1. **Backend:** deploy `main` as usual — only Mo's copy of the persona subtitles changed (the four
-      new texts of Anna); independent of the theme upload.
-   2. **Theme upload — the second round of 22.10.** (theme repo `MANIFEST.md`, entry „2026-10-22 b“):
-      replace `sections/ms-home-gym-configurator.liquid`, `assets/ms-home-gym-configurator.js`,
-      `assets/ms-home-gym-configurator.css` and `assets/ms-chat-widget.css` (`ms-chat-widget.js` is
-      unchanged). **Do NOT upload `templates/page.home-gym-mo.json`** — it would drop the uploaded seals;
-      the changed texts use new setting ids (`seal_note`, `mo_hello`, `mo_lead`).
-   3. **Check the page** (`/pages/home-gym-konfigurator-1`, desktop and phone): sections alternate white
-      and light grey like the homepage; the blue line above „Dein Home Gym. Klar geplant.“ (regular
-      weight) like „Darf in keinem Gym fehlen. / Bestseller.“; larger seals with „… Empfehlungssiegel von
-      Men's und Women's Health.“; no divider lines (also not in Mo's plan); persona titles on two lines
-      with the new subtitles; Mo's panel „Hallo, ich bin Mo.“ with one sentence. Optional in the theme
-      editor: „Einleitung in Großbuchstaben“ switches the blue line to caps.
-   4. **Widget build:** `npm run verify:widget` should report `konfigurator-2026-10-22` (the widget of the
-      first round of 22.10.) — send C the output, who marks it as the expected build (this sandbox cannot
-      reach the shop).
-   5. **Partner check:** have Men's Health / Women's Health confirm seals and names before the link goes
-      out — the page is visible (`/pages/home-gym-konfigurator-1`, in the sitemap) but not linked.
-   6. **Assortment:** keep the configurator set tagged `home-gym-konfigurator` (Konfigurator →
-      „Sortiment“; also what „+ Produkt hinzufügen“ offers); plates, dumbbells and kettlebells need their
-      weight variants available.
-   7. **Optional — the URL:** the old static guide holds `/pages/home-gym-konfigurator`. For a clean
-      partner link, rename one of the two handles (Shopify offers a redirect when a handle changes)
-      before the links are printed.
-   8. **Check after the first orders:** KPIs → „Home-Gym-Konfigurator“ and the cross-cut row in „Wie der
-      Umsatz entstand“ show the same orders as Konfigurator → „Wirkung“. Tell C what looks off.
+   1. **Backend first:** deploy `main` as usual. Safe on its own — the step-by-step consultation only
+      starts for the new widget (it declares `features: ["options"]`); the live widget keeps the
+      one-plan flow until the theme upload. New public route `GET /api/configurator/search`.
+   2. **Theme upload** (theme repo `MANIFEST.md`, entry „2026-10-23“): replace
+      `sections/ms-home-gym-configurator.liquid`, `assets/ms-home-gym-configurator.js`,
+      `assets/ms-home-gym-configurator.css`, `assets/ms-chat-widget.js` and `assets/ms-chat-widget.css`.
+      **Do NOT upload `templates/page.home-gym-mo.json`** — it would drop the uploaded seals; the changed
+      texts use new setting ids.
+   3. **Hero photo:** theme editor → the page → section „Home-Gym-Konfigurator“ → „Bild (optional)“: upload Anna's
+      photo (ATX power rack, dark wall; resize below 25 megapixels if Shopify refuses it) and set the
+      focal point on the rack. Without a photo the page keeps the white hero.
+   4. **Check the page** (`/pages/home-gym-konfigurator-1`, desktop and phone): the photo hero with the
+      seals on its lower edge; black buttons that turn blue on hover (blue on the photo), no red; the
+      badges SCHRITT 01 / 02 / 03 with more space between the cards; „KI-Home-Gym-Berater“ in „Starke
+      Partner“ and under Mo. Then a consultation: Mo offers two to three base units with pros and cons,
+      „Auswählen“ puts one into the plan, then accessories, bench, weights, flooring; „Überspringen“ and
+      „Andere Vorschläge“ work; „+ Produkt hinzufügen“ finds products of the whole shop by typing.
+   5. **Widget build:** `npm run verify:widget` should report `konfigurator-2026-10-23` — send C the
+      output, who marks it as the expected build (this sandbox cannot reach the shop).
+   6. **Accessories:** Mo offers the accessories of the chosen base unit from its „Ergänzende Produkte“
+      (catalog `compatibleWith`); maintain them for the racks and stations in the set (Latzug-Option,
+      Dip-Barren, Hip-Thrust-Auflage …) — without any, Mo searches the catalog.
+   7. **Assortment:** keep the configurator set tagged `home-gym-konfigurator` (Konfigurator →
+      „Sortiment“); plates, dumbbells and kettlebells need their weight variants available.
+   8. **Partner check:** have Men's Health / Women's Health confirm seals, names and the new text before
+      the link goes out — the page is visible but not linked.
+   9. **Optional — the URL:** the old static guide holds `/pages/home-gym-konfigurator`; rename one of the
+      two handles (Shopify offers a redirect) before the links are printed.
+   10. **Check after the first consultations:** Konfigurator → „Wirkung“ → „Schritt für Schritt“ fills
+      per product type; KPIs → „Home-Gym-Konfigurator“ shows the same orders as Konfigurator →
+      „Wirkung“. Tell C what looks off.
 
 ## Done
 
+- [x] **22.10. — Konfigurator, second feedback round live.** M reported everything done: backend deploy,
+  the four theme files of `MANIFEST.md` entry „2026-10-22 b“ (not the template) — homepage structure,
+  larger seals, no divider lines, persona titles on two lines, the short Mo panel. The widget-build
+  confirmation moves to item 15.5.
 - [x] **22.10. — Konfigurator, first feedback round of Anna live.** M reported the steps done: backend
   deploy (with migration `0080`), the five theme files of `MANIFEST.md` entry „2026-10-22“ (not the
   template), page checked — persona card with Mo's personas, light design, „+ Produkt hinzufügen“,

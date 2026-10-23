@@ -991,7 +991,7 @@ category/quality if present, and outcome signals derived from existing data:
 | --- | --- | --- |
 | tools fired | distinct `messages.tool_name` | reliable |
 | checkout offered | `conversations.selected_product_ids` non-empty | `add_to_cart` or a Home-Gym plan (`show_gym_plan`) fired |
-| Konfigurator | a fired `suggest_replies` or `show_gym_plan` (`isConfiguratorThread`) | badge „Konfigurator“; the detail shows the latest plan (lines, roles, notes, today's prices) in a `Disclosure` „Home-Gym-Plan“ above the transcript ([`CONFIGURATOR.md`](./CONFIGURATOR.md) §5) |
+| Konfigurator | a fired `suggest_replies`, `show_gym_plan` or `offer_plan_options` (`isConfiguratorThread`) | badge „Konfigurator“; the detail shows the latest plan (lines, roles, notes, today's prices) in a `Disclosure` „Home-Gym-Plan“ above the transcript ([`CONFIGURATOR.md`](./CONFIGURATOR.md) §5) |
 | cart link used | `kpi_events` `%cart%`/`%checkout%` by session | session-grained |
 | email captured | `email_captures` EXISTS by session | session-grained |
 | "keine Antwort" (error proxy) | user turn present, zero assistant turns | see below |
@@ -1401,9 +1401,12 @@ one pass), client `konfigurator/KonfiguratorWorkspace` and `KonfiguratorRange` (
   because the handover starts a fresh thread); „So antworten die Besucher“ (one `BarList` per answer —
   fields with nothing but „ohne Angabe“ are hidden; „Typ / Trainingsfokus“ lists Mo's six personas and
   counts answers of the first version under the mapped persona, the goal card is gone since 22.10.2026 —
-  plus „Herkunft“ Men's Health / Women's Health / direct); „Produkte in Mos Plänen“ (top 12 by sessions); „Antwort-Chips“ (by topic, plus chip clicks and
-  plan edits); „Letzte Konfigurator-Beratungen“ (12 newest with answers, plans, result badge and a link
-  `?tab=gespraeche&gid=`).
+  plus „Herkunft“ Men's Health / Women's Health / direct); „Schritt für Schritt“ (since 23.10.2026: per
+  product type — Basisgerät, Zubehör, Hantelbank, Gewichte, Bodenschutz, Cardio, Sonstiges — options
+  shown, picked, skipped and „Andere Vorschläge“; only types with numbers, the card is hidden without
+  any); „Produkte in Mos Plänen und Optionen“ (top 12 by sessions, products of shown plans and of Mo's
+  options); „Antwort-Chips“ (by topic, plus chip clicks and plan edits); „Letzte Konfigurator-Beratungen“
+  (12 newest with answers, plans and picked options, result badge and a link `?tab=gespraeche&gid=`).
 - **Mo im Konfigurator**: „Geführte Beratung“ Aktiv/Aus, „Sortiments-Fokus“ (bevorzugen / nur
   Sortiment), „Shopify-Tag des Sortiments“, „Zusätzliche Produkte“ (`CatalogProductPicker`, up to 60),
   „Hinweise für Mo“ (≤ 1.500 characters). Saved with `POST konfigurator/settings` (validation:
@@ -1625,8 +1628,10 @@ panel counts as opened; section note on §5.22) and „Bestell-Zuordnung: Varian
 (`attribution-variants-refunds`: variant refs count as their product, refunds reach the ledger — §5.5,
 §5.16), and on 22.10.2026 „Konfigurator: Trainingsfokus = Mos Personas“ (`konfigurator-personas`: the
 persona card, two new personas, no goal card, weight steps and the visitor's own plan lines — behaviour,
-no counting change) — eighteen entries in all; the six of 06.10., the one of 08.10., the second of 21.10.
-and the one of 22.10. add no section note. The
+no counting change), and on 23.10.2026 „Konfigurator: Mo geht die Produktarten Schritt für Schritt durch“
+(`konfigurator-schritt-fuer-schritt`: product options picked into the plan; „Plan erstellt“ and the
+configurator orders also count threads with options) — nineteen entries in all; the six of 06.10., the
+one of 08.10., the second of 21.10., the one of 22.10. and the one of 23.10. add no section note. The
 affected sections add a note when the period starts earlier: Anmelde-Popup,
 Einwilligung, Kundenkonto and „Chat gestartet“ of the Kampagnen-Funnel are
 „erst ab dem 04.10.2026 aussagekräftig“, the two widget tiers of
@@ -1963,8 +1968,8 @@ observed base rate). Without it no comparison is shown.
 ### 5.22 Home-Gym-Konfigurator — [`getConfiguratorSummary()`](../src/lib/configurator-store.ts), [`kpi/sections/KonfiguratorSection.tsx`](../src/app/admin/kpi/sections/KonfiguratorSection.tsx)
 
 Section in the „Beratung & Funnel“ group after the page context (anchor `konfigurator`, 2026-10-21): four
-tiles for the KPI period — An Mo übergeben (hint: share of the started runs), Plan erstellt (plans shown,
-share of the consultations), Warenkorb (plan value of the lines that landed — not revenue) and
+tiles for the KPI period — An Mo übergeben (hint: share of the started runs), Plan erstellt (sessions
+with a shown plan or a picked option; hint: plans, picks, share of the consultations), Warenkorb (plan value of the lines that landed — not revenue) and
 Bestellungen (orders „über den Konfigurator“ with their revenue, „in ‚Umsatz durch Mo‘ enthalten“) — and
 „Im Konfigurator öffnen“ (`?tab=konfigurator`, 7 / 30 / 90 days; a custom period opens 30). The
 definitions, the funnel and the detail lists are the Konfigurator screen's (§3.11,
