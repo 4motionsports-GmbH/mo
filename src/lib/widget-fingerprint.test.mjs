@@ -83,7 +83,7 @@ test("the live-safe builds are exactly the ones that redeem the code", () => {
       assert.equal(Boolean(b?.acceptable), widgetRedeemsLinkCode(counts), `${variant} ${commit}`);
     }
   }
-  assert.deepEqual(WIDGET_BUILDS.filter((b) => b.current).map((b) => b.key), ["konfigurator-2026-10-21"]);
+  assert.deepEqual(WIDGET_BUILDS.filter((b) => b.current).map((b) => b.key), ["konfigurator-2026-10-23"]);
 });
 
 test("a half-applied set or a non-widget file is never passed off as a known build", () => {
@@ -174,7 +174,7 @@ test("the Home-Gym-Konfigurator build (2026-10-21) is recognised only with both 
   const row = WIDGET_BUILDS.find((b) => b.key === "konfigurator-2026-10-21");
   assert.equal(WIDGET_BUILDS[2], row); // newest first, after the rounds of 2026-10-22 and 2026-10-23
   assert.equal(row?.acceptable, true);
-  assert.equal(row?.current, true); // live since 2026-10-21 (M's upload, page tested)
+  assert.equal(row?.current, false); // live 2026-10-21 … 2026-10-24, then 7cf0c7d
   const c = countWidgetMarkers(`dockRoot = el('div', { class: 'ms-chat-root ms-chat-root--dock' }); wrap = el('div', { class: 'ms-chat-root ms-chat-planhost' });`);
   assert.equal(c["ms-chat-root--dock"], 1);
   assert.equal(c["ms-chat-planhost"], 1);
@@ -203,6 +203,6 @@ test("the Konfigurator round of 2026-10-23 is recognised by its product options"
   const row = WIDGET_BUILDS.find((b) => b.key === "konfigurator-2026-10-23");
   assert.equal(WIDGET_BUILDS[0], row); // newest first
   assert.equal(row?.acceptable, true);
-  assert.equal(row?.current, false); // until M uploads it
+  assert.equal(row?.current, true); // live since 2026-10-24 (M's upload, live check passed)
   assert.equal(countWidgetMarkers(`group.className = 'ms-chat-offer';`)["ms-chat-offer"], 1);
 });

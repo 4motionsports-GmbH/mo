@@ -137,7 +137,7 @@ export const KPI_RELEASES = Object.freeze([
       "Auf der Konfigurator-Seite wählen Besucher:innen ihren Trainingsfokus aus sechs Typen — das sind Mos Personas, zwei davon neu („Design & Lifestyle“, „Abnehmen & Fitness“); die Wahl setzt Mos Beratungsmodus direkt. Die Frage „Ich will …“ (Ziel) entfällt; ältere Angaben zählen unter dem passenden Typ. Im Plan können Besucher:innen selbst Produkte und Gewichtsstufen ergänzen (Widget-Upload nötig).",
   },
   {
-    date: "2026-10-23",
+    date: "2026-10-24",
     key: "konfigurator-schritt-fuer-schritt",
     title: "Konfigurator: Mo geht die Produktarten Schritt für Schritt durch",
     detail:

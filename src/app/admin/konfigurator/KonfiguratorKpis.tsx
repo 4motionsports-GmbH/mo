@@ -234,7 +234,7 @@ export function KonfiguratorKpis({
             <KpiSection
               id="konfigurator-schritte"
               title="Schritt für Schritt"
-              info="Mos Produkt-Optionen je Produktart (seit 23.10.2026): wie oft Mo Optionen gezeigt hat, wie oft Besucher eine Option in ihren Plan gewählt, den Schritt übersprungen oder andere Vorschläge verlangt haben. Gezählt werden Ereignisse, nicht Sitzungen."
+              info="Mos Produkt-Optionen je Produktart (seit 24.10.2026): wie oft Mo Optionen gezeigt hat, wie oft Besucher eine Option in ihren Plan gewählt, den Schritt übersprungen oder andere Vorschläge verlangt haben. Gezählt werden Ereignisse, nicht Sitzungen."
               empty={kpis.steps.length === 0 ? "Im Zeitraum hat Mo noch keine Produkt-Optionen gezeigt." : null}
             >
               <Card>

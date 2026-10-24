@@ -76,10 +76,10 @@ export const WIDGET_BUILDS = Object.freeze([
     key: "konfigurator-2026-10-23",
     commit: "7cf0c7d",
     label: "Widget mit der Konfigurator-Runde vom 23.10. (7cf0c7d: Schritt-für-Schritt-Auswahl, Shop-Suche im Plan, Buttons wie die Startseite)",
-    current: false,
+    current: true,
     acceptable: true,
     consequence:
-      "Wie der Stand vom 22.10., dazu wählt der Besucher auf der Konfigurator-Seite Mos Produkt-Optionen Schritt für Schritt in seinen Plan, „+ Produkt hinzufügen“ sucht im ganzen Shop und Plan und angedocktes Mo tragen die Buttons der Startseite; alle anderen Seiten unverändert (docs/CONFIGURATOR.md).",
+      "Erwarteter Live-Stand seit 24.10. (Ms Upload, Live-Check bestanden): wie der Stand vom 22.10., dazu wählt der Besucher auf der Konfigurator-Seite Mos Produkt-Optionen Schritt für Schritt in seinen Plan, „+ Produkt hinzufügen“ sucht im ganzen Shop und Plan und angedocktes Mo tragen die Buttons der Startseite; alle anderen Seiten unverändert (docs/CONFIGURATOR.md).",
   },
   {
     key: "konfigurator-2026-10-22",
@@ -88,16 +88,16 @@ export const WIDGET_BUILDS = Object.freeze([
     current: false,
     acceptable: true,
     consequence:
-      "Wie der Stand vom 21.10., dazu im Plan auf der Konfigurator-Seite „+ Produkt hinzufügen“ (Konfigurator-Sortiment), „+ Gewichtsstufe“ mit Hinweis und das helle Performance-Design von Plan und angedocktem Mo; alle anderen Seiten unverändert (docs/CONFIGURATOR.md).",
+      "Wie der Stand vom 21.10., dazu im Plan auf der Konfigurator-Seite „+ Produkt hinzufügen“ (Konfigurator-Sortiment), „+ Gewichtsstufe“ mit Hinweis und das helle Performance-Design von Plan und angedocktem Mo; alle anderen Seiten unverändert (docs/CONFIGURATOR.md) — ohne Mos Schritt-für-Schritt-Auswahl und die Shop-Suche: 7cf0c7d hochladen.",
   },
   {
     key: "konfigurator-2026-10-21",
     commit: "cc6c8c8",
     label: "Widget mit dem Home-Gym-Konfigurator (cc6c8c8, 2026-10-21: angedocktes Mo, Antwort-Chips, Home-Gym-Plan)",
-    current: true,
+    current: false,
     acceptable: true,
     consequence:
-      "Erwarteter Live-Stand seit 21.10.: alles aus 495fdf6 (Gutschein-Hinweis, Anmelde-Teaser und Wertmoment ruhen weiter bis CONSENT_REWARD_ENABLED / CONSENT_VALUE_MOMENT_ENABLED) plus der Konfigurator — auf der Konfigurator-Seite ist Mo angedockt, führt mit Antwort-Chips und zeigt den Plan mit Warenkorb-Knopf; alle anderen Seiten unverändert (docs/CONFIGURATOR.md).",
+      "Live-Stand vom 21.10. bis 24.10.: alles aus 495fdf6 (Gutschein-Hinweis, Anmelde-Teaser und Wertmoment ruhen weiter bis CONSENT_REWARD_ENABLED / CONSENT_VALUE_MOMENT_ENABLED) plus der Konfigurator — auf der Konfigurator-Seite ist Mo angedockt, führt mit Antwort-Chips und zeigt den Plan mit Warenkorb-Knopf; alle anderen Seiten unverändert (docs/CONFIGURATOR.md) — ohne Produkt-Auswahl, Gewichtsstufen und Schritt-für-Schritt-Auswahl: 7cf0c7d hochladen.",
   },
   {
     key: "reward-2026-10-08",
@@ -106,7 +106,7 @@ export const WIDGET_BUILDS = Object.freeze([
     current: false,
     acceptable: true,
     consequence:
-      "Stand vom 08.10. bis 21.10., ruhend: ohne reward / valueMoment im ausgelieferten Text (v6) zeigt das Widget nichts Neues; aktiv sind nur die Härtungen H-1 (kein Wertmoment und keine Token-Erneuerung nach einem abgebrochenen Stream) und H-2 (ein Ja der letzten 24 h auf diesem Gerät fragt nicht erneut). CONSENT_REWARD_ENABLED / CONSENT_VALUE_MOMENT_ENABLED erst nach T8/T9. Ohne den Home-Gym-Konfigurator (die Konfigurator-Seite zeigt nach 8 s „Mo ist gerade nicht erreichbar“ mit dem Ausweich-Link) — cc6c8c8 hochladen.",
+      "Stand vom 08.10. bis 21.10., ruhend: ohne reward / valueMoment im ausgelieferten Text (v6) zeigt das Widget nichts Neues; aktiv sind nur die Härtungen H-1 (kein Wertmoment und keine Token-Erneuerung nach einem abgebrochenen Stream) und H-2 (ein Ja der letzten 24 h auf diesem Gerät fragt nicht erneut). CONSENT_REWARD_ENABLED / CONSENT_VALUE_MOMENT_ENABLED erst nach T8/T9. Ohne den Home-Gym-Konfigurator (die Konfigurator-Seite zeigt nach 8 s „Mo ist gerade nicht erreichbar“ mit dem Ausweich-Link) — 7cf0c7d hochladen.",
   },
   {
     key: "tasks-2026-10-05",
@@ -115,7 +115,7 @@ export const WIDGET_BUILDS = Object.freeze([
     current: false,
     acceptable: true,
     consequence:
-      "Stand vom 06.10.: Vorteile im Einwilligungs-Popup kommen vom Server (mit Variante und Platzierung), getippte Fragen auf Produkt- und Kollektionsseiten tragen den Seitenkontext, die Bestell-Markierung wird nach einer Beratung erneuert und beim Abmelden geleert — aber ohne Gutschein-Hinweis, Anmelde-Teaser und Wertmoment und ohne H-1/H-2. cc6c8c8 hochladen.",
+      "Stand vom 06.10.: Vorteile im Einwilligungs-Popup kommen vom Server (mit Variante und Platzierung), getippte Fragen auf Produkt- und Kollektionsseiten tragen den Seitenkontext, die Bestell-Markierung wird nach einer Beratung erneuert und beim Abmelden geleert — aber ohne Gutschein-Hinweis, Anmelde-Teaser und Wertmoment und ohne H-1/H-2. 7cf0c7d hochladen.",
   },
   {
     key: "main-2026-10-04",
@@ -124,7 +124,7 @@ export const WIDGET_BUILDS = Object.freeze([
     current: false,
     acceptable: true,
     consequence:
-      "Stand vor dem 06.10.: Einmal-Code, Shop-Erkennung, mo_c, Kontaktformular mit Sitzung, order_support-Beschriftung, Antwortabbruch und Audio-Stopp bei neuem Chat — aber Vorteile im Einwilligungs-Popup noch aus dem Widget, kein Seitenkontext bei getippten Fragen, keine Token-Erneuerung. cc6c8c8 hochladen.",
+      "Stand vor dem 06.10.: Einmal-Code, Shop-Erkennung, mo_c, Kontaktformular mit Sitzung, order_support-Beschriftung, Antwortabbruch und Audio-Stopp bei neuem Chat — aber Vorteile im Einwilligungs-Popup noch aus dem Widget, kein Seitenkontext bei getippten Fragen, keine Token-Erneuerung. 7cf0c7d hochladen.",
   },
   {
     key: "fixes-minified",
@@ -133,7 +133,7 @@ export const WIDGET_BUILDS = Object.freeze([
     current: false,
     acceptable: true,
     consequence:
-      "Stand vor dem 06.10. (minifiziert; ob der Audio-Stopp von 3e87341 dabei ist, lässt sich nicht erkennen): ohne Vorteile vom Server, Seitenkontext und Token-Erneuerung — cc6c8c8 hochladen.",
+      "Stand vor dem 06.10. (minifiziert; ob der Audio-Stopp von 3e87341 dabei ist, lässt sich nicht erkennen): ohne Vorteile vom Server, Seitenkontext und Token-Erneuerung — 7cf0c7d hochladen.",
   },
   {
     key: "fixes-8d0a0c4",
@@ -142,7 +142,7 @@ export const WIDGET_BUILDS = Object.freeze([
     current: false,
     acceptable: true,
     consequence:
-      "Stand vom 04.10. ohne Audio-Stopp bei „Neuer Chat“ und ohne die Aufgaben vom 05.10. — cc6c8c8 hochladen.",
+      "Stand vom 04.10. ohne Audio-Stopp bei „Neuer Chat“ und ohne die Aufgaben vom 05.10. — 7cf0c7d hochladen.",
   },
   {
     key: "pr73",
@@ -151,7 +151,7 @@ export const WIDGET_BUILDS = Object.freeze([
     current: false,
     acceptable: true,
     consequence:
-      "Anmeldung, mo_c und App-Proxy-Einlösen funktionieren; ohne Sitzung im Kontaktformular-Body (das Backend nimmt dann x-ms-session), ohne order_support-Beschriftung, ohne Antwortabbruch bei neuem Chat und ohne die Aufgaben vom 05.10. — cc6c8c8 hochladen.",
+      "Anmeldung, mo_c und App-Proxy-Einlösen funktionieren; ohne Sitzung im Kontaktformular-Body (das Backend nimmt dann x-ms-session), ohne order_support-Beschriftung, ohne Antwortabbruch bei neuem Chat und ohne die Aufgaben vom 05.10. — 7cf0c7d hochladen.",
   },
   {
     key: "popup-2026-10-01",
