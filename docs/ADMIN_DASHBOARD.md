@@ -1401,7 +1401,7 @@ one pass), client `konfigurator/KonfiguratorWorkspace` and `KonfiguratorRange` (
   because the handover starts a fresh thread); „So antworten die Besucher“ (one `BarList` per answer —
   fields with nothing but „ohne Angabe“ are hidden; „Typ / Trainingsfokus“ lists Mo's six personas and
   counts answers of the first version under the mapped persona, the goal card is gone since 22.10.2026 —
-  plus „Herkunft“ Men's Health / Women's Health / direct); „Schritt für Schritt“ (since 23.10.2026: per
+  plus „Herkunft“ Men's Health / Women's Health / direct); „Schritt für Schritt“ (since 24.10.2026, the widget upload: per
   product type — Basisgerät, Zubehör, Hantelbank, Gewichte, Bodenschutz, Cardio, Sonstiges — options
   shown, picked, skipped and „Andere Vorschläge“; only types with numbers, the card is hidden without
   any); „Produkte in Mos Plänen und Optionen“ (top 12 by sessions, products of shown plans and of Mo's
@@ -1645,14 +1645,14 @@ panel counts as opened; section note on §5.22) and „Bestell-Zuordnung: Varian
 (`attribution-variants-refunds`: variant refs count as their product, refunds reach the ledger — §5.5,
 §5.16), and on 22.10.2026 „Konfigurator: Trainingsfokus = Mos Personas“ (`konfigurator-personas`: the
 persona card, two new personas, no goal card, weight steps and the visitor's own plan lines — behaviour,
-no counting change), and on 23.10.2026 „Konfigurator: Mo geht die Produktarten Schritt für Schritt durch“
+no counting change), and on 24.10.2026 „Konfigurator: Mo geht die Produktarten Schritt für Schritt durch“
 (`konfigurator-schritt-fuer-schritt`: product options picked into the plan; „Plan erstellt“ and the
 configurator orders also count threads with options), and on 24.10.2026 „Konfigurator: fehlende Angaben
 markiert, Konfigurator-Rabatt vorbereitet“ (`konfigurator-pflichtangaben-rabatt`: the page outlines missing
-answers on „Weiter“, the discount pop-up is built switched off — behaviour, no counting change; the last
-two take effect with the theme upload and get its date then, ROLLOUT_TODO item 15.5) — twenty
-entries in all; the six of 06.10., the one of 08.10., the second of 21.10., the one of 22.10., the one of
-23.10. and the one of 24.10. add no section note. The
+answers on „Weiter“, the discount pop-up is built switched off — behaviour, no counting change; both
+carry the day of the theme upload, 24.10.2026, not their build days) — twenty entries in all; the six of
+06.10., the one of 08.10., the second of 21.10., the one of 22.10. and the two of 24.10. add no section
+note. The
 affected sections add a note when the period starts earlier: Anmelde-Popup,
 Einwilligung, Kundenkonto and „Chat gestartet“ of the Kampagnen-Funnel are
 „erst ab dem 04.10.2026 aussagekräftig“, the two widget tiers of

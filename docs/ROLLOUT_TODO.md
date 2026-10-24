@@ -204,7 +204,7 @@ lawyer ready to send, the Shopify steps and the frontend prompt: [`WELCOME_VOUCH
       starts for the new widget (it declares `features: ["options"]`); the live widget keeps the
       one-plan flow until the theme upload. New public routes `GET /api/configurator/search` and
       `GET /api/configurator/offer` (answers „no offer“ until you switch the discount on in step 11).
-   2. **Theme upload** (theme repo `MANIFEST.md`, entry „2026-10-24“ — it lists the five files of both
+   2. **done 24.10.** (the live check found the new widget) — **Theme upload** (theme repo `MANIFEST.md`, entry „2026-10-24“ — it lists the five files of both
       rounds: the three page files of 24.10. plus the two widget files of 23.10.; one upload of the latest
       files covers both): replace
       `sections/ms-home-gym-configurator.liquid`, `assets/ms-home-gym-configurator.js`,
@@ -223,11 +223,9 @@ lawyer ready to send, the Shopify steps and the frontend prompt: [`WELCOME_VOUCH
       **Missing answers (24.10.):** reload, pick everything except the space (m²) and click „Weiter – Mo
       berät mich“: the card „Trainingsort & Platz“ gets a red outline, the page scrolls to it and says
       „Bitte wähle deine Fläche aus.“; picking a space removes the red. Also on the phone.
-   5. **Widget build:** `npm run verify:widget` should report `konfigurator-2026-10-23` — send C the
-      output and the upload day: C marks it as the expected build (this sandbox cannot reach the shop)
-      and moves the KPI release dates of `konfigurator-schritt-fuer-schritt` and
-      `konfigurator-pflichtangaben-rabatt` (`kpi-releases.mjs`, today 23.10. / 24.10.) to the upload day,
-      so „Änderungen im Zeitraum“ marks the day the page really changed.
+   5. ~~**Widget build**~~ — **done 24.10.:** `npm run verify:widget` reports `konfigurator-2026-10-23`
+      (`7cf0c7d`, asset uploaded 24.10. 14:13); C marked it as the expected build and dated the KPI
+      releases `konfigurator-schritt-fuer-schritt` and `konfigurator-pflichtangaben-rabatt` to 24.10.
    6. **Accessories:** Mo offers the accessories of the chosen base unit from its „Ergänzende Produkte“
       (catalog `compatibleWith`); maintain them for the racks and stations in the set (Latzug-Option,
       Dip-Barren, Hip-Thrust-Auflage …) — without any, Mo searches the catalog.
@@ -267,6 +265,11 @@ lawyer ready to send, the Shopify steps and the frontend prompt: [`WELCOME_VOUCH
 
 ## Done
 
+- [x] **24.10. — Konfigurator, third and fourth round: theme uploaded.** M uploaded the files of
+  `MANIFEST.md` entry „2026-10-24“ (not the template); `npm run verify:widget` passed: widget
+  `konfigurator-2026-10-23` (`7cf0c7d`, now the expected build), head script, `/cart` snippet, App Proxy.
+  Open in item 15: confirm the backend deploy, the hero photo and the page check (15.1, 15.3, 15.4),
+  then 15.6–15.11.
 - [x] **22.10. — Konfigurator, second feedback round live.** M reported everything done: backend deploy,
   the four theme files of `MANIFEST.md` entry „2026-10-22 b“ (not the template) — homepage structure,
   larger seals, no divider lines, persona titles on two lines, the short Mo panel. The widget-build

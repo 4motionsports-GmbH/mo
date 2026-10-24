@@ -381,11 +381,10 @@ and booleans only — never a name, text or e-mail.
 - KPI release markers `home-gym-konfigurator` and `attribution-variants-refunds` (21.10.2026,
   `kpi-releases.mjs`) name the counting changes for periods across the launch;
   `konfigurator-personas` (22.10.2026) the persona card, weight steps and own plan lines (behaviour, no
-  counting change); `konfigurator-schritt-fuer-schritt` (23.10.2026) the step flow — „Plan erstellt“
+  counting change); `konfigurator-schritt-fuer-schritt` (24.10.2026) the step flow — „Plan erstellt“
   and the order rule now also count the options; `konfigurator-pflichtangaben-rabatt` (24.10.2026) the
-  missing-answer outline and the discount built switched off (behaviour, no counting change). Both take
-  effect with the theme upload, not on the build day — C moves their dates to the upload day
-  (ROLLOUT_TODO item 15.5). The answer
+  missing-answer outline and the discount built switched off (behaviour, no counting change). Both are
+  dated by the theme upload of 24.10.2026 (live check: widget 7cf0c7d), not by their build days. The answer
   distribution „Typ / Trainingsfokus“ counts first-version answers under the mapped persona; the goal card
   has no distribution any more.
 
