@@ -44,7 +44,8 @@ import {
   getOrderStatusKpis,
   getPageContextKpis,
 } from "./kpi-store";
-import { getConfiguratorSummary } from "./configurator-store";
+import { getConfiguratorSettings, getConfiguratorSummary } from "./configurator-store";
+import { configuratorOffer } from "./configurator-core.mjs";
 import { getMoRevenueData } from "./mo-revenue-store";
 import { getJourneyCounts } from "./kpi-journey-store";
 import { getAiCostMetrics } from "./ai-usage-store";
@@ -542,7 +543,7 @@ export async function collectBusinessSnapshotRaw(
   const period = describePeriod(range);
   const previous = previousPeriod(range);
   const shopifyWanted = Boolean(opts.includeShopify) && isShopifyConfigured();
-  const [cur, prev, moRevenueData, shopifyBlock, customerBase, moEffectRaw] = await Promise.all([
+  const [cur, prev, moRevenueData, shopifyBlock, customerBase, moEffectRaw, configurator] = await Promise.all([
     collectPeriod(asRange(period), sql),
     collectPeriod(asRange(previous), sql),
     // Both periods' ledger in one call (its previous period is ours).
@@ -552,6 +553,8 @@ export async function collectBusinessSnapshotRaw(
       : Promise.resolve(null),
     safe("customerBase", () => getCustomerBaseKpis()),
     safe("moEffect", () => getMoEffectKpis()),
+    // The „Konfigurator-Rabatt“ lives in admin_settings, not in an env var — read here, snapshotSwitches is sync.
+    safe("configuratorSettings", () => getConfiguratorSettings(sql)),
   ]);
   const shopify = shopifyBlock
     ? { revenue: shopifyBlock.revenue.value, campaign: shopifyBlock.campaign.value, fetchedAt: shopifyBlock.fetchedAt }
@@ -575,7 +578,11 @@ export async function collectBusinessSnapshotRaw(
     moRevenue,
     shopify,
     campaignCodes,
-    switches: snapshotSwitches(),
+    switches: {
+      ...snapshotSwitches(),
+      // On = visitors get the offer now (on, complete, not past „Gültig bis“).
+      configuratorDiscount: configurator ? configuratorOffer(configurator, opts.now ?? new Date()) !== null : false,
+    },
     releases: releasesInRange({ from: previous.from, to: period.to }),
     releaseNotes: releaseNotesBySection(period, previous),
   };

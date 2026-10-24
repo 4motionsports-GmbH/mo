@@ -466,6 +466,11 @@ test("describeSwitches keeps the known switches in a fixed order with their env 
     { key: "customerSync", label: "Shopify-Kundenabgleich", env: "SHOPIFY_CUSTOMER_SYNC_ENABLED", value: true },
     { key: "pageContextHoldoutPct", label: "Kontrollgruppe Seitenkontext (%)", env: "CHAT_PAGE_CONTEXT_HOLDOUT_PCT", value: 10 },
   ]);
+  // an admin setting, not an env var
+  assert.deepEqual(describeSwitches({ configuratorDiscount: true, consentReward: false }), [
+    { key: "consentReward", label: "Newsletter-Willkommensgutschein (Hinweis und Mo)", env: "CONSENT_REWARD_ENABLED", value: false },
+    { key: "configuratorDiscount", label: "Konfigurator-Rabatt (Pop-up und Mo)", env: null, value: true },
+  ]);
 });
 
 test("Mo's share of the shop revenue is unknown — not above 100 % — when the ledger is incomplete", () => {

@@ -384,6 +384,32 @@ test("measureChange: section notes alone do not block (both windows under one ru
   assert.match(switched.confounders[0].label, /Schalter „Zuordnungsfenster ab letzter Beratung“ zwischen 25\.08\.2026 und 09\.09\.2026/);
 });
 
+test("the „Konfigurator-Rabatt“ switch is a product confounder of chat and journey, never a measurement change", () => {
+  assert.deepEqual(SWITCH_EFFECTS.configuratorDiscount, { measurement: [], product: ["chat", "journey"] });
+  const change = {
+    ref: "S53",
+    kind: "suggestion",
+    id: 53,
+    suggestionId: 53,
+    title: "Konfigurator-Begrüßung",
+    lane: "frontend",
+    date: "2026-08-20",
+    until: null,
+    state: "umgesetzt",
+    metricSource: "erfolgsmass",
+    metrics: [{ key: "journey.chatToOrder", role: "primary" }],
+    horizonDays: 14,
+    target: null,
+  };
+  const sw = [{ key: "configuratorDiscount", label: "Konfigurator-Rabatt (Pop-up und Mo)", from: false, to: true, between: { from: "2026-08-25", to: "2026-09-09" } }];
+  const m = measureChange(change, { snapshot: sampleWindowSnapshot("2026-08-21", "2026-09-03"), today: SAMPLE_TODAY, switchHistory: sw, releases: [] });
+  const c = m.confounders.find((x) => x.kind === "switch");
+  assert.ok(c, "the switch is named");
+  assert.equal(c.measurement, false);
+  assert.match(c.label, /Schalter „Konfigurator-Rabatt \(Pop-up und Mo\)“ zwischen 25\.08\.2026 und 09\.09\.2026/);
+  assert.notEqual(m.verdict, "nicht_vergleichbar");
+});
+
 test("measureChange: too fresh changes and summariseMeasurements", () => {
   const all = changes();
   const d4 = all.find((c) => c.ref === "D4");

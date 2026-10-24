@@ -143,6 +143,13 @@ export const KPI_RELEASES = Object.freeze([
     detail:
       "Mit dem neuen Widget zeigt Mo im Konfigurator je Produktart (Basisgerät, Zubehör, Hantelbank, Gewichte, Bodenschutz) bis zu vier Optionen mit Vor- und Nachteilen; Besucher:innen wählen in ihren Plan, überspringen oder verlangen andere Vorschläge — statt eines fertigen Sets. „Plan erstellt“ zählt seitdem auch Sitzungen mit einer gewählten Option; Mos Produkt-Optionen zählen als Beratung für die Bestell-Zuordnung und machen ein Gespräch zu „über den Konfigurator“. Im Plan sucht „+ Produkt hinzufügen“ im ganzen Shop.",
   },
+  {
+    date: "2026-10-24",
+    key: "konfigurator-pflichtangaben-rabatt",
+    title: "Konfigurator: fehlende Angaben markiert, Konfigurator-Rabatt vorbereitet",
+    detail:
+      "Fehlt beim Klick auf „Weiter – Mo berät mich“ eine Angabe (z. B. die Fläche), markiert die Seite die Karte rot und springt dorthin, statt still zu blockieren — „An Mo übergeben“ kann steigen. Neu und standardmäßig aus: der Konfigurator-Rabatt (Pop-up mit Rabattcode, Einstellung im Bereich Konfigurator); erst wenn er eingeschaltet ist, ändern sich Pop-up-Zahlen und Bestellungen mit dem Code. Nichts wird anders gezählt.",
+  },
 ]);
 
 /** First day the opt-in events carry source and outcome (OI1). */

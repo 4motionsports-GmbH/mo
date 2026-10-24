@@ -463,6 +463,7 @@ export const SAMPLE_SNAPSHOT_RAW = {
     pageContextHoldoutPct: 0,
     chatOrderStatus: false,
     consentReward: false,
+    configuratorDiscount: false,
     emailConfigured: true,
     anthropicConfigured: true,
   },

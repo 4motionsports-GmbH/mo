@@ -162,6 +162,10 @@ export const RELEASE_EFFECTS = Object.freeze({
     measurement: ["chat.configuratorPlans", "revenue.viaConfigurator", ...ATTRIBUTION],
     product: ["chat", "journey"],
   },
+  // Round of 2026-10-24: missing answers outlined on „Weiter“ (more handovers —
+  // behaviour) and the „Konfigurator-Rabatt“ built switched off; nothing is
+  // counted differently.
+  "konfigurator-pflichtangaben-rabatt": { measurement: [], product: ["chat", "journey"] },
 });
 
 /** What flipping a switch changes (switch keys of business-snapshot snapshotSwitches). */
@@ -179,6 +183,8 @@ export const SWITCH_EFFECTS = Object.freeze({
   chatOrderStatus: { measurement: [], product: ["orderStatus", "quality", "chat"] },
   // The welcome voucher (hint on the ask, teaser on the login popup, Mo's answer).
   consentReward: { measurement: [], product: ["consent", "signin", "capture", "chat"] },
+  // The „Konfigurator-Rabatt“ (admin setting; pop-up on the configurator page and Mo's answer).
+  configuratorDiscount: { measurement: [], product: ["chat", "journey"] },
   emailConfigured: { measurement: [], product: ["capture", "campaigns", "consent"] },
   anthropicConfigured: { measurement: [], product: ["chat", "quality", "journey", "inbox", "knowledge"] },
 });
