@@ -72,6 +72,7 @@ fresh within 300 s. **Bucket:** see "Rate limits" below.
 | GET | `/api/products` | origin | `products` | §3 |
 | GET | `/api/configurator/assortment` (configurator page only) | origin | `products` | §3a |
 | GET | `/api/configurator/search` (configurator page only) | origin | `products` | §3b |
+| GET | `/api/configurator/offer` (configurator page only) | origin | `products` | §3c |
 | POST | `/api/contact` | secret | `chat` + `contact-ip` | §4 |
 | POST | `/api/kpi` | origin | `kpi` | §5 |
 | POST | `/api/capture-email` | secret | `chat` + `capture-recipient` | §7.1 |
@@ -1234,6 +1235,33 @@ cardio, „Bank“ → accessory, „Hanteln“ → weights), then the exact nam
 plural, before a name word's prefix, before a substring of the name, before brand / category / tags,
 then the shorter name; hidden products never; `[]` for no match. Independent of the configurator switch. Errors: §1 envelope.
 
+## 3c. `GET /api/configurator/offer` (since 2026-10-24)
+
+The „Konfigurator-Rabatt“ of the configurator page ([CONFIGURATOR.md](../CONFIGURATOR.md) §1, §7) —
+the page (not the widget) fetches it once on load from `window.MS_CHAT_CONFIG.apiBase`. No secret, only an
+allowlisted origin (`products` bucket); `Cache-Control: public, max-age=60` (with the backend's settings
+cache an admin change arrives within about two minutes). No query parameters.
+
+```jsonc
+{ "ok": true, "offer": null }   // the discount is off (the default), incomplete, past its last day („Gültig bis“, Europe/Berlin), or the guided consultation is off
+
+{
+  "ok": true,
+  "offer": {
+    "code": "HOMEGYM5",                                   // the Shopify discount code: 3–40 of [A-Za-z0-9_-] — safe in /discount/<code>
+    "title": "5 % auf deinen Home-Gym-Plan",             // ≤ 60 characters, one line
+    "text": "Als Dankeschön fürs Planen mit Mo: 5 % auf deine Bestellung.",  // ≤ 200, may be ""
+    "terms": "Ab 500 € Bestellwert, bis 31.12.2026, nicht kombinierbar.",    // ≤ 200, never ""
+    "trigger": "start"                                    // "start" = ~1 s after the handover · "plan" = the first product in the plan
+  }
+}
+```
+
+The texts are the operator's (German; the page shows them as they are, as text — never as HTML) with
+whitespace collapsed. A failed request or any other shape = no offer: the page shows nothing. Activating
+is the shop's own `GET /discount/<code>` (same origin as the page), not a backend call. Errors: §1 envelope
+(`429`, `500 internal_error`).
+
 ---
 
 ## 4. `POST /api/contact`
@@ -1506,7 +1534,8 @@ Produkte geklickt“.
 
 Sent by the widget (the configurator page through `window.MS_CHAT.configurator.track`, which accepts
 only `configurator_*` names and flat ids/enums/numbers). Read by the admin screen „Konfigurator“
-(backend `docs/CONFIGURATOR.md`).
+(backend `docs/CONFIGURATOR.md`). None of them matches the click patterns except `configurator_cart_added`
+(tested in `kpi-widget-events.test.mjs`).
 
 | Event | When | `data` |
 | --- | --- | --- |
@@ -1520,6 +1549,11 @@ only `configurator_*` names and flat ids/enums/numbers). Read by the admin scree
 | `configurator_option_picked` | an option of `offer_plan_options` went into the plan („Auswählen“ / „Übernehmen“; since 2026-10-23) | `{ step, rank, items, multi, count }` — `rank` = 1-based position of the (first) picked option in Mo's list (the tool input — 1 = Mo's first option, his recommendation; positions count the options the widget left out too), `items` = its item lines, `count` = options picked in this action |
 | `configurator_option_skipped` | „Überspringen“ under an option group (2026-10-23) | `{ step }` |
 | `configurator_option_more` | „Andere Vorschläge“ under an option group (2026-10-23) | `{ step }` |
+| `configurator_validation_blocked` | „Weiter – Mo berät mich“ clicked (or Enter) while required answers are missing — the page outlines the cards (2026-10-24) | `{ fields }` — comma list of the missing field keys (`persona`, `location`, `space`, `level`) |
+| `configurator_discount_shown` | the „Konfigurator-Rabatt“ pop-up opened (once per browser and code; 2026-10-24) | `{ trigger }` — `start` \| `plan` |
+| `configurator_discount_activated` | „Rabatt aktivieren“ in the pop-up or the note above the plan — `/discount/<code>` answered (2026-10-24) | `{}` |
+| `configurator_discount_copied` | „Code kopieren“ (2026-10-24) | `{}` |
+| `configurator_discount_closed` | the pop-up closed (×, Esc, backdrop; 2026-10-24) | `{}` |
 
 ### Server-emitted lifecycle events (canonical names)
 
@@ -2495,3 +2529,4 @@ section that holds the fact; this table repeats none of the detail.
 | 2026-10-21 (follow-up) | KPI accuracy, no shape change: `configurator_started` once per run (also for a prefilled handover and after „Neu starten“), `configurator_cart_added.value` = the lines that landed, `chat_opened` after a session rotation in an open panel, the plan thumbnail sends `product_cta_clicked`, an attribution token minted for a session that rotated meanwhile is dropped — the new session mints its own only once it is consulted (lazy); `configurator_plan_shown` only for rendered plans. | §5 |
 | 2026-10-22 | Konfigurator round after the partner feedback: `configurator.persona` is one of Mo's personas (six, two new: `design_lifestyle`, `weight_loss`) and sets the thread's archetype; `goal` dropped (old values still parse); plan items may carry `added: true`; `show_gym_plan` up to 20 items (the page plan's limit, the visitor's own lines included); new `GET /api/configurator/assortment`; `configurator_plan_edited.action` adds `add` / `add_step`. Additive for the widget: the 2026-10-21 build keeps working (its persona/goal ids map) — but it renders and echoes only 12 of Mo's lines and has no „+ Produkt hinzufügen“ / „+ Gewichtsstufe“, which Mo now mentions; upload the theme right after the deploy. | §1, §2 "`context.type: "configurator"`", `show_gym_plan`, §3a, §5 |
 | 2026-10-23 | Konfigurator step by step (third feedback round): `configurator.features` (`["options"]`) declares the new widget; then the configurator-only tool `offer_plan_options` (2–4 options per product type with pros / cons, picked into the page plan as `added: true` lines) is offered and Mo goes through the types one by one; new `GET /api/configurator/search` (whole-shop search for „+ Produkt hinzufügen“); widget events `configurator_option_picked` / `_skipped` / `_more`, server-only `configurator_options_shown`, `configurator_chat_started.steps`. Additive: a widget without `features` keeps the one-plan flow and never gets the tool. Same day, after the review: up to 80 messages per request in the step flow; an option counts as shown only when every item is known and available (`shownOptions`, `configurator_options_shown`); `rank` = the position in Mo's list; a pick replaces the earlier pick of the same step (accessory / extra / multiSelect add); option texts accepted at twice the documented length; the search folds ae/oe/ue and „-er“ plurals and finds variant SKUs; „Plate Load“ machines are `base`. Search results: name matches of the plan role the query names first (not when the product's own name names another role), the exact word before its plural, then the shorter name. | §1, §2 "`context.type: "configurator"`", `offer_plan_options`, §3a, §3b, §5 |
+| 2026-10-24 | Konfigurator, fourth round (external feedback): new `GET /api/configurator/offer` — the „Konfigurator-Rabatt“ (`offer: null` by default and after its optional last day; with it code, title, text, terms and `trigger` `start` \| `plan`), fetched once by the configurator page, which shows the pop-up and the note above the plan and activates through the shop's own `/discount/<code>`; page events `configurator_validation_blocked` { fields } (a click on „Weiter – Mo berät mich“ with answers missing — the page outlines the incomplete cards) and `configurator_discount_shown` { trigger } / `_activated` / `_copied` / `_closed`. Additive: no widget change, no change to `/api/chat`'s shapes (Mo knows the discount only while it is on). | §1, §3c, §5 |

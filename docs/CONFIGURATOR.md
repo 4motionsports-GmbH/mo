@@ -6,9 +6,11 @@ level), hands them to Mo, and Mo — docked on the right of the same page — as
 wishes), then goes through the product types one by one — base unit, accessories for it, bench,
 weights, flooring — with two to three options each, from which the visitor picks into the plan on the
 page; the visitor can extend the plan with own products from the whole shop and weight steps, and puts
-it into the cart with one click. This document owns the feature; the wire shapes are in
+it into the cart with one click. Optionally — switched off by default — a „Konfigurator-Rabatt“ offers
+the visitor a Shopify discount code in a pop-up. This document owns the feature; the wire shapes are in
 [`frontend/API_CONTRACT.md`](./frontend/API_CONTRACT.md) §2 (`context.type: "configurator"`, the tools
-`suggest_replies` / `offer_plan_options` / `show_gym_plan`), §3b (assortment and search) and §5 (KPI events). Live status: [`ROLLOUT_TODO.md`](./ROLLOUT_TODO.md).
+`suggest_replies` / `offer_plan_options` / `show_gym_plan`), §3a / §3b (assortment and search), §3c (the
+discount offer) and §5 (KPI events). Live status: [`ROLLOUT_TODO.md`](./ROLLOUT_TODO.md).
 
 ## 1. The flow
 
@@ -18,7 +20,9 @@ sequenceDiagram
   participant P as Configurator page (theme section)
   participant W as Mo widget (docked)
   participant B as Mo backend (/api/chat)
+  P->>B: GET /api/configurator/offer (once on load, offer null while the discount is off)
   V->>P: picks the training focus (persona), place + space, training + level
+  V->>P: „Weiter – Mo berät mich“ — with an answer missing: the card outlined red, scrolled to (§7)
   P->>W: MS_CHAT.configurator.start(answers, {partner})
   W->>B: messages: [] + context {type: "configurator", configurator: {...}}
   B-->>W: greeting + first open question + suggest_replies (budget)
@@ -28,6 +32,7 @@ sequenceDiagram
   B-->>W: step „Basisgerät“: offer_plan_options (2–3 options with pros / cons, Mo's pick first)
   V->>W: „Auswählen“ → the option's lines into the plan + „Ich nehme: …“ (or „Überspringen“ / „Andere Vorschläge“)
   W->>P: the picked lines in the editable plan in [data-ms-chat-plan]
+  P->>V: with an offer: the pop-up „Dein Konfigurator-Vorteil“ (trigger start: ~1 s after the handover · plan: the first product in the plan), then a slim note above the plan
   B-->>W: next step: accessories for the chosen base (multiSelect), bench, weights, flooring … summary
   V->>P: adjusts quantities / variants, „+ Gewichtsstufe“, „+ Produkt hinzufügen“, „Alles in den Warenkorb“
   P->>P: POST /cart/add.js, cart drawer opens (_mo marker stamped first, consent-gated)
@@ -52,6 +57,21 @@ The picks land in the plan on the page („Von dir gewählt“); Mo keeps the su
 in view and ends with a short summary. „Zeig mir einfach was“ starts with the base unit right away.
 The step flow needs the new widget (`configurator.features = ["options"]`, API_CONTRACT §2); an old
 cached widget keeps the one-plan flow above unchanged.
+
+**Missing answers** (fourth round, 24.10.2026 — external feedback: a tester forgot the m² answer and could
+not go on): „Weiter – Mo berät mich“ stays clickable while answers are missing; a click outlines every
+incomplete card in red with a short line at the missing field and scrolls to the first one (page only,
+§7; KPI `configurator_validation_blocked`).
+
+**Konfigurator-Rabatt** (fourth round, the client's idea „zur Diskussion“ — built complete but **switched
+off by default**): the operator sets code, title, text, terms, the moment and optionally the last day
+(„Gültig bis“) in Konfigurator → „Mo im Konfigurator“ (§5) after creating the same code in Shopify
+(Rabatte). While it is on (and its last day is not over), the page shows a
+pop-up „Dein Konfigurator-Vorteil“ with the code („Code kopieren“, „Rabatt aktivieren“ → Shopify's
+`/discount/<code>` stores it for the checkout) once per browser and code — right after the handover
+(`start`, default) or when the first product lands in the plan (`plan`) — and afterwards a slim note
+above the plan; Mo knows the discount (§4). The public offer: `GET /api/configurator/offer`
+(API_CONTRACT §3c); the effect: the card „Konfigurator-Rabatt“ (§6).
 
 **The training focus is Mo's persona.** The card „Welcher Typ bist du? Wähle deinen Trainingsfokus
 aus.“ offers six types — the four private personas Mo already derives from a conversation plus
@@ -107,7 +127,8 @@ theme's `assets/ms-home-gym-configurator.js` uses the same ids):
 | `budget` (Mo asks) | `b1` ≤ 1.000 € · `b2` 1.000–2.500 € · `b3` 2.500–5.000 € · `b4` 5.000–10.000 € · `b5` > 10.000 € |
 | `wishes` (Mo asks) | `assembly` · `fast_delivery` · `quiet` · `no_drilling` · `foldable` · `floor_protection` · `showroom` |
 
-Required on the page: persona, location, space, level (training is optional). Place, space and level
+Required on the page: persona, location, space, level (training is optional) — a click on „Weiter“ with
+one of them missing outlines its card (§7). Place, space and level
 carry a consulting cue for Mo where it matters (e.g. `apartment` → quiet, impact/floor protection,
 drilling only with the landlord's consent; `xs` → wall stations, fold-back racks, adjustable
 dumbbells); the persona brings Mo's whole consulting mode instead.
@@ -231,8 +252,20 @@ Prefilled answers are only preselected — the visitor still confirms with „We
   a persona's, e.g. „maximal 1-2 Produkte“) do not apply to the plan.
 - **Cart:** the whole plan goes into the shop cart through the plan's button (`/cart/add.js`);
   `add_to_cart` (direct checkout) only when the visitor wants a single product right away.
+- **Konfigurator-Rabatt** (24.10.2026, default off): while it is on and complete, the configurator
+  section carries one short block after the team's notes — „Konfigurator-Rabatt (vom motion sports Team
+  freigegeben)“ with title, code, terms and when the page shows the pop-up (`renderDiscount` via
+  `configuratorOffer`): Mo brings it up only when price, budget or the cart come up or the visitor asks —
+  not in the greeting, not with its own budget question, on its own at most once; with the moment
+  „Beim ersten Produkt im Plan“ and an empty plan not before the plan has a product (only when asked),
+  so Mo does not announce it before the page's pop-up —, names code and terms, points to „Rabatt
+  aktivieren“ / the checkout, never promises more than the terms, never calculates reduced prices (the
+  subtotal stays without the discount) and never invents other discounts or codes; the newsletter /
+  welcome rules keep their own section. Off, incomplete or past „Gültig bis“ the section is
+  byte-identical (tested, and compared with the version before the discount).
 - **Switch:** Konfigurator → „Geführte Beratung“ (admin setting, default on). Off: the page still works,
-  Mo just chats normally (no answers, chips or plan). Settings are cached per instance for 60 s.
+  Mo just chats normally (no answers, chips or plan) and the discount offer is `null`. Settings are
+  cached per instance for 60 s.
 
 ## 5. Admin screen „Konfigurator“
 
@@ -243,14 +276,30 @@ Prefilled answers are only preselected — the visitor still confirms with „We
   orders + revenue; the funnel „Vom ersten Klick zur Bestellung“; how visitors answered (one card per
   field), the partner split, „Schritt für Schritt“ (per product type: options shown, picked, skipped,
   „Andere Vorschläge“ — third round), the products in Mo's plans, chip topics, the 12 latest
-  configurator consultations with a link to the transcript in Gespräche.
+  configurator consultations with a link to the transcript in Gespräche; the card „Konfigurator-Rabatt“
+  (24.10.2026: Pop-up gezeigt, Rabatt aktiviert, Code kopiert, Bestellungen mit dem Code + revenue — only
+  while the discount is on or the period has pop-up events; §6).
 - **Mo im Konfigurator:** on/off, assortment focus, Shopify tag, extra products, „Hinweise für Mo“
-  (≤ 1.500 characters, e.g. a running promotion or delivery times).
+  (≤ 1.500 characters, e.g. a running promotion or delivery times); the card **„Konfigurator-Rabatt“**
+  (24.10.2026): Aktiv / Aus (default Aus), Zeitpunkt („Nach dem Start der Beratung“ / „Beim ersten
+  Produkt im Plan“), Rabattcode (3–40 characters, letters, digits, `-`, `_` — exactly the code created in
+  Shopify → Rabatte with the same value and conditions; **not** starting with `MK-` / `MS5-`, the
+  prefixes of Mo's own unique codes that the order attribution counts as Mo's — `isMoDiscountCode`,
+  [`ORDER_ATTRIBUTION.md`](./ORDER_ATTRIBUTION.md)), Überschrift (≤ 60), Text (≤ 200, optional),
+  Bedingungen (≤ 200; Preisangaben: state them in full — minimum order value, validity, exclusions,
+  combinability), **Gültig bis** (optional, the last day in Europe/Berlin: from 00:00 the day after,
+  the offer is `null` and Mo's block is gone without a save — `isDiscountEnded`; the badge then reads
+  „Abgelaufen“) and a simplified preview. „Aktiv“ needs code, title and terms (`validateConfiguratorDiscountInput`,
+  German messages); a stored row without them, or with a reserved code, is never active
+  (`parseConfiguratorDiscount`, fail-closed). Mo creates no code and checks none in Shopify.
 - **Sortiment:** the resolved assortment with price, stock and why it is in (Tag / Liste); warnings for
   unknown extra handles and a mostly sold-out assortment.
 
-Storage: `admin_settings` key `configurator` (migration 0078 — **no new migration**). Route:
-`POST /api/admin/konfigurator/settings` (`guardAdminPost`, audit `settings.configurator`).
+Storage: `admin_settings` key `configurator` (migration 0078 — **no new migration**; the discount is the
+field `discount` of the same value). Route: `POST /api/admin/konfigurator/settings` (`guardAdminPost`,
+audit `settings.configurator` with the discount's on/off, code, moment and last day; a body without `discount` keeps
+the stored one). Public: `GET /api/configurator/offer` (origin allowlist, `products` bucket, cached 60 s —
+a change reaches the page within about two minutes; the save toast says so when the discount changed).
 
 Elsewhere in the admin (ADMIN_DASHBOARD.md §3.5 / §5.22 and §3.4):
 
@@ -262,7 +311,9 @@ Elsewhere in the admin (ADMIN_DASHBOARD.md §3.5 / §5.22 and §3.4):
   „Antwort-Chips“ / „Home-Gym-Plan“ / „Produkt-Optionen“, and the latest plan (lines, roles, notes,
   today's prices) above the transcript.
 - **Komplettanalyse / Verbesserung:** `chat.configuratorHandover`, `chat.configuratorPlans`,
-  `chat.configuratorCarts` and `revenue.viaConfigurator` ([`BUSINESS_SNAPSHOT.md`](./BUSINESS_SNAPSHOT.md)).
+  `chat.configuratorCarts` and `revenue.viaConfigurator` ([`BUSINESS_SNAPSHOT.md`](./BUSINESS_SNAPSHOT.md));
+  the switch `configuratorDiscount` (on = visitors get the offer now) makes switching the discount on or
+  off a confounder of chat and journey changes (`SWITCH_EFFECTS`).
 
 ## 6. KPIs and attribution
 
@@ -270,7 +321,8 @@ Events (names and data: API_CONTRACT §5): widget `configurator_viewed` (only wi
 consent), `configurator_started`, `configurator_handover`, `configurator_answers_changed`,
 `configurator_chip_clicked`, `configurator_plan_edited` (`action` qty / variant / remove / restore /
 add / add_step), `configurator_cart_added`, `configurator_option_picked` / `_skipped` / `_more`
-(step flow); server-only `configurator_chat_started` (`steps`: the step flow was on),
+(step flow), `configurator_validation_blocked` (`fields`, 24.10.2026), `configurator_discount_shown`
+(`trigger`) / `_activated` / `_copied` / `_closed` (24.10.2026); server-only `configurator_chat_started` (`steps`: the step flow was on),
 `configurator_plan_shown`, `configurator_options_shown` (in `SERVER_ONLY_EVENTS`). Ids, enums, counts
 and booleans only — never a name, text or e-mail.
 
@@ -314,21 +366,35 @@ and booleans only — never a name, text or e-mail.
   list, Mo's recommendation is 1 — options the widget left out count too), skips and „Andere
   Vorschläge“ per step.
 - **Cart value** = the plan price of the lines that actually landed in the cart (not the plan total).
+- **Konfigurator-Rabatt** (card on the Konfigurator screen, `getConfiguratorDiscountKpis`, pure DB):
+  „Pop-up gezeigt“ / „Rabatt aktiviert“ / „Code kopiert“ = distinct sessions with the page event in the
+  period (an activation from the note above the plan counts too; the rates are against the sessions
+  that saw the pop-up, capped at 100 %); „Bestellungen mit dem Code“ = realised `mo_orders` rows (PAID /
+  PARTIALLY_REFUNDED) processed in the period whose `discount_codes` contain the **current** code
+  (trimmed, case-insensitive) + their revenue. `mo_orders` holds only orders with the Mo marker (analytics
+  consent), so orders with the code but without the marker are missing — the InfoTip says so; after a code
+  change the old code's orders no longer count. These orders are inside „Umsatz durch Mo“ like any marked
+  order, never added on top. `configurator_validation_blocked` is stored but not shown yet (the fields
+  visitors miss, for a later look).
 - `configurator_cart_added` matches `%cart%`, so it also counts as an add-to-cart click on the KPI
   screen (tested in `kpi-widget-events.test.mjs`); no other configurator event matches a click pattern.
 - KPI release markers `home-gym-konfigurator` and `attribution-variants-refunds` (21.10.2026,
   `kpi-releases.mjs`) name the counting changes for periods across the launch;
   `konfigurator-personas` (22.10.2026) the persona card, weight steps and own plan lines (behaviour, no
   counting change); `konfigurator-schritt-fuer-schritt` (23.10.2026) the step flow — „Plan erstellt“
-  and the order rule now also count the options. The answer distribution „Typ / Trainingsfokus“ counts first-version answers under
-  the mapped persona; the goal card has no distribution any more.
+  and the order rule now also count the options; `konfigurator-pflichtangaben-rabatt` (24.10.2026) the
+  missing-answer outline and the discount built switched off (behaviour, no counting change). Both take
+  effect with the theme upload, not on the build day — C moves their dates to the upload day
+  (ROLLOUT_TODO item 15.5). The answer
+  distribution „Typ / Trainingsfokus“ counts first-version answers under the mapped persona; the goal card
+  has no distribution any more.
 
 ## 7. Storefront (theme repo `ms_shopify_clone`)
 
 | File | What |
 | --- | --- |
 | `sections/ms-home-gym-configurator.liquid` | the landing page: hero (with the photo of the setting `hero_image`, else white) with the partner seals, configurator (three cards with the badges SCHRITT 01–03, persona card with the seals), Mo dock, plan host, „So funktioniert's“, „Starke Partner“; all texts, the photo and the seals are section settings |
-| `assets/ms-home-gym-configurator.js` / `.css` | page logic (answer cards, prefill, partner, handover, edit, stepper, KPI) and styles — light design after the Performance campaign mail (accent light blue `#008ccb`) in the homepage's structure: sections alternate `#ffffff` / `#f9f9f9`, headings as a blue kicker over a regular-weight headline („Darf in keinem Gym fehlen. / Bestseller.“), no divider lines (second round of 22.10.2026); buttons like the homepage's „MOTION SPORTS – Learn more“ (black pill, blue with a lift, glow and shine on hover; blue on the photo; outline pill as secondary) — no red since the third round of 23.10.2026 |
+| `assets/ms-home-gym-configurator.js` / `.css` | page logic (answer cards, prefill, partner, handover, edit, stepper, KPI; since 24.10.2026 the missing-answer outline and the „Konfigurator-Rabatt“ pop-up + note) and styles — light design after the Performance campaign mail (accent light blue `#008ccb`) in the homepage's structure: sections alternate `#ffffff` / `#f9f9f9`, headings as a blue kicker over a regular-weight headline („Darf in keinem Gym fehlen. / Bestseller.“), no divider lines (second round of 22.10.2026); buttons like the homepage's „MOTION SPORTS – Learn more“ (black pill, blue with a lift, glow and shine on hover; blue on the photo; outline pill as secondary) — no red since the third round of 23.10.2026 |
 | `templates/page.home-gym-mo.json` | the page template (assign it to a page, or open any page with `?view=home-gym-mo`) |
 | `assets/ms-chat-widget.js` / `.css` | docked mode (`[data-ms-chat-dock]`), `window.MS_CHAT.configurator` (`start`, `update`, `restart`, `track`, `state`), the `ms-chat:configurator` events, chips, plan card, Mo's option cards (`ms-chat-offer`: „Auswählen“ / „Übernehmen“, „Überspringen“ / „Andere Vorschläge“), plan host („+ Produkt hinzufügen“ with the whole-shop search, „+ Gewichtsstufe“, weights hint, picked lines „Von dir gewählt“), cart add; the homepage buttons in the page plan and the dock only — the floating widget on every other page is unchanged |
 
@@ -371,6 +437,35 @@ plan card in the chat. The sign-in and e-mail popups wait
 in a configurator thread until Mo shows a complete plan, so in the step flow they do not interrupt
 (the header's „Anmelden“ / „Per E-Mail teilen“ stay available).
 
+**Missing answers** (fourth round, 24.10.2026): „Weiter – Mo berät mich“ stays clickable while required
+answers are missing — `aria-disabled="true"` with the disabled look, not the `disabled` attribute, which
+would swallow the click (the edit mode „Ändere eine Angabe …“ and the unavailable mode are unchanged). A
+click (or Enter) with answers missing outlines every incomplete card in the page's error red (2 px, the
+card's radius — the only red on the page besides error text) and puts a short line at each missing field
+(„Bitte wähle deine Fläche aus.“, DE / EN; the field group `aria-invalid`, `aria-describedby` to its
+line; one `role="alert"` announcement per click, not one per field); the first incomplete card scrolls
+into view below the sticky header (smooth unless reduced motion) and its first option gets the focus; the
+hint under the button names what is open as before. A field's line and outline go as soon as it is
+answered (the card's outline when the card is complete); there is no outline before the first click, and
+every click validates again. KPI `configurator_validation_blocked` { fields } — the missing field keys as a
+comma list — through the page's `track()`. 320–1920 px, DE and EN.
+
+**Konfigurator-Rabatt on the page** (fourth round; nothing changes without an offer — no markup, no
+flash): the page fetches `GET {apiBase}/api/configurator/offer` once on load (origin request, no secret;
+a failure = no offer). Trigger `start`: about one second after a successful handover; `plan`: at the
+first `ms-chat:configurator` event that reports a plan with at least one line. Once per browser and code
+(`localStorage` `ms-hgk-discount-<code>`). The pop-up is a modal dialog in the page's design (labelled,
+focus moves in and back, Esc / backdrop / × close): the blue kicker „Dein Konfigurator-Vorteil“ („Your
+configurator benefit“), the title, the text, the code in a code box with „Code kopieren“ (secondary
+pill, „Kopiert ✓“), the primary pill „Rabatt aktivieren“ — `fetch('/discount/' + code, { redirect:
+'manual' })` on the shop's own origin (the 302 that sets Shopify's discount cookie is the answer), so
+Shopify keeps the code for the checkout — then „Aktiviert ✓ – wird an der Kasse abgezogen, sobald die
+Bedingungen erfüllt sind.“, and the terms in small print (also read out when the pop-up opens). An offer
+without terms is not shown. Afterwards a slim note directly above the plan host keeps title, code,
+„Aktivieren / Aktiviert ✓“ and the terms (the activated state survives a reload). Buttons per the third
+round (black / blue pills, no red). KPI events `configurator_discount_shown` { trigger },
+`_activated`, `_copied`, `_closed` (§6).
+
 **Persona tiles:** every title on two lines (a fixed break, `|` in the page's vocabulary — hidden on
 phones, where each tile is one row), the subtitles of the client (second round: „Platzsparende
 Fitnesslösungen für den optimalen Einstieg.“, „Vielseitige Fitnessgeräte in erstklassiger Qualität.“,
@@ -383,7 +478,10 @@ Screenshots (local harness: the real section and widget, Mo's dialogue mocked, p
 for the base unit, accessories and weights, the plan built from picks, the whole-shop search) and the
 second round of 22.10.2026 (persona card, Mo's panel, handover on the phone, plan with weight steps
 and own lines, „So funktioniert's“, „Starke Partner“), admin 1440 / 1024 px in light and dark
-(„Schritt für Schritt“, the persona distribution with first-version answers mapped); the KPI integration (`kpi-section-*`, `kpi-umsatz-wege-*`,
+(`admin-konfigurator-*`, as of 24.10.2026: „Schritt für Schritt“, the persona distribution with
+first-version answers mapped, the card „Konfigurator-Rabatt“ in „Wirkung“ and its settings block;
+`admin-rabatt-einstellung-1440-*`, `admin-rabatt-kpi-1440-*`, `admin-rabatt-validierung-1440-light` —
+„Aktiv“ with nothing filled and an invalid code); the KPI integration (`kpi-section-*`, `kpi-umsatz-wege-*`,
 `kpi-bestellungen-*`, `gespraeche-plan-*`) on local seed data.
 
 ## 8. Limits

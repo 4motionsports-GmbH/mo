@@ -1406,17 +1406,34 @@ one pass), client `konfigurator/KonfiguratorWorkspace` and `KonfiguratorRange` (
   shown, picked, skipped and „Andere Vorschläge“; only types with numbers, the card is hidden without
   any); „Produkte in Mos Plänen und Optionen“ (top 12 by sessions, products of shown plans and of Mo's
   options); „Antwort-Chips“ (by topic, plus chip clicks and plan edits); „Letzte Konfigurator-Beratungen“
-  (12 newest with answers, plans and picked options, result badge and a link `?tab=gespraeche&gid=`).
-- **Mo im Konfigurator**: „Geführte Beratung“ Aktiv/Aus, „Sortiments-Fokus“ (bevorzugen / nur
-  Sortiment), „Shopify-Tag des Sortiments“, „Zusätzliche Produkte“ (`CatalogProductPicker`, up to 60),
-  „Hinweise für Mo“ (≤ 1.500 characters). Saved with `POST konfigurator/settings` (validation:
-  `validateConfiguratorSettingsInput`); `router.refresh()` reloads the assortment. The chat reads the
-  settings with a 60-second cache per instance.
+  (12 newest with answers, plans and picked options, result badge and a link `?tab=gespraeche&gid=`);
+  after the funnel the card **„Konfigurator-Rabatt“** (since 24.10.2026, anchor `#kpi-konfigurator-rabatt`;
+  only while the discount is on or the period has pop-up events — orders with the code alone do not
+  open it; `configuratorDiscountCard`, tested): badges Aktiv / Abgelaufen / Aus and the code, stats Pop-up gezeigt (+ geschlossen), Rabatt aktiviert, Code
+  kopiert (distinct sessions, share of those who saw the pop-up) and Bestellungen mit dem Code + Umsatz
+  (realised `mo_orders` with the current code, case-insensitive — only orders with the Mo marker, said in
+  the InfoTip; `configurator-store.getConfiguratorDiscountKpis`).
+- **Mo im Konfigurator**: card „Beratung“ — „Geführte Beratung“ Aktiv/Aus, „Sortiments-Fokus“
+  (bevorzugen / nur Sortiment), „Shopify-Tag des Sortiments“, „Zusätzliche Produkte“
+  (`CatalogProductPicker`, up to 60), „Hinweise für Mo“ (≤ 1.500 characters); card „Konfigurator-Rabatt“
+  (since 24.10.2026, default Aus, explanations in InfoTips — the code must exist in Shopify → Rabatte with
+  the same value and conditions; Preisangaben: state the conditions in full): Aktiv/Aus, Zeitpunkt („Nach
+  dem Start der Beratung“ / „Beim ersten Produkt im Plan“; wraps on narrow screens), Rabattcode (MK- /
+  MS5- refused — Mo's own code prefixes), Überschrift, Text, Bedingungen with counters, „Gültig bis“
+  (optional date; once the day is over in Europe/Berlin the badge reads „Abgelaufen“ and neither the page
+  nor Mo shows the discount), a simplified „Vorschau“ of the pop-up, the fields required for „Aktiv“
+  marked (`*`, „Zum Aktivieren nötig.“) and a warning while „Geführte Beratung“ is off. One „Speichern“ under both cards
+  (`POST konfigurator/settings`, validation `validateConfiguratorSettingsInput` incl.
+  `validateConfiguratorDiscountInput`; when it cannot save, the reason stands next to the button);
+  `router.refresh()` reloads the assortment. The chat and `GET /api/configurator/offer` read the settings
+  with a 60-second cache per instance (the toast: Mo within a minute, after a discount change the page
+  within about two minutes).
 - **Sortiment**: the resolved assortment (`DataTable`: product, category, price, Lieferbar/Ausverkauft,
   Tag / Liste, shop link) with warnings for unknown extra handles and a mostly sold-out assortment; an
   empty assortment is an `EmptyState` explaining the tag.
 
-Storage: `admin_settings` key `configurator` (migration 0078, no new migration).
+Storage: `admin_settings` key `configurator` (migration 0078, no new migration; the discount is its
+field `discount`).
 
 ---
 
@@ -1630,8 +1647,12 @@ panel counts as opened; section note on §5.22) and „Bestell-Zuordnung: Varian
 persona card, two new personas, no goal card, weight steps and the visitor's own plan lines — behaviour,
 no counting change), and on 23.10.2026 „Konfigurator: Mo geht die Produktarten Schritt für Schritt durch“
 (`konfigurator-schritt-fuer-schritt`: product options picked into the plan; „Plan erstellt“ and the
-configurator orders also count threads with options) — nineteen entries in all; the six of 06.10., the
-one of 08.10., the second of 21.10., the one of 22.10. and the one of 23.10. add no section note. The
+configurator orders also count threads with options), and on 24.10.2026 „Konfigurator: fehlende Angaben
+markiert, Konfigurator-Rabatt vorbereitet“ (`konfigurator-pflichtangaben-rabatt`: the page outlines missing
+answers on „Weiter“, the discount pop-up is built switched off — behaviour, no counting change; the last
+two take effect with the theme upload and get its date then, ROLLOUT_TODO item 15.5) — twenty
+entries in all; the six of 06.10., the one of 08.10., the second of 21.10., the one of 22.10., the one of
+23.10. and the one of 24.10. add no section note. The
 affected sections add a note when the period starts earlier: Anmelde-Popup,
 Einwilligung, Kundenkonto and „Chat gestartet“ of the Kampagnen-Funnel are
 „erst ab dem 04.10.2026 aussagekräftig“, the two widget tiers of

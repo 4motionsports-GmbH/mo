@@ -138,7 +138,8 @@ without any data are left out.
 `shopifyConfigured`, `customerSync`, `consentWriteback`, `campaignSendsApproved`,
 `campaignRelease`, `physicalMailApproved`, `appProxySignin`,
 `attributionSessionAnchor`, `pageContext`, `pageContextHoldoutPct`,
-`chatOrderStatus`, `consentReward`, `emailConfigured`, `anthropicConfigured` — with their env name.
+`chatOrderStatus`, `consentReward`, `configuratorDiscount` (the admin setting „Konfigurator-Rabatt“:
+on = visitors get the offer now — no env name), `emailConfigured`, `anthropicConfigured` — with their env name.
 
 ## Caveats
 
