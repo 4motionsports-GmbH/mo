@@ -5,13 +5,18 @@
 //     the partners, the products of Mo's plans and the latest configurator
 //     consultations (configurator-store getConfiguratorKpis, pure DB, never
 //     cached), for the ?kpiRange= period (7d / 30d / 90d, like the KPI screen);
+//   - the card „Konfigurator-Rabatt“ (getConfiguratorDiscountKpis: the
+//     pop-up's events and the orders with the saved code — shown while the
+//     discount is on or the period has pop-up events);
 //   - „Mo im Konfigurator“ + „Sortiment“ — the operator settings
-//     (admin_settings 'configurator') and the curated assortment resolved
-//     against the live catalog, edited in the client KonfiguratorWorkspace.
+//     (admin_settings 'configurator', incl. the „Konfigurator-Rabatt“) and the
+//     curated assortment resolved against the live catalog, edited in the
+//     client KonfiguratorWorkspace.
 
 import { resolveKpiRange } from "@/lib/kpi-range";
-import { configuratorRangeParam } from "@/lib/configurator-core.mjs";
+import { configuratorOffer, configuratorRangeParam, isDiscountEnded } from "@/lib/configurator-core.mjs";
 import {
+  getConfiguratorDiscountKpis,
   getConfiguratorKpis,
   getConfiguratorSettings,
   loadConfiguratorAssortment,
@@ -24,9 +29,10 @@ import type { AssortmentRow } from "./konfigurator/types";
 export async function KonfiguratorTab({ dbReady, kpiRange }: { dbReady: boolean; kpiRange?: string }) {
   const range = resolveKpiRange({ kpiRange: configuratorRangeParam(kpiRange) });
   const settings = await getConfiguratorSettings();
-  const [assortment, kpis] = await Promise.all([
+  const [assortment, kpis, discountKpis] = await Promise.all([
     loadConfiguratorAssortment(settings),
     dbReady ? getConfiguratorKpis(range) : Promise.resolve(null),
+    dbReady ? getConfiguratorDiscountKpis(range, settings.discount.code) : Promise.resolve(null),
   ]);
   const rows: AssortmentRow[] = assortment.products.map((p) => ({
     id: p.id,
@@ -52,6 +58,13 @@ export async function KonfiguratorTab({ dbReady, kpiRange }: { dbReady: boolean;
       )}
       <KonfiguratorKpis
         kpis={kpis}
+        discount={{
+          // „Aktiv“ = what visitors get now (off, incomplete or past „Gültig bis“ → not active)
+          enabled: configuratorOffer(settings) !== null,
+          ended: settings.discount.enabled && isDiscountEnded(settings.discount.endsOn),
+          code: settings.discount.code,
+          kpis: discountKpis,
+        }}
         rangeLabel={range.label}
         rangeControl={<KonfiguratorRange preset={configuratorRangeParam(range.preset)} />}
       />

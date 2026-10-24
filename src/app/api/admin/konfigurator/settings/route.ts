@@ -1,4 +1,4 @@
-// POST /api/admin/konfigurator/settings  { enabled, tag, extraProductIds, focus, notes }
+// POST /api/admin/konfigurator/settings  { enabled, tag, extraProductIds, focus, notes, discount? }
 //   → { ok: true, settings }
 //
 // Konfigurator → „Mo im Konfigurator“: the Home-Gym-Konfigurator's operator
@@ -7,13 +7,17 @@
 // answers and tools (off: a configurator chat becomes a normal chat); tag =
 // the Shopify product tag of the curated assortment; extraProductIds = handles
 // added by hand; focus = prefer | only; notes = the team's hints for Mo
-// (≤ 1500 characters). Audit-logged (settings.configurator).
+// (≤ 1500 characters); discount = the „Konfigurator-Rabatt“ { enabled, code,
+// title, text, terms, trigger, endsOn } (default off; on needs code + title +
+// terms — the code must exist in Shopify, MK- / MS5- are refused as Mo's own
+// code prefixes; endsOn = „Gültig bis“, YYYY-MM-DD or ""); a body without
+// `discount` keeps the stored one. Audit-logged (settings.configurator).
 //
 // Auth + CSRF via guardAdminPost (the proxy already gates /api/admin/*).
 
 import { guardAdminPost, adminJson, adminJsonError } from "@/lib/admin-api";
 import { isDbConfigured } from "@/lib/db";
-import { setConfiguratorSettings } from "@/lib/configurator-store";
+import { getConfiguratorSettings, setConfiguratorSettings } from "@/lib/configurator-store";
 import { validateConfiguratorSettingsInput } from "@/lib/configurator-core.mjs";
 import { recordAdminAccess } from "@/lib/admin-access-log";
 import { reportError } from "@/lib/observability";
@@ -35,7 +39,13 @@ export async function POST(req: Request) {
   if (!parsed.ok) return adminJsonError("bad_request", parsed.message, 400);
 
   try {
-    const result = await setConfiguratorSettings(parsed.settings);
+    // A client from before the „Konfigurator-Rabatt“ sends no `discount` —
+    // keep the stored one instead of switching it off.
+    const keepDiscount = !(body && typeof body === "object" && "discount" in body);
+    const settings = keepDiscount
+      ? { ...parsed.settings, discount: (await getConfiguratorSettings()).discount }
+      : parsed.settings;
+    const result = await setConfiguratorSettings(settings);
     if (!result.ok) {
       if (result.reason === "missing_table") {
         return adminJsonError("migration_missing", "Migration 0078 fehlt — bitte zuerst ausführen.", 503);
@@ -54,6 +64,10 @@ export async function POST(req: Request) {
           focus: result.settings.focus,
           extraProducts: result.settings.extraProductIds.length,
           notesChars: result.settings.notes.length,
+          discountEnabled: result.settings.discount.enabled,
+          discountCode: result.settings.discount.code,
+          discountTrigger: result.settings.discount.trigger,
+          discountEndsOn: result.settings.discount.endsOn || null,
         },
       },
       req

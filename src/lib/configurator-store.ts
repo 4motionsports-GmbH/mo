@@ -1,11 +1,13 @@
 // Home-Gym-Konfigurator — the I/O half (rules, vocabulary and texts live in the
 // pure, tested configurator-core.mjs). Three jobs:
 //   - the operator settings (admin_settings key 'configurator', migration
-//     0078 — no new migration), cached for the chat path;
+//     0078 — no new migration; since 24.10.2026 with the „Konfigurator-
+//     Rabatt“), cached for the chat path and GET /api/configurator/offer;
 //   - the curated assortment („Konfigurator-Sortiment“) resolved against the
 //     live catalog;
 //   - the KPIs of the admin screen „Konfigurator“ (and the summary on the KPI
-//     screen and in the Komplettanalyse) over kpi_events + mo_orders + messages.
+//     screen and in the Komplettanalyse) over kpi_events + mo_orders + messages,
+//     plus the „Konfigurator-Rabatt“ card (its page events, orders with the code).
 // Fail-soft throughout: without a database, before migration 0078 or on a read
 // error the defaults apply and the KPIs are null. Nothing here can break a chat
 // response. docs/CONFIGURATOR.md.
@@ -48,7 +50,7 @@ function isMissingTable(err: unknown): boolean {
 }
 
 function defaults(): ConfiguratorSettings {
-  return { ...DEFAULT_CONFIGURATOR_SETTINGS, extraProductIds: [] };
+  return { ...DEFAULT_CONFIGURATOR_SETTINGS, extraProductIds: [], discount: { ...DEFAULT_CONFIGURATOR_SETTINGS.discount } };
 }
 
 /** The stored settings, or the defaults (no database, no row, before 0078, read error). */
@@ -96,6 +98,15 @@ export async function setConfiguratorSettings(
     extraProductIds: settings.extraProductIds,
     focus: settings.focus,
     notes: settings.notes,
+    discount: {
+      enabled: settings.discount.enabled,
+      code: settings.discount.code,
+      title: settings.discount.title,
+      text: settings.discount.text,
+      terms: settings.discount.terms,
+      trigger: settings.discount.trigger,
+      endsOn: settings.discount.endsOn,
+    },
   });
   try {
     const rows = (await sql`
@@ -498,6 +509,80 @@ export async function getConfiguratorKpis(range: KpiRange, sql: Sql | null = get
     };
   } catch (err) {
     reportError(err, { route: "lib/configurator-store", phase: "getConfiguratorKpis" });
+    return null;
+  }
+}
+
+/** „Konfigurator-Rabatt“ in the period (Konfigurator → „Wirkung“, card „Konfigurator-Rabatt“). */
+export interface ConfiguratorDiscountKpis {
+  /** Distinct sessions per page event (configurator_discount_*). */
+  shown: number;
+  activated: number;
+  copied: number;
+  closed: number;
+  /** Realised mo_orders processed in the period whose discount codes contain the current code (case-insensitive). */
+  orders: number;
+  revenue: number;
+}
+
+/**
+ * The discount's page events and the orders with its code for `range` — pure
+ * DB, never cached. Orders come from mo_orders (the ledger of the Konfigurator
+ * screen's orders: only orders with the Mo marker are in it), realised and by
+ * order date like „Bestellungen“; without a code (never configured) no order
+ * query. Null without a database or on failure.
+ */
+export async function getConfiguratorDiscountKpis(
+  range: KpiRange,
+  code: string,
+  sql: Sql | null = getSql()
+): Promise<ConfiguratorDiscountKpis | null> {
+  if (!sql) return null;
+  const realised = [...REALISED_FINANCIAL_STATUSES];
+  const W = CONFIGURATOR_WIDGET_EVENTS;
+  const wanted = code.trim().toUpperCase();
+  try {
+    const [eventRows, orderRows] = await Promise.all([
+      sql`
+        SELECT
+          count(DISTINCT session_id) FILTER (WHERE event = ${W.discountShown})::int AS shown,
+          count(DISTINCT session_id) FILTER (WHERE event = ${W.discountActivated})::int AS activated,
+          count(DISTINCT session_id) FILTER (WHERE event = ${W.discountCopied})::int AS copied,
+          count(DISTINCT session_id) FILTER (WHERE event = ${W.discountClosed})::int AS closed
+          FROM kpi_events
+         WHERE event IN (${W.discountShown}, ${W.discountActivated}, ${W.discountCopied}, ${W.discountClosed})
+           AND session_id IS NOT NULL
+           AND session_id NOT LIKE 'livecheck-%'
+           AND created_at >= ${range.from}::date
+           AND created_at < (${range.to}::date + 1)
+      `,
+      wanted
+        ? sql`
+            SELECT count(*)::int AS orders,
+                   COALESCE(sum(o.total_price), 0)::float AS revenue
+              FROM mo_orders o
+             WHERE o.processed_at >= ${range.from}::date
+               AND o.processed_at < (${range.to}::date + 1)
+               AND upper(COALESCE(o.financial_status, '')) = ANY(${realised}::text[])
+               AND EXISTS (
+                 SELECT 1 FROM unnest(o.discount_codes) AS d(code)
+                  WHERE upper(btrim(d.code)) = ${wanted}
+               )
+          `
+        : Promise.resolve([{ orders: 0, revenue: 0 }]),
+    ]);
+    const e = (eventRows as Array<Record<string, number>>)[0] ?? {};
+    const o = (orderRows as Array<Record<string, number>>)[0] ?? {};
+    return {
+      shown: Number(e.shown ?? 0),
+      activated: Number(e.activated ?? 0),
+      copied: Number(e.copied ?? 0),
+      closed: Number(e.closed ?? 0),
+      orders: Number(o.orders ?? 0),
+      revenue: Number(o.revenue ?? 0),
+    };
+  } catch (err) {
+    reportError(err, { route: "lib/configurator-store", phase: "getConfiguratorDiscountKpis" });
     return null;
   }
 }

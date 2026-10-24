@@ -2,14 +2,21 @@
 // first answer on the page to the order, the headline numbers, how visitors
 // answered, where they came from (seal / partner link), which products Mo put
 // into plans and the latest configurator consultations with a link into
-// Gespräche. Data: configurator-store getConfiguratorKpis (kpi_events +
-// mo_orders, pure DB). Ids and enums only — no names or texts of visitors.
+// Gespräche; the „Konfigurator-Rabatt“ card (24.10.2026, only while it is on
+// or the period has its events). Data: configurator-store getConfiguratorKpis
+// + getConfiguratorDiscountKpis (kpi_events + mo_orders, pure DB). Ids and
+// enums only — no names or texts of visitors.
 
 import * as React from "react";
 import Link from "next/link";
 import { ExternalLink } from "lucide-react";
-import type { ConfiguratorKpis } from "@/lib/configurator-store";
-import { configuratorFunnel, configuratorLabel, personaAnswer } from "@/lib/configurator-core.mjs";
+import type { ConfiguratorDiscountKpis, ConfiguratorKpis } from "@/lib/configurator-store";
+import {
+  configuratorDiscountCard,
+  configuratorFunnel,
+  configuratorLabel,
+  personaAnswer,
+} from "@/lib/configurator-core.mjs";
 import { eur, num, ratio } from "@/lib/admin-format.mjs";
 import { ADMIN_DATE_TIME_SHORT, formatAdmin } from "@/lib/admin-datetime.mjs";
 import { adminTabHref } from "@/lib/admin-tabs.mjs";
@@ -65,12 +72,24 @@ export const FUNNEL_INFO = (
   </div>
 );
 
+/** The „Konfigurator-Rabatt“ as the card shows it (the saved settings). */
+export interface DiscountCardProps {
+  /** Visitors get the offer now (on, complete, not past „Gültig bis“). */
+  enabled: boolean;
+  /** Switched on, but its „Gültig bis“ day is over. */
+  ended: boolean;
+  code: string;
+  kpis: ConfiguratorDiscountKpis | null;
+}
+
 export function KonfiguratorKpis({
   kpis,
+  discount,
   rangeLabel,
   rangeControl,
 }: {
   kpis: ConfiguratorKpis | null;
+  discount: DiscountCardProps;
   rangeLabel: string;
   rangeControl: React.ReactNode;
 }) {
@@ -134,6 +153,8 @@ export function KonfiguratorKpis({
             </Card>
           )}
         </KpiSection>
+
+        <DiscountCard {...discount} />
 
         {kpis && !empty && (
           <>
@@ -309,6 +330,66 @@ export function KonfiguratorKpis({
         )}
       </div>
     </Section>
+  );
+}
+
+/** „Konfigurator-Rabatt“ — hidden while the discount is off and the period has none of its pop-up events. */
+function DiscountCard({ enabled, ended, code, kpis }: DiscountCardProps) {
+  const card = configuratorDiscountCard(kpis, enabled);
+  if (!card) return null;
+  const rate = (r: number | null, what: string) => (r == null ? "—" : `${ratio(r)} ${what}`);
+  return (
+    <KpiSection
+      id="konfigurator-rabatt"
+      title="Konfigurator-Rabatt"
+      badges={
+        <>
+          {enabled ? (
+            <StatusBadge tone="success">Aktiv</StatusBadge>
+          ) : ended ? (
+            <StatusBadge tone="warning">Abgelaufen</StatusBadge>
+          ) : (
+            <StatusBadge tone="neutral">Aus</StatusBadge>
+          )}
+          {code && (
+            <StatusBadge tone="neutral" dot={false}>
+              <span className="font-mono">{code}</span>
+            </StatusBadge>
+          )}
+        </>
+      }
+      info="Das Pop-up mit dem Rabattcode auf der Konfigurator-Seite (Einstellung unten in „Mo im Konfigurator“): wie viele Sitzungen es gesehen, den Rabatt aktiviert oder den Code kopiert haben, und die Bestellungen mit dem Code im Zeitraum. Sitzungen zählen je Ereignis für sich (ein Gerät, keine Person)."
+      empty={kpis ? null : "Noch keine Daten."}
+    >
+      {kpis && (
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+          <Stat
+            label="Pop-up gezeigt"
+            value={num(kpis.shown)}
+            hint={`${num(kpis.closed)} geschlossen`}
+            info="Sitzungen, denen die Seite das Pop-up gezeigt hat (configurator_discount_shown) — je Browser und Code höchstens einmal. „Geschlossen“: mit ×, Esc oder einem Klick daneben (configurator_discount_closed)."
+          />
+          <Stat
+            label="Rabatt aktiviert"
+            value={num(kpis.activated)}
+            hint={rate(card.activationRate, "der Gezeigten")}
+            info="Sitzungen mit einem Klick auf „Rabatt aktivieren“ im Pop-up oder im Hinweis über dem Plan — Shopify merkt sich den Code dann für die Kasse (configurator_discount_activated)."
+          />
+          <Stat
+            label="Code kopiert"
+            value={num(kpis.copied)}
+            hint={rate(card.copyRate, "der Gezeigten")}
+            info="Sitzungen mit einem Klick auf „Code kopieren“ (configurator_discount_copied)."
+          />
+          <Stat
+            label="Bestellungen mit dem Code"
+            value={num(kpis.orders)}
+            hint={`${eur(kpis.revenue, 0)} Umsatz`}
+            info="Bezahlte Bestellungen im Zeitraum (nach Bestelldatum), die den aktuellen Code enthalten (Groß-/Kleinschreibung egal). Gezählt aus Mos Bestellungen (mo_orders) — darin stehen nur Bestellungen mit der Mo-Markierung im Warenkorb, die die Analyse-Einwilligung im Shop braucht; Bestellungen mit dem Code ohne Markierung fehlen hier. Ein früherer Code zählt nach einem Wechsel nicht mehr."
+          />
+        </div>
+      )}
+    </KpiSection>
   );
 }
 

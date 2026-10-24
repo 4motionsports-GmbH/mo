@@ -19,11 +19,15 @@
 //     show_gym_plan) — kept here, not in tool-descriptions.mjs, so the copy of
 //     every other conversation (and Mo's self-snapshot) stays byte-identical;
 //   - the KPI payloads (ids and enums only) and the funnel arithmetic of the
-//     admin screen „Konfigurator“.
+//     admin screen „Konfigurator“;
+//   - the „Konfigurator-Rabatt“ (24.10.2026, off by default): its settings,
+//     the public offer of GET /api/configurator/offer and Mo's prompt block.
 //
 // docs/CONFIGURATOR.md is the owner document.
 
 import { isVariantAvailable, normalizeVariantId, productVariants } from "./product-ref.mjs";
+import { isMoDiscountCode } from "./order-attribution.mjs";
+import { berlinDay } from "./order-status-core.mjs";
 
 /** The admin_settings key (migration 0078). */
 export const CONFIGURATOR_SETTINGS_KEY = "configurator";
@@ -37,6 +41,26 @@ export const DEFAULT_CONFIGURATOR_TAG = "home-gym-konfigurator";
 /** How strictly Mo stays inside the curated assortment. */
 export const CONFIGURATOR_FOCUS_MODES = /** @type {const} */ (["prefer", "only"]);
 
+/** When the page shows the „Konfigurator-Rabatt“ pop-up: right after the handover, or at the first product in the plan. */
+export const CONFIGURATOR_DISCOUNT_TRIGGERS = /** @type {const} */ (["start", "plan"]);
+
+/**
+ * The „Konfigurator-Rabatt“ (round of 24.10.2026, switched off by default): a
+ * Shopify discount code the operator created in Shopify, shown on the page in
+ * a pop-up and named by Mo. `code` / `title` / `terms` are required to switch
+ * it on. `endsOn` („Gültig bis“, YYYY-MM-DD, Europe/Berlin, "" = no end): after
+ * that day the page and Mo drop it on their own.
+ * @typedef {{
+ *   enabled: boolean,
+ *   code: string,
+ *   title: string,
+ *   text: string,
+ *   terms: string,
+ *   trigger: "start" | "plan",
+ *   endsOn: string,
+ * }} ConfiguratorDiscount
+ */
+
 /**
  * @typedef {{
  *   enabled: boolean,
@@ -44,8 +68,20 @@ export const CONFIGURATOR_FOCUS_MODES = /** @type {const} */ (["prefer", "only"]
  *   extraProductIds: string[],
  *   focus: "prefer" | "only",
  *   notes: string,
+ *   discount: ConfiguratorDiscount,
  * }} ConfiguratorSettings
  */
+
+/** @type {Readonly<ConfiguratorDiscount>} */
+export const DEFAULT_CONFIGURATOR_DISCOUNT = Object.freeze({
+  enabled: false,
+  code: "",
+  title: "",
+  text: "",
+  terms: "",
+  trigger: "start",
+  endsOn: "",
+});
 
 /** @type {Readonly<ConfiguratorSettings>} */
 export const DEFAULT_CONFIGURATOR_SETTINGS = Object.freeze({
@@ -54,7 +90,20 @@ export const DEFAULT_CONFIGURATOR_SETTINGS = Object.freeze({
   extraProductIds: Object.freeze([]),
   focus: "prefer",
   notes: "",
+  discount: DEFAULT_CONFIGURATOR_DISCOUNT,
 });
+
+/** Lengths of the „Konfigurator-Rabatt“ fields (the code as Shopify accepts it on /discount/<code>). */
+export const CONFIGURATOR_DISCOUNT_LIMITS = Object.freeze({
+  codeMin: 3,
+  codeMax: 40,
+  titleMax: 60,
+  textMax: 200,
+  termsMax: 200,
+});
+
+/** A Shopify discount code the page can put into a /discount/<code> link unchanged. */
+const DISCOUNT_CODE_RE = /^[A-Za-z0-9_-]{3,40}$/;
 
 export const CONFIGURATOR_LIMITS = Object.freeze({
   tagMax: 60,
@@ -611,7 +660,136 @@ export function parseConfiguratorSettings(value) {
     extraProductIds: parseProductIdList(obj.extraProductIds),
     focus: obj.focus === "only" || obj.focus === "prefer" ? obj.focus : d.focus,
     notes: typeof obj.notes === "string" ? obj.notes.trim().slice(0, CONFIGURATOR_LIMITS.notesMax) : d.notes,
+    discount: parseConfiguratorDiscount(obj.discount),
   };
+}
+
+/** One line of text as the pop-up shows it: control characters out, whitespace collapsed, trimmed. @param {unknown} raw */
+function oneLine(raw) {
+  return typeof raw === "string" ? raw.replace(/[\u0000-\u001f\u007f]+/g, " ").replace(/\s+/g, " ").trim() : "";
+}
+
+/** Why MK- / MS5- codes are refused: the order attribution counts them as Mo's own unique codes (order-attribution isMoDiscountCode). */
+export const RESERVED_DISCOUNT_CODE_MESSAGE =
+  "MK- und MS5- sind für Mos eigene Codes reserviert — bitte einen anderen Rabattcode wählen.";
+
+/**
+ * A Shopify discount code as stored (trimmed), or "" when it is not one the
+ * page can link — or when it carries a prefix of Mo's own unique codes (MK- /
+ * MS5-): the order attribution would count every order with that shared code
+ * as Mo's, so such a row never becomes an offer (fail-closed).
+ * @param {unknown} raw
+ */
+export function normalizeDiscountCode(raw) {
+  const code = typeof raw === "string" ? raw.trim() : "";
+  return DISCOUNT_CODE_RE.test(code) && !isMoDiscountCode(code) ? code : "";
+}
+
+/** A „Gültig bis“ day as stored: a real calendar day YYYY-MM-DD, else "" (no end). @param {unknown} raw */
+export function normalizeDiscountEndsOn(raw) {
+  const day = typeof raw === "string" ? raw.trim() : "";
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return "";
+  const t = new Date(`${day}T00:00:00Z`);
+  return !Number.isNaN(t.getTime()) && t.toISOString().slice(0, 10) === day ? day : "";
+}
+
+/**
+ * True once the „Gültig bis“ day is over in Europe/Berlin (the shop's day):
+ * the discount runs through the whole end day and is gone from 00:00 the day
+ * after. Without an end day never.
+ * @param {unknown} endsOn
+ * @param {Date | string} [now]
+ */
+export function isDiscountEnded(endsOn, now = new Date()) {
+  const end = normalizeDiscountEndsOn(endsOn);
+  if (!end) return false;
+  const today = berlinDay(now);
+  return today != null && today > end;
+}
+
+/**
+ * The stored „Konfigurator-Rabatt“ → the discount. Fail-soft per field, and
+ * fail-CLOSED for the switch: a row without a usable code, title or terms is
+ * never active — a damaged row must not put a discount in front of visitors.
+ * @param {unknown} raw
+ * @returns {ConfiguratorDiscount}
+ */
+export function parseConfiguratorDiscount(raw) {
+  const obj = asObject(raw) ?? {};
+  const L = CONFIGURATOR_DISCOUNT_LIMITS;
+  const code = normalizeDiscountCode(obj.code);
+  const title = oneLine(obj.title).slice(0, L.titleMax);
+  const text = oneLine(obj.text).slice(0, L.textMax);
+  const terms = oneLine(obj.terms).slice(0, L.termsMax);
+  return {
+    enabled: obj.enabled === true && Boolean(code && title && terms),
+    code,
+    title,
+    text,
+    terms,
+    trigger: obj.trigger === "plan" ? "plan" : "start",
+    endsOn: normalizeDiscountEndsOn(obj.endsOn),
+  };
+}
+
+/**
+ * Strict check of a NEW „Konfigurator-Rabatt“ (part of the admin route body).
+ * German messages. Switching it on needs code, title and terms.
+ * @param {unknown} value
+ * @returns {{ ok: true, discount: ConfiguratorDiscount } | { ok: false, message: string }}
+ */
+export function validateConfiguratorDiscountInput(value) {
+  const obj = asRecord(value);
+  if (!obj) return { ok: false, message: "Ungültige Angaben zum Konfigurator-Rabatt." };
+  if (typeof obj.enabled !== "boolean") return { ok: false, message: "Konfigurator-Rabatt: „Aktiv“ fehlt." };
+  const L = CONFIGURATOR_DISCOUNT_LIMITS;
+  const rawCode = typeof obj.code === "string" ? obj.code.trim() : "";
+  if (rawCode && !DISCOUNT_CODE_RE.test(rawCode)) {
+    return {
+      ok: false,
+      message: `Der Rabattcode muss ${L.codeMin}–${L.codeMax} Zeichen lang sein und darf nur Buchstaben, Ziffern, „-“ und „_“ enthalten.`,
+    };
+  }
+  if (rawCode && isMoDiscountCode(rawCode)) return { ok: false, message: RESERVED_DISCOUNT_CODE_MESSAGE };
+  const title = oneLine(obj.title);
+  if (title.length > L.titleMax) return { ok: false, message: `Die Überschrift des Rabatts darf höchstens ${L.titleMax} Zeichen haben.` };
+  const text = oneLine(obj.text);
+  if (text.length > L.textMax) return { ok: false, message: `Der Text des Rabatts darf höchstens ${L.textMax} Zeichen haben.` };
+  const terms = oneLine(obj.terms);
+  if (terms.length > L.termsMax) return { ok: false, message: `Die Bedingungen dürfen höchstens ${L.termsMax} Zeichen haben.` };
+  const trigger = obj.trigger === undefined || obj.trigger === null || obj.trigger === "" ? "start" : obj.trigger;
+  if (trigger !== "start" && trigger !== "plan") return { ok: false, message: "Unbekannter Zeitpunkt für den Konfigurator-Rabatt." };
+  const rawEndsOn = typeof obj.endsOn === "string" ? obj.endsOn.trim() : obj.endsOn == null ? "" : null;
+  const endsOn = normalizeDiscountEndsOn(rawEndsOn);
+  if (rawEndsOn === null || (rawEndsOn && !endsOn)) {
+    return { ok: false, message: "„Gültig bis“ des Konfigurator-Rabatts ist kein gültiges Datum." };
+  }
+  if (obj.enabled) {
+    const missing = [!rawCode && "Rabattcode", !title && "Überschrift", !terms && "Bedingungen"].filter(Boolean);
+    if (missing.length) {
+      return { ok: false, message: `Zum Aktivieren des Konfigurator-Rabatts fehlen: ${missing.join(", ")}.` };
+    }
+  }
+  return { ok: true, discount: { enabled: obj.enabled, code: rawCode, title, text, terms, trigger, endsOn } };
+}
+
+/**
+ * The public offer of GET /api/configurator/offer: null unless the guided
+ * consultation AND the discount are on and complete, and its „Gültig bis“ day
+ * (if any) is not over yet in Europe/Berlin.
+ * @param {Pick<ConfiguratorSettings, "enabled"> & { discount?: ConfiguratorDiscount | null }} settings
+ * @param {Date | string} [now]
+ * @returns {{ code: string, title: string, text: string, terms: string, trigger: "start" | "plan" } | null}
+ */
+export function configuratorOffer(settings, now = new Date()) {
+  const d = settings?.discount;
+  if (!settings?.enabled || !d || d.enabled !== true) return null;
+  if (isDiscountEnded(d.endsOn, now)) return null;
+  const code = normalizeDiscountCode(d.code);
+  const title = oneLine(d.title);
+  const terms = oneLine(d.terms);
+  if (!code || !title || !terms) return null;
+  return { code, title, text: oneLine(d.text), terms, trigger: d.trigger === "plan" ? "plan" : "start" };
 }
 
 /**
@@ -645,6 +823,14 @@ export function validateConfiguratorSettingsInput(value) {
   if (rawIds.length > CONFIGURATOR_LIMITS.extraProductIdsMax) {
     return { ok: false, message: `Höchstens ${CONFIGURATOR_LIMITS.extraProductIdsMax} zusätzliche Produkte.` };
   }
+  // Without `discount` (a client from before 24.10.2026) the default — the
+  // admin route keeps the stored discount in that case.
+  let discount = { ...DEFAULT_CONFIGURATOR_DISCOUNT };
+  if (obj.discount !== undefined) {
+    const d = validateConfiguratorDiscountInput(obj.discount);
+    if (!d.ok) return d;
+    discount = d.discount;
+  }
   return {
     ok: true,
     settings: {
@@ -653,6 +839,7 @@ export function validateConfiguratorSettingsInput(value) {
       extraProductIds: parseProductIdList(rawIds),
       focus: obj.focus,
       notes,
+      discount,
     },
   };
 }
@@ -1100,6 +1287,34 @@ function renderHints(a, locale) {
 }
 
 /**
+ * The „Konfigurator-Rabatt“ block (round of 24.10.2026) — "" without an
+ * active, complete, not yet ended discount, so the section stays
+ * byte-identical while it is off. Mo names it on price / budget / cart topics
+ * or when asked — not in the greeting, not with its own budget question, on
+ * its own at most once, and with the trigger "plan" not before the plan has
+ * a product (the page shows the pop-up only then) —, never more than the
+ * terms, no other discounts.
+ * @param {ReturnType<typeof configuratorOffer>} offer
+ * @param {"de" | "en"} locale
+ * @param {number} planLines lines of the plan as it stands
+ */
+function renderDiscount(offer, locale, planLines) {
+  if (!offer) return "";
+  const early = offer.trigger === "plan" && planLines < 1;
+  return locale === "en"
+    ? `\n\n### Configurator discount (approved by the motion sports team)
+Visitors of the configurator are offered this discount on the page (${offer.trigger === "plan" ? "a pop-up when the first product lands in the plan" : "a pop-up shortly after the consultation starts"}, then a note above the plan):
+- "${offer.title}" — discount code \`${offer.code}\`
+- Terms: ${offer.terms}
+Bring it up yourself only when price, budget or the cart come up, or when the customer asks about a discount — with the code and the terms; it is redeemed with "Activate discount" on the page or at checkout. Not in the greeting and not with your own budget question; on your own at most once.${early ? " Only once the plan has a product — before that only when the customer asks about a discount." : ""} Never promise more than the terms, never calculate reduced prices (the subtotal stays without the discount) and never invent other discounts or codes. Newsletter and welcome discounts keep their own section.`
+    : `\n\n### Konfigurator-Rabatt (vom motion sports Team freigegeben)
+Besucher des Konfigurators bekommen auf der Seite diesen Rabatt angeboten (${offer.trigger === "plan" ? "Pop-up, sobald das erste Produkt im Plan ist" : "Pop-up kurz nach dem Start der Beratung"}, danach Hinweis über dem Plan):
+- „${offer.title}“ — Rabattcode \`${offer.code}\`
+- Bedingungen: ${offer.terms}
+Sprich ihn von dir aus nur an, wenn es um Preis, Budget oder den Warenkorb geht oder der Kunde nach einem Rabatt fragt — mit Code und Bedingungen; eingelöst wird er mit „Rabatt aktivieren“ auf der Seite oder an der Kasse. Nicht in der Begrüßung und nicht bei deiner eigenen Budgetfrage; von dir aus höchstens einmal.${early ? " Erst, wenn der Plan ein Produkt hat — vorher nur, wenn der Kunde nach einem Rabatt fragt." : ""} Versprich nie mehr als die Bedingungen, rechne keine reduzierten Preise aus (die Zwischensumme bleibt ohne Rabatt) und erfinde keine anderen Rabatte oder Codes. Für Newsletter- und Willkommensrabatte gilt weiter nur ihr eigener Abschnitt.`;
+}
+
+/**
  * @param {Array<{ id: string, qty: number, name?: string, added?: boolean }>} plan
  * @param {"de" | "en"} locale
  */
@@ -1289,14 +1504,15 @@ export function planAccessories(bases, productsById, planIds) {
  *   answers: ConfiguratorAnswers,
  *   assortment: AssortmentProduct[],
  *   assortmentTotal?: number,
- *   settings: Pick<ConfiguratorSettings, "focus" | "notes">,
+ *   settings: Pick<ConfiguratorSettings, "focus" | "notes"> & { discount?: ConfiguratorDiscount | null },
  *   plan?: Array<{ id: string, qty: number, name?: string, price?: number, added?: boolean }>,
  *   accessories?: Array<{ baseId: string, baseName: string, items: Array<{ id: string, name: string, price: number }>, inPlan?: string[] }>,
  *   locale?: "de" | "en",
+ *   now?: Date | string,
  * }} opts
  * @returns {string}
  */
-export function renderConfiguratorSection({ answers, assortment, assortmentTotal, settings, plan = [], accessories = [], locale = "de" }) {
+export function renderConfiguratorSection({ answers, assortment, assortmentTotal, settings, plan = [], accessories = [], locale = "de", now = new Date() }) {
   const en = locale === "en";
   // The step-by-step flow when the widget renders offer_plan_options; else the one-plan guide.
   const steps = configuratorHasOptions(answers);
@@ -1307,6 +1523,8 @@ export function renderConfiguratorSection({ answers, assortment, assortmentTotal
   const hints = renderHints(answers, locale);
   const notes = (settings.notes ?? "").trim();
   const strict = settings.focus === "only";
+  // „Konfigurator-Rabatt“: only while it is on (and not past „Gültig bis“) — off, the section is byte-identical.
+  const discount = renderDiscount(configuratorOffer({ enabled: true, discount: settings.discount ?? null }, now), locale, plan.length);
 
   if (en) {
     const assortmentBlock = listed.length
@@ -1341,7 +1559,7 @@ ${assortmentBlock}
 - \`suggest_replies\`: 2–6 short answers (max. 40 characters each) that the customer can tap; no \`suggest_replies\` for open questions without sensible presets.
 - Per-answer product limits ("max. 2–3 products per answer" and the consulting mode's, e.g. "at most 1–2 products") do not apply to \`show_gym_plan\` (up to ${PLAN_MAX_ITEMS} items, the customer's own included) — they do apply to \`show_product\` cards.${steps ? `\n- \`offer_plan_options\`: one call per answer (plus the replacement for options not shown) and no \`suggest_replies\` with it (the cards bring "Skip" and "Other suggestions"); no \`show_product\` card for products that are in the options. The per-answer product limits do not apply to it (up to ${OPTIONS_LIMITS.options} options of up to ${OPTIONS_LIMITS.items} items).` : ""}
 - The whole set goes into the cart through the plan's cart button — use \`add_to_cart\` only when the customer explicitly wants to order a single product directly.
-- Assembly service, delivery date: answer from the product data (delivery time) and the additional knowledge; for an assembly service the shop does not offer as a product, or for large projects (budget > €10,000), offer \`show_contact_form\` (reason "general").${notes ? `\n\n### Notes from the motion sports team for the configurator (follow them)\n${notes}` : ""}${extras}`;
+- Assembly service, delivery date: answer from the product data (delivery time) and the additional knowledge; for an assembly service the shop does not offer as a product, or for large projects (budget > €10,000), offer \`show_contact_form\` (reason "general").${notes ? `\n\n### Notes from the motion sports team for the configurator (follow them)\n${notes}` : ""}${discount}${extras}`;
   }
 
   const assortmentBlock = listed.length
@@ -1376,7 +1594,7 @@ ${assortmentBlock}
 - \`suggest_replies\`: 2–6 kurze Antworten (max. 40 Zeichen), die der Kunde antippen kann; kein \`suggest_replies\` bei offenen Fragen ohne sinnvolle Vorgaben.
 - Produktgrenzen pro Antwort („Maximal 2-3 Produkte pro Antwort“ und die des Beratungsmodus, z. B. „maximal 1-2 Produkte“) gelten nicht für \`show_gym_plan\` (bis zu ${PLAN_MAX_ITEMS} Positionen, die des Kunden eingeschlossen) — für \`show_product\`-Karten gelten sie weiter.${steps ? `\n- \`offer_plan_options\`: ein Aufruf pro Antwort (plus der Ersatz für nicht gezeigte Optionen) und kein \`suggest_replies\` dazu (die Karten bringen „Überspringen“ und „Andere Vorschläge“ mit); keine \`show_product\`-Karte für Produkte, die in den Optionen stehen. Die Produktgrenzen pro Antwort gelten dafür nicht (bis zu ${OPTIONS_LIMITS.options} Optionen mit je bis zu ${OPTIONS_LIMITS.items} Positionen).` : ""}
 - Das ganze Set kommt über den Warenkorb-Button des Plans in den Warenkorb — \`add_to_cart\` nur, wenn der Kunde ausdrücklich ein einzelnes Produkt direkt bestellen will.
-- Aufbau-/Montageservice, Liefertermin: beantworte aus den Produktdaten (Lieferzeit) und dem Zusatzwissen; für einen Aufbauservice, den der Shop nicht als Produkt führt, oder bei großen Projekten (Budget über 10.000 €) biete \`show_contact_form\` an (reason "general").${notes ? `\n\n### Hinweise des motion sports Teams zum Konfigurator (befolge sie)\n${notes}` : ""}${extras}`;
+- Aufbau-/Montageservice, Liefertermin: beantworte aus den Produktdaten (Lieferzeit) und dem Zusatzwissen; für einen Aufbauservice, den der Shop nicht als Produkt führt, oder bei großen Projekten (Budget über 10.000 €) biete \`show_contact_form\` an (reason "general").${notes ? `\n\n### Hinweise des motion sports Teams zum Konfigurator (befolge sie)\n${notes}` : ""}${discount}${extras}`;
 }
 
 /**
@@ -1740,6 +1958,13 @@ export const CONFIGURATOR_WIDGET_EVENTS = Object.freeze({
   optionPicked: "configurator_option_picked",
   optionSkipped: "configurator_option_skipped",
   optionMore: "configurator_option_more",
+  /** „Weiter – Mo berät mich“ with required answers missing (2026-10-24; `fields` = the missing keys). */
+  validationBlocked: "configurator_validation_blocked",
+  /** „Konfigurator-Rabatt“ (2026-10-24): the pop-up shown, „Rabatt aktivieren“, „Code kopieren“, closed. */
+  discountShown: "configurator_discount_shown",
+  discountActivated: "configurator_discount_activated",
+  discountCopied: "configurator_discount_copied",
+  discountClosed: "configurator_discount_closed",
 });
 
 /**
@@ -1912,4 +2137,24 @@ export function configuratorFunnel(c) {
     cartRate: rate(c.carts, c.plans),
     orderRate: rate(c.orders, c.chats),
   };
+}
+
+/**
+ * The card „Konfigurator-Rabatt“ on the Konfigurator screen: hidden (null)
+ * unless the discount is on or the period has any of its pop-up events —
+ * orders alone do not count (a saved draft whose code is already used
+ * elsewhere, e.g. a newsletter code, must not open a card for a pop-up that
+ * never ran); else the rates against the sessions that saw the pop-up (null
+ * without any).
+ * @param {{ shown: number, activated: number, copied: number, closed: number, orders: number } | null | undefined} k
+ * @param {boolean} on the discount is switched on now
+ */
+export function configuratorDiscountCard(k, on) {
+  const shown = Number(k?.shown) || 0;
+  const activated = Number(k?.activated) || 0;
+  const copied = Number(k?.copied) || 0;
+  const any = shown + activated + copied + (Number(k?.closed) || 0) > 0;
+  if (!on && !any) return null;
+  const rate = (/** @type {number} */ part) => (shown > 0 ? Math.min(1, part / shown) : null);
+  return { activationRate: rate(activated), copyRate: rate(copied) };
 }

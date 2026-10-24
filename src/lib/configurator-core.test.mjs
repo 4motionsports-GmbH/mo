@@ -5,6 +5,9 @@ import {
   CONFIGURATOR_LIMITS,
   CONFIGURATOR_PLAN_TOOLS,
   CONFIGURATOR_TOOLS,
+  CONFIGURATOR_DISCOUNT_LIMITS,
+  CONFIGURATOR_WIDGET_EVENTS,
+  DEFAULT_CONFIGURATOR_DISCOUNT,
   DEFAULT_CONFIGURATOR_SETTINGS,
   ACCESSORY_LIMITS,
   OPTION_STEPS,
@@ -24,9 +27,11 @@ import {
   assortmentCards,
   chatStartedEventData,
   configuratorArchetype,
+  configuratorDiscountCard,
   configuratorFunnel,
   configuratorGreetingTrigger,
   configuratorLabel,
+  configuratorOffer,
   configuratorRangeParam,
   configuratorRetrievalQuery,
   configuratorToolCopy,
@@ -35,8 +40,13 @@ import {
   isConfiguratorThread,
   mergeConfiguratorProfile,
   normalizePlanItems,
+  isDiscountEnded,
+  normalizeDiscountCode,
+  normalizeDiscountEndsOn,
   normalizeTag,
   parseConfiguratorContext,
+  parseConfiguratorDiscount,
+  RESERVED_DISCOUNT_CODE_MESSAGE,
   parseConfiguratorSettings,
   parseProductIdList,
   parseStoredGymPlan,
@@ -47,6 +57,7 @@ import {
   renderConfiguratorSection,
   selectAssortment,
   unknownExtraIds,
+  validateConfiguratorDiscountInput,
   validateConfiguratorSettingsInput,
 } from "./configurator-core.mjs";
 import { buildSystemPrompt } from "./system-prompt-core.mjs";
@@ -208,7 +219,14 @@ test("settings: fail-soft parse and strict validation", () => {
   assert.deepEqual(parseConfiguratorSettings(null), { ...DEFAULT_CONFIGURATOR_SETTINGS, extraProductIds: [] });
   assert.deepEqual(parseConfiguratorSettings("{broken"), { ...DEFAULT_CONFIGURATOR_SETTINGS, extraProductIds: [] });
   const s = parseConfiguratorSettings({ enabled: false, tag: "  Home  Gym ", extraProductIds: "a, b\nc a", focus: "only", notes: " x " });
-  assert.deepEqual(s, { enabled: false, tag: "Home Gym", extraProductIds: ["a", "b", "c"], focus: "only", notes: "x" });
+  assert.deepEqual(s, {
+    enabled: false,
+    tag: "Home Gym",
+    extraProductIds: ["a", "b", "c"],
+    focus: "only",
+    notes: "x",
+    discount: { ...DEFAULT_CONFIGURATOR_DISCOUNT },
+  });
   assert.equal(parseConfiguratorSettings({ tag: "a,b", focus: "x" }).tag, DEFAULT_CONFIGURATOR_SETTINGS.tag);
   assert.equal(parseConfiguratorSettings({ focus: "x" }).focus, "prefer");
 
@@ -1005,4 +1023,280 @@ test("tool copy of offer_plan_options exists in both locales", () => {
       assert.ok(typeof c[key] === "string" && c[key].length > 20, `${locale}.${key}`);
     }
   }
+});
+
+// ---------------------------------------------------------------------------
+// „Konfigurator-Rabatt“ (round of 24.10.2026 — switched off by default)
+// ---------------------------------------------------------------------------
+
+const discountOn = {
+  enabled: true,
+  code: "HOMEGYM5",
+  title: "5 % auf deinen Home-Gym-Plan",
+  text: "Als Dankeschön fürs Planen mit Mo.",
+  terms: "Ab 500 € Bestellwert, bis 31.12.2026, nicht kombinierbar.",
+  trigger: "plan",
+  endsOn: "",
+};
+
+test("discount: off by default, fail-soft parse that never switches on an incomplete row", () => {
+  assert.deepEqual(DEFAULT_CONFIGURATOR_SETTINGS.discount, {
+    enabled: false, code: "", title: "", text: "", terms: "", trigger: "start", endsOn: "",
+  });
+  assert.deepEqual(parseConfiguratorSettings({}).discount, { ...DEFAULT_CONFIGURATOR_DISCOUNT });
+  assert.deepEqual(parseConfiguratorDiscount(discountOn), discountOn);
+  assert.deepEqual(parseConfiguratorDiscount(JSON.stringify(discountOn)), discountOn);
+  // whitespace collapsed, control characters out, over-long texts clipped, unknown trigger → start
+  const messy = parseConfiguratorDiscount({
+    ...discountOn,
+    code: "  HOMEGYM5 ",
+    title: " 5 %\n auf  deinen Plan ",
+    terms: `${"x".repeat(CONFIGURATOR_DISCOUNT_LIMITS.termsMax + 20)}`,
+    trigger: "later",
+  });
+  assert.equal(messy.code, "HOMEGYM5");
+  assert.equal(messy.title, "5 % auf deinen Plan");
+  assert.equal(messy.terms.length, CONFIGURATOR_DISCOUNT_LIMITS.termsMax);
+  assert.equal(messy.trigger, "start");
+  assert.equal(messy.enabled, true);
+  // fail-closed: no usable code, title or terms → never active
+  for (const broken of [{ code: "" }, { code: "a b" }, { code: "x".repeat(41) }, { code: "ab" }, { title: "" }, { terms: "  " }]) {
+    assert.equal(parseConfiguratorDiscount({ ...discountOn, ...broken }).enabled, false, JSON.stringify(broken));
+  }
+  assert.equal(parseConfiguratorDiscount({ ...discountOn, enabled: "true" }).enabled, false);
+  assert.equal(normalizeDiscountCode("MO-HOME_GYM-24"), "MO-HOME_GYM-24");
+  assert.equal(normalizeDiscountCode("RABATT%"), "");
+  assert.equal(normalizeDiscountCode("ÄPFEL5"), "");
+  // MK- / MS5- are Mo's own unique codes in the order attribution — a stored row with one is never an offer
+  for (const reserved of ["MK-KONFIG5", "mk-konfig", "MS5-HOMEGYM", "ms5-konfig"]) {
+    assert.equal(normalizeDiscountCode(reserved), "", reserved);
+    assert.equal(parseConfiguratorDiscount({ ...discountOn, code: reserved }).enabled, false, reserved);
+  }
+  assert.equal(normalizeDiscountCode("MKHOMEGYM"), "MKHOMEGYM");
+  assert.equal(normalizeDiscountCode("MS5HOMEGYM"), "MS5HOMEGYM");
+  // „Gültig bis“: a real calendar day or "" (no end)
+  assert.equal(parseConfiguratorDiscount({ ...discountOn, endsOn: " 2026-12-31 " }).endsOn, "2026-12-31");
+  for (const bad of ["2026-02-30", "31.12.2026", "2026-1-5", 20261231, null]) {
+    assert.equal(parseConfiguratorDiscount({ ...discountOn, endsOn: bad }).endsOn, "", String(bad));
+  }
+  assert.equal(normalizeDiscountEndsOn("2028-02-29"), "2028-02-29");
+  assert.equal(normalizeDiscountEndsOn("2027-02-29"), "");
+});
+
+test("discount: strict validation with German messages; on needs code, title and terms", () => {
+  const ok = validateConfiguratorDiscountInput(discountOn);
+  assert.equal(ok.ok, true);
+  assert.deepEqual(ok.ok && ok.discount, discountOn);
+  // off may be saved half-filled (a draft) — and with the default trigger
+  const draft = validateConfiguratorDiscountInput({ enabled: false, code: "", title: "Entwurf" });
+  assert.equal(draft.ok, true);
+  assert.deepEqual(draft.ok && draft.discount, { enabled: false, code: "", title: "Entwurf", text: "", terms: "", trigger: "start", endsOn: "" });
+  const dated = validateConfiguratorDiscountInput({ ...discountOn, endsOn: "2026-12-31" });
+  assert.equal(dated.ok && dated.discount.endsOn, "2026-12-31");
+
+  const msg = (/** @type {unknown} */ v) => {
+    const r = validateConfiguratorDiscountInput(v);
+    assert.equal(r.ok, false, JSON.stringify(v));
+    return r.ok ? "" : r.message;
+  };
+  assert.match(msg(null), /Ungültige Angaben zum Konfigurator-Rabatt/);
+  assert.match(msg({ ...discountOn, enabled: "yes" }), /„Aktiv“ fehlt/);
+  assert.match(msg({ ...discountOn, code: "5 % RABATT" }), /Rabattcode muss 3–40 Zeichen lang sein/);
+  assert.match(msg({ ...discountOn, code: "AB" }), /Rabattcode/);
+  assert.match(msg({ ...discountOn, title: "x".repeat(61) }), /Überschrift des Rabatts darf höchstens 60 Zeichen/);
+  assert.match(msg({ ...discountOn, text: "x".repeat(201) }), /Text des Rabatts darf höchstens 200 Zeichen/);
+  assert.match(msg({ ...discountOn, terms: "x".repeat(201) }), /Bedingungen dürfen höchstens 200 Zeichen/);
+  assert.match(msg({ ...discountOn, trigger: "checkout" }), /Unbekannter Zeitpunkt/);
+  for (const reserved of ["MK-KONFIG5", "ms5-konfig"]) {
+    assert.equal(msg({ ...discountOn, code: reserved }), RESERVED_DISCOUNT_CODE_MESSAGE);
+    assert.equal(msg({ ...discountOn, enabled: false, code: reserved }), RESERVED_DISCOUNT_CODE_MESSAGE); // not even as a draft
+  }
+  assert.match(RESERVED_DISCOUNT_CODE_MESSAGE, /^MK- und MS5- sind für Mos eigene Codes reserviert/);
+  for (const bad of ["31.12.2026", "2026-02-30", 20261231]) {
+    assert.match(msg({ ...discountOn, endsOn: bad }), /„Gültig bis“ des Konfigurator-Rabatts ist kein gültiges Datum/, String(bad));
+  }
+  assert.equal(
+    msg({ enabled: true, code: "", title: "", text: "Hallo", terms: "" }),
+    "Zum Aktivieren des Konfigurator-Rabatts fehlen: Rabattcode, Überschrift, Bedingungen."
+  );
+  assert.equal(msg({ ...discountOn, terms: "" }), "Zum Aktivieren des Konfigurator-Rabatts fehlen: Bedingungen.");
+
+  // as part of the settings body; without `discount` the default (the route keeps the stored one)
+  const base = { enabled: true, tag: "konfig", extraProductIds: [], focus: "prefer", notes: "" };
+  const withDiscount = validateConfiguratorSettingsInput({ ...base, discount: discountOn });
+  assert.equal(withDiscount.ok, true);
+  assert.deepEqual(withDiscount.ok && withDiscount.settings.discount, discountOn);
+  const without = validateConfiguratorSettingsInput(base);
+  assert.deepEqual(without.ok && without.settings.discount, { ...DEFAULT_CONFIGURATOR_DISCOUNT });
+  const bad = validateConfiguratorSettingsInput({ ...base, discount: { ...discountOn, title: "" } });
+  assert.equal(bad.ok, false);
+  assert.match(bad.ok ? "" : bad.message, /fehlen: Überschrift/);
+});
+
+test("configuratorOffer: only with the guided consultation and a complete active discount", () => {
+  const settings = { ...DEFAULT_CONFIGURATOR_SETTINGS, discount: discountOn };
+  assert.deepEqual(configuratorOffer(settings), {
+    code: "HOMEGYM5",
+    title: "5 % auf deinen Home-Gym-Plan",
+    text: "Als Dankeschön fürs Planen mit Mo.",
+    terms: "Ab 500 € Bestellwert, bis 31.12.2026, nicht kombinierbar.",
+    trigger: "plan",
+  });
+  assert.equal(configuratorOffer(DEFAULT_CONFIGURATOR_SETTINGS), null);
+  assert.equal(configuratorOffer({ ...settings, enabled: false }), null);
+  assert.equal(configuratorOffer({ ...settings, discount: { ...discountOn, enabled: false } }), null);
+  assert.equal(configuratorOffer({ ...settings, discount: { ...discountOn, code: "kein code" } }), null);
+  assert.equal(configuratorOffer({ ...settings, discount: { ...discountOn, terms: "" } }), null);
+  assert.equal(configuratorOffer({ enabled: true }), null);
+  assert.equal(configuratorOffer(/** @type {any} */ (null)), null);
+  // the stored settings → the same offer
+  assert.deepEqual(configuratorOffer(parseConfiguratorSettings({ enabled: true, discount: discountOn })), configuratorOffer(settings));
+  // a reserved MK- / MS5- code never becomes an offer
+  assert.equal(configuratorOffer({ ...settings, discount: { ...discountOn, code: "MK-KONFIG5" } }), null);
+});
+
+test("discount „Gültig bis“: runs through the end day in Europe/Berlin, gone from midnight after", () => {
+  // winter (CET, UTC+1): 31.12. 23:59:59 Berlin = 22:59:59Z
+  const winter = { ...DEFAULT_CONFIGURATOR_SETTINGS, discount: { ...discountOn, endsOn: "2026-12-31" } };
+  assert.equal(configuratorOffer(winter, new Date("2026-12-30T12:00:00Z"))?.code, "HOMEGYM5");
+  assert.equal(configuratorOffer(winter, new Date("2026-12-31T22:59:59Z"))?.code, "HOMEGYM5");
+  assert.equal(configuratorOffer(winter, new Date("2026-12-31T23:00:00Z")), null);
+  assert.equal(configuratorOffer(winter, "2027-03-01T08:00:00Z"), null);
+  // summer (CEST, UTC+2): 24.10. 23:59:59 Berlin = 21:59:59Z
+  const summer = { ...DEFAULT_CONFIGURATOR_SETTINGS, discount: { ...discountOn, endsOn: "2026-10-24" } };
+  assert.equal(configuratorOffer(summer, new Date("2026-10-24T21:59:59Z"))?.code, "HOMEGYM5");
+  assert.equal(configuratorOffer(summer, new Date("2026-10-24T22:00:00Z")), null);
+  // the offer itself carries no end day (the contract of /api/configurator/offer is unchanged)
+  assert.deepEqual(Object.keys(configuratorOffer(winter, new Date("2026-12-30T12:00:00Z")) ?? {}), ["code", "title", "text", "terms", "trigger"]);
+  // no end day → never ended; a broken one counts as none
+  assert.equal(isDiscountEnded("", new Date("2099-01-01T00:00:00Z")), false);
+  assert.equal(isDiscountEnded("bald", new Date("2099-01-01T00:00:00Z")), false);
+  assert.equal(isDiscountEnded("2026-10-23", new Date("2026-10-23T21:59:59Z")), false);
+  assert.equal(isDiscountEnded("2026-10-23", new Date("2026-10-23T22:00:00Z")), true);
+});
+
+test("renderConfiguratorSection: the discount block only while it is on — off is byte-identical", () => {
+  const answers = parseConfiguratorContext(ctx({ ...fullAnswers, features: ["options"] }));
+  const assortment = selectAssortment(catalog, { tag: "home-gym-konfigurator", extraProductIds: [] }).map((s) => s.product);
+  const plan = [{ id: "rack", qty: 1, name: "Rack", price: 900 }];
+  for (const locale of /** @type {const} */ (["de", "en"])) {
+    for (const notes of ["", "Aktion: Lieferung frei."]) {
+      const render = (/** @type {any} */ discount) =>
+        renderConfiguratorSection({ answers, assortment, settings: { focus: "prefer", notes, ...(discount === undefined ? {} : { discount }) }, plan, locale });
+      const plain = render(undefined);
+      assert.equal(render(null), plain);
+      assert.equal(render({ ...DEFAULT_CONFIGURATOR_DISCOUNT }), plain);
+      assert.equal(render({ ...discountOn, enabled: false }), plain);
+      assert.equal(render({ ...discountOn, terms: "" }), plain); // incomplete never reaches Mo
+      const on = render(discountOn);
+      assert.notEqual(on, plain);
+      // one block, inserted after the notes and before the plan — everything else unchanged
+      const head = locale === "en" ? "\n\n### Configurator discount (approved by the motion sports team)\n" : "\n\n### Konfigurator-Rabatt (vom motion sports Team freigegeben)\n";
+      const at = on.indexOf(head);
+      assert.ok(at > 0);
+      const planHead = locale === "en" ? "\n\n### The plan as it stands" : "\n\n### Der Plan, wie er jetzt";
+      const end = on.indexOf(planHead);
+      assert.ok(end > at);
+      assert.equal(on.slice(0, at) + on.slice(end), plain);
+      const block = on.slice(at, end);
+      assert.match(block, /`HOMEGYM5`/);
+      assert.match(block, /5 % auf deinen Home-Gym-Plan/);
+      assert.match(block, /Ab 500 € Bestellwert, bis 31\.12\.2026, nicht kombinierbar\./);
+      if (notes) assert.ok(on.indexOf(notes) < at);
+      if (locale === "de") {
+        assert.match(block, /Preis, Budget oder den Warenkorb/);
+        assert.match(block, /Versprich nie mehr als die Bedingungen/);
+        assert.match(block, /erfinde keine anderen Rabatte oder Codes/);
+      } else {
+        assert.match(block, /price, budget or the cart/);
+        assert.match(block, /Never promise more than the terms/);
+        assert.match(block, /never invent other discounts or codes/);
+      }
+      assert.doesNotMatch(block, /undefined|null/);
+      // not from the greeting on: never in the greeting nor with Mo's own budget question, at most once
+      assert.match(
+        block,
+        locale === "de"
+          ? /Nicht in der Begrüßung und nicht bei deiner eigenen Budgetfrage; von dir aus höchstens einmal\./
+          : /Not in the greeting and not with your own budget question; on your own at most once\./
+      );
+      // trigger "plan" with a product in the plan: no wait sentence
+      assert.doesNotMatch(block, /Erst, wenn der Plan ein Produkt hat|Only once the plan has a product/);
+      // past „Gültig bis“ the block is gone too
+      const at2 = (/** @type {any} */ discount, /** @type {string} */ now) =>
+        renderConfiguratorSection({ answers, assortment, settings: { focus: "prefer", notes, discount }, plan, locale, now });
+      assert.equal(at2({ ...discountOn, endsOn: "2026-10-23" }, "2026-10-23T22:00:00Z"), plain);
+      assert.equal(at2({ ...discountOn, endsOn: "2026-10-23" }, "2026-10-23T21:59:59Z"), on);
+    }
+  }
+});
+
+test("renderConfiguratorSection: the discount block follows the trigger — „plan“ waits for the first product", () => {
+  const answers = parseConfiguratorContext(ctx({ ...fullAnswers, features: ["options"] }));
+  const assortment = selectAssortment(catalog, { tag: "home-gym-konfigurator", extraProductIds: [] }).map((s) => s.product);
+  for (const locale of /** @type {const} */ (["de", "en"])) {
+    const head = locale === "en" ? "\n\n### Configurator discount (approved by the motion sports team)\n" : "\n\n### Konfigurator-Rabatt (vom motion sports Team freigegeben)\n";
+    const wait = locale === "en"
+      ? " Only once the plan has a product — before that only when the customer asks about a discount."
+      : " Erst, wenn der Plan ein Produkt hat — vorher nur, wenn der Kunde nach einem Rabatt fragt.";
+    const block = (/** @type {"start" | "plan"} */ trigger, /** @type {any[]} */ plan) => {
+      const plain = renderConfiguratorSection({ answers, assortment, settings: { focus: "prefer", notes: "" }, plan, locale });
+      const on = renderConfiguratorSection({ answers, assortment, settings: { focus: "prefer", notes: "", discount: { ...discountOn, trigger } }, plan, locale });
+      const at = on.indexOf(head);
+      assert.ok(at > 0, `${locale} ${trigger}`);
+      const end = plan.length ? on.indexOf(locale === "en" ? "\n\n### The plan as it stands" : "\n\n### Der Plan, wie er jetzt") : on.length;
+      assert.equal(on.slice(0, at) + on.slice(end), plain); // only the block differs
+      return on.slice(at, end);
+    };
+    const planEmpty = block("plan", []);
+    assert.ok(planEmpty.includes(wait), `${locale}: plan + empty plan waits`);
+    assert.match(planEmpty, locale === "en" ? /a pop-up when the first product lands in the plan/ : /Pop-up, sobald das erste Produkt im Plan ist/);
+    const planFull = block("plan", [{ id: "rack", qty: 1, name: "Rack", price: 900 }]);
+    assert.ok(!planFull.includes(wait), `${locale}: plan + product does not wait`);
+    // the wait sentence is the only difference between an empty and a filled plan
+    assert.equal(planEmpty.replace(wait, ""), planFull);
+    const startEmpty = block("start", []);
+    assert.ok(!startEmpty.includes(wait), `${locale}: start never waits`);
+    assert.match(startEmpty, locale === "en" ? /a pop-up shortly after the consultation starts/ : /Pop-up kurz nach dem Start der Beratung/);
+    for (const b of [planEmpty, planFull, startEmpty]) {
+      assert.match(b, locale === "en" ? /Not in the greeting and not with your own budget question; on your own at most once\./ : /Nicht in der Begrüßung und nicht bei deiner eigenen Budgetfrage; von dir aus höchstens einmal\./);
+    }
+  }
+});
+
+test("configurator page events: discount and validation names the page's track() accepts, none server-only", () => {
+  const names = [
+    CONFIGURATOR_WIDGET_EVENTS.validationBlocked,
+    CONFIGURATOR_WIDGET_EVENTS.discountShown,
+    CONFIGURATOR_WIDGET_EVENTS.discountActivated,
+    CONFIGURATOR_WIDGET_EVENTS.discountCopied,
+    CONFIGURATOR_WIDGET_EVENTS.discountClosed,
+  ];
+  assert.deepEqual(names, [
+    "configurator_validation_blocked",
+    "configurator_discount_shown",
+    "configurator_discount_activated",
+    "configurator_discount_copied",
+    "configurator_discount_closed",
+  ]);
+  for (const name of Object.values(CONFIGURATOR_WIDGET_EVENTS)) {
+    // MS_CHAT.configurator.track accepts configurator_[a-z_]{1,40}
+    assert.match(name, /^configurator_[a-z_]{1,40}$/);
+    assert.equal(SERVER_ONLY_EVENTS.includes(name), false, name);
+  }
+});
+
+test("configuratorDiscountCard: hidden while off and quiet; rates against the sessions that saw the pop-up", () => {
+  const none = { shown: 0, activated: 0, copied: 0, closed: 0, orders: 0 };
+  assert.equal(configuratorDiscountCard(none, false), null);
+  assert.equal(configuratorDiscountCard(null, false), null);
+  assert.deepEqual(configuratorDiscountCard(none, true), { activationRate: null, copyRate: null });
+  assert.deepEqual(configuratorDiscountCard(null, true), { activationRate: null, copyRate: null });
+  // switched off again, but the period still has events → the card stays
+  assert.deepEqual(configuratorDiscountCard({ ...none, shown: 8, activated: 2, copied: 4 }, false), { activationRate: 0.25, copyRate: 0.5 });
+  // orders alone (a draft code already used elsewhere) never open the card while it is off
+  assert.equal(configuratorDiscountCard({ ...none, orders: 1 }, false), null);
+  assert.deepEqual(configuratorDiscountCard({ ...none, orders: 1 }, true), { activationRate: null, copyRate: null });
+  // the banner can activate without a pop-up in the period — never over 100 %
+  assert.deepEqual(configuratorDiscountCard({ ...none, shown: 1, activated: 3 }, true), { activationRate: 1, copyRate: 0 });
 });

@@ -2,20 +2,28 @@
 
 // „Mo im Konfigurator“ + „Sortiment“ of the Konfigurator screen: the operator
 // settings of the Home-Gym-Konfigurator (admin_settings 'configurator',
-// configurator-core.mjs) and the curated assortment Mo works in. Saved through
-// POST /api/admin/konfigurator/settings; after a save the server render
-// refreshes so the assortment list follows a changed tag or list.
+// configurator-core.mjs) — the guided consultation and the „Konfigurator-
+// Rabatt“ (24.10.2026, default off) — and the curated assortment Mo works in.
+// Saved together through POST /api/admin/konfigurator/settings; after a save
+// the server render refreshes so the assortment list follows a changed tag or
+// list.
 
 import * as React from "react";
 import { useRouter } from "next/navigation";
-import { Dumbbell, ExternalLink, PackageSearch, Save, Tag, X } from "lucide-react";
+import { BadgePercent, Dumbbell, ExternalLink, PackageSearch, Save, Tag, X } from "lucide-react";
 import {
+  CONFIGURATOR_DISCOUNT_LIMITS,
   CONFIGURATOR_LIMITS,
   DEFAULT_CONFIGURATOR_TAG,
+  RESERVED_DISCOUNT_CODE_MESSAGE,
+  isDiscountEnded,
+  normalizeDiscountCode,
   validateConfiguratorSettingsInput,
+  type ConfiguratorDiscount,
   type ConfiguratorSettings,
 } from "@/lib/configurator-core.mjs";
 import { eur, num, plural } from "@/lib/admin-format.mjs";
+import { isMoDiscountCode } from "@/lib/order-attribution.mjs";
 import {
   Button,
   Callout,
@@ -41,6 +49,7 @@ import { useAsyncAction } from "../lib/use-async-action";
 import type { AssortmentRow } from "./types";
 
 type Focus = ConfiguratorSettings["focus"];
+type DiscountTrigger = ConfiguratorDiscount["trigger"];
 
 const FOCUS_OPTIONS = [
   { value: "prefer", label: "Sortiment bevorzugen" },
@@ -51,6 +60,13 @@ const STATE_OPTIONS = [
   { value: "on", label: "Aktiv" },
   { value: "off", label: "Aus" },
 ] as const;
+
+const TRIGGER_OPTIONS = [
+  { value: "start", label: "Nach dem Start der Beratung" },
+  { value: "plan", label: "Beim ersten Produkt im Plan" },
+] as const;
+
+const DL = CONFIGURATOR_DISCOUNT_LIMITS;
 
 export function KonfiguratorWorkspace({
   dbReady,
@@ -72,15 +88,36 @@ export function KonfiguratorWorkspace({
   const [extra, setExtra] = React.useState<Array<{ id: string; title: string | null }>>(
     initialSettings.extraProductIds.map((id) => ({ id, title: assortment.find((a) => a.id === id.split("~")[0])?.name ?? null }))
   );
+  // „Konfigurator-Rabatt“
+  const [discount, setDiscount] = React.useState<ConfiguratorDiscount>(initialSettings.discount);
+  const setD = <K extends keyof ConfiguratorDiscount>(key: K, value: ConfiguratorDiscount[K]) =>
+    setDiscount((d) => ({ ...d, [key]: value }));
 
-  const draft = { enabled, tag, focus, notes, extraProductIds: extra.map((e) => e.id) };
+  const draft = { enabled, tag, focus, notes, extraProductIds: extra.map((e) => e.id), discount };
   const parsed = validateConfiguratorSettingsInput(draft);
+  const savedDiscount = saved.discount;
+  const discountDirty =
+    discount.enabled !== savedDiscount.enabled ||
+    discount.code.trim() !== savedDiscount.code ||
+    discount.title.trim() !== savedDiscount.title ||
+    discount.text.trim() !== savedDiscount.text ||
+    discount.terms.trim() !== savedDiscount.terms ||
+    discount.trigger !== savedDiscount.trigger ||
+    discount.endsOn !== savedDiscount.endsOn;
   const dirty =
     enabled !== saved.enabled ||
     tag.trim() !== saved.tag ||
     focus !== saved.focus ||
     notes.trim() !== saved.notes ||
-    draft.extraProductIds.join(",") !== saved.extraProductIds.join(",");
+    draft.extraProductIds.join(",") !== saved.extraProductIds.join(",") ||
+    discountDirty;
+  // Field-level hints of the discount (the full message stays next to „Speichern“).
+  const codeReserved = isMoDiscountCode(discount.code);
+  const codeInvalid = discount.code.trim() !== "" && !normalizeDiscountCode(discount.code);
+  const need = (value: string) => discount.enabled && value.trim() === "";
+  // „Gültig bis“ over (Europe/Berlin): the page and Mo no longer show it.
+  const endedDraft = isDiscountEnded(discount.endsOn);
+  const savedEnded = saved.discount.enabled && isDiscountEnded(saved.discount.endsOn);
 
   const save = useAsyncAction(
     async () => {
@@ -97,11 +134,16 @@ export function KonfiguratorWorkspace({
         setSaved(next);
         setTag(next.tag);
         setNotes(next.notes);
+        setDiscount(next.discount);
+        // The page reads the offer through the settings cache (60 s) plus the response's max-age (60 s).
+        const discountChanged = JSON.stringify(next.discount) !== JSON.stringify(saved.discount);
         toast({
           variant: "success",
           title: "Gespeichert",
           description: next.enabled
-            ? "Mo nutzt die neuen Einstellungen spätestens nach einer Minute."
+            ? discountChanged
+              ? "Mo nutzt die neuen Einstellungen spätestens nach einer Minute, die Seite nach etwa zwei Minuten."
+              : "Mo nutzt die neuen Einstellungen spätestens nach einer Minute."
             : "Mo berät Konfigurator-Besucher jetzt wie im normalen Chat.",
         });
         router.refresh();
@@ -189,128 +231,282 @@ export function KonfiguratorWorkspace({
         title="Mo im Konfigurator"
         info="Wie Mo die Beratung auf der Konfigurator-Seite führt. Die Seite selbst (Texte, Siegel, Fragen) wird im Shopify-Theme gepflegt — Abschnitt „Home-Gym-Konfigurator“."
       >
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Dumbbell className="size-4" aria-hidden /> Beratung
-              {saved.enabled ? <StatusBadge tone="success">Aktiv</StatusBadge> : <StatusBadge tone="neutral">Aus</StatusBadge>}
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            {!dbReady && (
-              <Callout tone="warning" compact className="mb-4">
-                Keine Datenbank konfiguriert — die Einstellungen können nicht gespeichert werden.
-              </Callout>
-            )}
-            <form
-              className="grid grid-cols-1 gap-5 lg:grid-cols-2"
-              onSubmit={(e) => {
-                e.preventDefault();
-                if (!disabled && dirty && parsed.ok) void save.run();
-              }}
-            >
-              <Field
-                label="Geführte Beratung"
-                info="Aktiv: Mo bekommt die Angaben der Seite, führt mit Antwort-Chips durch die offenen Fragen und stellt einen Home-Gym-Plan zusammen. Aus: Besucher der Seite chatten mit Mo wie überall im Shop — ohne Angaben, Chips und Plan."
-              >
-                <SegmentedControl
+        <form
+          className="flex flex-col gap-4"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (!disabled && dirty && parsed.ok) void save.run();
+          }}
+        >
+          {!dbReady && (
+            <Callout tone="warning" compact>
+              Keine Datenbank konfiguriert — die Einstellungen können nicht gespeichert werden.
+            </Callout>
+          )}
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Dumbbell className="size-4" aria-hidden /> Beratung
+                {saved.enabled ? <StatusBadge tone="success">Aktiv</StatusBadge> : <StatusBadge tone="neutral">Aus</StatusBadge>}
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
+                <Field
                   label="Geführte Beratung"
-                  value={enabled ? "on" : "off"}
-                  options={STATE_OPTIONS}
-                  onChange={(v) => setEnabled(v === "on")}
-                  disabled={disabled}
-                />
-              </Field>
-              <Field
-                label="Sortiments-Fokus"
-                info="„Sortiment bevorzugen“: Mo plant vorrangig mit dem Konfigurator-Sortiment, darf aber andere Produkte aus dem Shop dazunehmen, wenn der Kunde danach fragt oder nichts passt (z. B. ein Gymnastikball). „Nur Sortiment“: Mo empfiehlt ausschließlich Sortiments-Produkte, außer der Kunde fragt ausdrücklich nach einem anderen."
-              >
-                <SegmentedControl<Focus>
-                  label="Sortiments-Fokus"
-                  value={focus}
-                  options={FOCUS_OPTIONS}
-                  onChange={setFocus}
-                  disabled={disabled}
-                />
-              </Field>
-              <Field
-                label="Shopify-Tag des Sortiments"
-                info={`Produkte mit diesem Tag gehören zum Konfigurator-Sortiment — in Shopify unter Produkte → Produkt → „Tags“ eintragen (Groß-/Kleinschreibung egal). Der Katalog-Abgleich übernimmt neue Tags beim nächsten Sync. Standard: ${DEFAULT_CONFIGURATOR_TAG}.`}
-                error={tag.trim() && !parsed.ok && /Tag/.test(parsed.message) ? parsed.message : undefined}
-              >
-                <Input value={tag} onChange={(e) => setTag(e.target.value)} disabled={disabled} maxLength={CONFIGURATOR_LIMITS.tagMax} />
-              </Field>
-              <Field
-                label="Zusätzliche Produkte"
-                info="Produkte ohne den Tag, die trotzdem zum Sortiment gehören — z. B. zum Testen, bevor im Shop getaggt ist. Varianten werden zum Produkt zusammengefasst."
-              >
-                <div className="flex flex-col gap-2">
-                  <CatalogProductPicker
-                    showThumbnails={false}
-                    maxResults={6}
-                    selectLabel="hinzufügen"
-                    placeholder="Produkt suchen (tippen)…"
-                    ariaLabel="Produkt zum Konfigurator-Sortiment hinzufügen"
-                    isSelected={(hit) => extra.some((e) => e.id === hit.productId)}
-                    disableReason={() =>
-                      extra.length >= CONFIGURATOR_LIMITS.extraProductIdsMax
-                        ? `Höchstens ${CONFIGURATOR_LIMITS.extraProductIdsMax} Produkte`
-                        : null
-                    }
-                    onSelect={(hit) => {
-                      if (extra.some((e) => e.id === hit.productId)) return;
-                      setExtra((list) => [...list, { id: hit.productId, title: hit.title }]);
-                    }}
-                    onError={(err) =>
-                      toast({ variant: "error", title: "Suche fehlgeschlagen", description: friendlyErrorMessage(err) })
-                    }
+                  info="Aktiv: Mo bekommt die Angaben der Seite, führt mit Antwort-Chips durch die offenen Fragen und stellt einen Home-Gym-Plan zusammen. Aus: Besucher der Seite chatten mit Mo wie überall im Shop — ohne Angaben, Chips und Plan."
+                >
+                  <SegmentedControl
+                    label="Geführte Beratung"
+                    value={enabled ? "on" : "off"}
+                    options={STATE_OPTIONS}
+                    onChange={(v) => setEnabled(v === "on")}
+                    disabled={disabled}
                   />
-                  {extra.length > 0 && (
-                    <ul className="flex flex-wrap gap-1.5" aria-label="Zusätzliche Produkte">
-                      {extra.map((e) => (
-                        <li key={e.id}>
-                          <span className="inline-flex h-7 items-center gap-1 rounded-full border border-border bg-surface-2 pl-2.5 pr-1 text-xs">
-                            <span className="max-w-[16rem] truncate">{e.title ?? e.id}</span>
-                            <button
-                              type="button"
-                              className="inline-flex size-5 items-center justify-center rounded-full text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-50"
-                              onClick={() => setExtra((list) => list.filter((x) => x.id !== e.id))}
-                              disabled={disabled}
-                              aria-label={`${e.title ?? e.id} entfernen`}
-                            >
-                              <X className="size-3" />
-                            </button>
-                          </span>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </div>
-              </Field>
-              <Field
-                label="Hinweise für Mo"
-                info="Kurze Anweisungen des Teams, die Mo in jeder Konfigurator-Beratung befolgt — z. B. eine laufende Aktion, ein bevorzugtes Basisgerät, ein Liefertermin-Hinweis. Keine Rechtstexte und keine Rabattcodes, die nicht freigegeben sind."
-                hint={`${num(notes.length)} / ${num(CONFIGURATOR_LIMITS.notesMax)} Zeichen`}
-                error={notes.length > CONFIGURATOR_LIMITS.notesMax ? `Höchstens ${num(CONFIGURATOR_LIMITS.notesMax)} Zeichen.` : undefined}
-                className="lg:col-span-2"
-              >
-                <Textarea
-                  rows={4}
-                  value={notes}
-                  onChange={(e) => setNotes(e.target.value)}
-                  disabled={disabled}
-                  placeholder="z. B. Bei wenig Platz zuerst die Wandzugstation empfehlen. Lieferung von Racks aktuell 2–3 Wochen."
-                />
-              </Field>
-              <div className="flex items-center gap-3 lg:col-span-2">
-                <Button type="submit" size="sm" loading={save.pending} disabled={!dbReady || !dirty || !parsed.ok}>
-                  <Save /> Speichern
-                </Button>
-                {dirty && <span className="text-xs text-muted-foreground">Ungespeicherte Änderungen</span>}
+                </Field>
+                <Field
+                  label="Sortiments-Fokus"
+                  info="„Sortiment bevorzugen“: Mo plant vorrangig mit dem Konfigurator-Sortiment, darf aber andere Produkte aus dem Shop dazunehmen, wenn der Kunde danach fragt oder nichts passt (z. B. ein Gymnastikball). „Nur Sortiment“: Mo empfiehlt ausschließlich Sortiments-Produkte, außer der Kunde fragt ausdrücklich nach einem anderen."
+                >
+                  <SegmentedControl<Focus>
+                    label="Sortiments-Fokus"
+                    value={focus}
+                    options={FOCUS_OPTIONS}
+                    onChange={setFocus}
+                    disabled={disabled}
+                  />
+                </Field>
+                <Field
+                  label="Shopify-Tag des Sortiments"
+                  info={`Produkte mit diesem Tag gehören zum Konfigurator-Sortiment — in Shopify unter Produkte → Produkt → „Tags“ eintragen (Groß-/Kleinschreibung egal). Der Katalog-Abgleich übernimmt neue Tags beim nächsten Sync. Standard: ${DEFAULT_CONFIGURATOR_TAG}.`}
+                  error={tag.trim() && !parsed.ok && /Tag/.test(parsed.message) ? parsed.message : undefined}
+                >
+                  <Input value={tag} onChange={(e) => setTag(e.target.value)} disabled={disabled} maxLength={CONFIGURATOR_LIMITS.tagMax} />
+                </Field>
+                <Field
+                  label="Zusätzliche Produkte"
+                  info="Produkte ohne den Tag, die trotzdem zum Sortiment gehören — z. B. zum Testen, bevor im Shop getaggt ist. Varianten werden zum Produkt zusammengefasst."
+                >
+                  <div className="flex flex-col gap-2">
+                    <CatalogProductPicker
+                      showThumbnails={false}
+                      maxResults={6}
+                      selectLabel="hinzufügen"
+                      placeholder="Produkt suchen (tippen)…"
+                      ariaLabel="Produkt zum Konfigurator-Sortiment hinzufügen"
+                      isSelected={(hit) => extra.some((e) => e.id === hit.productId)}
+                      disableReason={() =>
+                        extra.length >= CONFIGURATOR_LIMITS.extraProductIdsMax
+                          ? `Höchstens ${CONFIGURATOR_LIMITS.extraProductIdsMax} Produkte`
+                          : null
+                      }
+                      onSelect={(hit) => {
+                        if (extra.some((e) => e.id === hit.productId)) return;
+                        setExtra((list) => [...list, { id: hit.productId, title: hit.title }]);
+                      }}
+                      onError={(err) =>
+                        toast({ variant: "error", title: "Suche fehlgeschlagen", description: friendlyErrorMessage(err) })
+                      }
+                    />
+                    {extra.length > 0 && (
+                      <ul className="flex flex-wrap gap-1.5" aria-label="Zusätzliche Produkte">
+                        {extra.map((e) => (
+                          <li key={e.id} className="max-w-full">
+                            <span className="inline-flex h-7 max-w-full items-center gap-1 rounded-full border border-border bg-surface-2 pl-2.5 pr-1 text-xs">
+                              <span className="min-w-0 max-w-[16rem] truncate">{e.title ?? e.id}</span>
+                              <button
+                                type="button"
+                                className="inline-flex size-5 shrink-0 items-center justify-center rounded-full text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-50"
+                                onClick={() => setExtra((list) => list.filter((x) => x.id !== e.id))}
+                                disabled={disabled}
+                                aria-label={`${e.title ?? e.id} entfernen`}
+                              >
+                                <X className="size-3" />
+                              </button>
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                </Field>
+                <Field
+                  label="Hinweise für Mo"
+                  info="Kurze Anweisungen des Teams, die Mo in jeder Konfigurator-Beratung befolgt — z. B. eine laufende Aktion, ein bevorzugtes Basisgerät, ein Liefertermin-Hinweis. Keine Rechtstexte und keine Rabattcodes, die nicht freigegeben sind."
+                  hint={`${num(notes.length)} / ${num(CONFIGURATOR_LIMITS.notesMax)} Zeichen`}
+                  error={notes.length > CONFIGURATOR_LIMITS.notesMax ? `Höchstens ${num(CONFIGURATOR_LIMITS.notesMax)} Zeichen.` : undefined}
+                  className="lg:col-span-2"
+                >
+                  <Textarea
+                    rows={4}
+                    value={notes}
+                    onChange={(e) => setNotes(e.target.value)}
+                    disabled={disabled}
+                    placeholder="z. B. Bei wenig Platz zuerst die Wandzugstation empfehlen. Lieferung von Racks aktuell 2–3 Wochen."
+                  />
+                </Field>
               </div>
-            </form>
-          </CardContent>
-        </Card>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex flex-wrap items-center gap-2">
+                <BadgePercent className="size-4" aria-hidden /> Konfigurator-Rabatt
+                {savedEnded ? (
+                  <StatusBadge tone="warning">Abgelaufen</StatusBadge>
+                ) : saved.discount.enabled ? (
+                  <StatusBadge tone="success">Aktiv</StatusBadge>
+                ) : (
+                  <StatusBadge tone="neutral">Aus</StatusBadge>
+                )}
+                <InfoTip panelClassName="max-w-md">
+                  Ein Rabatt für Besucher des Konfigurators: Die Seite zeigt ihn als Pop-up (mit „Code kopieren“ und „Rabatt
+                  aktivieren“) und danach als Hinweis über dem Plan; Mo nennt ihn, wenn es um Preis, Budget oder den Warenkorb
+                  geht. Standard: Aus. Den Code zuerst in Shopify unter Rabatte anlegen — genau dieser Code, derselbe Wert und
+                  dieselben Bedingungen wie hier. Mo legt keinen Code an und prüft ihn nicht; abgezogen wird er von Shopify an
+                  der Kasse.
+                </InfoTip>
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              {discount.enabled && !enabled && (
+                <Callout tone="warning" compact className="mb-4">
+                  Der Rabatt erscheint erst, wenn „Geführte Beratung“ aktiv ist.
+                </Callout>
+              )}
+              <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
+                <Field
+                  label="Konfigurator-Rabatt"
+                  info="Aktiv: Die Konfigurator-Seite zeigt das Pop-up, und Mo kennt den Rabatt. Aus: kein Pop-up, Mo erwähnt keinen Konfigurator-Rabatt. Eine Änderung erreicht die Seite nach spätestens etwa zwei Minuten."
+                >
+                  <SegmentedControl
+                    label="Konfigurator-Rabatt"
+                    value={discount.enabled ? "on" : "off"}
+                    options={STATE_OPTIONS}
+                    onChange={(v) => setD("enabled", v === "on")}
+                    disabled={disabled}
+                  />
+                </Field>
+                <Field
+                  label="Zeitpunkt"
+                  info="„Nach dem Start der Beratung“: etwa eine Sekunde nach „Weiter – Mo berät mich“. „Beim ersten Produkt im Plan“: sobald das erste Produkt im Plan auf der Seite landet. Das Pop-up kommt je Browser und Code nur einmal; danach bleibt der Hinweis über dem Plan."
+                >
+                  <SegmentedControl<DiscountTrigger>
+                    label="Zeitpunkt"
+                    value={discount.trigger}
+                    options={TRIGGER_OPTIONS}
+                    onChange={(v) => setD("trigger", v)}
+                    disabled={disabled}
+                    className="max-w-full flex-wrap"
+                  />
+                </Field>
+                <Field
+                  label="Rabattcode"
+                  required={discount.enabled}
+                  info={`Muss in Shopify unter Rabatte genau so angelegt sein — mit demselben Wert und denselben Bedingungen wie unten beschrieben. ${DL.codeMin}–${DL.codeMax} Zeichen: Buchstaben, Ziffern, „-“ und „_“. „Rabatt aktivieren“ auf der Seite hinterlegt den Code über motionsports.de/discount/<Code> für die Kasse. Nicht mit MK- oder MS5- beginnen: Diese Anfänge stehen für Mos eigene Einmal-Codes, die Bestell-Zuordnung zählt jede Bestellung damit als Mos.`}
+                  error={
+                    codeReserved
+                      ? RESERVED_DISCOUNT_CODE_MESSAGE
+                      : codeInvalid
+                        ? `${DL.codeMin}–${DL.codeMax} Zeichen: nur Buchstaben, Ziffern, „-“ und „_“.`
+                        : need(discount.code)
+                          ? "Zum Aktivieren nötig."
+                          : undefined
+                  }
+                >
+                  <Input
+                    value={discount.code}
+                    onChange={(e) => setD("code", e.target.value)}
+                    disabled={disabled}
+                    maxLength={DL.codeMax}
+                    autoComplete="off"
+                    spellCheck={false}
+                    className="font-mono"
+                    placeholder="z. B. HOMEGYM5"
+                  />
+                </Field>
+                <Field
+                  label="Überschrift"
+                  required={discount.enabled}
+                  info="Die große Zeile im Pop-up und im Hinweis über dem Plan."
+                  hint={`${num(discount.title.length)} / ${num(DL.titleMax)} Zeichen`}
+                  error={need(discount.title) ? "Zum Aktivieren nötig." : undefined}
+                >
+                  <Input
+                    value={discount.title}
+                    onChange={(e) => setD("title", e.target.value)}
+                    disabled={disabled}
+                    maxLength={DL.titleMax}
+                    placeholder="z. B. 5 % auf deinen Home-Gym-Plan"
+                  />
+                </Field>
+                <Field
+                  label="Text"
+                  info="Der Satz im Pop-up unter der Überschrift (optional)."
+                  hint={`${num(discount.text.length)} / ${num(DL.textMax)} Zeichen`}
+                  className="lg:col-span-2"
+                >
+                  <Textarea
+                    rows={2}
+                    value={discount.text}
+                    onChange={(e) => setD("text", e.target.value)}
+                    disabled={disabled}
+                    maxLength={DL.textMax}
+                    placeholder="z. B. Als Dankeschön fürs Planen mit Mo: 5 % auf deine Bestellung."
+                  />
+                </Field>
+                <Field
+                  label="Bedingungen"
+                  required={discount.enabled}
+                  info="Klein unter dem Text im Pop-up und im Hinweis über dem Plan; Mo nennt sie zusammen mit dem Code und verspricht nie mehr. Preisangaben: Die Bedingungen vollständig angeben — Mindestbestellwert, Laufzeit, ausgenommene Produkte, ob mit anderen Rabatten kombinierbar."
+                  hint={`${num(discount.terms.length)} / ${num(DL.termsMax)} Zeichen`}
+                  error={need(discount.terms) ? "Zum Aktivieren nötig." : undefined}
+                  className="lg:col-span-2"
+                >
+                  <Textarea
+                    rows={2}
+                    value={discount.terms}
+                    onChange={(e) => setD("terms", e.target.value)}
+                    disabled={disabled}
+                    maxLength={DL.termsMax}
+                    placeholder="z. B. Ab 500 € Bestellwert, bis 31.12.2026, nicht mit anderen Rabatten kombinierbar."
+                  />
+                </Field>
+                <Field
+                  label="Gültig bis"
+                  info="Optional: der letzte Tag des Rabatts (deutsche Zeit) — dasselbe Enddatum wie in Shopify und in den Bedingungen. Ab 0 Uhr am Tag danach zeigen die Seite und Mo den Rabatt nicht mehr, auch wenn er hier aktiv bleibt. Leer: ohne Enddatum (dann von Hand auf „Aus“ stellen)."
+                  hint={endedDraft ? "Abgelaufen — die Seite und Mo zeigen den Rabatt nicht mehr." : undefined}
+                >
+                  <Input
+                    type="date"
+                    value={discount.endsOn}
+                    onChange={(e) => setD("endsOn", e.target.value)}
+                    disabled={disabled}
+                    className="max-w-[12rem]"
+                  />
+                </Field>
+                {(discount.title.trim() || discount.code.trim()) && (
+                  <div className="lg:col-span-2">
+                    <DiscountPreview discount={discount} />
+                  </div>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+
+          <div className="flex flex-wrap items-center gap-3">
+            <Button type="submit" size="sm" loading={save.pending} disabled={!dbReady || !dirty || !parsed.ok}>
+              <Save /> Speichern
+            </Button>
+            {dirty && parsed.ok && <span className="text-xs text-muted-foreground">Ungespeicherte Änderungen</span>}
+            {dirty && !parsed.ok && (
+              <span className="text-xs text-destructive" role="status">
+                {parsed.message}
+              </span>
+            )}
+          </div>
+        </form>
       </Section>
 
       <Section
@@ -357,5 +553,29 @@ export function KonfiguratorWorkspace({
         </div>
       </Section>
     </div>
+  );
+}
+
+/** How the page's pop-up reads — simplified, in the admin's tokens (the page has its own design). */
+function DiscountPreview({ discount }: { discount: ConfiguratorDiscount }) {
+  return (
+    <figure className="flex flex-col gap-2">
+      <figcaption className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+        Vorschau
+        <InfoTip>
+          Vereinfacht — auf der Seite im Design des Konfigurators, mit „Code kopieren“, „Rabatt aktivieren“ und einem
+          Schließen-Knopf; danach als schmaler Hinweis über dem Plan.
+        </InfoTip>
+      </figcaption>
+      <div className="max-w-md rounded-lg border border-border bg-surface-2 p-4">
+        <div className="text-2xs font-semibold uppercase tracking-wide text-accent">Dein Konfigurator-Vorteil</div>
+        <div className="mt-1 text-base font-semibold text-foreground">{discount.title.trim() || "Überschrift"}</div>
+        {discount.text.trim() && <p className="mt-1 text-sm text-foreground">{discount.text.trim()}</p>}
+        <div className="mt-3 inline-flex items-center rounded-md border border-dashed border-border bg-card px-3 py-1.5 font-mono text-sm text-foreground">
+          {discount.code.trim() || "CODE"}
+        </div>
+        {discount.terms.trim() && <p className="mt-3 text-2xs text-muted-foreground">{discount.terms.trim()}</p>}
+      </div>
+    </figure>
   );
 }
