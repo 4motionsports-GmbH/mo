@@ -12,6 +12,10 @@
 //   4. /apps/chat/whoami answers JSON (App Proxy set up) — without cookies the
 //      answer is {"signedIn":false}; check signedIn:true in a browser signed in
 //      to the shop.
+//   5. the Home-Gym-Konfigurator is served under its public URL
+//      /pages/home-gym-konfigurator (live-check.mjs; `--configurator-path` to
+//      check another path) and the old /pages/home-gym-konfigurator-1
+//      redirects there (a missing redirect is a hint, not a failure).
 // Exit code 0 only when every check passes: a build the backend switches may
 // be flipped for, the head script, the /cart style, and no App Proxy answering
 // a widget that cannot redeem the code. The App Proxy not being set up yet is
@@ -26,6 +30,13 @@ import {
   widgetRedeemsLinkCode,
   WIDGET_BUILDS,
 } from "../src/lib/widget-fingerprint.mjs";
+import {
+  CONFIGURATOR_OLD_PATHS,
+  CONFIGURATOR_PAGE_PATH,
+  configuratorPageStatus,
+  redirectsTo,
+  urlPath,
+} from "../src/lib/live-check.mjs";
 
 const args = process.argv.slice(2);
 const argValue = (name) => {
@@ -35,13 +46,21 @@ const argValue = (name) => {
 const origin = (argValue("--origin") ?? "https://www.motionsports.de").replace(/\/+$/, "");
 const UA = "Mozilla/5.0 (Mo live check; +https://mo.motionsports.de)";
 
-async function get(path) {
+async function get(path, { redirect = "follow" } = {}) {
   const url = path.startsWith("http") ? path : `${origin}${path}`;
   try {
-    const res = await fetch(url, { headers: { "user-agent": UA, accept: "*/*" }, redirect: "follow" });
-    return { ok: res.ok, status: res.status, type: res.headers.get("content-type") ?? "", text: await res.text(), url };
+    const res = await fetch(url, { headers: { "user-agent": UA, accept: "*/*" }, redirect });
+    return {
+      ok: res.ok,
+      status: res.status,
+      type: res.headers.get("content-type") ?? "",
+      location: res.headers.get("location"),
+      text: redirect === "manual" ? "" : await res.text(),
+      url,
+      finalUrl: res.url || url,
+    };
   } catch (err) {
-    return { ok: false, status: 0, type: "", text: "", url, error: String(err?.cause?.code ?? err?.message ?? err) };
+    return { ok: false, status: 0, type: "", location: null, text: "", url, finalUrl: url, error: String(err?.cause?.code ?? err?.message ?? err) };
   }
 }
 
@@ -113,6 +132,42 @@ if (whoJson && typeof whoJson.signedIn === "boolean") {
     "App Proxy /apps/chat/whoami",
     `noch nicht eingerichtet (HTTP ${who.status}, ${who.type.split(";")[0] || "kein Content-Type"})`
   );
+}
+
+// 5: the configurator under its public URL (and the old one redirecting there)
+const configuratorPath = argValue("--configurator-path") ?? CONFIGURATOR_PAGE_PATH;
+const cfgPage = await get(configuratorPath);
+const cfgStatus = configuratorPageStatus(cfgPage.text);
+const cfgFinalPath = urlPath(cfgPage.finalUrl, origin);
+const cfgAtPath = cfgPage.ok && cfgFinalPath === urlPath(configuratorPath, origin);
+if (cfgAtPath && cfgStatus.configurator) {
+  line(true, `Konfigurator unter ${configuratorPath}`);
+} else {
+  line(
+    false,
+    `Konfigurator unter ${configuratorPath}`,
+    !cfgPage.ok
+      ? cfgPage.error ?? `HTTP ${cfgPage.status}`
+      : !cfgAtPath
+        ? `leitet weiter nach ${cfgFinalPath} — die Seite mit der Vorlage „home-gym-mo“ muss diesen Handle haben`
+        : "die Seite zeigt nicht den Konfigurator (alte Vorlage? Seite muss die Vorlage „home-gym-mo“ nutzen)"
+  );
+  pass = false;
+}
+for (const oldPath of CONFIGURATOR_OLD_PATHS) {
+  if (urlPath(oldPath, origin) === urlPath(configuratorPath, origin)) continue;
+  const old = await get(oldPath, { redirect: "manual" });
+  if (redirectsTo(old.status, old.location, configuratorPath, origin)) {
+    line(true, `${oldPath} leitet auf ${configuratorPath} weiter`, `HTTP ${old.status}`);
+  } else {
+    line(
+      null,
+      `${oldPath}`,
+      old.status === 404
+        ? `antwortet 404 — Weiterleitung einrichten (Shopify → Navigation → URL-Weiterleitungen: ${oldPath} → ${configuratorPath})`
+        : `HTTP ${old.status}${old.location ? ` → ${urlPath(old.location, origin)}` : ""} (erwartet: 301 → ${configuratorPath})`
+    );
+  }
 }
 
 console.log(
