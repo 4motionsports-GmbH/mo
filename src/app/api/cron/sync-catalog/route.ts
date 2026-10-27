@@ -20,6 +20,12 @@
 //
 // Protected by CRON_SECRET — Vercel Cron sends Authorization: Bearer <secret>.
 // Manual invocation: curl -H "Authorization: Bearer $CRON_SECRET" $URL
+//
+// SHOWROOM (2026-10-27, docs/CONFIGURATOR.md §4b): the same daily run re-reads
+// which products are on display in the showroom from the live theme
+// (showroom-store refreshShowroomFromTheme, needs the scope read_themes). It
+// runs alongside the catalog work, fail-soft: its outcome is reported under
+// `showroom` in the response and never changes the catalog's status code.
 
 import { NextResponse } from "next/server";
 import OpenAI from "openai";
@@ -39,6 +45,7 @@ import { classifyOpenAiError } from "@/lib/openai-error.mjs";
 import { fetchAllProducts } from "@/lib/shopify";
 import { reportError } from "@/lib/observability";
 import { requireCronAuth } from "@/lib/cron-auth";
+import { refreshShowroomFromTheme } from "@/lib/showroom-store";
 import type { Product } from "@/lib/types";
 
 // Vercel hobby plan caps cron functions at 60s; pro at 300s. Bumping to 300
@@ -173,6 +180,11 @@ async function handle(req: Request): Promise<Response> {
 
   const startedAt = Date.now();
   const log: Record<string, unknown> = {};
+  // The showroom list (fail-soft, never throws) — awaited before every answer.
+  const showroomTask = refreshShowroomFromTheme({ background: true }).then(
+    (r) => ({ ok: r.ok, count: r.count, error: r.error, ...(r.skipped ? { skipped: r.skipped } : {}) }),
+    () => ({ ok: false, count: 0, error: "Der Showroom konnte nicht aktualisiert werden." })
+  );
 
   try {
     // 1. Source the products (Shopify → fallback bundle). Self-heals to the
@@ -208,6 +220,7 @@ async function handle(req: Request): Promise<Response> {
         catalogUrl = await writeCatalogToBlob(products);
         invalidateCache();
       }
+      log.showroom = await showroomTask;
       return summaryResponse({ ok: true, mode, products, catalogUrl, embeddingsUrl: null, file: null, startedAt, log });
     }
 
@@ -228,6 +241,7 @@ async function handle(req: Request): Promise<Response> {
         quota: summary.quota,
         errorClass: summary.errorClass,
       });
+      log.showroom = await showroomTask;
       return NextResponse.json(
         { ok: false, mode, error: msg, embeddings: summary, elapsedMs: Date.now() - startedAt, ...log },
         { status: 503 }
@@ -247,13 +261,14 @@ async function handle(req: Request): Promise<Response> {
       log.blobSkipped = "BLOB_READ_WRITE_TOKEN not set";
     }
 
+    log.showroom = await showroomTask;
     return summaryResponse({ ok: true, mode, products, catalogUrl, embeddingsUrl, file, startedAt, log });
   } catch (err) {
     // A real failure (a Blob write throwing, an unexpected error) is reported to
     // Sentry and surfaced as a 503 envelope. With the atomic write above, a
     // failure here cannot have left a fresh catalog with stale embeddings.
     reportError(err, { route: "api/cron/sync-catalog" });
-    return NextResponse.json({ ok: false, error: (err as Error).message }, { status: 503 });
+    return NextResponse.json({ ok: false, error: (err as Error).message, showroom: await showroomTask }, { status: 503 });
   }
 }
 
