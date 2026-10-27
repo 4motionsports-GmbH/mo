@@ -57,12 +57,14 @@ export function buildShopifyCartUrl(idOrGid, quantity = 1, shopDomain = SHOP_DOM
  * Build a MULTI-line prefilled-cart permalink of the form
  * `/cart/<variant>:<qty>,<variant>:<qty>`, optionally with `?discount=CODE`.
  *
- * Accepts a list of bare numeric ids / variant GIDs / SKUs; non-numeric and
- * unresolvable entries are skipped, and duplicate variant ids are de-duped
- * (first-seen order preserved). Returns null when not a single line resolves,
- * so callers omit the cart link rather than emit a broken URL.
+ * Accepts a list of bare numeric ids / variant GIDs / SKUs — or `{ id,
+ * quantity }` entries for a quantity per line (the product rules' minimum,
+ * e.g. a pair of plates, 2026-10-27); non-numeric and unresolvable entries
+ * are skipped, and duplicate variant ids are de-duped (first-seen order
+ * preserved). Returns null when not a single line resolves, so callers omit
+ * the cart link rather than emit a broken URL.
  *
- * @param {Array<string | number | null | undefined>} idsOrGids
+ * @param {Array<string | number | null | undefined | { id: string | number | null | undefined, quantity?: number }>} idsOrGids
  * @param {{ quantity?: number, discountCode?: string, shopDomain?: string }} [options]
  * @returns {string | null}
  */
@@ -72,10 +74,15 @@ export function buildCartPermalink(idsOrGids, options = {}) {
   const seen = new Set();
   const segments = [];
   for (const raw of idsOrGids ?? []) {
-    const variantId = parseNumericVariantId(raw);
+    const entry = raw && typeof raw === "object" ? raw : null;
+    const variantId = parseNumericVariantId(entry ? entry.id : raw);
     if (!variantId || seen.has(variantId)) continue;
     seen.add(variantId);
-    segments.push(`${variantId}:${qty}`);
+    const lineQty =
+      entry && Number.isFinite(entry.quantity) && /** @type {number} */ (entry.quantity) > 0
+        ? Math.floor(/** @type {number} */ (entry.quantity))
+        : qty;
+    segments.push(`${variantId}:${lineQty}`);
   }
   if (segments.length === 0) return null;
   let url = `${shopDomain}/cart/${segments.join(",")}`;

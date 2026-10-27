@@ -23,6 +23,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { MO_RULE_METAFIELDS, parseMoRuleMetafields } from "../src/lib/product-rules.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, "..");
@@ -285,7 +286,13 @@ async function main() {
     color: metaCol("metafields.shopify.color-pattern"),
     certification: metaCol("metafields.custom.zertifizierung"),
     complementary: metaCol("complementary_products"),
+    // The merchant's sales unit (Stück / Paar / Set) — the live sync keeps it
+    // as specifications.Liefereinheit too; the product rules read it.
+    liefereinheit: metaCol("metafields.custom.liefereinheit"),
   };
+  // Product rules (namespace `mo`, product-rules.mjs): one column per key when
+  // the export carries it.
+  const MO_COLS = Object.fromEntries(MO_RULE_METAFIELDS.map((key) => [key, metaCol(`metafields.mo.${key}`)]));
 
   if (COLS.handle < 0 || COLS.title < 0 || COLS.price < 0) {
     throw new Error(
@@ -396,6 +403,10 @@ async function main() {
     if (META.serie >= 0 && first[META.serie]) {
       specs["Serie"] = first[META.serie];
     }
+    if (META.liefereinheit >= 0 && first[META.liefereinheit]) {
+      specs["Liefereinheit"] = first[META.liefereinheit];
+    }
+    const moRules = parseMoRuleMetafields((key) => (MO_COLS[key] >= 0 ? first[MO_COLS[key]] : null));
 
     // Dimensions: prefer metafields, fallback to Variant Grams for weight.
     const heightCm = META.height >= 0 ? parseNumber(first[META.height]) : null;
@@ -541,6 +552,7 @@ async function main() {
       deliveryTime,
       ...(series ? { series } : {}),
       tags,
+      ...(moRules ? { moRules } : {}),
       // Persona-relevant fields default to "unknown" — hand-curate hot products later.
       medicalCertification: {
         ceClass: "unknown",

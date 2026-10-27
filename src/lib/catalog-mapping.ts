@@ -10,6 +10,7 @@ import { richTextToPlainText } from "./shopify-richtext.mjs";
 import { buildShopifyCartUrl, parseNumericVariantId } from "./shopify-cart-url.mjs";
 import { QA_METAFIELD_KEY, QA_METAFIELD_NAMESPACE, parseQaMetafield } from "./qa-core.mjs";
 import { parseKurztextSpecs, extractKurztextDimensions } from "./kurztext.mjs";
+import { parseMoRuleMetafields } from "./product-rules.mjs";
 // The embedded-doc builder lives in its own module (one source of truth shared
 // with the cron sync and scripts/build-embeddings.mjs). Re-exported here so the
 // long-standing `import { buildEmbeddingDoc } from "@/lib/catalog-mapping"`
@@ -494,6 +495,11 @@ export function mapShopifyProducts(
       getMetafield(p, "shopify--discovery--product_recommendation", "related_products")
     );
     const hideFromSearch = isTruthyFlag(getMetafield(p, "custom", "hide_from_search"));
+    // Product rules of this product (namespace `mo`, docs/CONFIGURATOR.md §4a):
+    // mo.sold_in_pairs / quantity_step / min_quantity / max_quantity /
+    // coverage_m2 — they beat the code registry of product-rules.mjs. Only the
+    // fields that parse; absent without any.
+    const moRules = parseMoRuleMetafields((key) => getMetafield(p, "mo", key));
     // Published Q&A pairs (the "Wissen" feature) — the metafield carries the
     // canonical {q,a} JSON list; parse defensively (junk → []).
     const qa = parseQaMetafield(getMetafield(p, QA_METAFIELD_NAMESPACE, QA_METAFIELD_KEY));
@@ -549,6 +555,7 @@ export function mapShopifyProducts(
         ? { ratingCount: Math.round(ratingCount) }
         : {}),
       ...(hideFromSearch ? { hideFromSearch: true } : {}),
+      ...(moRules ? { moRules } : {}),
       ...(qa.length ? { qa } : {}),
       medicalCertification: {
         ceClass: "unknown",

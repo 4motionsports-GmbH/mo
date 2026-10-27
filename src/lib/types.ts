@@ -98,6 +98,17 @@ export interface Product {
   // this product from storefront search. Mo's retrieval mirrors that: the
   // product stays resolvable by id but is never recommended proactively.
   hideFromSearch?: boolean;
+  // Product rules from the `mo` metafield namespace (2026-10-27, product-
+  // rules.mjs parseMoRuleMetafields): mo.sold_in_pairs, mo.quantity_step,
+  // mo.min_quantity, mo.max_quantity, mo.coverage_m2 — they beat the code
+  // registry (PRODUCT_RULES). Only the fields that parse; absent without any.
+  moRules?: {
+    soldInPairs?: boolean;
+    quantityStep?: number;
+    minQuantity?: number;
+    maxQuantity?: number;
+    coverageM2?: number;
+  };
   // Published customer Q&A pairs from the `custom.qa` metafield (the "Wissen"
   // feature, docs/QA_KNOWLEDGE.md) — shown in the PDP Q&A tab and given to Mo
   // so an already-answered question never stumps him again. German (question/

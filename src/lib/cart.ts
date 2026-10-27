@@ -15,6 +15,7 @@
 // marketing-only) and the marketing dashboard (which may append a discount).
 
 import { loadProductCatalog } from "./catalog-store";
+import { resolveProductRules } from "./product-rules.mjs";
 import {
   buildCartPermalink,
   parseNumericVariantId,
@@ -73,6 +74,12 @@ export interface BuildPrefilledCartOptions {
    * checkout action (stock is sync-fresh — see docs/CATALOG_SYNC.md).
    */
   excludeSoldOut?: boolean;
+  /**
+   * Units of one line, per product / variant — e.g. the product rules' minimum
+   * (a pair of plates, 2026-10-27: GET /api/products). Wins over
+   * quantityPerItem; an invalid result falls back to it.
+   */
+  quantityFor?: (product: Product, variant: ProductVariant | null) => number;
 }
 
 /**
@@ -168,7 +175,7 @@ export function buildPrefilledCartUrl(
   const resolvedProductIds: string[] = [];
   const unresolvedProductIds: string[] = [];
   const soldOutProductIds: string[] = [];
-  const variantIds: string[] = [];
+  const variantIds: Array<{ id: string; quantity: number }> = [];
   // De-dupe variant ids so the same product isn't added twice (e.g. discussed
   // and also "recommended"), while preserving first-seen order.
   const seenVariants = new Set<string>();
@@ -213,7 +220,8 @@ export function buildPrefilledCartUrl(
     if (seenVariants.has(variantId)) continue;
     seenVariants.add(variantId);
     resolvedProductIds.push(ref);
-    variantIds.push(variantId);
+    const lineQty = product && options.quantityFor ? options.quantityFor(product, variant) : qty;
+    variantIds.push({ id: variantId, quantity: Number.isFinite(lineQty) && lineQty > 0 ? Math.floor(lineQty) : qty });
   }
 
   // Delegate the actual permalink assembly to the shared (unit-tested) helper
@@ -230,7 +238,9 @@ export function buildPrefilledCartUrl(
 /**
  * Convenience wrapper that loads the live catalog and builds the permalink for
  * the given product ids. Use this from routes/email builders that have only the
- * ids in hand.
+ * ids in hand. Without an explicit quantity each line carries the product
+ * rules' minimum (a pair of plates → `:2`, 2026-10-27) — the same as the
+ * widget's links from GET /api/products.
  */
 export async function buildPrefilledCartUrlForIds(
   productIds: string[],
@@ -238,5 +248,10 @@ export async function buildPrefilledCartUrlForIds(
 ): Promise<PrefilledCart> {
   const catalog = await loadProductCatalog();
   const byId = new Map(catalog.map((p) => [p.id, p]));
-  return buildPrefilledCartUrl(productIds, byId, options);
+  const quantityFor =
+    options.quantityFor ??
+    (options.quantityPerItem === undefined
+      ? (product: Product, variant: ProductVariant | null) => resolveProductRules(product, { variant }).min
+      : undefined);
+  return buildPrefilledCartUrl(productIds, byId, { ...options, quantityFor });
 }

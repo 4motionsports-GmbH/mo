@@ -108,3 +108,10 @@ test("the bundled catalog never emits a SKU-based cart URL", async () => {
     );
   }
 });
+
+test("buildCartPermalink takes a quantity per line ({ id, quantity }) next to plain ids", () => {
+  const url = buildCartPermalink([{ id: "111", quantity: 2 }, "222", { id: "gid://shopify/ProductVariant/333", quantity: 4 }, { id: "111", quantity: 6 }, { id: null, quantity: 2 }]);
+  assert.equal(url, "https://motionsports.de/cart/111:2,222:1,333:4");
+  // a bad per-line quantity falls back to the shared one
+  assert.equal(buildCartPermalink([{ id: "111", quantity: 0 }], { quantity: 3 }), "https://motionsports.de/cart/111:3");
+});
