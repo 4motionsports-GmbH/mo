@@ -5,13 +5,16 @@
 // put a product into the plan himself. Public storefront fields only (same
 // guardrails as /api/products: origin allowlist + rate limit, no secret); the
 // widget hydrates a picked product through /api/products as usual. Empty
-// when the configurator is switched off in the admin.
+// when the configurator is switched off in the admin. Since 2026-10-27 every
+// card carries its product rules (`rules`, product-rules.mjs — `{}` = one by
+// one) and, while the showroom list is known, `showroom`.
 
 import { corsHeaders, guardOriginOnly, preflightResponse } from "@/lib/security";
 import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
 import { errorResponse, reportError } from "@/lib/observability";
 import { getCachedConfiguratorSettings, loadConfiguratorAssortment } from "@/lib/configurator-store";
 import { assortmentCards } from "@/lib/configurator-core.mjs";
+import { getCachedShowroom } from "@/lib/showroom-store";
 
 export const maxDuration = 10;
 
@@ -30,9 +33,12 @@ export async function GET(req: Request) {
     const rl = await checkRateLimit(req, "products");
     if (!rl.ok) return rateLimitResponse(rl.retryAfter, cors);
 
-    const settings = await getCachedConfiguratorSettings();
+    const [settings, showroom] = await Promise.all([getCachedConfiguratorSettings(), getCachedShowroom()]);
     const products = settings.enabled
-      ? assortmentCards((await loadConfiguratorAssortment(settings)).products)
+      ? assortmentCards((await loadConfiguratorAssortment(settings)).products, {
+          showroomIds: showroom.known ? showroom.ids : null,
+          showroomKnown: showroom.known,
+        })
       : [];
 
     return new Response(JSON.stringify({ ok: true, products }), {

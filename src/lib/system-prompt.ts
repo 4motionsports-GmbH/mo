@@ -92,6 +92,11 @@ interface BuildPromptOpts {
   // (configurator-core.mjs renderConfiguratorSection). Absent/"" → the prompt
   // is byte-identical to before the feature.
   configuratorBlock?: string;
+  // The products on display in the showroom and whether that list is known
+  // (showroom-store getCachedShowroom, 2026-10-27): the product lines say „im
+  // Showroom ausgestellt“, the showroom rule follows what is known. Absent →
+  // unknown: Mo does not suggest the showroom on his own.
+  showroom?: { known: boolean; ids: ReadonlySet<string> | null } | null;
 }
 
 // Lightweight in-conversation note used when the user opens the product

@@ -654,3 +654,89 @@ test("welcome voucher on + memory: points to the section; an earlier welcome cod
   assert.match(issued, /gilt nur für die erste Newsletter-Anmeldung/);
   assert.match(issued, /stelle keinen neuen Gutschein in Aussicht/);
 });
+
+// ---------------------------------------------------------------------------
+// Product rules and the showroom (2026-10-27, product-rules.mjs / showroom-core.mjs)
+// ---------------------------------------------------------------------------
+
+test("product rules reach the retrieved-products block; a product without rules gets no line", () => {
+  const plates = product({ id: "plates", name: "Hantelscheiben Guss 50 mm", category: "Weight Plates" });
+  const mat = product({ id: "mat", name: "Bodenschutzmatte Standard 1000 x 1000 x 15 / 20 mm", category: "Floor Protection Mats" });
+  const rack = product({ id: "rack", name: "Power Rack", category: "Power Racks" });
+  const products = [plates, mat, rack, product()];
+  const de = buildSystemPrompt({ profile: emptyProfile(), archetype: "unknown", retrievedProducts: products, showroom: { known: true, ids: new Set(["rack"]) } });
+  assert.match(de, /### Hantelscheiben Guss 50 mm {2}`plates`\n- Kategorie: Weight Plates [^\n]*\n- Kurzbeschreibung hier\.\n- Regeln: nur paarweise\n/);
+  assert.match(de, /`mat`\n[^#]*- Regeln: deckt ca\. 1 m² je Stück · für die ganze Raumfläche planen\n/);
+  assert.match(de, /### Power Rack {2}`rack`\n- Kategorie: [^\n]*\n- Kurzbeschreibung hier\.\n- Regeln: im Showroom ausgestellt\n/);
+  // the fixture product has no rule → no line (its block is the golden's)
+  assert.match(de, /### Test Gerät {2}`p1`\n- Kategorie: Laufband [^\n]*\n- Kurzbeschreibung hier\.\n- Details|### Test Gerät {2}`p1`\n- Kategorie: Laufband [^\n]*\n- Kurzbeschreibung hier\.\n- Artikelnummer|### Test Gerät {2}`p1`\n- Kategorie: Laufband [^\n]*\n- Kurzbeschreibung hier\.\n- Features/);
+  assert.equal((de.match(/- Regeln: /g) ?? []).length, 3);
+  const en = buildSystemPrompt({ profile: emptyProfile(), archetype: "unknown", retrievedProducts: products, locale: "en", showroom: { known: true, ids: new Set(["rack"]) } });
+  assert.match(en, /- Rules: pairs only\n/);
+  assert.match(en, /- Rules: covers approx\. 1 m² per unit · plan for the whole room\n/);
+  assert.match(en, /- Rules: on display in the showroom\n/);
+  // an unknown showroom list never marks a product, even with ids handed in
+  const unknown = buildSystemPrompt({ profile: emptyProfile(), archetype: "unknown", retrievedProducts: products, showroom: { known: false, ids: new Set(["rack"]) } });
+  assert.doesNotMatch(unknown, /im Showroom ausgestellt\n/);
+});
+
+test("the generic product-rules and floor-protection instructions sit in the recommendation rules (both locales)", () => {
+  const de = buildSystemPrompt({ profile: emptyProfile(), archetype: "unknown", retrievedProducts: [] });
+  assert.match(de, /- Maximal 2-3 Produkte pro Antwort\.\n- Produktregeln: Trägt ein Produkt eine Zeile „Regeln: …“ \(z\. B\. nur paarweise, deckt ca\. 1 m² je Stück, im Showroom ausgestellt\), richte Mengen und Aussagen danach\. Meldet ein Tool-Ergebnis `adjusted`, wurden Mengen nach diesen Regeln korrigiert — nenne im Text die korrigierten Mengen\.\n- Bodenschutz \(Matten, Platten\) für einen Trainingsraum/);
+  assert.match(de, /für die ganze Raumfläche, nicht nur unter dem Gerät — außer der Kunde will ausdrücklich nur einen Bereich schützen\. Kennst du die genaue Fläche \(Länge × Breite\) nicht, frag danach, speichere sie mit `update_customer_profile` \(spaceM2\)/);
+  assert.match(de, /\(je Menge 1 — bei einem Produkt mit Produktregel dessen Mindestmenge, z\. B\. ein Paar\)/);
+  // two floor products: Mo works out both counts; the direct checkout carries only the minimum — the cart sets the rest
+  assert.match(de, /und rechne die Stückzahl aus der Deckung je Stück — bei zwei Bodenschutz-Produkten \(z\. B\. eine Drop-Zone unter dem Rack und Matten für den Rest\) so, dass sie zusammen die Fläche abdecken\. Der Direkt-Checkout \(`add_to_cart`\) legt je Produkt nur die Mindestmenge in den Warenkorb: Nennst du eine größere Stückzahl, sag dazu, dass der Kunde sie im Warenkorb einstellt\.\n/);
+  const en = buildSystemPrompt({ profile: emptyProfile(), archetype: "unknown", retrievedProducts: [], locale: "en" });
+  assert.match(en, /- Product rules: if a product has a line "Rules: …"[^\n]*state the corrected quantities in your text\.\n- Floor protection \(mats, tiles\) for a training room/);
+  assert.match(en, /\(quantity 1 each — for a product with a product rule its minimum, e\.g\. a pair\)/);
+  assert.match(en, /work out the number of pieces from the coverage per unit — with two floor protection products \(e\.g\. a drop zone under the rack plus mats for the rest\), so that together they cover the area\. The direct checkout \(`add_to_cart`\) puts only the minimum quantity of each product into the cart: if you name a larger piece count, tell the customer to set it in the cart\.\n/);
+  // no product names in the generic instructions
+  assert.doesNotMatch(de.slice(de.indexOf("- Produktregeln:"), de.indexOf("### Verfügbarkeit")), /ATX|Gymfloor|Excellence/);
+});
+
+test("showroom: availability-based — known: only products on display; unknown: no suggestion of Mo's own", () => {
+  const section = (p, head) => {
+    const at = p.indexOf(head);
+    return at < 0 ? "" : p.slice(at, p.indexOf("\n\n", at + head.length));
+  };
+  for (const locale of ["de", "en"]) {
+    const base = { profile: emptyProfile(), archetype: "unknown", retrievedProducts: [], locale };
+    const known = buildSystemPrompt({ ...base, showroom: { known: true, ids: new Set(["rack"]) } });
+    const unknown = buildSystemPrompt(base);
+    assert.equal(buildSystemPrompt({ ...base, showroom: null }), unknown);
+    assert.equal(buildSystemPrompt({ ...base, showroom: { known: false, ids: null } }), unknown);
+    for (const p of [known, unknown]) {
+      // never price-based any more
+      assert.doesNotMatch(p, />\s*500\s*€|>\s*€\s*500|teuren Produkten|expensive products/);
+      assert.match(p, locale === "de" ? /- Ausgestellt ist eine Auswahl unserer Geräte \(nicht das ganze Sortiment\)/ : /- A selection of our equipment is on display \(not the whole range\)/);
+      assert.doesNotMatch(p, /Alle Geräte können vor Ort getestet werden|All devices can be tested on site/);
+    }
+    const k = section(known, "### Showroom\n");
+    const u = section(unknown, "### Showroom\n");
+    if (locale === "de") {
+      assert.match(k, /welche, steht in den Produktzeilen \(„im Showroom ausgestellt“\)\. Schlag einen Besuch über `suggest_showroom` nur für solche Produkte vor/);
+      assert.match(k, /fragt der Kunde danach, sag ehrlich, dass dieses Produkt dort nicht ausgestellt ist/);
+      // a product without a product line in this turn (earlier answer, search_products) is checked first
+      assert.match(k, /Hat ein Produkt in dieser Runde keine Produktzeile \(es kam in einer früheren Antwort vor oder über search_products\), prüf es mit `suggest_showroom`, bevor du sagst, dass es nicht ausgestellt ist — bei ok: false zeigt der Chat keine Karte\.$/);
+      assert.doesNotMatch(u, /prüf es mit `suggest_showroom`/);
+      assert.match(u, /welche, ist gerade nicht bekannt\. Schlag den Showroom deshalb nicht von dir aus vor\./);
+      assert.match(u, /sag aber kein bestimmtes Gerät zu/);
+    } else {
+      assert.match(k, /Suggest a visit via `suggest_showroom` only for such products/);
+      assert.match(k, /If a product has no product line in this turn \(it came up in an earlier answer or via search_products\), check it with `suggest_showroom` before saying it is not on display — with ok: false the chat shows no card\.$/);
+      assert.match(u, /which products is not known right now\. So don't suggest the showroom on your own\./);
+    }
+  }
+});
+
+test("persona addenda: the showroom only for products on display, never by price", () => {
+  for (const archetype of ["ambitious_home_athlete", "design_lifestyle"]) {
+    const de = getPersonaAddendum(archetype, "de");
+    const en = getPersonaAddendum(archetype, "en");
+    assert.match(de, /„im Showroom ausgestellt“/, archetype);
+    assert.match(en, /"on display in the showroom"/, archetype);
+    assert.doesNotMatch(de, /2000|Investitionen >/);
+    assert.doesNotMatch(en, /€2000|>€/);
+  }
+});

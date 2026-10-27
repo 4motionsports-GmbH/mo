@@ -14,6 +14,7 @@
 
 import { MAX_EMAIL_OFFERS_PER_CONVERSATION } from "./email-offer-trigger.mjs";
 import { profileFactsBlock } from "./customer-profile-core.mjs";
+import { resolveProductRules, ruleHint } from "./product-rules.mjs";
 
 // ---------------------------------------------------------------------------
 // Product / browsing context (chat opened "about" a product or after browsing)
@@ -400,7 +401,7 @@ function clipText(s, max) {
   return (lastSpace > max * 0.6 ? cut.slice(0, lastSpace) : cut).trim() + "…";
 }
 
-function renderRetrievedProducts(products, locale) {
+function renderRetrievedProducts(products, locale, showroomIds = null) {
   const en = locale === "en";
   if (products.length === 0) {
     return en
@@ -439,6 +440,11 @@ function renderRetrievedProducts(products, locale) {
           `- ${p.shortDescription}`
         );
       }
+      // The product rules (product-rules.mjs: pairs, coverage of floor tiles,
+      // on display in the showroom) — no line for a product without any, so
+      // such a block stays byte-identical.
+      const rules = ruleHint(resolveProductRules(p, { showroomIds }), locale);
+      if (rules) lines.push(en ? `- Rules: ${rules}` : `- Regeln: ${rules}`);
       // The sellable variants, each with the ref suffix the tools accept
       // (`id~variantId` — see the tool descriptions): Mo can recommend and
       // check out a SPECIFIC strength/weight/colour. Capped so a 30-variant
@@ -879,7 +885,7 @@ export function getPersonaAddendum(archetype, locale) {
 - Speak as an equal. Technical details (load capacity, profile strength, bearings) are welcome.
 - Feel free to recommend complete systems (rack + bench + plates + cable column).
 - Highlight expandability and studio quality.
-- For investments >€2000: proactively suggest the showroom in Gröbenzell.
+- For bigger investments: if a recommended device says "on display in the showroom" in its product line, proactively suggest testing it in the showroom in Gröbenzell.
 - Mention brand quality and durability concretely.`;
 
       case "strength_focused":
@@ -904,7 +910,7 @@ export function getPersonaAddendum(archetype, locale) {
 - Prefer equipment that fits a living space with style or stows away neatly.
 - Give dimensions concretely, also when set up.
 - Quality over quantity: a few premium, durable pieces rather than many.
-- Offer to see material and finish in the showroom in Gröbenzell.`;
+- If a recommended product says "on display in the showroom" in its product line, offer to see material and finish there (showroom in Gröbenzell).`;
 
       case "weight_loss":
         return `## Consulting mode: Weight Loss & Fitness
@@ -967,7 +973,7 @@ export function getPersonaAddendum(archetype, locale) {
 - Sprich auf Augenhöhe. Technische Details (Belastbarkeit, Profilstärke, Lager) sind willkommen.
 - Empfiehl gerne Komplettsysteme (Rack + Bank + Scheiben + Kabelzug).
 - Hebe Erweiterbarkeit und Studio-Qualität hervor.
-- Bei Investitionen >2000€: schlage proaktiv den Showroom in Gröbenzell vor.
+- Bei größeren Investitionen: Steht bei einem empfohlenen Gerät „im Showroom ausgestellt“, schlag proaktiv vor, es im Showroom in Gröbenzell zu testen.
 - Erwähne Markenqualität und Langlebigkeit konkret.`;
 
     case "strength_focused":
@@ -992,7 +998,7 @@ export function getPersonaAddendum(archetype, locale) {
 - Bevorzuge Geräte, die sich stilvoll in den Wohnraum einfügen oder sich gut verstauen lassen.
 - Nenne Maße konkret — auch im aufgebauten Zustand.
 - Qualität vor Masse: lieber wenige, hochwertige und langlebige Stücke.
-- Biete an, Material und Optik im Showroom in Gröbenzell anzusehen.`;
+- Steht bei einem empfohlenen Produkt „im Showroom ausgestellt“, biete an, Material und Optik dort anzusehen (Showroom in Gröbenzell).`;
 
     case "weight_loss":
       return `## Beratungsmodus: Abnehmen & Fitness
@@ -1126,6 +1132,33 @@ export function greetingTriggerText(locale, ctx) {
 }
 
 // ---------------------------------------------------------------------------
+// Showroom (2026-10-27): availability-based, never price-based
+// ---------------------------------------------------------------------------
+
+/**
+ * The showroom rule of "### Dein Verhalten": Mo suggests the showroom only for
+ * products whose line says „im Showroom ausgestellt“ (showroom-core.mjs: the
+ * list read from the live theme plus the admin's list). Unknown list → no
+ * suggestion of his own, no promise of a particular product.
+ * @param {boolean} known
+ * @param {"de" | "en"} locale
+ */
+function renderShowroomRule(known, locale) {
+  if (locale === "en") {
+    return known
+      ? `### Showroom
+The showroom in Gröbenzell has a selection of our equipment on display — which products, the product lines say ("on display in the showroom"). Suggest a visit via \`suggest_showroom\` only for such products, when the customer is unsure or wants to test before buying. If none of the products in question has that note, don't suggest the showroom on your own; if the customer asks, say honestly that this product is not on display there and name displayed alternatives if any fit. If a product has no product line in this turn (it came up in an earlier answer or via search_products), check it with \`suggest_showroom\` before saying it is not on display — with ok: false the chat shows no card.`
+      : `### Showroom
+The showroom in Gröbenzell has a selection of our equipment on display; which products is not known right now. So don't suggest the showroom on your own. If the customer asks, say honestly that a selection is on display there, but don't promise any particular product — the team confirms what is on display when the appointment is made.`;
+  }
+  return known
+    ? `### Showroom
+Im Showroom in Gröbenzell steht eine Auswahl unserer Geräte — welche, steht in den Produktzeilen („im Showroom ausgestellt“). Schlag einen Besuch über \`suggest_showroom\` nur für solche Produkte vor, wenn der Kunde unsicher ist oder vor dem Kauf testen möchte. Steht der Hinweis bei keinem Produkt, um das es geht, schlag den Showroom nicht von dir aus vor; fragt der Kunde danach, sag ehrlich, dass dieses Produkt dort nicht ausgestellt ist, und nenne ausgestellte Alternativen, wenn welche passen. Hat ein Produkt in dieser Runde keine Produktzeile (es kam in einer früheren Antwort vor oder über search_products), prüf es mit \`suggest_showroom\`, bevor du sagst, dass es nicht ausgestellt ist — bei ok: false zeigt der Chat keine Karte.`
+    : `### Showroom
+Im Showroom in Gröbenzell steht eine Auswahl unserer Geräte; welche, ist gerade nicht bekannt. Schlag den Showroom deshalb nicht von dir aus vor. Fragt der Kunde danach, sag ehrlich, dass dort eine Auswahl steht, sag aber kein bestimmtes Gerät zu — das Team bestätigt bei der Terminvereinbarung, was ausgestellt ist.`;
+}
+
+// ---------------------------------------------------------------------------
 // Main assembly
 // ---------------------------------------------------------------------------
 
@@ -1148,6 +1181,7 @@ export function greetingTriggerText(locale, ctx) {
  *   orderStatus?: boolean,
  *   welcomeReward?: { badge: string, terms: string, termsUrl?: string, alt?: { badge: string, terms: string } } | null,
  *   configuratorBlock?: string,
+ *   showroom?: { known?: boolean, ids?: Iterable<string> | ReadonlySet<string> | null } | null,
  * }} opts  orderStatus: get_order_status is offered (CHAT_ORDER_STATUS_ENABLED);
  *   absent/false leaves the prompt byte-identical to before the feature.
  *   welcomeReward: the live newsletter welcome voucher (CONSENT_REWARD_ENABLED,
@@ -1156,6 +1190,10 @@ export function greetingTriggerText(locale, ctx) {
  *   configuratorBlock: the Home-Gym-Konfigurator section of a configurator
  *   conversation (configurator-core.mjs renderConfiguratorSection), placed
  *   right after the context blocks; absent/"" leaves the prompt byte-identical
+ *   showroom: the products on display in the showroom and whether that list is
+ *   known (showroom-core showroomView, 2026-10-27) — the product lines say „im
+ *   Showroom ausgestellt“; absent/unknown → Mo does not suggest the showroom
+ *   on his own
  * @returns {string}
  */
 export function buildSystemPrompt({
@@ -1172,11 +1210,14 @@ export function buildSystemPrompt({
   orderStatus = false,
   welcomeReward = null,
   configuratorBlock = "",
+  showroom = null,
 }) {
   const profileBlock = renderProfileForPrompt(profile, locale);
   const archetypeAddendum = getPersonaAddendum(archetype, locale);
   const archetypeLabel = archetypePromptLabel(archetype, locale);
-  const productsBlock = renderRetrievedProducts(retrievedProducts, locale);
+  const showroomKnown = showroom?.known === true;
+  const productsBlock = renderRetrievedProducts(retrievedProducts, locale, showroomKnown ? (showroom?.ids ?? null) : null);
+  const showroomRule = renderShowroomRule(showroomKnown, locale);
   const generalQaBlock = renderGeneralKnowledgeQa(generalQa, locale);
   const directivesBlock = renderTeamDirectives(directives, locale);
   const productContextBlock = productContext
@@ -1252,6 +1293,8 @@ ${archetypeAddendum}${customerMemoryBlock}
 - Real comparisons run via \`compare_products\`; the product you ultimately recommend additionally gets its \`show_product\` card.
 - Briefly explain WHY the recommended product fits (reference the customer's need), ideally in the \`reason\`.
 - At most 2-3 products per answer.
+- Product rules: if a product has a line "Rules: …" (e.g. pairs only, covers approx. 1 m² per unit, on display in the showroom), follow it in quantities and statements. If a tool result reports \`adjusted\`, quantities were corrected by these rules — state the corrected quantities in your text.
+- Floor protection (mats, tiles) for a training room (a room of its own, basement, garage) is planned for the whole floor area, not just under the machine — unless the customer explicitly wants to protect only an area. If you don't know the exact area (length × width), ask for it, store it with \`update_customer_profile\` (spaceM2) and work out the number of pieces from the coverage per unit — with two floor protection products (e.g. a drop zone under the rack plus mats for the rest), so that together they cover the area. The direct checkout (\`add_to_cart\`) puts only the minimum quantity of each product into the cart: if you name a larger piece count, tell the customer to set it in the cart.
 
 ### Availability / sold-out products (CRITICAL)
 For each pre-retrieved product you see the stock status ("In stock: yes" or "⚠️ CURRENTLY SOLD OUT"). The status comes from the daily catalog sync — so up to date daily, not to the second. Behave like a good advisor in a specialist store:
@@ -1262,7 +1305,7 @@ For each pre-retrieved product you see the stock status ("In stock: yes" or "⚠
 - **Tone stays the same:** warm, honest, never pushy. Sold out is no drama, but an opportunity to advise well.
 
 ### Direct checkout (B2C)
-For \`segment=private\` you can show a **direct-checkout button** with \`add_to_cart\`. One click takes the customer straight to checkout with the product(s) (quantity 1 each) — no detour via the cart. That makes closing easy and is a real service.
+For \`segment=private\` you can show a **direct-checkout button** with \`add_to_cart\`. One click takes the customer straight to checkout with the product(s) (quantity 1 each — for a product with a product rule its minimum, e.g. a pair) — no detour via the cart. That makes closing easy and is a real service.
 
 **One product vs several:** if the customer wants ONE product, set \`productId\`. If they clearly want SEVERAL products together ("I'll take both", "the rack AND the weight bench", "the whole combo"), call \`add_to_cart\` **exactly once** with \`productIds\` (all the desired ids) — this creates ONE shared cart link with all variants, not several individual buttons. Still show a \`show_product\` card for each included product so the customer sees what's in the checkout.
 
@@ -1281,8 +1324,7 @@ NEVER on uncertainty, open objections, a pure info question — and NEVER with a
 ### B2B / special cases (CRITICAL)
 For \`segment=studio\` or \`segment=public_sector\`: NEVER use \`add_to_cart\`. Use \`show_contact_form\` instead as soon as the customer shows procurement signals. For \`segment=physio\` this shows earlier: when genuine medical devices or rehab expertise are required, also \`show_contact_form\`.
 
-### Showroom
-For expensive products (>€500) and when the customer seems unsure, suggest the showroom via \`suggest_showroom\`.
+${showroomRule}
 
 ${emailOfferSection}
 
@@ -1326,7 +1368,7 @@ ${productsBlock}${generalQaBlock}${directivesBlock}
 ### Showroom
 - Address: Gröbenzell near Munich
 - Appointment required
-- All devices can be tested on site`;
+- A selection of our equipment is on display (not the whole range); what is on display can be tested on site`;
   }
 
   return `Du bist Mo, der KI-Fitnessberater von motion sports (motionsports.de), einem führenden europäischen Online-Shop für hochwertige Fitnessgeräte und Equipment.${productContextBlock}${browsingContextBlock}${configuratorSection}
@@ -1381,6 +1423,8 @@ ${archetypeAddendum}${customerMemoryBlock}
 - Echte Gegenüberstellungen laufen über \`compare_products\`; das Produkt, das du am Ende empfiehlst, bekommt zusätzlich seine \`show_product\`-Karte.
 - Erkläre kurz WARUM das empfohlene Produkt passt (Bezug auf Kundenbedürfnis), idealerweise im \`reason\`.
 - Maximal 2-3 Produkte pro Antwort.
+- Produktregeln: Trägt ein Produkt eine Zeile „Regeln: …“ (z. B. nur paarweise, deckt ca. 1 m² je Stück, im Showroom ausgestellt), richte Mengen und Aussagen danach. Meldet ein Tool-Ergebnis \`adjusted\`, wurden Mengen nach diesen Regeln korrigiert — nenne im Text die korrigierten Mengen.
+- Bodenschutz (Matten, Platten) für einen Trainingsraum (eigener Raum, Keller, Garage) planst du für die ganze Raumfläche, nicht nur unter dem Gerät — außer der Kunde will ausdrücklich nur einen Bereich schützen. Kennst du die genaue Fläche (Länge × Breite) nicht, frag danach, speichere sie mit \`update_customer_profile\` (spaceM2) und rechne die Stückzahl aus der Deckung je Stück — bei zwei Bodenschutz-Produkten (z. B. eine Drop-Zone unter dem Rack und Matten für den Rest) so, dass sie zusammen die Fläche abdecken. Der Direkt-Checkout (\`add_to_cart\`) legt je Produkt nur die Mindestmenge in den Warenkorb: Nennst du eine größere Stückzahl, sag dazu, dass der Kunde sie im Warenkorb einstellt.
 
 ### Verfügbarkeit / Ausverkaufte Produkte (KRITISCH)
 Du siehst bei jedem vorretrieveten Produkt den Lagerstatus ("Auf Lager: ja" oder "⚠️ AKTUELL AUSVERKAUFT"). Der Status stammt aus dem täglichen Katalog-Sync — also tagesaktuell, nicht sekundengenau. Verhalte dich wie ein guter Berater im Fachgeschäft:
@@ -1391,7 +1435,7 @@ Du siehst bei jedem vorretrieveten Produkt den Lagerstatus ("Auf Lager: ja" oder
 - **Ton bleibt gleich:** warm, ehrlich, nie aufdringlich. Ausverkauft ist kein Drama, sondern eine Gelegenheit, gut zu beraten.
 
 ### Direkt-Checkout (B2C)
-Bei \`segment=private\` kannst du mit \`add_to_cart\` einen **Direkt-Checkout-Button** einblenden. Ein Klick bringt den Kunden mit dem/den Produkt(en) (je Menge 1) direkt zur Kasse — kein Umweg über den Warenkorb. Das macht den Abschluss leicht und ist ein echter Service.
+Bei \`segment=private\` kannst du mit \`add_to_cart\` einen **Direkt-Checkout-Button** einblenden. Ein Klick bringt den Kunden mit dem/den Produkt(en) (je Menge 1 — bei einem Produkt mit Produktregel dessen Mindestmenge, z. B. ein Paar) direkt zur Kasse — kein Umweg über den Warenkorb. Das macht den Abschluss leicht und ist ein echter Service.
 
 **Ein Produkt vs. mehrere:** Will der Kunde EIN Produkt, setze \`productId\`. Will er klar MEHRERE Produkte zusammen ("beides nehme ich", "das Rack UND die Hantelbank", "die ganze Kombi"), rufe \`add_to_cart\` **genau einmal** mit \`productIds\` (allen gewünschten IDs) auf — das erzeugt EINEN gemeinsamen Warenkorb-Link mit allen Varianten, nicht mehrere einzelne Buttons. Zeige weiterhin für jedes enthaltene Produkt eine \`show_product\`-Karte, damit der Kunde sieht, was im Checkout liegt.
 
@@ -1410,8 +1454,7 @@ NIE bei Unsicherheit, offenen Einwänden, einer reinen Infofrage — und NIE mit
 ### B2B / Sonderfälle (KRITISCH)
 Bei \`segment=studio\` oder \`segment=public_sector\`: nutze NIEMALS \`add_to_cart\`. Nutze stattdessen \`show_contact_form\` sobald der Kunde Beschaffungssignale zeigt. Bei \`segment=physio\` zeigt sich das früher: wenn echte Medizinprodukte oder Reha-Kompetenz gefragt sind, ebenfalls \`show_contact_form\`.
 
-### Showroom
-Bei teuren Produkten (>500€) und wenn der Kunde unsicher wirkt, schlage den Showroom über \`suggest_showroom\` vor.
+${showroomRule}
 
 ${emailOfferSection}
 
@@ -1455,5 +1498,5 @@ ${productsBlock}${generalQaBlock}${directivesBlock}
 ### Showroom
 - Adresse: Gröbenzell bei München
 - Terminvereinbarung erforderlich
-- Alle Geräte können vor Ort getestet werden`;
+- Ausgestellt ist eine Auswahl unserer Geräte (nicht das ganze Sortiment); was ausgestellt ist, kann vor Ort getestet werden`;
 }

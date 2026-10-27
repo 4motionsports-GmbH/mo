@@ -7,6 +7,12 @@
 // cards. Returns only public fields already visible on the storefront, so
 // no shared-secret auth is required — origin allowlist + rate limit are the
 // guardrails.
+//
+// Since 2026-10-27 every entry carries its product rules (`rules`: pairs, a
+// minimum / maximum, the coverage of a floor tile — product-rules.mjs, only
+// the fields that apply) and, while the showroom list is known, `showroom`
+// (true / false — showroom-store); the cart permalinks use the rules' minimum
+// quantity (a pair of plates → `:2`). docs/frontend/API_CONTRACT.md §3.
 
 import {
   corsHeaders,
@@ -18,6 +24,9 @@ import { errorResponse, reportError } from "@/lib/observability";
 import { loadProductCatalog } from "@/lib/catalog-store";
 import { buildPrefilledCartUrl } from "@/lib/cart";
 import { projectVariant } from "@/lib/product-catalog";
+import { publicRules, resolveProductRules } from "@/lib/product-rules.mjs";
+import { buildShopifyCartUrl } from "@/lib/shopify-cart-url.mjs";
+import { getCachedShowroom, type ShowroomView } from "@/lib/showroom-store";
 import {
   parseProductRef,
   productVariants,
@@ -99,6 +108,15 @@ export interface PublicProduct {
   // Effective price range across variants ("ab 3,60 €" rendering).
   priceMin?: number;
   priceMax?: number;
+  // Product rules (2026-10-27, product-rules.mjs publicRules): only the fields
+  // that differ from „one by one“ — step (2 = pairs), min, max, coverageM2 (m²
+  // one unit covers, floor tiles sized to the whole room; for a pinned variant
+  // that variant's — an edge piece or connector has none). On EVERY entry:
+  // `{}` = one by one, no limits; no `rules` at all = an older backend.
+  rules: { step?: number; min?: number; max?: number; coverageM2?: number };
+  // On display in the showroom — only while the showroom list is known
+  // (absent = unknown; the widget then keeps its older showroom card).
+  showroom?: boolean;
 }
 
 /**
@@ -106,18 +124,36 @@ export interface PublicProduct {
  * flat fields the card shows; `base` is the underlying catalog product the
  * variant list comes from (defaults to `p`).
  */
-function toPublic(p: Product, base?: Product, selectedVariantId?: string): PublicProduct {
+function toPublic(
+  p: Product,
+  showroom: ShowroomView,
+  base?: Product,
+  selectedVariantId?: string,
+  selectedVariant?: ProductVariant | null
+): PublicProduct {
   const source = base ?? p;
-  const variants = (productVariants(source) as ProductVariant[]).map((v) => ({
-    id: v.id ?? null,
-    title: v.title ?? "",
-    ...(v.sku ? { sku: v.sku } : {}),
-    price: v.price,
-    ...(typeof v.salePrice === "number" && v.salePrice > 0 ? { salePrice: v.salePrice } : {}),
-    available: isVariantAvailable(source, v),
-    ...(v.cartUrl && isVariantAvailable(source, v) ? { cartUrl: v.cartUrl } : {}),
-    isDefault: v.isDefault === true,
-  }));
+  const rules = resolveProductRules(source, {
+    showroomIds: showroom.known ? showroom.ids : null,
+    variant: selectedVariant ?? null,
+  });
+  const pub = publicRules(rules);
+  // A cart link carries the rules' minimum (a pair of plates → :2).
+  const cartLink = (variantId: string | null | undefined, stored: string | undefined) =>
+    rules.min > 1 ? (buildShopifyCartUrl(variantId ?? null, rules.min) ?? stored) : stored;
+  const variants = (productVariants(source) as ProductVariant[]).map((v) => {
+    const cartUrl = v.cartUrl && isVariantAvailable(source, v) ? cartLink(v.id, v.cartUrl) : undefined;
+    return {
+      id: v.id ?? null,
+      title: v.title ?? "",
+      ...(v.sku ? { sku: v.sku } : {}),
+      price: v.price,
+      ...(typeof v.salePrice === "number" && v.salePrice > 0 ? { salePrice: v.salePrice } : {}),
+      available: isVariantAvailable(source, v),
+      ...(cartUrl ? { cartUrl } : {}),
+      isDefault: v.isDefault === true,
+    };
+  });
+  const shopifyCartUrl = p.shopifyCartUrl && p.inStock ? cartLink(p.shopifyVariantId, p.shopifyCartUrl) : undefined;
   return {
     id: source.id,
     name: p.name,
@@ -136,7 +172,7 @@ function toPublic(p: Product, base?: Product, selectedVariantId?: string): Publi
     shopifyUrl: p.shopifyUrl,
     // Never expose a quick-checkout link for a sold-out product — that keeps a
     // sold-out item out of the checkout even at the single-product card level.
-    ...(p.shopifyCartUrl && p.inStock ? { shopifyCartUrl: p.shopifyCartUrl } : {}),
+    ...(shopifyCartUrl ? { shopifyCartUrl } : {}),
     inStock: p.inStock,
     ...(typeof p.inventoryQuantity === "number" ? { inventoryQuantity: p.inventoryQuantity } : {}),
     ...(typeof p.anyVariantAvailable === "boolean" ? { anyVariantAvailable: p.anyVariantAvailable } : {}),
@@ -149,6 +185,9 @@ function toPublic(p: Product, base?: Product, selectedVariantId?: string): Publi
     ...(selectedVariantId ? { selectedVariantId } : {}),
     ...(source.priceMin != null ? { priceMin: source.priceMin } : {}),
     ...(source.priceMax != null ? { priceMax: source.priceMax } : {}),
+    // Always present: {} tells the widget this backend knows rules (no pair heuristic for a kettlebell).
+    rules: pub ?? {},
+    ...(showroom.known ? { showroom: rules.showroom } : {}),
   };
 }
 
@@ -201,7 +240,7 @@ export async function GET(req: Request) {
       );
     }
 
-    const catalog = await loadProductCatalog();
+    const [catalog, showroom] = await Promise.all([loadProductCatalog(), getCachedShowroom()]);
     const byId = new Map(catalog.map((p) => [p.id, p]));
     // Preserve request order and represent unknown ids as null entries so
     // the widget can render partial results without a 404. An id may be a
@@ -219,9 +258,9 @@ export async function GET(req: Request) {
             (v) => normalizeVariantId(v.id) === variantId
           ) ?? null;
         if (!variant || effectiveVariantPrice(variant) == null) return null;
-        return toPublic(projectVariant(p, variant), p, variantId);
+        return toPublic(projectVariant(p, variant), showroom, p, variantId, variant);
       }
-      return toPublic(p);
+      return toPublic(p, showroom);
     });
 
     // Combined prefilled-cart permalink covering ALL requested (resolvable)
@@ -235,7 +274,13 @@ export async function GET(req: Request) {
     // excludeSoldOut: the quick-checkout action must NEVER contain a sold-out
     // item, so we drop them here as a hard guarantee on top of the system
     // prompt instructing Mo not to include them. Stock is sync-fresh (daily).
-    const cartUrl = buildPrefilledCartUrl(ids, byId, { excludeSoldOut: true }).url;
+    //
+    // quantityFor: each line carries the product rules' minimum (2026-10-27 —
+    // a pair of plates goes into the checkout as 2, like the cards' links).
+    const cartUrl = buildPrefilledCartUrl(ids, byId, {
+      excludeSoldOut: true,
+      quantityFor: (product, variant) => resolveProductRules(product, { variant }).min,
+    }).url;
 
     return new Response(JSON.stringify({ products, cartUrl }), {
       status: 200,

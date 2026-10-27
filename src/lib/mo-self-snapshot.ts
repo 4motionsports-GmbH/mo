@@ -28,6 +28,7 @@ import { ARCHETYPE_META } from "./persona";
 import { listPublishedGeneralQa } from "./qa-store";
 import { listActiveDirectives } from "./directives-store";
 import { welcomeRewardForPrompt } from "./consent-copy";
+import { getCachedShowroom } from "./showroom-store";
 
 export interface MoSelfSnapshot {
   /** The full snapshot text (German) — engine input and admin view. */
@@ -48,9 +49,11 @@ export interface MoSelfSnapshot {
  * version identifier.
  */
 export async function buildMoSelfSnapshot(): Promise<MoSelfSnapshot> {
-  const [generalQa, directives] = await Promise.all([
+  const [generalQa, directives, showroom] = await Promise.all([
     listPublishedGeneralQa(),
     listActiveDirectives(),
+    // Whether the showroom list is known decides Mo's showroom rule (2026-10-27).
+    getCachedShowroom(),
   ]);
 
   // The order status in the chat (get_order_status) is part of Mo only while
@@ -68,6 +71,8 @@ export async function buildMoSelfSnapshot(): Promise<MoSelfSnapshot> {
     orderStatus,
     // The welcome-voucher rule as the chat sees it (CONSENT_REWARD_ENABLED).
     welcomeReward: welcomeRewardForPrompt("de"),
+    // The showroom rule as the chat sees it (no products here, so no product line says it).
+    showroom: { known: showroom.known, ids: null },
   });
 
   const tools = activeToolCopy("de", { orderStatus });

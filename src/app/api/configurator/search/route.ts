@@ -3,14 +3,17 @@
 // „+ Produkt hinzufügen“ in the plan searches the entire catalog, not only the
 // curated assortment: a keyword match (configurator-core searchCatalogCards —
 // pure, no embeddings, so a search box costs nothing per keystroke). Public
-// storefront fields only, the same cards as /api/configurator/assortment;
-// origin allowlist + the `products` rate limit like /api/products.
+// storefront fields only, the same cards as /api/configurator/assortment
+// (with `rules` on every card — `{}` = one by one — and, while the showroom
+// list is known, `showroom` since 2026-10-27); origin allowlist + the
+// `products` rate limit like /api/products.
 
 import { corsHeaders, guardOriginOnly, preflightResponse } from "@/lib/security";
 import { checkRateLimit, rateLimitResponse } from "@/lib/rate-limit";
 import { errorResponse, reportError } from "@/lib/observability";
 import { loadProductCatalog } from "@/lib/catalog-store";
 import { SEARCH_LIMITS, searchCatalogCards } from "@/lib/configurator-core.mjs";
+import { getCachedShowroom } from "@/lib/showroom-store";
 
 export const maxDuration = 10;
 
@@ -42,7 +45,11 @@ export async function GET(req: Request) {
     const rl = await checkRateLimit(req, "products");
     if (!rl.ok) return rateLimitResponse(rl.retryAfter, cors);
 
-    const products = searchCatalogCards(await loadProductCatalog(), q, limit);
+    const [catalog, showroom] = await Promise.all([loadProductCatalog(), getCachedShowroom()]);
+    const products = searchCatalogCards(catalog, q, limit, {
+      showroomIds: showroom.known ? showroom.ids : null,
+      showroomKnown: showroom.known,
+    });
     return new Response(JSON.stringify({ ok: true, products }), {
       status: 200,
       headers: {

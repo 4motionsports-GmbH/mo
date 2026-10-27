@@ -4,7 +4,18 @@ import { retrieve, embedQuery } from "./retrieval";
 import { captureConsentCopy } from "./consent-copy";
 import { toolCopy } from "./tool-descriptions.mjs";
 import { createOrderStatusLookup } from "./order-status";
-import { resolveProductSelections } from "./product-catalog";
+import { loadProductCatalog, resolveProductSelections } from "./product-catalog";
+import {
+  RULE_LIMITS,
+  normalizeAreaM2,
+  resolveProductRules,
+  ruleFacts,
+  ruleHint,
+  validateLines,
+  validateOptions,
+} from "./product-rules.mjs";
+import { floorAreaSchema, lineQuantitySchema } from "./configurator-tool-schemas.mjs";
+import { showroomToolResult } from "./showroom-core.mjs";
 import {
   OPTIONS_LIMITS,
   OPTION_STEPS,
@@ -17,9 +28,10 @@ import {
   normalizeOfferOptions,
   normalizePlanItems,
   offerOptionsResult,
+  productHeightCm,
 } from "./configurator-core.mjs";
 import type { Locale } from "./locale";
-import type { CustomerProfile } from "./types";
+import type { CustomerProfile, Product } from "./types";
 
 function buildProfilePatchSchema(c: Record<string, string>) {
   return z.object({
@@ -107,6 +119,32 @@ export interface ChatToolOptions {
   sessionId?: string | null;
   /** CHAT_ORDER_STATUS_ENABLED (lib/platform-flags.mjs). */
   orderStatusEnabled?: boolean;
+  /**
+   * The products on display in the showroom and whether that list is known
+   * (showroom-store getCachedShowroom, 2026-10-27) — suggest_showroom and the
+   * configurator tools report them. Absent = unknown.
+   */
+  showroom?: { known: boolean; ids: ReadonlySet<string> } | null;
+  /**
+   * The configurator widget applies the product rules itself (configurator
+   * feature "rules", 2026-10-27). False = an older widget that caps every
+   * line at 20 and shows Mo's input: show_gym_plan / offer_plan_options then
+   * cap floor lines at 20 too (RULE_LIMITS.lineMax), so a reported `adjusted`
+   * never exceeds what that page can hold. Absent = the default caps.
+   */
+  widgetRules?: boolean;
+}
+
+// PRODUCT RULES (2026-10-27, product-rules.mjs): show_gym_plan,
+// offer_plan_options and add_to_cart validate their lines against the rules
+// (pairs, minimum / maximum, the coverage of floor tiles for a given room area)
+// and tell the model what they `adjusted`, the `coverage` and which products
+// are `inShowroom` — so it corrects its text in the same turn. The widget
+// renders the INPUT and normalises the quantities itself with the same rules
+// (GET /api/products `rules`). A result without anything to report keeps its
+// exact previous shape.
+async function catalogById(): Promise<Map<string, Product>> {
+  return new Map((await loadProductCatalog()).map((p) => [p.id, p]));
 }
 
 export function buildChatTools(
@@ -116,6 +154,10 @@ export function buildChatTools(
 ) {
   const c = toolCopy(locale);
   const k = configuratorToolCopy(locale);
+  const showroom = options.showroom?.known ? options.showroom : null;
+  const showroomIds = showroom?.ids ?? null;
+  // An older configurator widget (no "rules") holds at most 20 per line, floor lines included.
+  const floorLineMax = options.widgetRules === false ? RULE_LIMITS.lineMax : undefined;
   // One lookup per request: the access gate (link + live token) is resolved
   // once even when the model calls the tool several times in parallel.
   const lookupOrderStatus = createOrderStatusLookup(options.sessionId ?? null);
@@ -153,26 +195,34 @@ export function buildChatTools(
         });
         return {
           totalMatched: hits.length,
-          products: hits.map((h) => ({
-            id: h.product.id,
-            name: h.product.name,
-            category: h.product.category,
-            price: h.product.salePrice ?? h.product.price,
-            // Effective price range + count for multi-variant products (the
-            // flat price is only the default variant's; details + per-variant
-            // refs are in the retrieved-products prompt block).
-            ...(h.product.priceMin != null &&
-            h.product.priceMax != null &&
-            h.product.priceMax > h.product.priceMin
-              ? {
-                  priceFrom: h.product.priceMin,
-                  priceTo: h.product.priceMax,
-                  variantCount: h.product.variants?.length,
-                }
-              : {}),
-            shortDescription: h.product.shortDescription,
-            score: Number(h.score.toFixed(3)),
-          })),
+          products: hits.map((h) => {
+            // The product rules as on a product line („nur paarweise“, „deckt ca. 1 m² je Stück“,
+            // „im Showroom ausgestellt“ …) and the height (2026-10-27) — omitted when there are none.
+            const rules = ruleHint(resolveProductRules(h.product, { showroomIds }), locale);
+            const heightCm = productHeightCm(h.product);
+            return {
+              id: h.product.id,
+              name: h.product.name,
+              category: h.product.category,
+              price: h.product.salePrice ?? h.product.price,
+              // Effective price range + count for multi-variant products (the
+              // flat price is only the default variant's; details + per-variant
+              // refs are in the retrieved-products prompt block).
+              ...(h.product.priceMin != null &&
+              h.product.priceMax != null &&
+              h.product.priceMax > h.product.priceMin
+                ? {
+                    priceFrom: h.product.priceMin,
+                    priceTo: h.product.priceMax,
+                    variantCount: h.product.variants?.length,
+                  }
+                : {}),
+              shortDescription: h.product.shortDescription,
+              ...(heightCm != null ? { heightCm } : {}),
+              ...(rules ? { rules } : {}),
+              score: Number(h.score.toFixed(3)),
+            };
+          }),
         };
       },
     }),
@@ -219,15 +269,27 @@ export function buildChatTools(
         .refine((d) => Boolean(d.productId) || (d.productIds?.length ?? 0) > 0, {
           message: "Either productId or productIds must be provided.",
         }),
-      execute: async () => ({ ok: true }),
+      // The checkout link (GET /api/products cartUrl) carries each product's
+      // minimum quantity (pairs → 2); the result tells the model so.
+      execute: async ({ productId, productIds }) => {
+        const ids = [...new Set([...(productId ? [productId] : []), ...(productIds ?? [])])];
+        const v = validateLines(ids.map((id) => ({ productId: id, quantity: 1 })), await catalogById(), { locale });
+        return { ok: true, ...ruleFacts({ adjusted: v.adjusted }) };
+      },
     }),
 
+    // Only for products on display (showroom-core showroomToolResult): none on
+    // display → ok: false (the widget renders no card either); an unknown list
+    // → ok with the note not to promise a product.
     suggest_showroom: tool({
       description: c.showroomDesc,
       inputSchema: z.object({
         productIds: z.array(z.string()).describe(c.fieldShowroomIds),
       }),
-      execute: async () => ({ ok: true }),
+      execute: async ({ productIds }) => {
+        const byId = await catalogById();
+        return showroomToolResult(productIds, showroom ?? { known: false, ids: new Set<string>() }, (id) => byId.has(id), locale);
+      },
     }),
 
     // Order status for a customer signed in with the Customer Account in THIS
@@ -337,7 +399,8 @@ export function buildChatTools(
           .array(
             z.object({
               productId: z.string(),
-              quantity: z.number().int().min(1).max(20).optional(),
+              // Up to 200 (a floor line); validateLines caps any other line at 20 and reports it.
+              quantity: lineQuantitySchema,
               role: z.enum(PLAN_ROLES),
               note: z.string().max(120).optional(),
             })
@@ -346,19 +409,31 @@ export function buildChatTools(
           .max(PLAN_MAX_ITEMS)
           .describe(k.fieldPlanItems),
         tips: z.array(z.string().max(200)).max(3).optional().describe(k.fieldPlanTips),
+        // A number, null or absent (configurator-tool-schemas.mjs): a null area never invalidates
+        // the plan — normalizeAreaM2 drops a missing, zero, negative or implausible one.
+        floorAreaM2: floorAreaSchema.describe(k.fieldPlanFloorArea),
       }),
       // The widget renders the plan from the INPUT (hydrating the ids itself);
-      // the result only tells the model which lines will not show, so it can
-      // correct itself in the same turn.
+      // the result tells the model which lines will not show and what the
+      // product rules corrected (`adjusted`, `coverage`, `inShowroom`), so it
+      // can correct itself in the same turn.
       execute: async (input) => {
         const lines = normalizePlanItems(input);
         const resolved = await resolveProductSelections(lines.map((l) => l.productId));
         const known = new Map(resolved.map((r) => [r.ref, r]));
         const unknownIds = lines.filter((l) => !known.has(l.productId)).map((l) => l.productId);
         const soldOutIds = resolved.filter((r) => !r.available).map((r) => r.ref);
-        return unknownIds.length || soldOutIds.length
-          ? { ok: true, shownItems: lines.length - unknownIds.length, unknownIds, soldOutIds }
-          : { ok: true, shownItems: lines.length };
+        const base =
+          unknownIds.length || soldOutIds.length
+            ? { ok: true, shownItems: lines.length - unknownIds.length, unknownIds, soldOutIds }
+            : { ok: true, shownItems: lines.length };
+        const v = validateLines(lines, await catalogById(), {
+          showroomIds,
+          areaM2: normalizeAreaM2(input.floorAreaM2),
+          locale,
+          floorLineMax,
+        });
+        return { ...base, ...ruleFacts(v, { showroomKnown: Boolean(showroom) }) };
       },
     }),
 
@@ -383,7 +458,7 @@ export function buildChatTools(
                 .array(
                   z.object({
                     productId: z.string(),
-                    quantity: z.number().int().min(1).max(20).optional(),
+                    quantity: lineQuantitySchema,
                   })
                 )
                 .min(1)
@@ -397,12 +472,28 @@ export function buildChatTools(
           .min(1)
           .max(OPTIONS_LIMITS.options)
           .describe(k.fieldOptionsList),
+        // A number, null or absent: a null area never invalidates the options (normalizeAreaM2 is the gate).
+        areaM2: floorAreaSchema.describe(k.fieldOptionsArea),
       }),
       execute: async (input) => {
         const { options } = normalizeOfferOptions(input);
         const refs = [...new Set(options.flatMap((o) => o.items.map((it) => it.productId)))];
         const resolved = await resolveProductSelections(refs);
-        return offerOptionsResult(options, resolved);
+        const base = offerOptionsResult(options, resolved);
+        // The rules of the options the widget shows (every item known and
+        // available), numbered by their position in Mo's own list (`rank` —
+        // an option normalizeOfferOptions dropped never shifts the later ones).
+        const available = new Map(resolved.map((r) => [r.ref, r.available]));
+        const shown = options
+          .map((o) => ({ ...o, option: o.rank }))
+          .filter((o) => o.items.every((it) => available.get(it.productId) === true));
+        const v = validateOptions(shown, await catalogById(), {
+          showroomIds,
+          areaM2: normalizeAreaM2(input.areaM2),
+          locale,
+          floorLineMax,
+        });
+        return { ...base, ...ruleFacts(v, { showroomKnown: Boolean(showroom) }) };
       },
     }),
   };

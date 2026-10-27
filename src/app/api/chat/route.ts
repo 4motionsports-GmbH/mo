@@ -59,6 +59,7 @@ import {
   KPI_CONFIGURATOR_OPTIONS_SHOWN,
   CONFIGURATOR_OPTIONS_TOOL,
   configuratorHasOptions,
+  configuratorHasRules,
   optionsShownEvents,
   planAccessories,
   planAccessoryBases,
@@ -67,9 +68,12 @@ import {
   parseConfiguratorContext,
   planShownEvents,
   countShownGymPlans,
+  productHeightCm,
   renderConfiguratorSection,
 } from "@/lib/configurator-core.mjs";
 import { getCachedConfiguratorSettings, loadConfiguratorAssortment } from "@/lib/configurator-store";
+import { getCachedShowroom } from "@/lib/showroom-store";
+import { lineCapOf, resolveProductRules } from "@/lib/product-rules.mjs";
 import { effectiveVariantPrice, resolveProductRef, variantDisplayName } from "@/lib/product-ref.mjs";
 import {
   KPI_EMAIL_CAPTURE_ASK_SHOWN,
@@ -396,7 +400,8 @@ export async function POST(req: Request) {
     })();
 
     const campaignToken = typeof body.campaignToken === "string" ? body.campaignToken.slice(0, 128) : null;
-    const [hits, identity, emailOfferDeclined, generalQa, directives] = await Promise.all([
+    // (Positions 6 and 7 — the eager create and the campaign record — are not needed here.)
+    const [hits, identity, emailOfferDeclined, generalQa, directives, , , showroom] = await Promise.all([
       latestUserText
         ? retrieveForTurn({ latestUserMessage: latestUserText, profile, limit: configurator ? 6 : 8, boostIds })
         : configurator
@@ -439,7 +444,12 @@ export async function POST(req: Request) {
         : Promise.resolve(null),
       // Campaign attribution („Chat-Start“, best-effort, never blocks the chat).
       campaignToken ? recordCampaignChatStarted(campaignToken) : Promise.resolve(false),
+      // Which products are on display in the showroom (showroom-store, cached
+      // per instance for five minutes, never throws) — the product lines say
+      // so, suggest_showroom checks it; unknown → no suggestion of Mo's own.
+      getCachedShowroom(),
     ]);
+    const showroomIds = showroom.known ? showroom.ids : null;
 
     const customerMemory = identity.memory;
     // CA §6.0 on the server: the widget never shows the capture card to a
@@ -604,10 +614,25 @@ export async function POST(req: Request) {
               if (!hit || hit.missingVariant) return [];
               const base = planById.get(line.id.split("~")[0]);
               const price = (hit.variant ? effectiveVariantPrice(hit.variant) : null) ?? base?.salePrice ?? base?.price;
-              return [{ ...line, name: variantDisplayName(hit.product, hit.variant), ...(typeof price === "number" ? { price } : {}) }];
+              // The line's product rules (pairs, coverage, showroom) for its variant.
+              const rules = resolveProductRules(hit.product, { showroomIds, variant: hit.variant });
+              return [
+                {
+                  ...line,
+                  // The context clamps generically at 200 (a floor line); here the product is known: its cap (20, a floor line 200).
+                  qty: Math.min(line.qty, lineCapOf(rules)),
+                  name: variantDisplayName(hit.product, hit.variant),
+                  ...(typeof price === "number" ? { price } : {}),
+                  rules,
+                  // The height — Mo checks it against a ceiling height the visitor names (2026-10-27).
+                  heightCm: productHeightCm(hit.product),
+                },
+              ];
             }),
-            accessories: planAccessories(planBases, accessoryById, configuratorPlan.map((line) => line.id)),
+            accessories: planAccessories(planBases, accessoryById, configuratorPlan.map((line) => line.id), { showroomIds }),
             locale,
+            showroomIds,
+            showroomKnown: showroom.known,
           })
         : "";
 
@@ -625,7 +650,13 @@ export async function POST(req: Request) {
     // CHAT_ORDER_STATUS_TEST_CUSTOMERS (the live check) gets tool and prompt —
     // a second cached prefix for those sessions only (docs/PROMPT_CACHING.md).
     const orderStatusEnabled = await isOrderStatusEnabledFor(sessionId);
-    const tools = buildChatTools(profile, locale, { sessionId, orderStatusEnabled });
+    const tools = buildChatTools(profile, locale, {
+      sessionId,
+      orderStatusEnabled,
+      showroom: showroom.known ? { known: true, ids: showroom.ids } : null,
+      // An older configurator widget (no feature "rules") shows Mo's input and holds 20 per line.
+      ...(configurator ? { widgetRules: configuratorHasRules(configurator) } : {}),
+    });
     const configuratorToolNames: readonly string[] = CONFIGURATOR_TOOLS;
     const defaultActiveTools = Object.keys(tools).filter(
       (name) =>
@@ -692,6 +723,7 @@ export async function POST(req: Request) {
             orderStatus: orderStatusEnabled,
             welcomeReward: welcomeRewardForPrompt(locale),
             configuratorBlock,
+            showroom: { known: showroom.known, ids: showroomIds },
           }),
           providerOptions: cacheEphemeral,
         },
