@@ -115,6 +115,20 @@ the admin flows into the catalog:
   `catalog-mapping.ts`).
 - Review app fields: `reviews.rating` / `reviews.rating_count`
   (→ `Product.rating` / `ratingCount`).
+- **Product rules** (since 2026-10-27, [`CONFIGURATOR.md`](./CONFIGURATOR.md) §4a):
+  the namespace `mo` overrides the rule registry per product —
+  `mo.sold_in_pairs` (boolean; `false` lifts a pair rule), `mo.quantity_step`,
+  `mo.min_quantity`, `mo.max_quantity` (integers ≥ 1), `mo.coverage_m2`
+  (decimal m² one unit covers — a positive value makes the product floor
+  protection sized to the whole room, whatever its category; `0` switches
+  coverage and the whole room off) →
+  `Product.moRules` (`parseMoRuleMetafields` in `product-rules.mjs`, tested;
+  invalid values are dropped, never an error; no other namespace is read for
+  rules). `custom.liefereinheit` („Stück“ / „Paar“ / „Set“, →
+  `specifications.Liefereinheit`) is the sales unit the registry reads.
+  `scripts/convert-catalog.mjs` maps the same CSV columns (`Liefereinheit
+  (product.metafields.custom.liefereinheit)` and `… (product.metafields.mo.*)`)
+  for a regenerated bundled catalog; the committed one predates them.
 - Search & Discovery recommendations:
   `shopify--discovery--product_recommendation.complementary_products`
   (→ `Product.compatibleWith`, the PDP's accessory section) and
@@ -467,6 +481,12 @@ filter-stats breakdown.
 
 The route accepts `GET` and `POST` — Vercel Cron uses GET by default; the
 schedule in `vercel.json` runs daily at 03:00 UTC.
+
+The same run refreshes the Konfigurator's **showroom list** from the live
+theme (since 2026-10-27, [`CONFIGURATOR.md`](./CONFIGURATOR.md) §4b): started
+in parallel right after the auth check, fail-soft (a failure keeps the last good
+list and never fails the sync), its result in the response as `showroom` `{ ok,
+count, error, skipped? }`. It needs the Admin API scope `read_themes`.
 
 ## Rolling back to committed JSON
 

@@ -1398,10 +1398,17 @@ one pass), client `konfigurator/KonfiguratorWorkspace` and `KonfiguratorRange` (
   Umsatz (orders „über den Konfigurator“ by order date — the rule of [`CONFIGURATOR.md`](./CONFIGURATOR.md)
   §6, the same orders as the KPI screen's cross-cut row, §5.16); the
   funnel „Vom ersten Klick zur Bestellung“ (`FunnelBars`, each stage = distinct sessions on its own,
-  because the handover starts a fresh thread); „So antworten die Besucher“ (one `BarList` per answer —
+  because the handover starts a fresh thread; since 27.10.2026 the stage „Hinweise erreicht“ —
+  `configurator_note_step` — between „Konfigurator begonnen“ and „An Mo übergeben“, shown only for a
+  period that starts on or after the note step's first day, `NOTE_STEP_FROM` (derived from the release
+  `konfigurator-hinweise-regeln`, `kpi-releases.mjs` — a period across the release would mix runs
+  without the step and show a false drop there), and only when the period has such sessions; its
+  `InfoTip` names the day); „So antworten die Besucher“ (one `BarList` per answer —
   fields with nothing but „ohne Angabe“ are hidden; „Typ / Trainingsfokus“ lists Mo's six personas and
   counts answers of the first version under the mapped persona, the goal card is gone since 22.10.2026 —
-  plus „Herkunft“ Men's Health / Women's Health / direct); „Schritt für Schritt“ (since 24.10.2026, the widget upload: per
+  plus „Herkunft“ Men's Health / Women's Health / direct, and since 27.10.2026 „Hinweis vor der Beratung“
+  — handovers „mit Hinweis“ / „übersprungen“ from `configurator_handover.note`, only with such handovers;
+  the note's text is never stored); „Schritt für Schritt“ (since 24.10.2026, the widget upload: per
   product type — Basisgerät, Zubehör, Hantelbank, Gewichte, Bodenschutz, Cardio, Sonstiges — options
   shown, picked, skipped and „Andere Vorschläge“; only types with numbers, the card is hidden without
   any); „Produkte in Mos Plänen und Optionen“ (top 12 by sessions, products of shown plans and of Mo's
@@ -1428,12 +1435,32 @@ one pass), client `konfigurator/KonfiguratorWorkspace` and `KonfiguratorRange` (
   `router.refresh()` reloads the assortment. The chat and `GET /api/configurator/offer` read the settings
   with a 60-second cache per instance (the toast: Mo within a minute, after a discount change the page
   within about two minutes).
-- **Sortiment**: the resolved assortment (`DataTable`: product, category, price, Lieferbar/Ausverkauft,
-  Tag / Liste, shop link) with warnings for unknown extra handles and a mostly sold-out assortment; an
-  empty assortment is an `EmptyState` explaining the tag.
+- **Sortiment**: the resolved assortment (`DataTable`: product, category — from 1280 px —, price,
+  Lieferbar/Ausverkauft, Tag / Liste, **Regeln**, shop link) with warnings for unknown extra handles and a
+  mostly sold-out assortment; an empty assortment is an `EmptyState` explaining the tag. Since 27.10.2026
+  ([`CONFIGURATOR.md`](./CONFIGURATOR.md) §4a / §4b):
+  - column **„Regeln“** (sortable): the product rules as `StatusBadge`s — „paarweise“, „N m²/Stk“,
+    „ab N Stk“, „max. N Stk“ (`ruleBadges` over `resolveProductRules`), „Metafeld“ (a `mo.*` metafield
+    sets or lifts a rule), „Showroom“ (on display); „—“ without any;
+  - card **„Produktregeln“** (`konfigurator/ProductRulesCard`, read-only): the registry as a small
+    `DataTable` — Regel (description in the `InfoTip`), Wirkung, Produkte (matches in the whole catalog,
+    `configurator-store.loadProductRulesOverview` over `ruleRegistryOverview`) —, the number of products
+    with `mo.*` metafields (the five metafields in the `InfoTip`) and the `Disclosure` „Betroffene
+    Produkte“ (the matched products per rule, ≤ 100 each);
+  - card **„Showroom“** (`konfigurator/ShowroomCard`): badge „N Produkte ausgestellt“ / „Unbekannt“; a
+    `Callout` „Theme nicht gelesen“ with the last refresh's error (the read_themes how-to „Was tun“ in an
+    `InfoTip` only for a missing scope — a renamed section, a throttle or a network error say what to do in
+    their own message; the last good list keeps applying, the callout says since when); Quelle
+    (Theme / Eigene Liste / both, with counts), Zuletzt gelesen, Letzter Versuch, Theme-Abschnitt (the
+    section heading, the theme, a collection); „Jetzt aktualisieren“ (`POST
+    konfigurator/showroom/refresh`, needs Shopify — disabled without it, with a note); unknown handles;
+    the `Disclosure` „Ausgestellte Produkte“ (each marked Theme / Liste); „Eigene Liste“
+    (`CatalogProductPicker`, ≤ 60, chips, „Liste speichern“ → `POST konfigurator/showroom`). Both routes
+    answer with the card's data (no reload); the toasts say Mo follows within five minutes.
 
 Storage: `admin_settings` key `configurator` (migration 0078, no new migration; the discount is its
-field `discount`).
+field `discount`); key `showroom` for the showroom (theme list, manual list, last attempt and error —
+`showroom-store.ts`, no migration).
 
 ---
 
@@ -1650,8 +1677,12 @@ no counting change), and on 24.10.2026 „Konfigurator: Mo geht die Produktarten
 configurator orders also count threads with options), and on 24.10.2026 „Konfigurator: fehlende Angaben
 markiert, Konfigurator-Rabatt vorbereitet“ (`konfigurator-pflichtangaben-rabatt`: the page outlines missing
 answers on „Weiter“, the discount pop-up is built switched off — behaviour, no counting change; both
-carry the day of the theme upload, 24.10.2026, not their build days) — twenty entries in all; the six of
-06.10., the one of 08.10., the second of 21.10., the one of 22.10. and the two of 24.10. add no section
+carry the day of the theme upload, 24.10.2026, not their build days), and on 27.10.2026 „Konfigurator:
+Hinweise vor der Beratung, Produktregeln, Showroom nach Verfügbarkeit“ (`konfigurator-hinweise-regeln`:
+the optional step „Deine Hinweise“ with its own funnel stage, plates and single dumbbells in pairs and
+room-sized flooring — more units in plans, carts and cart links —, the showroom only for products on
+display — behaviour, no counting change) — twenty-one entries in all; the six of 06.10., the one of
+08.10., the second of 21.10., the one of 22.10., the two of 24.10. and the one of 27.10. add no section
 note. The
 affected sections add a note when the period starts earlier: Anmelde-Popup,
 Einwilligung, Kundenkonto and „Chat gestartet“ of the Kampagnen-Funnel are
@@ -2521,7 +2552,10 @@ still count in „Umsatz durch Mo“ (channel „Persönliche Marketing-E-Mail�
   import orders older than 60 days) and Protected Customer Data access incl.
   the name/e-mail fields — the full scope list (incl. the catalog and Wissen
   scopes) is the `SHOPIFY_CLIENT_ID` note in [`.env.example`](../.env.example)
-  (reinstall the app after adding scopes).
+  (reinstall the app after adding scopes). The showroom list of the
+  Konfigurator (§3.11, since 27.10.2026) needs `read_themes` — **not granted
+  yet**; until it is, the card „Showroom“ shows the error and only the manual
+  list applies.
 - **API version:** requests target the configured `SHOPIFY_API_VERSION` (current
   stable, e.g. `2026-04`), not `latest`.
 - The discount + orders calls follow the Shopify docs for
@@ -2679,6 +2713,8 @@ them. Actions that read or act on one person's data write the admin access log
 | Wissen | `GET qa/list?status=`, `POST qa/scan / answer / publish / unpublish / dismiss / restore` | the Q&A queue |
 | KPIs | `POST kpi/top-questions { personaLabel, force? }` | on-demand Top-Fragen summary |
 | Konfigurator | `POST konfigurator/settings { enabled, tag, extraProductIds, focus, notes }` | „Mo im Konfigurator“: store the configurator settings (`admin_settings` key `configurator`, 0078) → `{ ok, settings }`; German 400 on invalid input, 503 without a database or before 0078; audit `settings.configurator` |
+| Konfigurator | `POST konfigurator/showroom { handles }` (2026-10-27) | „Sortiment“ → „Showroom“ → „Liste speichern“: the manual list of products on display (≤ 60 handles, `validateManualShowroomInput`; `admin_settings` key `showroom`, 0078) → `{ ok, showroom }` (the card's data); German 400 on invalid input, 503 without a database or before 0078; audit `settings.showroom` |
+| Konfigurator | `POST konfigurator/showroom/refresh` (2026-10-27) | „Jetzt aktualisieren“: read the showroom list from the live theme now (scope `read_themes`; a failure keeps the last good list and is recorded) → `{ ok, result: { ok, count, error }, showroom }`; 503 without a database; audit `showroom.refresh`; `maxDuration` 60 |
 | Gespräche | `POST conversations/detail / analyze / analyze-bulk / insights` | transcript, cached analysis, confirmed bulk analysis, insights rollup |
 | Analyse | `GET analytics`, `GET analytics/<id>`, `GET analytics/<id>/pdf`, `POST analytics/estimate / create / step / delete` | Komplettanalysen; `estimate` also returns `strategistEur`, `minutes { low, high }` and `previousReport`; `step` answers `busy: true` while another step holds the report's claim (0077) |
 | Verbesserung | `GET improve`, `GET improve/<id>`, `GET improve/backlog`, `POST improve/run / step / suggestion / adopt / delete` | improvement runs, the open backlog |

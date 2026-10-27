@@ -12,7 +12,7 @@ who owns the Shopify app · **L** = the lawyer · **FE** = the frontend agent (t
 widget).
 Mo's admin is German; English translations are in brackets.
 
-Last updated: 2026-10-24 (fourth Konfigurator round built — a click on „Weiter“ with an answer missing outlines the card in red; the „Konfigurator-Rabatt“ built complete but switched off; no migration, no env var — item 15 now covers both rounds with one upload, plus the optional step 11 for the discount); before: 2026-10-22 evening (second Konfigurator feedback round built — homepage-like section backgrounds and headings, larger seals, no divider lines, persona titles on two lines with new subtitles, a shorter Mo panel; four theme files to upload, not the template; item 15 rewritten, the first round moved to Done); before: 2026-10-22 (Konfigurator round after Anna's feedback built — persona card = Mo's personas (two new), weight steps, „+ Produkt hinzufügen“ / „+ Gewichtsstufe“, light Performance design, new hero and „Starke Partner“; no migration, no env var — item 15 now: deploy, upload five theme files (NOT the template), check the texts); before: 2026-10-21 evening (Home-Gym-Konfigurator live — M uploaded the theme and tested the page; KPI integration built: KPI screen section, revenue cross-cut, plan in Gespräche, refunds into „Umsatz durch Mo“ with migration `0080` for M — item 15 now the migration, the follow-up upload and the partner material); before: 2026-10-21 (Home-Gym-Konfigurator built — Mo leads the configurator page of the Men's Health / Women's Health cooperation, new admin screen „Konfigurator“; no migration — new open item 15); before: 2026-10-20 („Kampagnenbild“ built — a campaign's own hero picture, uploaded in the campaign editor; migration `0079` for M before or with the deploy — new open item 14, new C.33; the admin POST guard now requires exactly `application/json`); before: 2026-10-13 (sender name „Mo von motion sports“ from the code; mails rebuilt for classic Outlook for Windows — open items 12 (Outlook check, 1.13) and 13 (optional: mo@motionsports.de, 1.12)); before: 2026-10-12 (sets, offers and Kontakthäufigkeit live after M's CLI deploy and migration `0078` — old open item 12 moved to Done; the Performance set block's „Zur Kasse“ is solid black with white text); before: 2026-10-11 night (counsel approved dossier § 22 and M said yes to O-1…O-9: copy v6 with the voucher hint, Mo's voucher rule and the confirmation-page note built behind switches (off); Shopify Messaging cannot send personal 30-day codes, so the issuer is open again — new open list 1–6: issuer decision, Shopify preparation, counsel's one-line OK on the final texts, theme texts, the switch-on, the live test); before: 2026-10-11 evening (M's third round: webhooks arrive again; 10f = 0 old-link cases; the welcome code's settings read; test case 8 passed — a chat DOI confirmation fires Shopify Messaging's 5 % welcome mail within a minute; open items 1–2 done, item 3 down to two steps; dossier § 22.1 updated); before: 2026-10-11 afternoon (M's second round: all 13 webhook subscriptions were missing — created, one tag check left; welcome code issued by Shopify Messaging, one shared code; open items 1–3 updated, dossier § 22.1 with the facts); before: 2026-10-11 (M's outputs of `verify:live` / `check:welcome` read: Shopify webhooks down since 05.10. ~16:45 — new open item 1, warnings on the KPI page, in Einstellungen and the Eingang, nightly alert (PR #235); welcome-code candidate: one shared code used by 150 customers, `check:welcome` now prints its settings; old-link check now `verify:live` 10f — the SQL item is gone; the live check of 09.10. done; open list rewritten with copy-paste commands, new C.32); before: 2026-10-08 evening (opt-in reward round of 08.10. built in PR #234 — no migration, no new switch, no widget change: DOI only once, C.29 fixed (Done), `npm run check:welcome`, `verify:live` section 10, KPI blocks of the voucher test, dossier § 22; new open list items 1–5 for M at the top (the old items 1–7 are now 6–12), new C.31); before: 2026-10-08 (the 504 of the Komplettanalyse fixed and pushed to main — Done; open list item 3 (now 8) updated: a stopped report continues when opened); before: 2026-10-06 late evening (three reworks on the branch, live with the next deploy together with the Verbesserung rework: Kunden profile card, KPI screen, Komplettanalyse as a decision report on the new AI tier `strategist` — Done; one migration `0077` for M; new open list item 3 „Neue Auswertungen prüfen“, new C.30; C.26 OI3 B4 needs the next free migration number); before: 2026-10-06 evening (four C tracks built, no migration, no new switch: consent — owner decision: no ask for a blocked address, OI1 F3; retention gaps + `db:reset`; admin texts and copy; attribution §9.1/§9.2/§4.9 — C.26, C.27; new C.28/C.29; Performance mail design on main `599e2e1`; open list item 1 = re-test after M's popup test of 06.10.); before: 2026-10-06 afternoon (widget checks evaluated: page context live and in use, both switches on since 05.10.; consent-popup check open); before: 2026-10-06 (widget `bc7fb5d` live, C.22 done); before: 2026-10-05 evening (all C items of 05.10. built; open list for M at the top; 5.2 + 5.4
+Last updated: 2026-10-27 (Konfigurator client feedback round 2 built — seals block in the hero, dark plan box, step 04 „Deine Hinweise“, product rules validated by the tools, showroom by availability; the move to `/pages/home-gym-konfigurator`; no migration, no switch — new item 16: deploy, five theme files right after, scope `read_themes`, the URL change, checks); before: 2026-10-24 (fourth Konfigurator round built — a click on „Weiter“ with an answer missing outlines the card in red; the „Konfigurator-Rabatt“ built complete but switched off; no migration, no env var — item 15 now covers both rounds with one upload, plus the optional step 11 for the discount); before: 2026-10-22 evening (second Konfigurator feedback round built — homepage-like section backgrounds and headings, larger seals, no divider lines, persona titles on two lines with new subtitles, a shorter Mo panel; four theme files to upload, not the template; item 15 rewritten, the first round moved to Done); before: 2026-10-22 (Konfigurator round after Anna's feedback built — persona card = Mo's personas (two new), weight steps, „+ Produkt hinzufügen“ / „+ Gewichtsstufe“, light Performance design, new hero and „Starke Partner“; no migration, no env var — item 15 now: deploy, upload five theme files (NOT the template), check the texts); before: 2026-10-21 evening (Home-Gym-Konfigurator live — M uploaded the theme and tested the page; KPI integration built: KPI screen section, revenue cross-cut, plan in Gespräche, refunds into „Umsatz durch Mo“ with migration `0080` for M — item 15 now the migration, the follow-up upload and the partner material); before: 2026-10-21 (Home-Gym-Konfigurator built — Mo leads the configurator page of the Men's Health / Women's Health cooperation, new admin screen „Konfigurator“; no migration — new open item 15); before: 2026-10-20 („Kampagnenbild“ built — a campaign's own hero picture, uploaded in the campaign editor; migration `0079` for M before or with the deploy — new open item 14, new C.33; the admin POST guard now requires exactly `application/json`); before: 2026-10-13 (sender name „Mo von motion sports“ from the code; mails rebuilt for classic Outlook for Windows — open items 12 (Outlook check, 1.13) and 13 (optional: mo@motionsports.de, 1.12)); before: 2026-10-12 (sets, offers and Kontakthäufigkeit live after M's CLI deploy and migration `0078` — old open item 12 moved to Done; the Performance set block's „Zur Kasse“ is solid black with white text); before: 2026-10-11 night (counsel approved dossier § 22 and M said yes to O-1…O-9: copy v6 with the voucher hint, Mo's voucher rule and the confirmation-page note built behind switches (off); Shopify Messaging cannot send personal 30-day codes, so the issuer is open again — new open list 1–6: issuer decision, Shopify preparation, counsel's one-line OK on the final texts, theme texts, the switch-on, the live test); before: 2026-10-11 evening (M's third round: webhooks arrive again; 10f = 0 old-link cases; the welcome code's settings read; test case 8 passed — a chat DOI confirmation fires Shopify Messaging's 5 % welcome mail within a minute; open items 1–2 done, item 3 down to two steps; dossier § 22.1 updated); before: 2026-10-11 afternoon (M's second round: all 13 webhook subscriptions were missing — created, one tag check left; welcome code issued by Shopify Messaging, one shared code; open items 1–3 updated, dossier § 22.1 with the facts); before: 2026-10-11 (M's outputs of `verify:live` / `check:welcome` read: Shopify webhooks down since 05.10. ~16:45 — new open item 1, warnings on the KPI page, in Einstellungen and the Eingang, nightly alert (PR #235); welcome-code candidate: one shared code used by 150 customers, `check:welcome` now prints its settings; old-link check now `verify:live` 10f — the SQL item is gone; the live check of 09.10. done; open list rewritten with copy-paste commands, new C.32); before: 2026-10-08 evening (opt-in reward round of 08.10. built in PR #234 — no migration, no new switch, no widget change: DOI only once, C.29 fixed (Done), `npm run check:welcome`, `verify:live` section 10, KPI blocks of the voucher test, dossier § 22; new open list items 1–5 for M at the top (the old items 1–7 are now 6–12), new C.31); before: 2026-10-08 (the 504 of the Komplettanalyse fixed and pushed to main — Done; open list item 3 (now 8) updated: a stopped report continues when opened); before: 2026-10-06 late evening (three reworks on the branch, live with the next deploy together with the Verbesserung rework: Kunden profile card, KPI screen, Komplettanalyse as a decision report on the new AI tier `strategist` — Done; one migration `0077` for M; new open list item 3 „Neue Auswertungen prüfen“, new C.30; C.26 OI3 B4 needs the next free migration number); before: 2026-10-06 evening (four C tracks built, no migration, no new switch: consent — owner decision: no ask for a blocked address, OI1 F3; retention gaps + `db:reset`; admin texts and copy; attribution §9.1/§9.2/§4.9 — C.26, C.27; new C.28/C.29; Performance mail design on main `599e2e1`; open list item 1 = re-test after M's popup test of 06.10.); before: 2026-10-06 afternoon (widget checks evaluated: page context live and in use, both switches on since 05.10.; consent-popup check open); before: 2026-10-06 (widget `bc7fb5d` live, C.22 done); before: 2026-10-05 evening (all C items of 05.10. built; open list for M at the top; 5.2 + 5.4
 done by M alone on 05.10. (Dev Dashboard + Shopify CLI); C.26 = the open follow-ups of the archived plans;
 doc paths follow the new layout — widget docs in `docs/frontend/`, history in `docs/archive/`).
 
@@ -233,8 +233,7 @@ lawyer ready to send, the Shopify steps and the frontend prompt: [`WELCOME_VOUCH
       „Sortiment“); plates, dumbbells and kettlebells need their weight variants available.
    8. **Partner check:** have Men's Health / Women's Health confirm seals, names and the new text before
       the link goes out — the page is visible but not linked.
-   9. **Optional — the URL:** the old static guide holds `/pages/home-gym-konfigurator`; rename one of the
-      two handles (Shopify offers a redirect) before the links are printed.
+   9. ~~**Optional — the URL**~~ — now item 16.4 (the editors have `/pages/home-gym-konfigurator`).
    10. **Check after the first consultations:** Konfigurator → „Wirkung“ → „Schritt für Schritt“ fills
       per product type; KPIs → „Home-Gym-Konfigurator“ shows the same orders as Konfigurator →
       „Wirkung“. Tell C what looks off.
@@ -262,6 +261,107 @@ lawyer ready to send, the Shopify steps and the frontend prompt: [`WELCOME_VOUCH
          set, the page and Mo drop it on their own from 00:00 the day after (the card then reads
          „Abgelaufen“); else „Aus“ + „Speichern“ (gone from the page within about two minutes); also
          deactivate the code in Shopify if it should no longer work for people who copied it.
+16. **Home-Gym-Konfigurator — client feedback round 2 of 27.10. (seals in the hero, dark plan box,
+   step 04 „Deine Hinweise“, product rules, showroom by availability) and the move to
+   `/pages/home-gym-konfigurator`: deploy, five theme files right after, one app permission, the URL
+   change, checks (~60 min). No migration, no switch; two optional env vars.** The feature:
+   [`CONFIGURATOR.md`](./CONFIGURATOR.md) §4a (rules), §4b (showroom), §7 (page); the files: theme repo
+   `MANIFEST.md`, entry „2026-10-27“.
+   1. **Backend first, then the theme right away:** deploy `main` as usual, then do step 2 at once (within minutes).
+      - The live widget (`7cf0c7d`) works with the new backend: it does not declare `rules`, so until the upload Mo writes the final quantities into its plans itself (plates in pairs; flooring = floor area ÷ coverage), and the page shows exactly those. The old page has no step 04.
+      - Two things are off until the upload, which is why it should follow right away. The „Zur Kasse“ card of the floating widget shows one plate's price while its checkout link already holds the pair. The old showroom card can name products although Mo was told not to promise any.
+      - Until step 3 the showroom list is unknown, and Mo promises no particular product for the showroom.
+      - New admin routes: `konfigurator/showroom` and `…/refresh`. The nightly catalog sync (03:00 UTC) also reads the showroom list.
+      - Optional env vars (`.env.example`): `SHOWROOM_THEME_FILE` (default `templates/page.json`) and `SHOWROOM_SECTION_ID` (pins the section). Neither is needed today.
+   2. **Theme upload** (theme repo `MANIFEST.md`, entry „2026-10-27“), widget first:
+      `assets/ms-chat-widget.js` and `assets/ms-chat-widget.css`, then
+      `sections/ms-home-gym-configurator.liquid`, `assets/ms-home-gym-configurator.js` and
+      `assets/ms-home-gym-configurator.css`. **Do NOT upload `templates/page.home-gym-mo.json`**: it
+      would drop the uploaded seals and the hero photo. The new setting „Position der Siegel im
+      Kopfbereich“ defaults to „Oben rechts“; „Unten rechts“ in the theme editor moves the block.
+   3. **App permission `read_themes` for the showroom list (~15 min, M in the Dev Dashboard, as in 5.4).**
+      The showroom page's products are a hand-picked list in the live theme, and Mo can read it only
+      with this scope.
+      1. Dev Dashboard (dev.shopify.com) → Apps → the app (its Client ID is Vercel `SHOPIFY_CLIENT_ID`)
+         → Versions → note the active version (the way back).
+      2. „Create a version“ → check that the form is pre-filled with the active version's values (URLs,
+         scopes, App proxy, webhooks API version). If it is empty or different, stop and tell C.
+      3. Scopes: add `read_themes`; keep every scope that is there. Release. Never rotate the client
+         secret.
+      4. Shopify admin → Apps → the app → accept the updated permissions.
+      5. `npm run shopify:webhooks -- --url https://mo.motionsports.de` (only reads). If it lists
+         missing subscriptions, run it again with `--apply`; they disappeared after the scope change
+         of 05.10.
+      6. Tell F: run `shopify app config link` before the next `shopify app deploy`, so
+         `shopify.app.toml` keeps `read_themes`.
+      7. Mo admin → Konfigurator → „Sortiment“ → card „Showroom“ → „Jetzt aktualisieren“. It should
+         show „Quelle: Theme“ and the number of products on display (23 on 27.10.). If it shows „Theme
+         nicht gelesen — Berechtigung read_themes fehlt“, sub-step 3 or 4 above is missing.
+      - **Without the permission:** use the same card → „Eigene Liste“ → add the products on display →
+        „Liste speichern“ (Mo uses it within five minutes). This list must then be kept in step with
+        the showroom page by hand.
+   4. **The URL `/pages/home-gym-konfigurator` (~15 min, Shopify admin).** The editors of Men's Health /
+      Women's Health already have this URL. Today it still holds the old static guide (template
+      „home-gym-konfigurator“), and the configurator runs at `/pages/home-gym-konfigurator-1`
+      (template „home-gym-mo“).
+      1. Onlineshop → Seiten (Online Store → Pages): open both pages and note which is which (the URL
+         is in the card „Suchmaschinen-Eintrag“ [Search engine listing], the template in „Theme-Vorlage“
+         [Theme template]). Note the configurator page's SEO title and description.
+      2. **Delete the old page** (the static guide: URL `/pages/home-gym-konfigurator`, template
+         „home-gym-konfigurator“) → „Seite löschen“. Do not rename it instead: renaming with the
+         redirect box ticked would send the URL away from the configurator.
+      3. **Rename the configurator page's handle:** the page with template „home-gym-mo“ → card
+         „Suchmaschinen-Eintrag“ → edit (pencil) → URL-Handle `home-gym-konfigurator` (remove the `-1`)
+         → keep the box „URL-Weiterleitung … erstellen“ [Create a URL redirect …] ticked → „Speichern“.
+         If Shopify says the handle is taken, the old page still exists (sub-step 2).
+      4. **Check the redirects:** Onlineshop → Navigation → „URL-Weiterleitungen“ (newer admin:
+         Inhalte → Menüs → „URL-Weiterleitungen anzeigen“), search `home-gym`.
+         - Keep exactly one: `/pages/home-gym-konfigurator-1` → `/pages/home-gym-konfigurator`.
+         - Delete any redirect FROM `/pages/home-gym-konfigurator`. It never fires while the page exists, and it would hijack the URL if the page is ever renamed.
+      5. **Links:** check the menus (Navigation) and any homepage section or banner that links to
+         `…-1`, and point them at `/pages/home-gym-konfigurator`. The redirect covers old links, but a
+         direct link saves the hop.
+      6. **Is a redirect needed?**
+         - Yes, the one from step 3. The `-1` URL was used in the tests and may be indexed or bookmarked.
+         - The public URL itself needs none: the configurator simply takes over the handle.
+         - No DNS change: `motionsports.de` forwards to the primary domain `www.motionsports.de` as today, path included.
+         - No Mo env var: the backend does not depend on the page URL.
+      7. **Optional cleanup:** the old template `templates/page.home-gym-konfigurator.json` is then
+         unused. Delete it in the theme's code editor only after step 2; not urgent.
+   5. **Check:** `npm run verify:widget` should print, among the other lines:
+      - `✔ Widget-Build: Widget mit der Konfigurator-Runde vom 27.10. …`
+      - `✔ Konfigurator unter /pages/home-gym-konfigurator`
+      - `✔ Konfigurator mit Schritt 04 „Deine Hinweise“ (Abschnitt und Seiten-Skript vom 27.10.)`
+      - `✔ /pages/home-gym-konfigurator-1 leitet auf /pages/home-gym-konfigurator weiter — HTTP 301`
+      - `OK: alle Prüfungen bestanden.`
+      Until C marks the new build as the expected one (step 8), the build line is followed by
+      „Erwartet: Widget mit der Konfigurator-Runde vom 23.10. …“ — that is fine. Send C the output.
+      Then, in a private window on desktop and phone, open
+      `https://motionsports.de/pages/home-gym-konfigurator`:
+      - The seals sit in one block at the top right of the hero, with the sentence above them (on the phone: under the headline).
+      - „Ändern“ / „Neu starten“ are outline buttons. The timeline is in its own card above Mo, flush with the chat.
+      - After the basics, „Weiter“ opens step 04. Type „Deckenhöhe 2,20 m“ → „Weiter – Mo berät mich“: Mo takes the ceiling height into account (no rack taller than 2,20 m).
+      - On a second run, „Überspringen“ hands over in one click.
+      - „Dein Home-Gym-Plan“ is dark blue with white text.
+      - Ask for weight plates: even numbers, marked „Paarweise“.
+      - Location garage: before the flooring, Mo asks for length × width and plans the whole floor.
+      - Location Wohnung: only the training area.
+      - The wish „Vorher im Showroom testen“: Mo names only products on display.
+   6. **Optional — rules per product (Shopify metafields)**, only when a product needs another rule
+      than the built-in ones (`CONFIGURATOR.md` §4a lists them). Shopify admin → Einstellungen →
+      Benutzerdefinierte Daten → Produkte → „Definition hinzufügen“, namespace and key:
+      - `mo.sold_in_pairs`: Wahr oder falsch; `falsch` lifts a pair rule.
+      - `mo.quantity_step`, `mo.min_quantity`, `mo.max_quantity`: Ganzzahl.
+      - `mo.coverage_m2`: Dezimalzahl, m² per piece. Greater than 0 means floor protection sized to the whole room; 0 switches the area calculation off.
+      Then set the value on the product. The nightly catalog sync picks it up (or trigger it as in
+      `CATALOG_SYNC.md` „Triggering the cron manually“). Konfigurator → „Sortiment“ → „Produktregeln“
+      lists the products with metafields.
+   7. **Keeping the showroom list current:** Shopify theme editor → the page „Showroom
+      München-Gröbenzell“ → section „Teste unsere Top-Geräte live im Showroom“ → „Produkte“: add or
+      remove → „Speichern“. Mo reads the change the next night, or at once with Konfigurator →
+      „Sortiment“ → „Showroom“ → „Jetzt aktualisieren“.
+   8. **Tell C the upload day.** C dates the KPI release `konfigurator-hinweise-regeln` to it (the
+      funnel stage „Hinweise erreicht“ shows for periods from that day on) and ticks this item.
 
 ## Done
 

@@ -46,7 +46,7 @@ Every widget change keeps all of these. They are referenced as "§0 rule n".
 21. **The campaign token stays session-less:** read from `mo_c`, kept in sessionStorage, sent once as `campaignToken`; never in KPI, localStorage, cookies or logs (§2 "Optional `campaignToken`").
 22. **Tone:** proactive copy references the page or category, never the visitor's behaviour; the nudge never asks for an e-mail.
 23. **Sign-in is a top-level redirect** (no popup window, no XHR login) and counts only after the one-time code was redeemed (ACCOUNT_CONTRACT.md §2, §2a).
-24. **Shared limits move together:** 40 messages per `/api/chat` request (80 in a configurator thread with `features: ["options"]`, §2), 10 ids per `/api/products`, trail ≤ 3 products + 2 categories, campaign token `^[A-Za-z0-9_-]{16,64}$`, one-time code 10 min, `benefits` 1–4 strings of ≤ 200 chars, 20 Q&A entries per product (`QA_MAX_PER_PRODUCT` vs the PDP snippet's `limit: 20`), TTS chunking mirrors `splitIntoTtsChunks()` (§8).
+24. **Shared limits move together:** 40 messages per `/api/chat` request (80 in a configurator thread with `features: ["options"]`, §2), 20 units per plan line and 200 per floor line (backend `RULE_LIMITS.lineMax` / `floorLineMax`, widget `CFG_MAX_QTY` / `CFG_FLOOR_MAX_QTY`, §3), the edge-piece regex `NON_TILE_VARIANT` / `CFG_NON_TILE` and the note cleaner (backend, widget and page, §2), 10 ids per `/api/products`, trail ≤ 3 products + 2 categories, campaign token `^[A-Za-z0-9_-]{16,64}$`, one-time code 10 min, `benefits` 1–4 strings of ≤ 200 chars, 20 Q&A entries per product (`QA_MAX_PER_PRODUCT` vs the PDP snippet's `limit: 20`), TTS chunking mirrors `splitIntoTtsChunks()` (§8).
 25. **Theme ownership:** `custom.*` metafields belong to merchandising except `custom.qa` (written by the backend; its `a_html` is pre-sanitised by the backend and output raw on the PDP); theme settings and editor-owned templates (e.g. the „MO only“ CTA block) are changed in the theme editor, not in code.
 
 ---
@@ -374,11 +374,12 @@ changed answer or an edited plan reaches Mo with the next message.
     "budget": "b2",             // optional: b1 (≤ 1.000 €) … b5 (> 10.000 €)
     "wishes": ["quiet"],        // optional: assembly | fast_delivery | quiet | no_drilling | foldable | floor_protection | showroom
     "partner": "mh",            // optional: mh | wh (Men's / Women's Health landing page)
-    "plan": [                   // optional: the plan as it stands on the page (≤ 20, ids or variant refs, qty 1–20)
+    "plan": [                   // optional: the plan as it stands on the page (≤ 20, ids or variant refs, qty 1–200 — a floor line up to 200, any other line up to 20; since 2026-10-27, 1–20 before)
       { "id": "atx-rack~4400000", "qty": 2 },
       { "id": "atx-scheiben~4400012", "qty": 2, "added": true }  // added: the visitor put it in („+ Produkt hinzufügen“ / „+ Gewichtsstufe“ / a picked option)
     ],
-    "features": ["options"]     // optional (since 2026-10-23): what the widget can render — "options" = offer_plan_options
+    "features": ["options", "rules"], // optional (since 2026-10-23): what the widget can do — "options" = offer_plan_options; "rules" (since 2026-10-27) = it applies the product rules itself
+    "note": "Deckenhöhe nur 2,20 m\nKnieprobleme – bitte gelenkschonend"  // optional (since 2026-10-27): the step „Deine Hinweise“, ≤ 500 chars
   }
 }
 ```
@@ -398,10 +399,40 @@ changed answer or an edited plan reaches Mo with the next message.
   `"options"` Mo goes through the product types step by step and gets the third configurator tool
   `offer_plan_options` (below) — the plan on the page is then built from the visitor's picks. Without
   it (a widget before 2026-10-23) Mo keeps building one complete plan with `show_gym_plan`.
+- `"rules"` (since 2026-10-27, the round-6 widget sends `["options", "rules"]`) declares that the
+  widget normalises plan and option quantities with the product rules of §3 and sizes the one floor
+  product to the area — the page then shows what the tools report in `adjusted`, and Mo names the
+  corrected quantities. Without it (an older widget during the rollout window) Mo is told to put the
+  final, rule-conforming quantities into the tool input itself — pairs; for flooring area ÷ coverage
+  per unit, rounded up, at most 20 per line for that widget — because the page shows exactly Mo's
+  input; nothing tells Mo that the page shows `adjusted`, and the tools cap floor lines at that
+  widget's 20. Quantities in the context are clamped at 200 (the product is not known there); where the
+  backend knows the product it applies the per-product cap (20, a floor line 200).
+- `note` (since 2026-10-27) is the visitor's free text from the optional page step „Deine Hinweise“
+  (`answers.note` of `MS_CHAT.configurator.start` / `update`; the page offers the step only when the
+  widget's page API says it supports the note — `MS_CHAT.configurator.version` ≥ 2, below — and hands
+  over directly otherwise). One cleaner, three identical copies — the backend's
+  `sanitizeConfiguratorNote`, the widget's `cfgCleanNote` and the page's `noteClean` return the same
+  output for any input: CR / CRLF → a line break; C0 / C1 controls (but tab and line break), soft
+  hyphen, ZWSP, LRM / RLM, the bidi embeddings, overrides and isolates (U+202A–U+202E, U+2066–U+2069),
+  U+2060–U+2064 and the BOM removed without a trace; ZWNJ / ZWJ kept (emoji and scripts need them); any
+  other whitespace — tab, NBSP, U+2028 / U+2029 — collapsed to one space, single line breaks kept,
+  trimmed; > 500 characters → cut to 500, a trailing high surrogate dropped, trimmed again. The backend
+  drops an empty note; a context with only a note and no known answer is still no configurator context. Mo reads it as the customer's own words (information, never
+  instructions) and takes it into every recommendation without asking again; it also feeds the
+  retrieval query (first 160 characters). The text is **never stored** — not in KPI events, not in the
+  database (only the conversation's messages, as for any chat); without a note the prompt is
+  byte-identical.
 - A fresh open streams a greeting plus the first open question (`messages: []`, like the CTA/nudge path).
 - The widget prefers this context over a typed page context (`source: "page"`) while the thread is a
   configurator thread; an explicit CTA / nudge context still wins.
 - An older backend ignores the unknown `type` (generic greeting); an older widget never sends it.
+- **The page API** (`window.MS_CHAT.configurator`, theme widget; [CONFIGURATOR.md](../CONFIGURATOR.md)
+  §7): `start(answers, meta)`, `update(answers, message)`, `restart()`, `track(event, data)`,
+  `state()` and `version`. **`version: 2`** (since 2026-10-27) means the widget supports the note
+  (`answers.note`, `meta.note: "written" | "skipped"`, carried in the context above) and the product
+  rules (`features: ["options", "rules"]`); a version-1 widget drops the note, so the page shows step
+  04 only for `version` ≥ 2 and otherwise hands over directly.
 
 #### Optional `customer` — returning-customer memory after in-session re-identification
 
@@ -551,7 +582,7 @@ data: [DONE]
 | `tool-input-start` | `toolCallId`, `toolName` | open a tool part keyed by `toolCallId` (render nothing yet) |
 | `tool-input-delta` | `toolCallId`, `inputTextDelta` | streaming JSON of the args; safe to ignore |
 | `tool-input-available` | `toolCallId`, `toolName`, `input` | args complete → **render the card now** (dispatch on `toolName`, read `input`) |
-| `tool-output-available` | `toolCallId`, `output` | tool result → for `offer_email_summary` this carries the load-bearing `output.consentCopy`; `search_products` and `get_order_status` return data for the model only (see "Tools the widget MUST NOT render"); the other tools return `{ ok: true }` |
+| `tool-output-available` | `toolCallId`, `output` | tool result → for `offer_email_summary` this carries the load-bearing `output.consentCopy`; for `suggest_showroom` (since 2026-10-27) the widget reads `ok`, `showroomKnown` and `inShowroom` (§2 `suggest_showroom`); `search_products` and `get_order_status` return data for the model only (see "Tools the widget MUST NOT render"); the other tools return `{ ok: true }` — since 2026-10-27 `add_to_cart`, `show_gym_plan` and `offer_plan_options` may add rule facts for the model only (`adjusted`, `coverage`, `inShowroom`) |
 | `error` | `errorText` | show the friendly retry message |
 | `finish` | `finishReason` (`messageMetadata` may appear) | finalize the message, re-enable input |
 | `[DONE]` (literal, not JSON) | — | stream end |
@@ -701,7 +732,9 @@ Multi-product example chunk:
 }
 ```
 
-Output: `{ ok: true }`. Widget action:
+Output: `{ ok: true }` — since 2026-10-27 for a product with a product rule also `adjusted:
+[{ productId, from: 1, to, rule }]` (e.g. `to: 2`, `rule: "paarweise"`), for the model only. Widget
+action:
 
 1. **Normalise the input to an id list:** `ids = input.productIds || [input.productId]`.
 2. **Hydrate:** `GET /api/products?ids=<id1>,<id2>,…` (up to 10 ids). Render **one** quick-checkout
@@ -714,8 +747,15 @@ Output: `{ ok: true }`. Widget action:
 4. **Degrade gracefully:** if `cartUrl` is `null` (nothing in stock or no variant resolved), hide the
    checkout button and fall back to the products' `shopifyUrl` links.
 
-The button sends the shopper **directly to checkout** (one unit per line), not into a cart they must
-then manage.
+The button sends the shopper **directly to checkout** (one unit per line — since 2026-10-27 the
+product rule's minimum for a product with `rules.min`, e.g. two plates sold in pairs, §3), not into a
+cart they must then manage. Each row shows exactly what that click buys (since the round-6 fixes of
+2026-10-27): with `q = p.rules && typeof p.rules.min === "number" && p.rules.min > 1 ? Math.floor(p.rules.min) : 1`
+— the backend's cart-link quantity — a row with `q > 1` reads „2× “ before the name (plus „Paarweise“ /
+„In pairs“ when `rules.step` is 2), its price is the line total (price × q and salePrice × q, rounded to
+cents) and its accessible text says the same; `q = 1` rows are unchanged. Mo knows that the checkout
+holds only that minimum per product (tool description and base prompt): when it names a larger piece
+count — e.g. 20 floor mats for the room — it tells the customer to set it in the cart.
 
 ##### `suggest_showroom` → showroom suggestion
 
@@ -732,10 +772,40 @@ Example `tool-input-available` chunk:
   "input": { "productIds": ["atx-treadmill-pro-fold"] }
 }
 ```
-Output: `{ ok: true }`. Widget action: `GET /api/products?ids=…`, render a showroom card listing the
-product names and linking to the showroom page (today
+Output (since 2026-10-27; before: `{ ok: true }`): which of the products are on display in the
+showroom. **Every** result carries `showroomKnown` (boolean):
+
+- some on display → `{ ok: true, showroomKnown: true, inShowroom: [ids], notInShowroom: [ids] }` (plus
+  a `note` when some are not on display);
+- none of the known products on display → `{ ok: false, showroomKnown: true, inShowroom: [],
+  notInShowroom: [ids], reason }` — Mo says honestly that these are not on display;
+- only ids the catalog does not know (or none) → `{ ok: false, showroomKnown, inShowroom: [],
+  notInShowroom: [], unknownIds: [ids], reason }` — the reason tells Mo to retry with the ids of the
+  product lines and to say nothing about the display (a mistyped handle of a displayed machine must not
+  be called „not on display“); unknown ids next to known ones come back as `unknownIds`, and a `reason`
+  then speaks only about `notInShowroom`;
+- an unknown showroom list (never read, no manual list) → `{ ok: true, showroomKnown: false,
+  inShowroom: [], notInShowroom: [], note }` — Mo promises no particular product.
+
+The widget **reads this output** (it is part of the widget contract, not model-only): `ok` (`false` →
+no card), `showroomKnown` (`false` → the list is unknown) and `inShowroom` (the products the card names,
+together with `showroom: true` of §3). Mo suggests the showroom only for products on display (the
+prompt's product lines say „im Showroom ausgestellt“; a product without a product line in this turn —
+an earlier answer, a `search_products` hit — Mo checks with this tool before saying it is not on
+display, which is safe because `ok: false` renders no card; backend [`CONFIGURATOR.md`](../CONFIGURATOR.md) §4b).
+
+Widget action: `GET /api/products?ids=…`, render a showroom card linking to the showroom page (today
 `https://motionsports.de/pages/showroom-munchen-grobenzell`; the URL is widget configuration — the
-backend sends none).
+backend sends none) with the same button, caption and `showroom_clicked` tracking in every variant:
+
+- `ok: false` → render **nothing**;
+- `showroomKnown: false` → the card **without product names** (since the round-6 fixes): „Besuche
+  unseren Showroom – welche Geräte dort ausgestellt sind, bestätigt dir das Team bei der
+  Terminvereinbarung.“ / "Visit our showroom – the team confirms which equipment is on display when you
+  book your visit.";
+- a known list → the card names only the products with `showroom: true` (§3; none → nothing);
+- an older backend (no `showroomKnown` in the result and no boolean `showroom` on the products) → the
+  named card as before 2026-10-27.
 
 ##### `show_contact_form` → inline contact form
 
@@ -879,15 +949,31 @@ Input schema:
   summary?: string;         // ≤ 400
   items: Array<{            // 1–20 (1–12 before 2026-10-22)
     productId: string;      // catalog id or variant ref
-    quantity?: number;      // 1–20, default 1
+    quantity?: number;      // 1–200 since 2026-10-27 (1–20 before), default 1 — a floor line (coverage) holds up to 200, any other line is capped at 20 (reported in `adjusted`)
     role: "base" | "accessory" | "weights" | "cardio" | "flooring" | "extra";
     note?: string;          // ≤ 120
   }>;
   tips?: string[];          // ≤ 3, ≤ 200 each
+  floorAreaM2?: number | null; // since 2026-10-27: the floor area the flooring is sized for (m²; null / absent = none — never invalidates the call; used when > 0 and ≤ 500)
 }
 ```
-Output: `{ ok: true, shownItems, unknownIds?, soldOutIds? }` — for the model only (it may correct the
-plan in the same turn); the widget renders from the input. Widget action: hydrate the ids with
+Output: `{ ok: true, shownItems, unknownIds?, soldOutIds?, adjusted?, coverage?, inShowroom? }` — for the
+model only (it may correct the plan in the same turn); the widget renders from the input. Since
+2026-10-27 the product rules (§3 `rules`; backend [`CONFIGURATOR.md`](../CONFIGURATOR.md) §4a) check
+every line: `adjusted: [{ productId, from, to, rule }]` names the quantities the rules correct (`rule`
+e.g. „paarweise“, „Mindestmenge“, „höchstens 20 je Position“ / „höchstens 200 je Position“ — the cap
+that applied —, „Raumfläche“; EN labels on `/en`). With `floorAreaM2`, **one** floor product is sized:
+only when the plan holds exactly one line with coverage (a line whose variant is an edge piece or a
+connector has none — §3), that line gets ceil(area / m² per unit), respecting step, minimum and the
+floor line's cap of 200. With two or more coverage lines (e.g. a drop zone under the rack plus mats for
+the rest) nothing is resized — Mo works out their counts. `coverage: { areaM2, coveredM2, lines: [{
+productId, quantity, coverageM2, coveredM2 }], missingM2?, neededQuantity? }` reports what the floor
+lines cover — `missingM2` when they leave part of the area uncovered, `neededQuantity` (the uncapped
+count) only for the one sized line when the cap of 200 stopped it. With a widget without the feature
+`"rules"` (an older widget, §2) floor lines are capped at that widget's 20. `inShowroom` lists the
+plan's products on display while the showroom list is known. A result without any of them is exactly
+as before. The widget normalises the lines itself with the same `rules` (§3) and the same sizing rule,
+so what the page shows matches what Mo is told. Widget action: hydrate the ids with
 `GET /api/products` (variant fields of §3) and render a plan card (lines, total, „Alles in den
 Warenkorb“); on the configurator page also the editable plan in `[data-ms-chat-plan]` (quantities,
 variants, remove/restore; since 2026-10-22 „+ Gewichtsstufe“ on weights lines, the weights hint and
@@ -911,13 +997,14 @@ Input schema:
   options: Array<{          // 1–4, Mo's recommendation first
     items: Array<{          // 1–6; more than one = a bundle (weights: one line per step, e.g. 2× 5 kg + 2× 10 kg)
       productId: string;    // catalog id or variant ref
-      quantity?: number;    // 1–20, default 1
+      quantity?: number;    // 1–200 since 2026-10-27 (1–20 before), default 1 — as show_gym_plan
     }>;
     label?: string;         // ≤ 60 — the option's name (bundles); else the first item's name (accepted up to 120, clipped)
     badge?: string;         // ≤ 24, e.g. „Mos Empfehlung“ (accepted up to 48, clipped)
     pros?: string[];        // ≤ 3, ≤ 90 each (accepted up to 180 each, clipped)
     cons?: string[];        // ≤ 2, ≤ 90 each (accepted up to 180 each, clipped)
   }>;
+  areaM2?: number | null;   // since 2026-10-27, step flooring: the floor area the options are sized for (m²; null / absent = none; used when > 0 and ≤ 500)
 }
 ```
 The tool descriptions ask for the documented texts (pros / cons „≤ 90 characters“, a short title,
@@ -925,9 +1012,13 @@ label and badge); the schema accepts twice the text lengths so a slightly long p
 the whole call — the backend (`normalizeOfferOptions`) and the widget clip every text to the
 documented limit (with „…“).
 
-Output: `{ ok: true, shownOptions, unknownIds?, soldOutIds? }` — for the model only. `shownOptions`
-counts with the widget's rule: options whose **every** item is known and available; a ref whose
-pinned variant does not exist is listed under `unknownIds`. When it is lower than the options offered,
+Output: `{ ok: true, shownOptions, unknownIds?, soldOutIds?, adjusted?, coverage?, inShowroom? }` — for
+the model only. `shownOptions` counts with the widget's rule: options whose **every** item is known and
+available; a ref whose pinned variant does not exist is listed under `unknownIds`. Since 2026-10-27 the
+product rules check the shown options like a plan (`show_gym_plan` above): `adjusted` and `coverage`
+entries carry `option` — the option's 1-based position in Mo's own list, also when an earlier option
+was dropped for a malformed id (the widget's `rank` counts the same way) —, each flooring option with
+exactly one coverage line sized to `areaM2`; `inShowroom` is the union over the shown options. When it is lower than the options offered,
 Mo calls the tool once more in the same answer with replacements (a second card group). Widget action:
 hydrate the ids with `GET /api/products` (max 10 per request — chunk) and render a card group
 (`ms-chat-offer`): title, intro, one card per option — thumbnail, name (label, else the first item's
@@ -960,7 +1051,9 @@ The widget renders **nothing** for them — no card, no placeholder, no "tool us
   customer profile from these replayed parts on every turn.
 - `search_products` — internal retrieval; the assistant uses the result to decide which
   `show_product` / `compare_products` calls to make. Output `{ totalMatched, products: [...] }` (id,
-  name, category, price, short description, score) — for the model only; never render cards from it.
+  name, category, price, short description, score; since 2026-10-27 also `heightCm` when the catalog
+  knows the height and `rules` — the product line's rule hint, e.g. „nur paarweise · im Showroom
+  ausgestellt“ — when one applies) — for the model only; never render cards from it.
 - `get_order_status` — behind `CHAT_ORDER_STATUS_ENABLED` (default off in code): the order status of
   a customer signed in with „Anmelden“ in this session, for the assistant's text answer („Wo ist meine
   Bestellung?“). Input `{ orderRef?: string; topic: "status" | "shipping" | "return" |
@@ -1113,12 +1206,25 @@ type PublicProduct = {
     answerEn?: string;
     answerEnHtml?: string;  // like answerHtml, for the English answer
   }>;
+  // Product rules (since 2026-10-27, see "Product rules and showroom" below) —
+  // on EVERY entry; only the fields that apply, {} = one by one, no limits.
+  // No `rules` at all = an older backend.
+  rules: {
+    step?: number;          // quantities in steps of this (2 = pairs: 2, 4, 6 …)
+    min?: number;           // at least this many (a multiple of step)
+    max?: number;           // at most this many per line
+    coverageM2?: number;    // m² one unit covers — floor protection sized to the whole room; a line holds up to 200 (for a variant ref that variant's; an edge piece / connector has none)
+  };
+  // On display in the showroom (since 2026-10-27): true / false while the
+  // backend knows the showroom list; absent when it does not (or older backend).
+  showroom?: boolean;
 };
 
 type ProductsResponse = {
   products: (PublicProduct | null)[];
   // Combined prefilled-cart permalink covering ALL requested resolvable
-  // variants in ONE cart (`…/cart/<v1>:1,<v2>:1`). Use this for the
+  // variants in ONE cart (`…/cart/<v1>:1,<v2>:2` — each line the product
+  // rule's minimum quantity, 1 without a rule; since 2026-10-27). Use this for the
   // `add_to_cart` checkout button. Sold-out products are excluded — they can
   // never enter this checkout link. `null` when no requested id resolves to an
   // in-stock variant. For a single requested id it equals that product's own
@@ -1143,7 +1249,7 @@ variants?: Array<{
   price: number;
   salePrice?: number;
   available: boolean;       // per-variant availability (sync-fresh)
-  cartUrl?: string;         // /cart/<id>:1 — omitted when unavailable
+  cartUrl?: string;         // /cart/<id>:1 (:<rules.min> since 2026-10-27) — omitted when unavailable
   isDefault: boolean;
 }>;
 selectedVariantId?: string; // set when the request pinned a variant
@@ -1164,7 +1270,8 @@ It is built server-side from the resolvable numeric variant ids, so the widget n
 multi-variant permalink itself.
 
 `shopifyCartUrl` is a Shopify storefront cart permalink for **one** unit of the product's variant, of
-the form `https://motionsports.de/cart/<numericVariantId>:1`. The `id` is always the **numeric**
+the form `https://motionsports.de/cart/<numericVariantId>:1` — since 2026-10-27 for the product rule's
+minimum instead (`rules.min`, e.g. `:2` for plates sold in pairs). The `id` is always the **numeric**
 Shopify variant id — never the SKU, handle, or product id. The field is **optional**: it is omitted
 when a product has no resolvable numeric variant id, **or when the product is sold out**
 (`inStock: false`).
@@ -1177,6 +1284,41 @@ still carry full product data and `inStock: false`, so the widget can render the
 „Ausverkauft“ badge.
 
 Response is cacheable for 60 s (`Cache-Control: public, max-age=60, stale-while-revalidate=300`).
+
+### Product rules and showroom (since 2026-10-27)
+
+The backend's rule registry (`src/lib/product-rules.mjs`, per product overridable through the Shopify
+metafields `mo.*` — backend [`CONFIGURATOR.md`](../CONFIGURATOR.md) §4a) decides how a product is
+bought: weight plates and single dumbbells sold per piece **in pairs** (`step: 2, min: 2`), floor tiles
+with a **coverage** per unit (`coverageM2`). `rules` is present on **every** entry since 2026-10-27 and
+carries only the fields that apply — `{}` = one by one, no limits; no `rules` at all = an older backend.
+Decisions the backend and the widget implement identically (round-6 fixes):
+
+- **Coverage means „whole room“.** A published `coverageM2` always means floor protection sized to the
+  room (the registry's floor tiles and any product with the metafield `mo.coverage_m2` > 0;
+  `mo.coverage_m2 = 0` switches coverage off) — the widget sizes every item whose `coverageM2` > 0.
+- **Line caps:** a line holds at most 20 units, a line with coverage (a floor line) at most 200.
+- **One floor product is sized.** With an area (`floorAreaM2` / `areaM2`, §2) quantities are sized only
+  when the plan, or one option, has exactly one line with coverage: ceil(area / coverageM2), respecting
+  the step and min. With two or more, nothing is resized (Mo works out the counts).
+- **Edge pieces have no coverage.** A line whose chosen variant title matches
+  `/verbinder|frog|clip|connector|kleber|klebeband|\btape\b|rampe|\brechts\b|\blinks\b|\bgerade\b|abschluss|kantenleiste/i`
+  (the backend's `NON_TILE_VARIANT`, mirrored byte for byte in the widget) shows no „Deckt ca.“ hint and
+  is no coverage line — for a ref of such a variant `GET /api/products` sends no `coverageM2` either.
+
+The widget (§2 `show_gym_plan` / `offer_plan_options`, the plan host) applies the rules where it builds
+or changes a quantity: round up to the step, at least `min`, at most `max` and the line's cap (20, a
+floor line 200); the stepper moves by `step` and never below `min`; „+ Produkt hinzufügen“ adds `min`;
+the cart add uses the normalised quantities; plans stored before are normalised on restore. Raw
+quantities (Mo's input, the stored plan) may be pre-clamped at 200 only when the product's rules run
+before they are shown or carted. Without any `rules` field (an older backend) the widget keeps its own
+heuristics (1–20, the round-4 pair rule of thumb for „Hinzufügen“). The cart permalinks
+(`shopifyCartUrl`, `variants[].cartUrl`, the combined `cartUrl`) carry `min`.
+
+`showroom` is present only while the backend knows which products are on display (read from the live
+theme's showroom page plus the admin's manual list; [`CONFIGURATOR.md`](../CONFIGURATOR.md) §4b): `true`
+on display, `false` not. Absent on every entry = unknown (or an older backend) — keep the behaviour of
+before (§2 `suggest_showroom`).
 
 ### Rate-limit response (429)
 
@@ -1205,15 +1347,19 @@ The curated Home-Gym-Konfigurator assortment for the plan's „+ Produkt hinzuf�
       "inStock": true,
       "variants": [        // optional: the variants with an id
         { "id": "4400011", "title": "0,5 kg", "price": 4, "salePrice": 3.5, "available": true, "isDefault": true }
-      ]
+      ],
+      "rules": { "step": 2, "min": 2 },  // since 2026-10-27 on every card: the product rules of §3 ({} = one by one)
+      "showroom": false                  // optional (since 2026-10-27): only while the showroom list is known (§3)
     }
   ]
 }
 ```
 
-A picked product is hydrated through `GET /api/products` as usual before it enters the plan — a
-`weights` card with more than one variant (plates, dumbbells in steps) as a pair (2×, a repeat adds 2),
-every other card as one. `role` comes from the catalog category, else the name; a strength machine
+A picked product is hydrated through `GET /api/products` as usual before it enters the plan — with
+`rules` (since 2026-10-27 on every card; `{}` = one, a repeat adds 1) as `min` units (a repeat adds
+`step`); without any `rules` field (an older backend) a `weights` card with more than one variant
+(plates, dumbbells in steps) as a pair (2×, a repeat adds 2), every other card as one — so a kettlebell
+from a new backend (`rules: {}`) goes in once, never as the old heuristic's pair. `role` comes from the catalog category, else the name; a strength machine
 that says „Plate Load“ is `base` (since 2026-10-23), not `weights`. Errors: the envelope of §1
 (`500 internal_error`, `429` rate limit).
 
@@ -1229,8 +1375,8 @@ send `x-ms-session` like §3); `Cache-Control: public, max-age=60, stale-while-r
   finds „Stands“ —, and short ones: „Bänke“). Missing or shorter → `400 bad_request`.
 - `limit` — 1–12, default 8.
 
-Response: `{ "ok": true, "products": Card[] }` — the card shape of §3a (role included), best matches
-first: in-stock before sold-out, then name matches of the plan role the query names („Rudergerät“ →
+Response: `{ "ok": true, "products": Card[] }` — the card shape of §3a (role, and since 2026-10-27
+`rules` on every card — `{}` = one by one — and `showroom`, included), best matches first: in-stock before sold-out, then name matches of the plan role the query names („Rudergerät“ →
 cardio, „Bank“ → accessory, „Hanteln“ → weights), then the exact name word before its singular /
 plural, before a name word's prefix, before a substring of the name, before brand / category / tags,
 then the shorter name; hidden products never; `[]` for no match. Independent of the configurator switch. Errors: §1 envelope.
@@ -1540,8 +1686,9 @@ only `configurator_*` names and flat ids/enums/numbers). Read by the admin scree
 | Event | When | `data` |
 | --- | --- | --- |
 | `configurator_viewed` | the page was shown — **only with Shopify analytics consent**, once per tab session | `{ partner }` (`mh` \| `wh` \| `""`) |
-| `configurator_started` | once per configurator run: the first answer picked, or the handover when the link prefilled the answers; „Neu starten“ begins a new run (since the follow-up of 2026-10-21) | `{ partner, prefilled }` |
-| `configurator_handover` | „Weiter – Mo berät mich“ (after the new thread started) | `{ persona, location, space, training, level, partner, prefilled }` — ids; `training` comma list (`goal` until 2026-10-22) |
+| `configurator_started` | once per configurator run: the first answer picked, or — for a prefilled link — when step 04 „Deine Hinweise“ opens (since 2026-10-27; with a version-1 widget, which gets no step 04, at the handover as before); „Neu starten“ begins a new run (since the follow-up of 2026-10-21) | `{ partner, prefilled }` |
+| `configurator_handover` | the handover, after the new thread started: „Weiter – Mo berät mich“ or „Überspringen“ on step 04 (or Ctrl/Cmd+Enter in the note); with a version-1 widget „Weiter“ on the basics | `{ persona, location, space, training, level, partner, prefilled, note }` — ids; `training` comma list (`goal` until 2026-10-22); `note` (since 2026-10-27) = `"written"` (the step „Deine Hinweise“ was filled) \| `"skipped"` — never the text |
+| `configurator_note_step` | the page showed the optional step „Deine Hinweise“ (step 04) — once per configurator run, also for a prefilled link (2026-10-27) | `{ prefilled }` |
 | `configurator_answers_changed` | changed answers sent to Mo after the handover | `{ fields }` — comma list of field keys |
 | `configurator_chip_clicked` | an answer chip of `suggest_replies` was sent | `{ topic, multi, count }` |
 | `configurator_plan_edited` | quantity, variant, remove or restore in the plan; since 2026-10-22 also an added product or weight step | `{ action }` — `qty` \| `variant` \| `remove` \| `restore` \| `add` \| `add_step` |
@@ -1549,7 +1696,7 @@ only `configurator_*` names and flat ids/enums/numbers). Read by the admin scree
 | `configurator_option_picked` | an option of `offer_plan_options` went into the plan („Auswählen“ / „Übernehmen“; since 2026-10-23) | `{ step, rank, items, multi, count }` — `rank` = 1-based position of the (first) picked option in Mo's list (the tool input — 1 = Mo's first option, his recommendation; positions count the options the widget left out too), `items` = its item lines, `count` = options picked in this action |
 | `configurator_option_skipped` | „Überspringen“ under an option group (2026-10-23) | `{ step }` |
 | `configurator_option_more` | „Andere Vorschläge“ under an option group (2026-10-23) | `{ step }` |
-| `configurator_validation_blocked` | „Weiter – Mo berät mich“ clicked (or Enter) while required answers are missing — the page outlines the cards (2026-10-24) | `{ fields }` — comma list of the missing field keys (`persona`, `location`, `space`, `level`) |
+| `configurator_validation_blocked` | „Weiter“ on the basics clicked (or Enter) while required answers are missing — or „Weiter – Mo berät mich“ / „Überspringen“ on step 04 when an answer was deselected there; the page outlines the cards (2026-10-24; „Weiter – Mo berät mich“ was the basics' button until 2026-10-27) | `{ fields }` — comma list of the missing field keys (`persona`, `location`, `space`, `level`) |
 | `configurator_discount_shown` | the „Konfigurator-Rabatt“ pop-up opened (once per browser and code; 2026-10-24) | `{ trigger }` — `start` \| `plan` |
 | `configurator_discount_activated` | „Rabatt aktivieren“ in the pop-up or the note above the plan — `/discount/<code>` answered (2026-10-24) | `{}` |
 | `configurator_discount_copied` | „Code kopieren“ (2026-10-24) | `{}` |
@@ -1580,7 +1727,7 @@ server-side capture-funnel names above, but does not store them:
 | `page_context_answered`    | `POST /api/chat` — when that turn finished (2026-10-05) | `{ kind, productCards, otherCards }` — card tool calls in the answer (`show_product`, `compare_products`, `add_to_cart`); `otherCards` leaves out a `show_product` of the open page's product. Counts only, no ids. Session-keyed. |
 | `consent_ask_eligible`     | `GET /api/auth/me` when it answers `marketing.optInActionable: true` — at most once per session per 24 h (2026-10-08). Only there: the App Proxy whoami never writes it | `{ variant, mode, locale }` — `variant` = the sign-in copy variant this session is assigned (the same pick as `/api/consent-copy?surface=signin` with this `x-ms-session`); `mode` `popup` \| `value_moment` (`value_moment` only when that copy carries an approved, valid `valueMoment`); `locale` `de` \| `en` (`?locale=` / `x-ms-locale`, §12). Session-keyed. The base of the welcome-voucher test (AD §5.7). |
 | `consent_copy_served`      | `GET /api/consent-copy?surface=signin` with `x-ms-session`, only while more than one variant is active (the `private, no-store` answer, §7.4) — at most once per session per 24 h, written after the answer (2026-10-08) | `{ variant, locale, reward, valueMoment }` — the variant served; `reward` / `valueMoment` = whether the served copy carries an approved, valid one (what the widget would render). Session-keyed, anonymous sessions included. |
-| `configurator_chat_started` | `POST /api/chat` — the fresh open (`messages: []`) of a configurator thread, at request time (2026-10-21) | `{ persona, location, space, training, level, budget, wishes, partner, locale, steps }` — answer ids (`goal` until 2026-10-22) (comma lists for `training` / `wishes`, `""` when open); `steps` (2026-10-23) = the widget declared `features: ["options"]`. Session-keyed. |
+| `configurator_chat_started` | `POST /api/chat` — the fresh open (`messages: []`) of a configurator thread, at request time (2026-10-21) | `{ persona, location, space, training, level, budget, wishes, partner, locale, steps }` — answer ids (`goal` until 2026-10-22) (comma lists for `training` / `wishes`, `""` when open); `steps` (2026-10-23) = the widget declared `features: ["options"]`; `note` (2026-10-27) = boolean, the context carried a customer note (never its text). Session-keyed. |
 | `configurator_plan_shown` | `POST /api/chat` — one per `show_gym_plan` call the widget renders (valid input, at least one known line), when the turn finished (2026-10-21) | `{ planNumber, items, units, productIds }` — catalog handles of the known lines (no variant ids, no names). Session-keyed. |
 | `configurator_options_shown` | `POST /api/chat` — one per `offer_plan_options` call with at least one renderable option, when the turn finished (2026-10-23) | `{ step, options, items, multi, productIds }` — only options whose every item is known and available (the widget's rule: an option with an unknown or sold-out id is left out); `items` and `productIds` come from those options; catalog handles only. Session-keyed. |
 
@@ -2530,3 +2677,5 @@ section that holds the fact; this table repeats none of the detail.
 | 2026-10-22 | Konfigurator round after the partner feedback: `configurator.persona` is one of Mo's personas (six, two new: `design_lifestyle`, `weight_loss`) and sets the thread's archetype; `goal` dropped (old values still parse); plan items may carry `added: true`; `show_gym_plan` up to 20 items (the page plan's limit, the visitor's own lines included); new `GET /api/configurator/assortment`; `configurator_plan_edited.action` adds `add` / `add_step`. Additive for the widget: the 2026-10-21 build keeps working (its persona/goal ids map) — but it renders and echoes only 12 of Mo's lines and has no „+ Produkt hinzufügen“ / „+ Gewichtsstufe“, which Mo now mentions; upload the theme right after the deploy. | §1, §2 "`context.type: "configurator"`", `show_gym_plan`, §3a, §5 |
 | 2026-10-23 | Konfigurator step by step (third feedback round): `configurator.features` (`["options"]`) declares the new widget; then the configurator-only tool `offer_plan_options` (2–4 options per product type with pros / cons, picked into the page plan as `added: true` lines) is offered and Mo goes through the types one by one; new `GET /api/configurator/search` (whole-shop search for „+ Produkt hinzufügen“); widget events `configurator_option_picked` / `_skipped` / `_more`, server-only `configurator_options_shown`, `configurator_chat_started.steps`. Additive: a widget without `features` keeps the one-plan flow and never gets the tool. Same day, after the review: up to 80 messages per request in the step flow; an option counts as shown only when every item is known and available (`shownOptions`, `configurator_options_shown`); `rank` = the position in Mo's list; a pick replaces the earlier pick of the same step (accessory / extra / multiSelect add); option texts accepted at twice the documented length; the search folds ae/oe/ue and „-er“ plurals and finds variant SKUs; „Plate Load“ machines are `base`. Search results: name matches of the plan role the query names first (not when the product's own name names another role), the exact word before its plural, then the shorter name. | §1, §2 "`context.type: "configurator"`", `offer_plan_options`, §3a, §3b, §5 |
 | 2026-10-24 | Konfigurator, fourth round (external feedback): new `GET /api/configurator/offer` — the „Konfigurator-Rabatt“ (`offer: null` by default and after its optional last day; with it code, title, text, terms and `trigger` `start` \| `plan`), fetched once by the configurator page, which shows the pop-up and the note above the plan and activates through the shop's own `/discount/<code>`; page events `configurator_validation_blocked` { fields } (a click on „Weiter – Mo berät mich“ with answers missing — the page outlines the incomplete cards) and `configurator_discount_shown` { trigger } / `_activated` / `_copied` / `_closed`. Additive: no widget change, no change to `/api/chat`'s shapes (Mo knows the discount only while it is on). | §1, §3c, §5 |
+| 2026-10-27 | Konfigurator round 6 (client review): `context.configurator.note` — the visitor's free text from the optional page step „Deine Hinweise“ (≤ 500 characters, cleaned, never stored); page event `configurator_note_step` { prefilled }, `configurator_handover.note` (`written` \| `skipped`), server `configurator_chat_started.note` (boolean). **Product rules:** `GET /api/products` entries and the §3a / §3b cards carry `rules` (`step` / `min` / `max` / `coverageM2`, only what applies) and — while the showroom list is known — `showroom` (boolean); the cart permalinks carry the rule's minimum (`:2` for pairs); `show_gym_plan` takes `floorAreaM2`, `offer_plan_options` `areaM2`; their results (and `add_to_cart`'s) may carry `adjusted` / `coverage` / `inShowroom` for the model; `suggest_showroom` answers `{ ok, showroomKnown, inShowroom, notInShowroom }` (`ok: false` when none is on display). Additive: an older widget ignores the new fields (and keeps its own pair heuristic), an older page sends no note. | §2 "`context.type: "configurator"`", `add_to_cart`, `suggest_showroom`, `show_gym_plan`, `offer_plan_options`; §3, §3a, §3b; §5 |
+| 2026-10-27 | Round-6 fixes after the review (lockstep backend / widget / page): `rules` on **every** `GET /api/products` entry and §3a / §3b card (`{}` = one by one; no `rules` at all = an older backend); a published `coverageM2` always means floor protection sized to the whole room (`mo.coverage_m2` > 0 on any product; `0` switches it off); a floor line holds up to **200** units, any other line 20 — the `show_gym_plan` / `offer_plan_options` item `quantity` accepts 1–200 and the backend caps a non-floor line at 20 in `adjusted` („höchstens 20 je Position“ / „höchstens 200 je Position“ names the cap); **one** floor product is sized to the area — two or more coverage lines are not resized (`coverage` keeps `coveredM2` / `missingM2`, no `neededQuantity`); edge-piece / connector variants (`NON_TILE_VARIANT`, mirrored in the widget) have no coverage; `floorAreaM2` / `areaM2` accept `null`; `offer_plan_options`'s `option` is Mo's own position even after a dropped option; `configurator.features` gains `"rules"` (the round-6 widget sends `["options", "rules"]`; without it Mo puts the final quantities into the tool input and floor lines are capped at 20); `MS_CHAT.configurator.version` 2 (note + rules — the page shows step 04 only for ≥ 2); `suggest_showroom` carries `showroomKnown` on every result, answers only-unknown ids with `ok: false` + `unknownIds` (retry, no display claim) and is read by the widget (`showroomKnown: false` → a card without product names); the add_to_cart card shows `q×` and the line total for `rules.min` > 1; one note cleaner for backend, widget and page (ZWNJ / ZWJ kept, U+2028 / U+2029 and tabs a space); `search_products` hits carry `rules` (hint) and `heightCm`; §5 trigger rows for started / handover / validation_blocked. | §0 rule 24; §2 "`context.type: "configurator"`", `add_to_cart`, `suggest_showroom`, `show_gym_plan`, `offer_plan_options`, `search_products`; §3, §3a, §3b; §5 |
