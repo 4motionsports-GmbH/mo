@@ -6,11 +6,12 @@
 // Rabatt“ (24.10.2026, default off) — and the curated assortment Mo works in.
 // Saved together through POST /api/admin/konfigurator/settings; after a save
 // the server render refreshes so the assortment list follows a changed tag or
-// list.
+// list. Under the assortment (2026-10-27): its product rules per row, the
+// read-only rule registry „Produktregeln“ and the card „Showroom“ (own routes).
 
 import * as React from "react";
 import { useRouter } from "next/navigation";
-import { BadgePercent, Dumbbell, ExternalLink, PackageSearch, Save, Tag, X } from "lucide-react";
+import { BadgePercent, Dumbbell, ExternalLink, PackageSearch, Save, Store, Tag, X } from "lucide-react";
 import {
   CONFIGURATOR_DISCOUNT_LIMITS,
   CONFIGURATOR_LIMITS,
@@ -46,7 +47,9 @@ import {
 } from "../ui";
 import { adminFetch, friendlyErrorMessage } from "../lib/admin-fetch";
 import { useAsyncAction } from "../lib/use-async-action";
-import type { AssortmentRow } from "./types";
+import { ProductRulesCard } from "./ProductRulesCard";
+import { ShowroomCard } from "./ShowroomCard";
+import type { AssortmentRow, ProductRulesOverview, ShowroomCardData } from "./types";
 
 type Focus = ConfiguratorSettings["focus"];
 type DiscountTrigger = ConfiguratorDiscount["trigger"];
@@ -73,11 +76,15 @@ export function KonfiguratorWorkspace({
   initialSettings,
   assortment,
   unknownExtraIds,
+  rulesOverview,
+  showroom,
 }: {
   dbReady: boolean;
   initialSettings: ConfiguratorSettings;
   assortment: AssortmentRow[];
   unknownExtraIds: string[];
+  rulesOverview: ProductRulesOverview;
+  showroom: ShowroomCardData;
 }) {
   const router = useRouter();
   const [saved, setSaved] = React.useState(initialSettings);
@@ -167,14 +174,16 @@ export function KonfiguratorWorkspace({
           ) : (
             <span className="size-9 shrink-0 rounded-md border border-border bg-surface-2" aria-hidden />
           )}
-          <div className="min-w-0">
+          {/* Capped below xl so price, status, rules and the shop link fit at 1024 px. */}
+          <div className="min-w-0 max-w-[26rem] xl:max-w-none">
             <div className="truncate font-medium">{r.name}</div>
             <div className="truncate font-mono text-2xs text-muted-foreground">{r.id}</div>
           </div>
         </div>
       ),
     },
-    { key: "category", header: "Kategorie", sortValue: (r) => r.category, hideBelow: "md", cell: (r) => r.category },
+    // From xl on: below, the rules column needs the room (the id line names the product).
+    { key: "category", header: "Kategorie", sortValue: (r) => r.category, hideBelow: "xl", cell: (r) => r.category },
     {
       key: "price",
       header: "Preis",
@@ -204,6 +213,34 @@ export function KonfiguratorWorkspace({
           )}
         </div>
       ),
+    },
+    {
+      key: "rules",
+      header: "Regeln",
+      sortValue: (r) => r.rules.length + (r.showroom ? 1 : 0) + (r.ruleMetafield ? 1 : 0),
+      defaultDir: "desc",
+      cell: (r) =>
+        r.rules.length || r.showroom || r.ruleMetafield ? (
+          <div className="flex flex-wrap gap-1">
+            {r.rules.map((label) => (
+              <StatusBadge key={label} tone="info" dot={false}>
+                {label}
+              </StatusBadge>
+            ))}
+            {r.ruleMetafield && (
+              <StatusBadge tone="neutral" dot={false}>
+                Metafeld
+              </StatusBadge>
+            )}
+            {r.showroom && (
+              <StatusBadge tone="accent" dot={false} icon={<Store />}>
+                Showroom
+              </StatusBadge>
+            )}
+          </div>
+        ) : (
+          <span className="text-muted-foreground">—</span>
+        ),
     },
     {
       key: "link",
@@ -512,7 +549,7 @@ export function KonfiguratorWorkspace({
       <Section
         title="Sortiment"
         subtitle={`${plural(assortment.length, "Produkt", "Produkte")}${soldOut ? ` · ${num(soldOut)} ausverkauft` : ""}`}
-        info="Die Produkte, in denen Mo im Konfigurator primär plant: alle Produkte mit dem Shopify-Tag plus die zusätzlichen Produkte. Mo sieht die Liste kompakt (Name, Kategorie, Preis, Stellfläche, Zubehör) und holt Details per Suche. Ausverkaufte Produkte empfiehlt Mo nicht."
+        info="Die Produkte, in denen Mo im Konfigurator primär plant: alle Produkte mit dem Shopify-Tag plus die zusätzlichen Produkte. Mo sieht die Liste kompakt (Name, Kategorie, Preis, Stellfläche, Zubehör, Produktregeln, Showroom) und holt Details per Suche. Ausverkaufte Produkte empfiehlt Mo nicht. „Regeln“: was für das Produkt gilt — z. B. „paarweise“ (Menge 2, 4, …), „1 m²/Stk“ (Bodenschutz, gerechnet auf die Raumfläche), „Metafeld“ (eigene Regel aus Shopify), „Showroom“ (dort ausgestellt)."
       >
         <div className="flex flex-col gap-3">
           {unknownExtraIds.length > 0 && (
@@ -550,6 +587,10 @@ export function KonfiguratorWorkspace({
               }
             />
           </Card>
+          <div className="grid grid-cols-1 items-start gap-4 xl:grid-cols-2">
+            <ProductRulesCard overview={rulesOverview} />
+            <ShowroomCard dbReady={dbReady} initial={showroom} />
+          </div>
         </div>
       </Section>
     </div>

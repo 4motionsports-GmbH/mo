@@ -166,6 +166,13 @@ export const RELEASE_EFFECTS = Object.freeze({
   // behaviour) and the „Konfigurator-Rabatt“ built switched off; nothing is
   // counted differently.
   "konfigurator-pflichtangaben-rabatt": { measurement: [], product: ["chat", "journey"] },
+  // Round of 2026-10-27: the optional step „Deine Hinweise“ before the
+  // handover (a new funnel stage of the Konfigurator screen only — the
+  // snapshot's configurator metrics count as before), product rules (pairs,
+  // room-sized flooring: more units in plans, carts and cart links, mails
+  // included) and the showroom suggested only for products on display (fewer
+  // suggest_showroom anchors) — behaviour, nothing counted differently.
+  "konfigurator-hinweise-regeln": { measurement: [], product: ["chat", "journey", "revenue"] },
 });
 
 /** What flipping a switch changes (switch keys of business-snapshot snapshotSwitches). */

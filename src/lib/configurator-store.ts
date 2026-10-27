@@ -17,6 +17,8 @@ import { reportError } from "./observability";
 import { loadProductCatalog } from "./catalog-store";
 import { REALISED_FINANCIAL_STATUSES } from "./kpi-revenue-core.mjs";
 import { CONSULTATION_ANCHOR_TOOLS } from "./order-attribution.mjs";
+import { ruleRegistryOverview } from "./product-rules.mjs";
+import { noteStepCounted } from "./kpi-releases.mjs";
 import {
   CONFIGURATOR_FIELDS,
   CONFIGURATOR_PLAN_TOOLS,
@@ -28,6 +30,7 @@ import {
   KPI_CONFIGURATOR_OPTIONS_SHOWN,
   KPI_CONFIGURATOR_PLAN_SHOWN,
   answerDistribution,
+  noteChoiceRows,
   optionStepRows,
   parseConfiguratorSettings,
   selectAssortment,
@@ -150,6 +153,23 @@ export async function loadConfiguratorAssortment(settings: ConfiguratorSettings)
   }
 }
 
+/** Konfigurator → „Sortiment“ → „Produktregeln“: the rule registry (product-rules.mjs). */
+export type ProductRulesOverview = ReturnType<typeof ruleRegistryOverview>;
+
+/**
+ * The rule registry with the catalog products each rule matches now (the
+ * whole catalog — the rules apply in every chat, not only in the
+ * configurator). An empty overview on a catalog failure; never throws.
+ */
+export async function loadProductRulesOverview(showroomIds: ReadonlySet<string> | null): Promise<ProductRulesOverview> {
+  try {
+    return ruleRegistryOverview(await loadProductCatalog(), { showroomIds });
+  } catch (err) {
+    reportError(err, { route: "lib/configurator-store", phase: "loadProductRulesOverview" });
+    return ruleRegistryOverview([], { showroomIds });
+  }
+}
+
 // ---------------------------------------------------------------------------
 // KPIs (admin screen „Konfigurator“, KPI screen, Komplettanalyse) — pure DB,
 // never cached
@@ -164,6 +184,9 @@ export interface ConfiguratorSummary {
   sessions: {
     viewed: number;
     started: number;
+    /** Sessions that reached the step „Deine Hinweise“ (configurator_note_step, page of 2026-10-27) — 0 for a
+     * period that starts before NOTE_STEP_FROM (kpi-releases noteStepCounted), so the funnel leaves the stage out. */
+    notes: number;
     handover: number;
     chats: number;
     plans: number;
@@ -187,6 +210,8 @@ export interface ConfiguratorSummary {
 
 export interface ConfiguratorKpis extends ConfiguratorSummary {
   distributions: Array<{ key: string; label: string; rows: Array<{ key: string; label: string; count: number }> }>;
+  /** „Hinweis vor der Beratung“ (2026-10-27): handovers with a note / skipped (configurator_handover.note); [] without any. */
+  noteChoices: Array<{ key: string; label: string; count: number }>;
   partners: Array<{ key: string; label: string; count: number }>;
   chipTopics: Array<{ key: string; count: number }>;
   /** Step-by-step flow per product type: option groups shown, picks, skips, „Andere Vorschläge“. */
@@ -223,6 +248,7 @@ async function queryConfiguratorSummary(range: KpiRange, sql: Sql): Promise<Conf
       SELECT
         count(DISTINCT session_id) FILTER (WHERE event = ${W.viewed})::int AS viewed,
         count(DISTINCT session_id) FILTER (WHERE event = ${W.started})::int AS started,
+        count(DISTINCT session_id) FILTER (WHERE event = ${W.noteStep})::int AS notes,
         count(DISTINCT session_id) FILTER (WHERE event = ${W.handover})::int AS handover,
         count(DISTINCT session_id) FILTER (WHERE event = ${KPI_CONFIGURATOR_CHAT_STARTED})::int AS chats,
         count(DISTINCT session_id) FILTER (WHERE event = ${KPI_CONFIGURATOR_PLAN_SHOWN}
@@ -239,7 +265,7 @@ async function queryConfiguratorSummary(range: KpiRange, sql: Sql): Promise<Conf
         COALESCE(sum(CASE WHEN event = ${W.cartAdded} AND data->>'value' ~ '^[0-9]{1,9}([.][0-9]{1,2})?$'
                           THEN (data->>'value')::numeric ELSE 0 END), 0)::float AS cart_value
         FROM kpi_events
-       WHERE event IN (${W.viewed}, ${W.started}, ${W.handover}, ${KPI_CONFIGURATOR_CHAT_STARTED},
+       WHERE event IN (${W.viewed}, ${W.started}, ${W.noteStep}, ${W.handover}, ${KPI_CONFIGURATOR_CHAT_STARTED},
                        ${KPI_CONFIGURATOR_PLAN_SHOWN}, ${W.cartAdded}, ${W.chipClicked}, ${W.planEdited},
                        ${KPI_CONFIGURATOR_OPTIONS_SHOWN}, ${W.optionPicked})
          AND session_id IS NOT NULL
@@ -276,6 +302,9 @@ async function queryConfiguratorSummary(range: KpiRange, sql: Sql): Promise<Conf
     sessions: {
       viewed: Number(s.viewed ?? 0),
       started: Number(s.started ?? 0),
+      // Only for periods from the note step's first day on — a period across the release would mix runs
+      // without the step and show a false drop at „Hinweise erreicht“ (kpi-releases NOTE_STEP_FROM).
+      notes: noteStepCounted(range) ? Number(s.notes ?? 0) : 0,
       handover: Number(s.handover ?? 0),
       chats: Number(s.chats ?? 0),
       plans: Number(s.plans ?? 0),
@@ -324,7 +353,7 @@ export async function getConfiguratorKpis(range: KpiRange, sql: Sql | null = get
   const configuratorTools = [...CONFIGURATOR_TOOLS];
   const W = CONFIGURATOR_WIDGET_EVENTS;
   try {
-    const [summary, distRows, chipRows, productRows, recentRows, stepRows] = await Promise.all([
+    const [summary, distRows, chipRows, productRows, recentRows, stepRows, noteRows] = await Promise.all([
       queryConfiguratorSummary(range, sql),
       sql`
         SELECT f.key, COALESCE(f.value, '') AS value, count(*)::int AS n
@@ -435,6 +464,18 @@ export async function getConfiguratorKpis(range: KpiRange, sql: Sql | null = get
            AND created_at < (${range.to}::date + 1)
          GROUP BY 1
       `,
+      // „Hinweis vor der Beratung“: the handover's `note` ("written" | "skipped"),
+      // one per handover — the note's text is never stored anywhere.
+      sql`
+        SELECT data->>'note' AS value, count(*)::int AS n
+          FROM kpi_events
+         WHERE event = ${W.handover}
+           AND data->>'note' IN ('written', 'skipped')
+           AND session_id NOT LIKE 'livecheck-%'
+           AND created_at >= ${range.from}::date
+           AND created_at < (${range.to}::date + 1)
+         GROUP BY 1
+      `,
     ]);
 
     const byField = new Map<string, Array<{ value: string; n: number }>>();
@@ -501,6 +542,7 @@ export async function getConfiguratorKpis(range: KpiRange, sql: Sql | null = get
     return {
       ...summary,
       distributions: distributions.filter((d) => d.key !== "partner"),
+      noteChoices: noteChoiceRows(noteRows as Array<{ value: string | null; n: number }>),
       partners,
       chipTopics: (chipRows as Array<{ topic: string; n: number }>).map((r) => ({ key: r.topic, count: Number(r.n) || 0 })),
       steps: optionStepRows(stepRows as Array<{ step: string; shown: number; picked: number; skipped: number; more: number }>),

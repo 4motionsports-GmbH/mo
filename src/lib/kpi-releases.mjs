@@ -150,10 +150,43 @@ export const KPI_RELEASES = Object.freeze([
     detail:
       "Fehlt beim Klick auf „Weiter – Mo berät mich“ eine Angabe (z. B. die Fläche), markiert die Seite die Karte rot und springt dorthin, statt still zu blockieren — „An Mo übergeben“ kann steigen. Neu und standardmäßig aus: der Konfigurator-Rabatt (Pop-up mit Rabattcode, Einstellung im Bereich Konfigurator); erst wenn er eingeschaltet ist, ändern sich Pop-up-Zahlen und Bestellungen mit dem Code. Nichts wird anders gezählt.",
   },
+  {
+    date: "2026-10-27",
+    key: "konfigurator-hinweise-regeln",
+    title: "Konfigurator: Hinweise vor der Beratung, Produktregeln, Showroom nach Verfügbarkeit",
+    detail:
+      "Neuer optionaler Schritt „Deine Hinweise“ vor der Übergabe an Mo — im Trichter die Stufe „Hinweise erreicht“; die übrigen Stufen zählen wie bisher, „An Mo übergeben“ kann sich durch den zusätzlichen Schritt verschieben. Mo plant Hantelscheiben und einzeln verkaufte Kurzhanteln nur paarweise und Bodenschutz für die ganze Raumfläche — Pläne, Warenkorbwerte und Warenkorb-Links (auch in E-Mails) enthalten dadurch mehr Stück. Den Showroom schlägt Mo nur noch vor, wenn ein empfohlenes Gerät dort ausgestellt ist. Nichts wird anders gezählt.",
+  },
 ]);
 
 /** First day the opt-in events carry source and outcome (OI1). */
 export const OPTIN_MEASUREMENT_FROM = "2026-10-05";
+
+/** @param {string} key @returns {string} the release's date — throws for a key that is not in KPI_RELEASES */
+function releaseDay(key) {
+  const r = KPI_RELEASES.find((x) => x.key === key);
+  if (!r) throw new Error(`kpi-releases: no release "${key}"`);
+  return r.date;
+}
+
+/**
+ * First day the Konfigurator funnel can show the stage „Hinweise erreicht“
+ * (configurator_note_step, the step „Deine Hinweise“ of the page). DERIVED
+ * from the release `konfigurator-hinweise-regeln` — re-date that entry to the
+ * theme upload and this follows; there is no second date.
+ */
+export const NOTE_STEP_FROM = releaseDay("konfigurator-hinweise-regeln");
+
+/**
+ * Does the period count the stage „Hinweise erreicht“? Only when it starts on
+ * or after NOTE_STEP_FROM: a period across the release mixes runs without the
+ * step (their starts and handovers count, their note step cannot) and would
+ * show a false drop at the new optional step — then the stage is left out.
+ * @param {{ from: string } | null | undefined} range
+ */
+export function noteStepCounted(range) {
+  return Boolean(range && isYmd(range.from) && range.from >= NOTE_STEP_FROM);
+}
 
 /** First day whose data a section can be read for — earlier days are not comparable. */
 const MEANINGFUL_FROM = Object.freeze({

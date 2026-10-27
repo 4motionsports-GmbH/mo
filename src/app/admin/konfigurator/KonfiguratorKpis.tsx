@@ -18,6 +18,7 @@ import {
   personaAnswer,
 } from "@/lib/configurator-core.mjs";
 import { eur, num, ratio } from "@/lib/admin-format.mjs";
+import { NOTE_STEP_FROM, germanDay } from "@/lib/kpi-releases.mjs";
 import { ADMIN_DATE_TIME_SHORT, formatAdmin } from "@/lib/admin-datetime.mjs";
 import { adminTabHref } from "@/lib/admin-tabs.mjs";
 import {
@@ -41,8 +42,9 @@ import { FunnelBars } from "../kpi/FunnelBars";
 import { KpiSection } from "../kpi/KpiSection";
 
 export const STAGE_INFO: Record<string, string> = {
-  started: "Sitzungen, die einen Durchgang auf der Konfigurator-Seite begonnen haben — die erste Antwort gewählt oder, mit vorausgefüllten Angaben aus dem Link, direkt übergeben; „Neu starten“ beginnt einen neuen Durchgang (configurator_started).",
-  handover: "Klick auf „Mo berät mich“ — die Angaben gehen an Mo (configurator_handover).",
+  started: "Sitzungen, die einen Durchgang auf der Konfigurator-Seite begonnen haben — die erste Antwort gewählt oder, mit vorausgefüllten Angaben aus dem Link, den Schritt „Deine Hinweise“ geöffnet (mit einem älteren Widget: direkt übergeben); „Neu starten“ beginnt einen neuen Durchgang (configurator_started).",
+  notes: `Sitzungen, die nach den Grundeinstellungen den Schritt „Deine Hinweise“ (Schritt 04, optional) erreicht haben — mit „Weiter“ oder über einen vorausgefüllten Link (configurator_note_step). Die Stufe erscheint nur für Zeiträume ab dem ${germanDay(NOTE_STEP_FROM)}, dem Tag des Seiten-Updates mit diesem Schritt: Ein Zeitraum davor mischt Durchgänge ohne den Schritt und zeigte hier einen falschen Abbruch.`,
+  handover: "Klick auf „Weiter – Mo berät mich“ oder „Überspringen“ im Schritt „Deine Hinweise“ — die Angaben gehen an Mo (configurator_handover).",
   chats: "Mo hat die Beratung mit den Angaben gestartet (serverseitig, configurator_chat_started). Weniger als „übergeben“, wenn der Chat nicht antworten konnte (z. B. Rate-Limit).",
   plans: "Mo hat einen Home-Gym-Plan gezeigt (show_gym_plan, serverseitig gezählt) oder der Besucher hat eine von Mos Optionen in seinen Plan gewählt (Schritt für Schritt, configurator_option_picked).",
   carts: "„Alles in den Warenkorb“ im Plan wurde geklickt und der Warenkorb hat die Produkte angenommen (configurator_cart_added).",
@@ -178,6 +180,23 @@ export function KonfiguratorKpis({
                       </CardContent>
                     </Card>
                   ))}
+                {kpis.noteChoices.length > 0 && (
+                  <Card>
+                    <CardHeader className="pb-2">
+                      <CardTitle className="flex items-center gap-1.5 text-sm">
+                        Hinweis vor der Beratung
+                        <InfoTip>
+                          Ob Besucher im optionalen Schritt „Deine Hinweise“ etwas für Mo notiert oder den Schritt
+                          übersprungen haben — je Übergabe an Mo (configurator_handover). Der Text selbst wird nirgends
+                          gespeichert, nur Mo liest ihn in der Beratung. Übergaben der Seite vor dem 27.10.2026 fehlen hier.
+                        </InfoTip>
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <BarList rows={kpis.noteChoices.map((r) => ({ key: r.key, label: r.label, count: r.count }))} />
+                    </CardContent>
+                  </Card>
+                )}
                 <Card>
                   <CardHeader className="pb-2">
                     <CardTitle className="flex items-center gap-1.5 text-sm">

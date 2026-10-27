@@ -1,6 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { KPI_RELEASES, SIGNIN_OUTAGE, germanDay, releaseNotesFor, releasesInRange } from "./kpi-releases.mjs";
+import { readFileSync } from "node:fs";
+import { KPI_RELEASES, NOTE_STEP_FROM, SIGNIN_OUTAGE, germanDay, noteStepCounted, releaseNotesFor, releasesInRange } from "./kpi-releases.mjs";
+import { configuratorFunnel } from "./configurator-core.mjs";
 
 test("release keys are unique and dates ascend", () => {
   const keys = KPI_RELEASES.map((r) => r.key);
@@ -10,7 +12,7 @@ test("release keys are unique and dates ascend", () => {
 });
 
 test("releases are ordered and dated as documented", () => {
-  assert.deepEqual(KPI_RELEASES.map((r) => r.date), ["2026-10-01", "2026-10-03", "2026-10-04", "2026-10-05", "2026-10-05", "2026-10-05", "2026-10-05", "2026-10-05", "2026-10-06", "2026-10-06", "2026-10-06", "2026-10-06", "2026-10-06", "2026-10-06", "2026-10-08", "2026-10-21", "2026-10-21", "2026-10-22", "2026-10-24", "2026-10-24"]);
+  assert.deepEqual(KPI_RELEASES.map((r) => r.date), ["2026-10-01", "2026-10-03", "2026-10-04", "2026-10-05", "2026-10-05", "2026-10-05", "2026-10-05", "2026-10-05", "2026-10-06", "2026-10-06", "2026-10-06", "2026-10-06", "2026-10-06", "2026-10-06", "2026-10-08", "2026-10-21", "2026-10-21", "2026-10-22", "2026-10-24", "2026-10-24", "2026-10-27"]);
   assert.deepEqual(SIGNIN_OUTAGE, { from: "2026-10-03", to: "2026-10-04" });
   assert.equal(germanDay("2026-10-04"), "04.10.2026");
 });
@@ -90,10 +92,17 @@ test("releasesInRange is inclusive on both ends", () => {
     "konfigurator-personas",
     "konfigurator-schritt-fuer-schritt",
     "konfigurator-pflichtangaben-rabatt",
+    "konfigurator-hinweise-regeln",
   ]);
-  assert.deepEqual(releasesInRange({ from: "2026-10-24", to: "2026-10-30" }).map((r) => r.key), ["konfigurator-schritt-fuer-schritt", "konfigurator-pflichtangaben-rabatt"]);
+  assert.deepEqual(releasesInRange({ from: "2026-10-24", to: "2026-10-30" }).map((r) => r.key), [
+    "konfigurator-schritt-fuer-schritt",
+    "konfigurator-pflichtangaben-rabatt",
+    "konfigurator-hinweise-regeln",
+  ]);
   assert.deepEqual(releasesInRange({ from: "2026-10-23", to: "2026-10-23" }), []);
-  assert.deepEqual(releasesInRange({ from: "2026-10-25", to: "2026-10-30" }), []);
+  assert.deepEqual(releasesInRange({ from: "2026-10-25", to: "2026-10-26" }), []);
+  assert.deepEqual(releasesInRange({ from: "2026-10-25", to: "2026-10-30" }).map((r) => r.key), ["konfigurator-hinweise-regeln"]);
+  assert.deepEqual(releasesInRange({ from: "2026-10-28", to: "2026-10-30" }), []);
   assert.deepEqual(releasesInRange({ from: "bad", to: "2026-10-30" }), []);
 });
 
@@ -102,4 +111,33 @@ test("konfigurator: one 'meaningful from' note before the launch, none after", (
   assert.equal(notes.length, 1);
   assert.match(notes[0], /^Erst ab dem 21\.10\.2026 aussagekräftig/);
   assert.deepEqual(releaseNotesFor("konfigurator", { from: "2026-10-21", to: "2026-11-19" }), []);
+});
+
+test("NOTE_STEP_FROM is the date of the release konfigurator-hinweise-regeln — one date to re-date", () => {
+  const release = KPI_RELEASES.find((r) => r.key === "konfigurator-hinweise-regeln");
+  assert.ok(release);
+  assert.equal(NOTE_STEP_FROM, release.date);
+  // derived, not a second literal: the module reads it from the release list
+  const src = readFileSync(new URL("./kpi-releases.mjs", import.meta.url), "utf8");
+  assert.match(src, /export const NOTE_STEP_FROM = releaseDay\("konfigurator-hinweise-regeln"\);/);
+});
+
+test("the Konfigurator funnel shows „Hinweise erreicht“ only for periods from NOTE_STEP_FROM on", () => {
+  const counts = { viewed: 900, started: 300, handover: 200, chats: 190, plans: 150, carts: 40, orders: 5 };
+  // what queryConfiguratorSummary passes: the stage's sessions only when the period starts on or after the day
+  const funnel = (/** @type {{ from: string, to: string }} */ range, notes) =>
+    configuratorFunnel({ ...counts, notes: noteStepCounted(range) ? notes : 0 }).stages.map((st) => st.key);
+  // a 30-day period across the release: no stage (it would read „13 % weiter“, then „500 % weiter“)
+  const across = { from: "2026-10-01", to: NOTE_STEP_FROM };
+  assert.equal(noteStepCounted(across), false);
+  assert.deepEqual(funnel(across, 40), ["started", "handover", "chats", "plans", "carts", "orders"]);
+  // a period that starts on the day: the stage between started and handover
+  const after = { from: NOTE_STEP_FROM, to: "2026-11-25" };
+  assert.equal(noteStepCounted(after), true);
+  assert.deepEqual(funnel(after, 40), ["started", "notes", "handover", "chats", "plans", "carts", "orders"]);
+  // … and without any such sessions still none
+  assert.deepEqual(funnel(after, 0), ["started", "handover", "chats", "plans", "carts", "orders"]);
+  assert.equal(noteStepCounted({ from: "2026-12-01", to: "2026-12-30" }), true);
+  assert.equal(noteStepCounted({ from: "x", to: "2026-12-30" }), false);
+  assert.equal(noteStepCounted(null), false);
 });
