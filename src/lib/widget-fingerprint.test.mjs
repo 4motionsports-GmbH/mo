@@ -156,7 +156,7 @@ test("the round of 2026-10-08 (495fdf6) is recognised only with both new class n
   const row = WIDGET_BUILDS.find((b) => b.key === "reward-2026-10-08");
   assert.equal(row?.commit, "495fdf6");
   assert.equal(row?.acceptable, true);
-  assert.equal(WIDGET_BUILDS[3].key, "reward-2026-10-08"); // newest first, after the three configurator builds
+  assert.equal(WIDGET_BUILDS[4].key, "reward-2026-10-08"); // newest first, after the four configurator builds
   // The new markers are counted like the others (class names, whitespace-insensitive).
   const c = countWidgetMarkers(`el.className = "ms-chat-reward-badge"; lead.className="ms-chat-vm-lead";`);
   assert.equal(c["ms-chat-reward-badge"], 1);
@@ -172,7 +172,7 @@ test("the Home-Gym-Konfigurator build (2026-10-21) is recognised only with both 
     assert.equal(classifyWidgetBuild(reward)?.key, "reward-2026-10-08", `${variant} without the configurator`);
   }
   const row = WIDGET_BUILDS.find((b) => b.key === "konfigurator-2026-10-21");
-  assert.equal(WIDGET_BUILDS[2], row); // newest first, after the rounds of 2026-10-22 and 2026-10-23
+  assert.equal(WIDGET_BUILDS[3], row); // newest first, after the rounds of 2026-10-22, 2026-10-23 and 2026-10-27
   assert.equal(row?.acceptable, true);
   assert.equal(row?.current, false); // live 2026-10-21 … 2026-10-24, then 7cf0c7d
   const c = countWidgetMarkers(`dockRoot = el('div', { class: 'ms-chat-root ms-chat-root--dock' }); wrap = el('div', { class: 'ms-chat-root ms-chat-planhost' });`);
@@ -187,7 +187,7 @@ test("the Konfigurator round of 2026-10-22 is recognised by its product picker",
     assert.equal(classifyWidgetBuild(configurator)?.key, "konfigurator-2026-10-21", `${variant} without the picker`);
   }
   const row = WIDGET_BUILDS.find((b) => b.key === "konfigurator-2026-10-22");
-  assert.equal(WIDGET_BUILDS[1], row); // newest first, after the round of 2026-10-23
+  assert.equal(WIDGET_BUILDS[2], row); // newest first, after the rounds of 2026-10-23 and 2026-10-27
   assert.equal(row?.acceptable, true);
   assert.equal(countWidgetMarkers(`wrap.className = 'ms-chat-planpick';`)["ms-chat-planpick"], 1);
 });
@@ -201,8 +201,26 @@ test("the Konfigurator round of 2026-10-23 is recognised by its product options"
     assert.equal(classifyWidgetBuild({ ...planpick, "ms-chat-planpick": 0, "ms-chat-offer": 9 })?.key, "konfigurator-2026-10-21", `${variant} offer without planpick`);
   }
   const row = WIDGET_BUILDS.find((b) => b.key === "konfigurator-2026-10-23");
-  assert.equal(WIDGET_BUILDS[0], row); // newest first
+  assert.equal(WIDGET_BUILDS[1], row); // newest first, after the round of 2026-10-27
   assert.equal(row?.acceptable, true);
   assert.equal(row?.current, true); // live since 2026-10-24 (M's upload, live check passed)
   assert.equal(countWidgetMarkers(`group.className = 'ms-chat-offer';`)["ms-chat-offer"], 1);
+});
+
+test("the Konfigurator round of 2026-10-27 is recognised by the product rule under a plan line", () => {
+  for (const variant of ["raw", "ws", "min"]) {
+    const offer = { ...MEASURED[variant]["495fdf6"], "ms-chat-root--dock": 1, "ms-chat-planhost": 29, "ms-chat-planpick": 4, "ms-chat-offer": 9 };
+    assert.equal(classifyWidgetBuild({ ...offer, "ms-chat-planhost-rule": 1 })?.key, "konfigurator-2026-10-27", variant);
+    assert.equal(classifyWidgetBuild(offer)?.key, "konfigurator-2026-10-23", `${variant} without the rules`);
+    // the rule marker without Mo's options is not this build
+    assert.equal(classifyWidgetBuild({ ...offer, "ms-chat-offer": 0, "ms-chat-planhost-rule": 1 })?.key, "konfigurator-2026-10-22", `${variant} rules without offer`);
+  }
+  const row = WIDGET_BUILDS.find((b) => b.key === "konfigurator-2026-10-27");
+  assert.equal(WIDGET_BUILDS[0], row); // newest first
+  assert.equal(row?.acceptable, true);
+  assert.equal(row?.current, false); // the expected build only after M's upload (ROLLOUT_TODO item 16)
+  assert.match(row?.commit ?? "", /^[0-9a-f]{7}$/);
+  const c = countWidgetMarkers(`if (rule) main.appendChild(el('div', { class: 'ms-chat-planhost-rule', text: rule }));`);
+  assert.equal(c["ms-chat-planhost-rule"], 1);
+  assert.equal(c["ms-chat-planhost"], 1); // the older marker is a prefix — still counted, still > 0
 });

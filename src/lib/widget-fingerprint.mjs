@@ -35,6 +35,7 @@ export const WIDGET_MARKERS = Object.freeze([
   "ms-chat-planhost", // Home-Gym-Konfigurator (2026-10-21): the plan on the page (class name)
   "ms-chat-planpick", // Konfigurator round of 2026-10-22: „+ Produkt hinzufügen“ in the plan (class name)
   "ms-chat-offer", // Konfigurator round of 2026-10-23: Mo's step-by-step product options (class name)
+  "ms-chat-planhost-rule", // Konfigurator round of 2026-10-27: a plan line's product rule („Paarweise“, class name)
 ]);
 
 /** @param {string} s */
@@ -64,14 +65,23 @@ export function countWidgetMarkers(js) {
 }
 
 /**
- * The builds, newest first. `current` = the build live since 2026-10-21 (cc6c8c8,
- * the Home-Gym-Konfigurator on top of 495fdf6, whose reward / value moment stay
- * dormant until the backend serves `reward` / `valueMoment`);
+ * The builds, newest first. `current` = the build expected live — since 2026-10-24
+ * 7cf0c7d (the Konfigurator round of 23.10.); the round of 27.10. becomes it after
+ * M's upload (docs/ROLLOUT_TODO.md item 16);
  * `acceptable` = the widget side is ready for the order status and the App Proxy
  * (the App Proxy also needs the backend step C.17, docs/ROLLOUT_TODO.md 5.4).
  * @type {ReadonlyArray<{ key: string, commit: string, label: string, current: boolean, acceptable: boolean, consequence: string }>}
  */
 export const WIDGET_BUILDS = Object.freeze([
+  {
+    key: "konfigurator-2026-10-27",
+    commit: "acd75c0",
+    label: "Widget mit der Konfigurator-Runde vom 27.10. (acd75c0: Hinweis vor der Beratung, Produktregeln im Plan, Plan in Dunkelblau, Showroom nach Verfügbarkeit)",
+    current: false,
+    acceptable: true,
+    consequence:
+      "Stand der Runde vom 27.10. (theme MANIFEST 2026-10-27, docs/ROLLOUT_TODO.md Punkt 16 — nach Ms Upload der erwartete Build): wie der Stand vom 23.10., dazu geht der Hinweis aus Schritt 04 in Mos Kontext, der Plan auf der Konfigurator-Seite folgt Mos Produktregeln (Hantelscheiben und einzelne Kurzhanteln paarweise, Bodenschutz für die Raumfläche), „Dein Home-Gym-Plan“ ist dunkelblau und die Showroom-Karte nennt nur ausgestellte Produkte; im schwebenden Widget zeigt die „Zur Kasse“-Karte „2×“ bei Paaren (docs/CONFIGURATOR.md).",
+  },
   {
     key: "konfigurator-2026-10-23",
     commit: "7cf0c7d",
@@ -79,7 +89,7 @@ export const WIDGET_BUILDS = Object.freeze([
     current: true,
     acceptable: true,
     consequence:
-      "Erwarteter Live-Stand seit 24.10. (Ms Upload, Live-Check bestanden): wie der Stand vom 22.10., dazu wählt der Besucher auf der Konfigurator-Seite Mos Produkt-Optionen Schritt für Schritt in seinen Plan, „+ Produkt hinzufügen“ sucht im ganzen Shop und Plan und angedocktes Mo tragen die Buttons der Startseite; alle anderen Seiten unverändert (docs/CONFIGURATOR.md).",
+      "Erwarteter Live-Stand seit 24.10. (Ms Upload, Live-Check bestanden): wie der Stand vom 22.10., dazu wählt der Besucher auf der Konfigurator-Seite Mos Produkt-Optionen Schritt für Schritt in seinen Plan, „+ Produkt hinzufügen“ sucht im ganzen Shop und Plan und angedocktes Mo tragen die Buttons der Startseite; alle anderen Seiten unverändert (docs/CONFIGURATOR.md). Ohne die Runde vom 27.10. (Hinweis vor der Beratung, Produktregeln im Plan — Mo schreibt dann selbst die endgültigen Mengen in den Plan): acd75c0 hochladen.",
   },
   {
     key: "konfigurator-2026-10-22",
@@ -219,7 +229,9 @@ export function classifyWidgetBuild(c) {
       if (dock && planHost) {
         if (n("ms-chat-planpick") === 0) return build("konfigurator-2026-10-21");
         // The round of 2026-10-23 adds Mo's product options to it.
-        return build(n("ms-chat-offer") > 0 ? "konfigurator-2026-10-23" : "konfigurator-2026-10-22");
+        if (n("ms-chat-offer") === 0) return build("konfigurator-2026-10-22");
+        // The round of 2026-10-27 adds the product rules to the plan lines.
+        return build(n("ms-chat-planhost-rule") > 0 ? "konfigurator-2026-10-27" : "konfigurator-2026-10-23");
       }
       if (dock || planHost) return null;
       return build("reward-2026-10-08");
