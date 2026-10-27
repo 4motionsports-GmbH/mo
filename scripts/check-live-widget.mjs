@@ -14,8 +14,9 @@
 //      to the shop.
 //   5. the Home-Gym-Konfigurator is served under its public URL
 //      /pages/home-gym-konfigurator (live-check.mjs; `--configurator-path` to
-//      check another path) and the old /pages/home-gym-konfigurator-1
-//      redirects there (a missing redirect is a hint, not a failure).
+//      check another path), with step 04 „Deine Hinweise“ of 2026-10-27 in the
+//      section and the page script, and the old /pages/home-gym-konfigurator-1
+//      redirects there (a missing step 04 or redirect is a hint, not a failure).
 // Exit code 0 only when every check passes: a build the backend switches may
 // be flipped for, the head script, the /cart style, and no App Proxy answering
 // a widget that cannot redeem the code. The App Proxy not being set up yet is
@@ -31,10 +32,12 @@ import {
   WIDGET_BUILDS,
 } from "../src/lib/widget-fingerprint.mjs";
 import {
+  CONFIGURATOR_NOTES_SCRIPT_MARKER,
   CONFIGURATOR_OLD_PATHS,
   CONFIGURATOR_PAGE_PATH,
   configuratorPageStatus,
   redirectsTo,
+  themeAssetUrl,
   urlPath,
 } from "../src/lib/live-check.mjs";
 
@@ -142,6 +145,24 @@ const cfgFinalPath = urlPath(cfgPage.finalUrl, origin);
 const cfgAtPath = cfgPage.ok && cfgFinalPath === urlPath(configuratorPath, origin);
 if (cfgAtPath && cfgStatus.configurator) {
   line(true, `Konfigurator unter ${configuratorPath}`);
+  // The round of 2026-10-27: step 04 „Deine Hinweise“ needs the section AND
+  // the page script of that upload (a hint, not a failure).
+  const pageJsUrl = themeAssetUrl(cfgPage.text, "ms-home-gym-configurator.js", origin);
+  const pageJs = pageJsUrl ? await get(pageJsUrl) : null;
+  const scriptNotes = Boolean(pageJs?.ok && pageJs.text.includes(CONFIGURATOR_NOTES_SCRIPT_MARKER));
+  if (cfgStatus.notes && scriptNotes) {
+    line(true, "Konfigurator mit Schritt 04 „Deine Hinweise“ (Abschnitt und Seiten-Skript vom 27.10.)");
+  } else {
+    const missing = [
+      cfgStatus.notes ? null : "Abschnitt sections/ms-home-gym-configurator.liquid noch alt",
+      scriptNotes
+        ? null
+        : pageJsUrl
+          ? "Seiten-Skript assets/ms-home-gym-configurator.js noch alt"
+          : "Seiten-Skript ms-home-gym-configurator.js nicht gefunden",
+    ].filter(Boolean);
+    line(null, "Konfigurator ohne Schritt 04 „Deine Hinweise“", `${missing.join(", ")} — Dateien aus MANIFEST.md (Eintrag 2026-10-27) hochladen`);
+  }
 } else {
   line(
     false,
