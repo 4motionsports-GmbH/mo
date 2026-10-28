@@ -20,6 +20,9 @@
 //      resync. Re-embeds only if the product's embedded text changed.
 //   3. Idempotent + burst-guarded (see lib/catalog-mutate): a duplicate or
 //      no-change delivery writes nothing; concurrent deliveries are serialized.
+//      Since 2026-10-28 a catalog delivery is ACKED at once and refreshed after
+//      the response (next/server after()) — Shopify fails a delivery whose
+//      answer takes longer than 5 s; a failed refresh is queued (step 4).
 //   4. THROTTLE BACKPRESSURE (see lib/shopify-backpressure.mjs): a webhook storm
 //      (bulk ERP stock sync → hundreds of deliveries in minutes) used to drain
 //      Shopify's cost bucket concurrently, exhaust every invocation's retries and
@@ -36,14 +39,15 @@
 // Shopify retry never applies a delivery twice.
 //
 // Same ingest contract as the other webhooks: 503 without a secret (fail closed),
-// 401 on a bad signature, 500 only on a real processing failure (so Shopify
-// retries safely — the update is idempotent). The daily sync remains the baseline
-// reconciliation (and the catch-all for id-only hard-deletes).
+// 401 on a bad signature, 500 only on a real processing failure of a customer /
+// order topic (so Shopify retries safely — those are deduplicated); catalog
+// topics answer 200 before their refresh runs. The daily sync remains the
+// baseline reconciliation (and the catch-all for id-only hard-deletes).
 //
 // Setup (Shopify side): register the webhook topics against this URL — see
 // docs/CATALOG_SYNC.md "Real-time stock webhook".
 
-import { NextResponse } from "next/server";
+import { NextResponse, after } from "next/server";
 import {
   verifyShopifyWebhook,
   planCatalogAction,
@@ -76,8 +80,8 @@ import {
 import { ingestShopifyOrder, noteUnresolvedMarker } from "@/lib/mo-orders-store";
 import { reportError } from "@/lib/observability";
 
-// A single-product Shopify fetch + (optional) one embedding + two blob writes —
-// comfortably within 60s, well above the other webhooks' 30s.
+// A single-product Shopify fetch + (optional) one embedding + two blob writes,
+// plus a bounded drain — run after the response (after()), within 60 s.
 export const maxDuration = 60;
 
 // Admin-made subscriptions are signed with the store's webhook key
@@ -196,61 +200,53 @@ export async function POST(req: Request) {
       return NextResponse.json({ ok: true, ignored: plan.reason ?? plan.action });
     }
 
-    // (3) BACKPRESSURE: while the shared throttle gate holds, don't touch
-    // Shopify — queue the target and ack. A refresh always re-fetches CURRENT
-    // truth from Shopify (never applies this payload), so deferring is lossless.
-    // When queueing isn't possible (no Redis) we fall through and try inline.
-    if (await isThrottleGateActive()) {
-      if (await enqueuePendingRefresh(kind, gid)) {
-        return NextResponse.json({ ok: true, topic, deferred: true });
-      }
-    }
+    // (3) ACK AT ONCE, refresh after the response (2026-10-28). Shopify counts
+    // a delivery as failed when the answer takes longer than 5 s — and a
+    // refresh reads and writes the catalog + embeddings blobs (~35 MB) behind
+    // a lock, then drains queued targets: a product edit or a stock burst
+    // failed in Shopify's log and was redelivered into the same load. The
+    // refresh re-fetches CURRENT truth from Shopify (never applies this
+    // payload), so running it after the answer is lossless; one that fails is
+    // queued for a later drain (Shopify no longer redelivers an acked
+    // delivery), the daily sync remains the backstop. after() keeps the
+    // function alive for it (Vercel waitUntil, within maxDuration).
+    after(() => applyCatalogRefresh(kind, gid, topic));
+    return NextResponse.json({ ok: true, topic, accepted: true });
+  } catch (err) {
+    reportError(err, { route: "api/webhooks/shopify", phase: "ingest", topic: topic ?? "none" });
+    return NextResponse.json({ ok: false, error: "Ingest failed" }, { status: 500 });
+  }
+}
 
-    // (4) Apply the TARGETED single-product update. products/update +
-    // products/delete both route through refreshProductInCatalog: an eligible
-    // product is upserted; one that no longer passes the catalog filters (or is
-    // gone) is removed. inventory_levels/* resolves the item → its product first.
+/**
+ * The catalog refresh of one delivery, run after the response:
+ *   1. BACKPRESSURE — while the shared throttle gate holds, don't touch Shopify:
+ *      queue the target (a coalescing set) for a later drain.
+ *   2. The TARGETED single-product update. products/update + products/delete
+ *      both route through refreshProductInCatalog: an eligible product is
+ *      upserted; one that no longer passes the catalog filters (or is gone) is
+ *      removed. inventory_levels/* resolves the item → its product first.
+ *   3. Throttled or a real failure (already warned / reported by the mutation):
+ *      queue the target so a later delivery's drain retries it.
+ *   4. Success ⇒ the bucket has budget again: work off a few queued targets
+ *      (bounded by items + time).
+ * Never throws — an error is reported, the daily sync reconciles.
+ */
+async function applyCatalogRefresh(kind: PendingKind, gid: string, topic: string | null): Promise<void> {
+  try {
+    if ((await isThrottleGateActive()) && (await enqueuePendingRefresh(kind, gid))) return;
     const result =
       kind === "inventory_item"
         ? await refreshInventoryItemInCatalog(gid)
         : await refreshProductInCatalog(gid);
-
     if (!result.ok) {
-      if (result.throttled) {
-        // Persistent throttle: a 500 would only make Shopify REDELIVER into the
-        // same saturated bucket. Queue + ack instead; drained once it clears.
-        if (await enqueuePendingRefresh(kind, gid)) {
-          return NextResponse.json({ ok: true, topic, deferred: true });
-        }
-        // No queue available — Shopify's spaced redelivery IS the retry then.
-        return NextResponse.json(
-          { ok: false, error: result.reason },
-          { status: 503, headers: { "Retry-After": "30" } }
-        );
+      if (!(await enqueuePendingRefresh(kind, gid))) {
+        console.warn(`[webhooks/shopify] refresh of ${gid} failed and could not be queued — the daily sync reconciles it`);
       }
-      // Real failure → 500 so Shopify retries (the update is idempotent).
-      return NextResponse.json({ ok: false, error: result.reason }, { status: 500 });
+      return;
     }
-
-    // (5) Success ⇒ the bucket has budget again: work off a few queued targets.
-    // Bounded (items + time) and never fatal to the delivery we just processed.
-    let drain: { drained: number; requeued: number } | null = null;
-    try {
-      drain = await drainPendingRefreshes();
-    } catch {
-      drain = null;
-    }
-
-    return NextResponse.json({
-      ok: true,
-      topic,
-      action: result.action,
-      productId: result.productId,
-      reembedded: result.reembedded,
-      ...(drain && drain.drained + drain.requeued > 0 ? { drain } : {}),
-    });
+    await drainPendingRefreshes();
   } catch (err) {
-    reportError(err, { route: "api/webhooks/shopify", phase: "ingest", topic: topic ?? "none" });
-    return NextResponse.json({ ok: false, error: "Ingest failed" }, { status: 500 });
+    reportError(err, { route: "api/webhooks/shopify", phase: "refresh-after-ack", topic: topic ?? "none" });
   }
 }

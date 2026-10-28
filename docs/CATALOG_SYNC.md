@@ -283,21 +283,28 @@ or product change; the route:
 4. Is **idempotent** (an unchanged product writes nothing — absorbs Shopify's
    frequent duplicate deliveries) and **burst-guarded** (catalog-blob mutations
    are serialized behind a best-effort Redis lock; it degrades to no-lock when KV
-   is absent, with the daily sync as backstop). A real failure returns **500** so
-   Shopify retries safely.
+   is absent, with the daily sync as backstop).
+   **Answers at once** (since 2026-10-28): the delivery is acked `200
+   {accepted:true}` right after the signature check and the routing, and the
+   refresh runs after the response (`after()` from `next/server`, Vercel
+   `waitUntil`, within `maxDuration` 60). Shopify fails a delivery whose answer
+   takes longer than 5 s, and a refresh reads and writes the catalog and
+   embeddings blobs (~35 MB) behind the lock and then drains queued targets — a
+   product edit or a stock burst used to fill Shopify's webhook log with
+   failures and redeliveries. A refresh that fails (throttled or a real error) is
+   queued for a later drain; Shopify no longer redelivers an acked delivery.
 5. Applies **throttle backpressure** (`shopify-backpressure.mjs` +
    `shopify-throttle-gate.ts`): a bulk change in Shopify (ERP stock sync, an app
    re-saving all products) fires hundreds of deliveries in minutes, whose
    concurrent Admin API calls drain the shop's cost-based leaky bucket together —
    per-invocation retries can't win against that, and a 500 would make Shopify
    *redeliver* into the storm. So the first `THROTTLED` response trips a shared,
-   short-lived Redis gate; while it holds, deliveries skip Shopify entirely — the
+   short-lived Redis gate; while it holds, refreshes skip Shopify entirely — the
    product/inventory-item GID is queued in a Redis **set** (which coalesces
-   duplicates) and the delivery is acked `200 {deferred:true}`. Later successful
-   deliveries drain a few queued targets each (a refresh always re-fetches
-   current truth, so deferral/coalescing is lossless); the daily sync reconciles
-   whatever remains. Without KV it falls back to in-function retries, then
-   `503` so Shopify's spaced redelivery acts as the queue.
+   duplicates). Later successful refreshes drain a few queued targets each (a
+   refresh always re-fetches current truth, so deferral/coalescing is lossless);
+   the daily sync reconciles whatever remains. Without KV a failed refresh is
+   only reported (the daily sync reconciles it).
    Persistent throttling is logged as a warning, not a Sentry error — it is
    self-healing backpressure, not a bug.
 
