@@ -42,7 +42,7 @@ const SOURCE_LABEL: Record<ShowroomCardData["source"], string> = {
 };
 
 const READ_THEMES_HELP =
-  "Die ausgestellten Produkte stehen im Live-Theme (Seite „Showroom München-Gröbenzell“, Abschnitt mit den Produkten). Mo liest sie über die Shopify-Admin-API — dafür braucht die App die Berechtigung read_themes: in der Shopify-App unter den Zugriffsbereichen ergänzen und die App neu installieren. Bis dahin gilt die eigene Liste; eine zuletzt gelesene Liste bleibt erhalten.";
+  "Die ausgestellten Produkte stehen im Live-Theme (Seite „Showroom München-Gröbenzell“, Abschnitt mit den Produkten). Mo liest sie über die Shopify-Admin-API — dafür braucht die App die Berechtigung read_themes. Fehlt sie (z. B. nach einem App-Deploy aus einer alten Konfiguration): in der App-Konfiguration ergänzen, eine neue App-Version veröffentlichen und die Berechtigung im Shopify-Admin bestätigen. Bis dahin gilt die eigene Liste; eine zuletzt gelesene Liste bleibt erhalten.";
 
 type Manual = ShowroomCardData["manual"];
 

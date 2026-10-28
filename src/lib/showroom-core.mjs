@@ -7,8 +7,7 @@
 // Showroom“) whose `products` setting is a hand-picked list of product handles
 // — no collection, tag or metafield. That list lives only in the LIVE theme, so
 // the backend reads the main theme's template through the Admin API (scope
-// `read_themes` — TODO(maintainer): the app does not have it yet; add the scope
-// to the app and reinstall it, docs/CONFIGURATOR.md §4b), takes the
+// `read_themes`, docs/CONFIGURATOR.md §4b), takes the
 // featured-collection section(s) whose heading or subheading mentions
 // „Showroom“ (or the section SHOWROOM_SECTION_ID pins) and, if such a section
 // points to a collection, that collection's products as well.

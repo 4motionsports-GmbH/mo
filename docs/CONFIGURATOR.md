@@ -426,9 +426,10 @@ Data-driven constraints the tools **validate** instead of relying on the prompt 
   (`read_products`). When no section matches and nothing is pinned (the client renamed the heading in
   the theme editor), the section ids of the last good read are tried before the error is recorded
   (`showroomFromStoredSections`), so later changes to the hand-picked products still reach Mo.
-- **Scope `read_themes` — manual step:** the app does not have it today. Add it to the Shopify app's
-  access scopes and reinstall the app (`TODO(maintainer)` in `showroom-store.ts`); until then every
-  refresh records „Berechtigung read_themes fehlt …“ and only the manual list applies.
+- **Scope `read_themes`:** needed to read the theme — the live state and the CLI steps that add it
+  (a new app version, the permission accepted in the Shopify admin): [`ROLLOUT_TODO.md`](./ROLLOUT_TODO.md)
+  item 16.3. Without it every refresh records „Berechtigung read_themes fehlt …“ and only the manual
+  list applies.
 - **Cache and refresh:** `admin_settings` key `showroom` (no migration) keeps the last good theme list
   (handles, collections, sections, theme name, file, `fetchedAt`), the manual list, the last attempt and
   its error; read per instance with a 5-minute TTL (chat, `/api/products`, the cards). Refreshed daily by

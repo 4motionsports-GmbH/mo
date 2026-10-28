@@ -2553,9 +2553,9 @@ still count in „Umsatz durch Mo“ (channel „Persönliche Marketing-E-Mail�
   the name/e-mail fields — the full scope list (incl. the catalog and Wissen
   scopes) is the `SHOPIFY_CLIENT_ID` note in [`.env.example`](../.env.example)
   (reinstall the app after adding scopes). The showroom list of the
-  Konfigurator (§3.11, since 27.10.2026) needs `read_themes` — **not granted
-  yet**; until it is, the card „Showroom“ shows the error and only the manual
-  list applies.
+  Konfigurator (§3.11, since 27.10.2026) needs `read_themes` (live state:
+  [`ROLLOUT_TODO.md`](./ROLLOUT_TODO.md) item 16.3); without it the card
+  „Showroom“ shows the error and only the manual list applies.
 - **API version:** requests target the configured `SHOPIFY_API_VERSION` (current
   stable, e.g. `2026-04`), not `latest`.
 - The discount + orders calls follow the Shopify docs for

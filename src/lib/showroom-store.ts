@@ -8,9 +8,8 @@
 // a database the showroom is unknown, a failed refresh keeps the last good
 // list, nothing here can break a chat response. docs/CONFIGURATOR.md §4b.
 //
-// TODO(maintainer): reading the theme needs the Admin API scope `read_themes`,
-// which the app does not have yet — add it to the Shopify app (Dev Dashboard →
-// the app's access scopes) and reinstall the app; until then the refresh
+// Reading the theme needs the Admin API scope `read_themes` (the live state and
+// how it is added: docs/ROLLOUT_TODO.md item 16.3); without it the refresh
 // records „Berechtigung read_themes fehlt …“ and only the manual list applies.
 
 import { getSql, type Sql } from "./db";
