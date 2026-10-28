@@ -83,7 +83,7 @@ test("the live-safe builds are exactly the ones that redeem the code", () => {
       assert.equal(Boolean(b?.acceptable), widgetRedeemsLinkCode(counts), `${variant} ${commit}`);
     }
   }
-  assert.deepEqual(WIDGET_BUILDS.filter((b) => b.current).map((b) => b.key), ["konfigurator-2026-10-23"]);
+  assert.deepEqual(WIDGET_BUILDS.filter((b) => b.current).map((b) => b.key), ["konfigurator-2026-10-27"]);
 });
 
 test("a half-applied set or a non-widget file is never passed off as a known build", () => {
@@ -203,7 +203,7 @@ test("the Konfigurator round of 2026-10-23 is recognised by its product options"
   const row = WIDGET_BUILDS.find((b) => b.key === "konfigurator-2026-10-23");
   assert.equal(WIDGET_BUILDS[1], row); // newest first, after the round of 2026-10-27
   assert.equal(row?.acceptable, true);
-  assert.equal(row?.current, true); // live since 2026-10-24 (M's upload, live check passed)
+  assert.equal(row?.current, false); // live 2026-10-24 … 2026-10-28, then acd75c0
   assert.equal(countWidgetMarkers(`group.className = 'ms-chat-offer';`)["ms-chat-offer"], 1);
 });
 
@@ -218,7 +218,7 @@ test("the Konfigurator round of 2026-10-27 is recognised by the product rule und
   const row = WIDGET_BUILDS.find((b) => b.key === "konfigurator-2026-10-27");
   assert.equal(WIDGET_BUILDS[0], row); // newest first
   assert.equal(row?.acceptable, true);
-  assert.equal(row?.current, false); // the expected build only after M's upload (ROLLOUT_TODO item 16)
+  assert.equal(row?.current, true); // live since 2026-10-28 (M's upload, live check passed)
   assert.match(row?.commit ?? "", /^[0-9a-f]{7}$/);
   const c = countWidgetMarkers(`if (rule) main.appendChild(el('div', { class: 'ms-chat-planhost-rule', text: rule }));`);
   assert.equal(c["ms-chat-planhost-rule"], 1);

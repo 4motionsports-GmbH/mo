@@ -151,7 +151,7 @@ export const KPI_RELEASES = Object.freeze([
       "Fehlt beim Klick auf „Weiter – Mo berät mich“ eine Angabe (z. B. die Fläche), markiert die Seite die Karte rot und springt dorthin, statt still zu blockieren — „An Mo übergeben“ kann steigen. Neu und standardmäßig aus: der Konfigurator-Rabatt (Pop-up mit Rabattcode, Einstellung im Bereich Konfigurator); erst wenn er eingeschaltet ist, ändern sich Pop-up-Zahlen und Bestellungen mit dem Code. Nichts wird anders gezählt.",
   },
   {
-    date: "2026-10-27",
+    date: "2026-10-28",
     key: "konfigurator-hinweise-regeln",
     title: "Konfigurator: Hinweise vor der Beratung, Produktregeln, Showroom nach Verfügbarkeit",
     detail:
