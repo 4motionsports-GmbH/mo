@@ -698,8 +698,8 @@ round (black / blue pills, no red). KPI events `configurator_discount_shown` { t
 `_activated`, `_copied`, `_closed` (§6).
 
 **Round 6 on the page and in the widget** (27.10.2026, client review — the shared spec; the theme's
-MANIFEST lists the files): the seals as one block with the sentence above them (regular weight), large,
-top right inside the hero by default — new setting `seal_position` („Oben rechts“ / „Unten rechts“, one
+MANIFEST lists the files): the seals as one block with the sentence (regular weight; since 29.10. below
+the seals, „Hero seals after the client's picture“ below), large, top right inside the hero by default — new setting `seal_position` („Oben rechts“ / „Unten rechts“, one
 modifier class on the hero); the plan box „Dein Home-Gym-Plan“ dark blue with white text (token
 `--hgk-navy` = `--hgk-step-3` `#00577f`, the widget reads `var(--hgk-navy, #00577f)`); „Ändern“ / „Neu
 starten“ as outline pills; the step timeline in its own container above the chat (desktop) with five
@@ -709,6 +709,15 @@ Produkt hinzufügen“ adds `min`, the cart add uses them — the old pair heuri
 that sends no `rules` field at all; flooring lines may show „deckt ca. N m²“) and shows the
 `suggest_showroom` card only for products with `showroom: true` (nothing when none; an old backend
 without the field: as before).
+
+**Hero seals after the client's picture** (29.10.2026, theme only — the theme's MANIFEST entry of that
+day): the seal block has no box any more (no background, border, blur or shadow); Women's Health left,
+Men's Health right, the sentence `seal_note` centred below them on three lines, white, regular weight.
+From 1200 px it sits on the photo sized after the picture (seal `clamp(120px, 10.65 % of the hero,
+230px)`, gap 0.343 × seal); the photo placement keeps the old block geometry, so intro, headline, CTA,
+banner and photo are unchanged. „Unten rechts“ adds a soft darkening behind the text for contrast. The
+picture is matched with square seal PNGs cropped tight to the seal's width. No setting id, no template
+change, no widget or backend change.
 
 **Round-6 fixes** (27.10.2026, after the adversarial review — decisions the backend, the widget and the
 page implement identically; API_CONTRACT §2 / §3): coverage means „whole room“ (a published
