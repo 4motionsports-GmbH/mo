@@ -732,6 +732,10 @@ every gap on the page is the layout's gap plus the PNGs' margin): theme setting 
 den Siegel-Bildern“, 0–30 % per side, default 0 = unchanged) shrinks the hero's seal box to the artwork
 (`--hgk-seal × (1 − 2 × trim)`) and draws the image larger inside it, clipped — the seals keep their visible
 size, the gaps and the sentence's distance become the designed ones; a value too high cuts the seals' edges.
+**Seals back to 1×, Men's Health first** (31.10.2026): with the PNGs cropped to the seal the 2× seals were too
+large — the hero seals have the picture's size again (`clamp(120px, 10.65 % of the hero, 230px)` on the photo,
+150–200 px at 750–1199), gaps, margins and the 12 px sentence unchanged; Men's Health left, as in the other
+places on the site (a partner page still puts the active partner first).
 
 **Round-6 fixes** (27.10.2026, after the adversarial review — decisions the backend, the widget and the
 page implement identically; API_CONTRACT §2 / §3): coverage means „whole room“ (a published
