@@ -399,11 +399,11 @@ lawyer ready to send, the Shopify steps and the frontend prompt: [`WELCOME_VOUCH
       entries 2026-10-30 and 2026-10-29). **Not** `templates/page.home-gym-mo.json` (it would drop the uploaded seals and
       the photo), not the widget files.
    2. **Open — M (30.10. evening):** the 2× seals are uploaded, but the seals and the sentence stand far
-      apart — the seal PNGs have an empty margin. Upload the same two files again (theme MANIFEST entry
-      „2026-10-30 evening“), then theme editor → section „Home-Gym-Konfigurator“ → **„Leerer Rand in den
-      Siegel-Bildern“**: raise it until the seals stand close together and the sentence sits under them
-      (too much cuts the seals' edges — one step back), save. Alternatively upload seal PNGs cropped
-      tight to the seal (then leave it at 0).
+      apart — the seal PNGs have an empty margin. **M's choice: cropped PNGs.** Trim the transparent
+      margin of both PNGs (artwork edge to edge, ideally ≥ 920 px wide) and replace them in the theme
+      editor → section „Home-Gym-Konfigurator“ → „Siegel Men's Health“ / „Siegel Women's Health“; save.
+      No code upload needed for that. The slider „Leerer Rand in den Siegel-Bildern“ (theme MANIFEST entry
+      „2026-10-30 evening“, optional upload) stays at 0 with cropped PNGs.
    3. **Open — M:** open `/pages/home-gym-konfigurator` on desktop and phone: seals top right without a
       box, Women's Health left, large, the small sentence below them on three lines. The seals stay sharp
       only with seal PNGs at least ~920 px wide, square and cropped tight to the seal's width (theme
