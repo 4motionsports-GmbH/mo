@@ -719,6 +719,15 @@ banner and photo are unchanged. „Unten rechts“ adds a soft darkening behind 
 picture is matched with square seal PNGs cropped tight to the seal's width. No setting id, no template
 change, no widget or backend change.
 
+**Seals 2×, sentence ½** (30.10.2026, theme only — MANIFEST entry of that day, on the maintainer's request):
+the seal box doubles where it fits (on the photo from 1200 px `clamp(240px, 21.3 % of the hero, 460px)`,
+300–400 px at 750–1199; phones and the white hero from 1200 px keep their size — the row or the headline
+leave no room); the gaps between the seals, the edge margins and the gap to the sentence keep their previous
+values; the sentence is half its size with a 12 px floor. A soft radial darkening behind the sentence keeps it
+at ≥ 4.5:1 on the photo; the active partner seal (1.06) grows away from its neighbour; at 750–1199 the banner
+grows by exactly the taller seal row, so the copy does not move. The seals now cover part of the rack and the
+plant on the photo (accepted). Seal images are requested up to 920 px wide.
+
 **Round-6 fixes** (27.10.2026, after the adversarial review — decisions the backend, the widget and the
 page implement identically; API_CONTRACT §2 / §3): coverage means „whole room“ (a published
 `coverageM2` is always sized to the room); a floor line holds up to 200 pieces, any other 20; only one
