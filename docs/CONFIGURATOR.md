@@ -727,6 +727,11 @@ values; the sentence is half its size with a 12 px floor. A soft radial darkenin
 at ≥ 4.5:1 on the photo; the active partner seal (1.06) grows away from its neighbour; at 750–1199 the banner
 grows by exactly the taller seal row, so the copy does not move. The seals now cover part of the rack and the
 plant on the photo (accepted). Seal images are requested up to 920 px wide.
+Seal PNGs with a transparent margin (30.10. evening, after the upload: seals and sentence stood far apart —
+every gap on the page is the layout's gap plus the PNGs' margin): theme setting `seal_trim` („Leerer Rand in
+den Siegel-Bildern“, 0–30 % per side, default 0 = unchanged) shrinks the hero's seal box to the artwork
+(`--hgk-seal × (1 − 2 × trim)`) and draws the image larger inside it, clipped — the seals keep their visible
+size, the gaps and the sentence's distance become the designed ones; a value too high cuts the seals' edges.
 
 **Round-6 fixes** (27.10.2026, after the adversarial review — decisions the backend, the widget and the
 page implement identically; API_CONTRACT §2 / §3): coverage means „whole room“ (a published
