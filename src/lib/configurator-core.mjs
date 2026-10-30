@@ -213,8 +213,8 @@ export const CONFIGURATOR_FIELDS = Object.freeze([
         id: "house",
         de: "Haus / Keller",
         en: "House / basement",
-        hintDe: "Wand- oder Bodenmontage meist möglich; Deckenhöhe für Racks und Klimmzüge klären",
-        hintEn: "wall or floor mounting usually possible; check the ceiling height for racks and pull-ups",
+        hintDe: "Wand- oder Bodenmontage meist möglich; Deckenhöhe für Racks und Klimmzüge klären; im Keller auf einen trockenen Raum achten",
+        hintEn: "wall or floor mounting usually possible; check the ceiling height for racks and pull-ups; in a basement make sure the room is dry",
       },
       {
         id: "apartment",
@@ -225,10 +225,11 @@ export const CONFIGURATOR_FIELDS = Object.freeze([
       },
       {
         id: "garage",
-        de: "Garage / Outdoor",
-        en: "Garage / outdoor",
-        hintDe: "Feuchtigkeit und Temperatur: robuste, pulverbeschichtete Geräte, Bodenschutz, Elektronik geschützt aufstellen",
-        hintEn: "humidity and temperature: rugged, powder-coated equipment, floor protection, keep electronics protected",
+        // „Outdoor“ removed on the client's request (31.10.2026): motion sports has no outdoor equipment.
+        de: "Garage",
+        en: "Garage",
+        hintDe: "weise von dir aus einmal darauf hin, dass die Garage nicht feucht sein sollte — Geräte gehören immer in eine trockene Umgebung (Feuchtigkeit schadet Stahl, Polstern und Elektronik); dazu Temperaturschwankungen und Bodenschutz beachten",
+        hintEn: "point out once, on your own, that the garage should not be damp — equipment always belongs in a dry environment (moisture harms steel, upholstery and electronics); also mind temperature swings and floor protection",
       },
     ],
   },

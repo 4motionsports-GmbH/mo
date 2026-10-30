@@ -142,7 +142,7 @@ theme's `assets/ms-home-gym-configurator.js` uses the same ids):
 | Field | Ids (German label) |
 | --- | --- |
 | `persona` („Typ / Trainingsfokus“, Mo's personas) | `pragmatic_beginner` Pragmatisch starten · `ambitious_home_athlete` Ambitioniert trainieren · `strength_focused` Kraft und Muskeln aufbauen · `cardio_focused` Gesundheit und Ausdauer fördern · `design_lifestyle` Design und Lifestyle leben · `weight_loss` Abnehmen und fit bleiben (each with Anna's subtitle) |
-| `location` | `house` Haus / Keller · `apartment` Wohnung (Mietobjekt) · `garage` Garage / Outdoor |
+| `location` | `house` Haus / Keller · `apartment` Wohnung (Mietobjekt) · `garage` Garage (until 31.10.2026 „Garage / Outdoor“ — motion sports has no outdoor equipment; the id stays) |
 | `space` | `xs` bis 6 m² · `s` 6–10 m² · `m` 10–20 m² · `l` über 20 m² |
 | `training` (several) | `free_weights` · `machines` · `cardio` · `functional` |
 | `level` | `rookie` · `intermediate` · `pro` |
@@ -732,6 +732,13 @@ every gap on the page is the layout's gap plus the PNGs' margin): theme setting 
 den Siegel-Bildern“, 0–30 % per side, default 0 = unchanged) shrinks the hero's seal box to the artwork
 (`--hgk-seal × (1 − 2 × trim)`) and draws the image larger inside it, clipped — the seals keep their visible
 size, the gaps and the sentence's distance become the designed ones; a value too high cuts the seals' edges.
+**Garage without „Outdoor“, dry environment** (31.10.2026, client mail): the location option is „Garage“ (DE/EN;
+id `garage` unchanged, stored answers and KPIs keep working). Its consulting cue tells Mo to point out once, on
+its own, that the garage should not be damp — equipment always belongs in a dry environment — plus temperature
+swings and floor protection (the old „robuste, pulverbeschichtete Geräte“ is gone); „Haus / Keller“ carries
+„im Keller auf einen trockenen Raum achten“ as a cue. Backend (`configurator-core.mjs`) + theme
+(`assets/ms-home-gym-configurator.js`, label only).
+
 **Seals back to 1×, Men's Health first** (31.10.2026): with the PNGs cropped to the seal the 2× seals were too
 large — the hero seals have the picture's size again (`clamp(120px, 10.65 % of the hero, 230px)` on the photo,
 150–200 px at 750–1199), gaps, margins and the 12 px sentence unchanged; Men's Health left, as in the other

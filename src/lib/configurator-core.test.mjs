@@ -1586,6 +1586,28 @@ test("renderConfiguratorSection: floor protection for the whole room (house, gar
   assert.match(render("garage", "en"), /The "Space" answer is only a range, and the space value in the customer profile only its upper end, not the floor area, as long as you haven't stored one yourself/);
 });
 
+test("location „Garage“ (31.10.2026): no „Outdoor“ in the labels; Mo points out once that the garage must be dry", () => {
+  assert.equal(configuratorLabel("location", "garage"), "Garage");
+  assert.equal(configuratorLabel("location", "garage", "en"), "Garage");
+  const render = (/** @type {string} */ location, /** @type {"de" | "en"} */ locale = "de") =>
+    renderConfiguratorSection({
+      answers: parseConfiguratorContext(ctx({ ...fullAnswers, location })),
+      assortment: ruleCatalog,
+      settings: { focus: "prefer", notes: "" },
+      locale,
+    });
+  const de = render("garage");
+  assert.match(de, /- Trainingsort: Garage — Platz:/);
+  assert.match(de, /- Garage: weise von dir aus einmal darauf hin, dass die Garage nicht feucht sein sollte — Geräte gehören immer in eine trockene Umgebung/);
+  assert.doesNotMatch(de, /Outdoor|pulverbeschichtet/);
+  const en = render("garage", "en");
+  assert.match(en, /- Garage: point out once, on your own, that the garage should not be damp — equipment always belongs in a dry environment/);
+  assert.doesNotMatch(en, /outdoor|powder-coated/i);
+  // the basement: the same principle as a cue, not an active hint
+  assert.match(render("house"), /- Haus \/ Keller: .*im Keller auf einen trockenen Raum achten/);
+  assert.doesNotMatch(render("apartment"), /feucht|trocken/);
+});
+
 test("renderConfiguratorSection: heights on the assortment, plan and accessory lines; accessory rules labelled", () => {
   const catalogWithHeights = [
     { id: "rack", name: "Power Rack", category: "Power Racks", price: 900, inStock: true, tags: ["home-gym-konfigurator"], dimensions: { width: 0, height: 227, depth: 0, weight: 150 } },
