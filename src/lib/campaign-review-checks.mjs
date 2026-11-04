@@ -70,7 +70,7 @@ function parseTime(value) {
 /**
  * @typedef {"blocked" | "hint" | "info"} ReviewLevel
  * @typedef {"skip" | "regenerate" | "narrow_basis" | "swap_products" | "rebuild_bundle" |
- *   "remove_discount" | "generate_hero" | "shorten_subject" | null} ReviewFix
+ *   "remove_discount" | "limit_scope" | "generate_hero" | "shorten_subject" | null} ReviewFix
  * @typedef {{
  *   key: string,
  *   level: ReviewLevel,
@@ -239,8 +239,21 @@ export function reviewChecks(item, ctx = {}) {
       key: "discount_scope_no_set",
       level: "blocked",
       title: "„Gilt für: Set“ gibt es nicht mehr",
-      detail: "„x % nur auf das Set“ gibt es nicht mehr — einen Rabattcode gibt es nur für Einzelprodukte. Rabatt entfernen oder „Gilt für“ auf die gesamte Bestellung bzw. die Empfehlungen ändern, sonst würde der Versand abgelehnt.",
+      detail: "„x % nur auf das Set“ gibt es nicht mehr — einen Rabattcode gibt es nur für die individuelle Auswahl der Mail. Rabatt entfernen oder auf die Auswahl begrenzen, sonst würde der Versand abgelehnt.",
       fix: "remove_discount",
+    });
+  }
+  // "Gilt für: gesamte Bestellung" is history since 04.11.2026: a code applies
+  // only to the individual selection the mail lists (discount-scope.mjs). The
+  // prose of such a draft may promise the whole order, so the send route
+  // refuses it; the fix re-scopes the draft and regenerates the text.
+  if (discount > 0 && item.discountScope === "all" && !item.bundle) {
+    blocked.push({
+      key: "discount_scope_whole_order",
+      level: "blocked",
+      title: "Rabatt gilt noch für die gesamte Bestellung",
+      detail: "Rabattcodes gelten nur noch für die individuelle Auswahl dieser Mail, nicht mehr für die gesamte Bestellung. „Auf Auswahl begrenzen“ stellt den Rabatt um und generiert den Text neu — sonst würde der Versand abgelehnt.",
+      fix: "limit_scope",
     });
   }
   if (
@@ -251,8 +264,8 @@ export function reviewChecks(item, ctx = {}) {
     blocked.push({
       key: "discount_scope_no_recommendations",
       level: "blocked",
-      title: "Rabatt nur für Empfehlungen — aber keine verfügbar",
-      detail: "Der Code soll nur für die empfohlenen Produkte gelten; ohne verfügbare Empfehlung würde der Versand abgelehnt. Produkte hinzufügen oder „Gilt für“ ändern.",
+      title: "Rabatt für die Auswahl — aber kein Produkt verfügbar",
+      detail: "Der Code gilt nur für die individuelle Auswahl dieser Mail; ohne verfügbares Produkt würde der Versand abgelehnt. Produkte hinzufügen oder den Rabatt entfernen.",
       fix: "swap_products",
     });
   }

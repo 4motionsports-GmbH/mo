@@ -248,7 +248,7 @@ export async function KampagneTab({
   // chosen variant's name and deep link.
   const allRecommendedIds = [...new Set(queue.flatMap((q) => q.draft.recommendedProductIds))];
   const recommendedSelections = allRecommendedIds.length
-    ? await resolveProductSelections(allRecommendedIds)
+    ? await resolveProductSelections(allRecommendedIds, { allVariants: true })
     : [];
   const productByRef = new Map(recommendedSelections.map((s) => [s.ref, s]));
 

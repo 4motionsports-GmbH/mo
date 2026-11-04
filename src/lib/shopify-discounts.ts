@@ -33,15 +33,20 @@
 //   }
 // `percentage` is a fraction (0.05 = 5%). `usageLimit: 1` makes the code truly
 // single-use; `appliesOncePerCustomer: true` additionally pins it to one buyer.
-// With `productIds` (campaign scope "Empfehlungen" / "Set", migration 0058)
-// `items` becomes `{ products: { productsToAdd: [gid…] } }` — a
+// With `productIds` / `productVariantIds` (the campaign's individual
+// selection, discount-scope.mjs) `items` becomes `{ products: { productsToAdd:
+// [Product gid…], productVariantsToAdd: [ProductVariant gid…] } }` — a
 // DiscountItemsInput / DiscountProductsInput per the same 2026-04 docs — so
-// the code applies to those products only.
+// the code applies to those products (every variant) and variants only.
+// `combinesWith` is set explicitly to false for product, order and shipping
+// discounts (DiscountCombinesWithInput): a personal code never stacks with
+// another code or an automatic discount.
 
 import { adminGraphql, isShopifyConfigured } from "./shopify";
 import { reportError } from "./observability";
 import { parseIntEnv } from "./env-num";
 import { STORE_TIME_ZONE } from "./store-datetime.mjs";
+import { NON_COMBINABLE_DISCOUNT, discountItemsInput } from "./discount-scope.mjs";
 
 // The admin chooses the discount depth as a whole-number percent (DEFAULT 0,
 // range 0–50). The bounds + validation live in lib/discount-validation.mjs,
@@ -195,11 +200,19 @@ export interface CreateDiscountOptions {
    * expiryDays when it lies in the future. */
   endsAt?: string | null;
   /**
-   * Restrict the code to these products (gid://shopify/Product/…). Omitted or
+   * Restrict the code to these products (gid://shopify/Product/…, every
+   * variant) and/or variants (gid://shopify/ProductVariant/…). Both omitted or
    * empty = the whole order. The caller decides whether an unresolvable scope
    * is an error — this function never widens a scope on its own.
    */
   productIds?: string[];
+  productVariantIds?: string[];
+  /**
+   * The code MUST be restricted to items (the campaign path): when no valid
+   * product or variant gid is left, nothing is minted (null) instead of a
+   * whole-order code.
+   */
+  requireItems?: boolean;
 }
 
 /**
@@ -226,7 +239,17 @@ export async function createUniqueDiscountCode(
       ? fixedEnd
       : new Date(startsAt.getTime() + expiryDays * 86_400_000);
 
-  const productIds = [...new Set((options.productIds ?? []).filter((g) => /^gid:\/\/shopify\/Product\/\d+$/.test(g)))];
+  const items = discountItemsInput({
+    productIds: options.productIds ?? [],
+    productVariantIds: options.productVariantIds ?? [],
+  });
+  if (options.requireItems && "all" in items) {
+    reportError(new Error("scoped discount without items — not minted"), {
+      route: "lib/shopify-discounts",
+      phase: "requireItems",
+    });
+    return null;
+  }
   const basicCodeDiscount = {
     title: options.title ?? `Persönlicher Rabatt (${Math.round(percentage * 100)}%) — ${code}`,
     code,
@@ -235,8 +258,10 @@ export async function createUniqueDiscountCode(
     customerSelection: { all: true },
     customerGets: {
       value: { percentage },
-      items: productIds.length > 0 ? { products: { productsToAdd: productIds } } : { all: true },
+      items,
     },
+    // Never stacks with another code or an automatic discount.
+    combinesWith: { ...NON_COMBINABLE_DISCOUNT },
     appliesOncePerCustomer: true,
     usageLimit: 1,
   };

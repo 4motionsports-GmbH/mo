@@ -61,7 +61,7 @@ const DEFAULT_CONFIG: CampaignSampleConfig = {
   brief: null,
   endsAt: null,
   discountPercent: 0,
-  discountScope: "all",
+  discountScope: "recommendations",
   discountValidUntil: null,
   designKey: null,
   textMode: null,

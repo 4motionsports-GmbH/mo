@@ -21,7 +21,7 @@ import { loadProductCatalog, loadEmbeddings } from "./catalog-store";
 import { cosine, embedQuery } from "./retrieval";
 import { blendRecommendationScore, profileSteeringQuery } from "./customer-profile-core.mjs";
 import type { CustomerProfileData } from "./customer-store";
-import { filterAvailable, isDefaultVariantAvailable } from "./availability.mjs";
+import { filterAvailable } from "./availability.mjs";
 import { fetchOrderHistoryByEmail, type OrderHistory } from "./shopify-orders";
 import { buildAccessoryMap, pickComplementIds } from "./campaign-complement.mjs";
 import { anchorValueEur, mergePurchaseOccasions } from "./repurchase-analysis.mjs";
@@ -246,9 +246,11 @@ async function pickCampaignRecommendations(
   }
 
   const owned = new Set(ownedProductIds);
-  // Picks are stored as bare ids, which the mail and the desk show as the
-  // DEFAULT variant — so that variant must be available, not just any one.
-  const candidates = filterAvailable(catalog).filter((p) => !owned.has(p.id) && isDefaultVariantAvailable(p));
+  // Picks are stored as bare ids, which the campaign rail reads as the product
+  // in ALL its variants (product-ref.mjs „All variants“) — a weight series is
+  // recommended as the series, the customer picks the weight in the shop. So a
+  // product qualifies as soon as ANY variant is available (filterAvailable).
+  const candidates = filterAvailable(catalog).filter((p) => !owned.has(p.id));
   if (candidates.length === 0) {
     return { products: [], ownedProductIds, lowConfidence: true, strategy };
   }

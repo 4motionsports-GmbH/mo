@@ -175,3 +175,11 @@ test("validateCampaignInput: letter mode and postage budget (0074)", () => {
   assert.equal(validateCampaignInput({ letterBudgetCents: -1 }).ok, false);
   assert.equal(validateCampaignInput({ letterBudgetCents: 10_000_001 }).ok, false);
 });
+
+test("discount scope: always the individual selection, an old whole-order value is narrowed", () => {
+  assert.equal(validateCampaignInput({ discountScope: "recommendations" }).value.discountScope, "recommendations");
+  assert.equal(validateCampaignInput({ discountScope: "all" }).value.discountScope, "recommendations");
+  const bad = validateCampaignInput({ discountScope: "set" });
+  assert.equal(bad.ok, false);
+  assert.ok(bad.errors.discountScope);
+});

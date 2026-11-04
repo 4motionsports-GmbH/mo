@@ -141,6 +141,11 @@ export interface Product {
   // rendering and price filters. Equal to price for single-variant products.
   priceMin?: number;
   priceMax?: number;
+  // Set only on a campaign DISPLAY projection (product-catalog.ts
+  // projectAllVariants): this entry stands for the product in ALL its
+  // variants — name without variant title, price "ab priceMin", product page
+  // without ?variant. Never present on catalog data itself.
+  allVariants?: boolean;
 }
 
 // ---------------- Customer profile / persona ----------------

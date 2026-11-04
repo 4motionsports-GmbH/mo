@@ -13,6 +13,9 @@ import {
   variantDisplayName,
   variantPdpUrl,
   productPriceRange,
+  hasVariantChoice,
+  allVariantsSummary,
+  allVariantsNote,
 } from "./product-ref.mjs";
 
 const kettlebell = {
@@ -190,4 +193,36 @@ test("normalizeVariantId handles digits, GIDs and junk", async () => {
   assert.equal(normalizeVariantId("gid://shopify/ProductVariant/456"), "456");
   assert.equal(normalizeVariantId("SKU-1"), null);
   assert.equal(normalizeVariantId(null), null);
+});
+
+test("hasVariantChoice: only products with more than one variant", () => {
+  assert.equal(hasVariantChoice(kettlebell), true);
+  assert.equal(hasVariantChoice(legacyProduct), false);
+  assert.equal(hasVariantChoice(null), false);
+});
+
+test("allVariantsSummary: range and cheapest over the AVAILABLE variants", () => {
+  const s = allVariantsSummary(kettlebell);
+  assert.equal(s.available, true);
+  assert.equal(s.min, 24.9);
+  // 16 kg is on sale (39.90) — 24 kg (69.90) is sold out and does not count.
+  assert.equal(s.max, 39.9);
+  assert.equal(s.cheapest.id, "111");
+  assert.deepEqual(s.titles, ["8 kg", "16 kg"]);
+  assert.equal(s.count, 3);
+});
+
+test("allVariantsSummary: all sold out → not available, range over all variants", () => {
+  const soldOut = { ...kettlebell, inStock: false };
+  const s = allVariantsSummary(soldOut);
+  assert.equal(s.available, false);
+  assert.equal(s.min, 24.9);
+  assert.equal(s.max, 69.9);
+});
+
+test("allVariantsNote: lists the choosable variants, null without a choice", () => {
+  assert.equal(allVariantsNote(kettlebell), "alle Varianten: 8 kg, 16 kg");
+  assert.equal(allVariantsNote(kettlebell, "en"), "all variants: 8 kg, 16 kg");
+  assert.equal(allVariantsNote(kettlebell, "de", 1), "alle Varianten: 8 kg, …");
+  assert.equal(allVariantsNote(legacyProduct), null);
 });

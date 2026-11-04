@@ -10,10 +10,10 @@
 //     single-product recommendations, no discount code, no percentage; the set
 //     block with price and saving is appended below the prose automatically;
 //   - an ITEMS mail presents the recommendations, optionally with a code that
-//     applies to everything or only to the recommendations.
+//     applies only to that individual selection (discount-scope.mjs).
 
 import { OFFER_ITEMS, OFFER_SET, discountForOffer, offerKind } from "./offer-mode.mjs";
-import { DEFAULT_DISCOUNT_SCOPE, parseEditableDiscountScope } from "./discount-scope.mjs";
+import { NEW_DISCOUNT_SCOPE, parseEditableDiscountScope } from "./discount-scope.mjs";
 import { bundleItemLabel, bundleItemList } from "./bundle-offer-core.mjs";
 
 /** @typedef {import("./offer-mode.mjs").OfferKind} OfferKind */
@@ -24,12 +24,13 @@ import { bundleItemLabel, bundleItemList } from "./bundle-offer-core.mjs";
  * (desk depth, campaign default, Vorbereiten popover, Eingang suggestion,
  * nightly auto-prepare):
  *   - with an active set attached: no discount (the set price is the
- *     concession) and scope "all" (a scope without a code means nothing);
- *   - without one: the requested depth, and the requested — else the stored —
- *     scope as long as it is one a new draft may carry; anything unknown
- *     becomes "all". The retired "set" (history: „x % only on the set“) means
- *     NO code — a set never carries one any more, and widening it to the whole
- *     order would hand out a discount nobody chose.
+ *     concession) and the selection scope (a scope without a code means
+ *     nothing);
+ *   - without one: the requested depth on the individual selection — the only
+ *     scope a new draft may carry. A stored or requested "all" (the retired
+ *     whole-order scope) is narrowed to the selection; the retired "set"
+ *     (history: „x % only on the set“) means NO code — a set never carries one
+ *     any more, and moving it elsewhere would hand out a discount nobody chose.
  *
  * @param {{
  *   discountPercent?: number | null,
@@ -37,19 +38,19 @@ import { bundleItemLabel, bundleItemList } from "./bundle-offer-core.mjs";
  *   storedScope?: string | null,
  *   hasActiveBundle?: boolean | null,
  * }} input
- * @returns {{ kind: OfferKind, discountPercent: number, discountScope: "all" | "recommendations" }}
+ * @returns {{ kind: OfferKind, discountPercent: number, discountScope: "recommendations" }}
  */
 export function effectiveDraftOffer({ discountPercent, requestedScope, storedScope, hasActiveBundle }) {
   const kind = offerKind(hasActiveBundle);
   const percent = discountForOffer(discountPercent, hasActiveBundle);
-  if (kind === OFFER_SET) return { kind, discountPercent: percent, discountScope: DEFAULT_DISCOUNT_SCOPE };
+  if (kind === OFFER_SET) return { kind, discountPercent: percent, discountScope: NEW_DISCOUNT_SCOPE };
   if ((requestedScope ?? storedScope) === "set") {
-    return { kind, discountPercent: 0, discountScope: DEFAULT_DISCOUNT_SCOPE };
+    return { kind, discountPercent: 0, discountScope: NEW_DISCOUNT_SCOPE };
   }
   return {
     kind,
     discountPercent: percent,
-    discountScope: parseEditableDiscountScope(requestedScope ?? storedScope) ?? DEFAULT_DISCOUNT_SCOPE,
+    discountScope: parseEditableDiscountScope(requestedScope ?? storedScope) ?? NEW_DISCOUNT_SCOPE,
   };
 }
 

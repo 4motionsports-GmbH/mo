@@ -78,6 +78,23 @@ export async function catalogNameLookup(route: string): Promise<(url: string) =>
  */
 export function productGridItem(p: Product, locale: "de" | "en" = "de"): EmailProductGridItem {
   const fmt = GRID_PRICE_FORMATS[locale];
+  // A campaign entry for the product in ALL its variants (projectAllVariants)
+  // with differing prices: ONE row, "ab <cheapest available>" — no
+  // strikethrough, since a single compare-at price cannot describe a range.
+  if (
+    p.allVariants &&
+    typeof p.priceMin === "number" &&
+    typeof p.priceMax === "number" &&
+    p.priceMax > p.priceMin
+  ) {
+    return {
+      imageUrl: firstProductImageUrl(p),
+      name: p.name,
+      url: p.shopifyUrl,
+      priceLabel: `${locale === "en" ? "from" : "ab"} ${fmt.format(p.priceMin)}`,
+      compareAtLabel: null,
+    };
+  }
   const onSale =
     typeof p.salePrice === "number" && p.salePrice > 0 && p.salePrice < p.price;
   return {

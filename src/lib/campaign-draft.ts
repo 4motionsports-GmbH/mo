@@ -51,6 +51,8 @@ import type {
 import type { CampaignPurchaseSummary } from "./campaign-store";
 import { formatStoreDate } from "./store-datetime.mjs";
 import { discountScopePhrase, parseDiscountScope } from "./discount-scope.mjs";
+import { allVariantsNote } from "./product-ref.mjs";
+import type { Product } from "./types";
 import { profileFactsBlock } from "./customer-profile-core.mjs";
 import type { CustomerProfileData } from "./customer-store";
 import type { OfferKind } from "./offer-mode.mjs";
@@ -131,6 +133,24 @@ export interface CampaignRecommendationInput {
   /** Absolute storefront product URL — the model links exactly this. */
   url: string;
   category: string | null;
+  /** For the product in ALL its variants: the variants the customer can pick
+   * from („alle Varianten: 8 kg, 12 kg, …“) — the prose then recommends the
+   * product in general, never one weight or strength. Null otherwise. */
+  variantNote?: string | null;
+}
+
+/** The prompt line input for one DISPLAY product of a campaign mail (a
+ * variant projection, or the all-variants projection of a bare ref). */
+export function campaignRecommendationInput(
+  p: Product,
+  language: "de" | "en" = "de"
+): CampaignRecommendationInput {
+  return {
+    name: p.name,
+    url: p.shopifyUrl,
+    category: p.category || null,
+    variantNote: p.allVariants ? allVariantsNote(p, language) : null,
+  };
 }
 
 export interface GenerateCampaignDraftInput extends DraftDiscountInput {
@@ -234,9 +254,16 @@ export function purchaseBlock(summary: CampaignPurchaseSummary | null, language:
 
 function recommendationsBlock(recs: CampaignRecommendationInput[]): string {
   if (recs.length === 0) return "(keine)";
-  return recs
-    .map((r) => `- ${r.name}${r.category ? ` (${r.category})` : ""} — ${r.url}`)
-    .join("\n");
+  const lines = recs.map(
+    (r) => `- ${r.name}${r.category ? ` (${r.category})` : ""}${r.variantNote ? ` — ${r.variantNote}` : ""} — ${r.url}`
+  );
+  if (recs.some((r) => r.variantNote)) {
+    lines.push(
+      "(Produkte mit „alle Varianten“ empfiehlst du als Produkt im Allgemeinen — leg dich auf keine Variante " +
+        "(Gewicht, Stärke, Größe, Sorte) fest; die Auswahl trifft der Kunde im Shop.)"
+    );
+  }
+  return lines.join("\n");
 }
 
 /** Discount paragraph for the templated fallbacks (no cart button on this
@@ -385,8 +412,10 @@ function discountHint(
       `- ${input.discountPercent}% ${phrase}.` +
       (scope === "all"
         ? ""
-        : ` It does NOT apply to the rest of the order — say plainly what it applies to, never "on your order".`) +
+        : ` It applies ONLY to the products presented in this email (for a product with "all variants": to every variant of it) — ` +
+          `NOT to the rest of the order. Say plainly that it is for their personal selection, never "on your order".`) +
       `\n` +
+      `- It cannot be combined with any other discount code or promotion.\n` +
       `- The code was created ONCE, for THIS customer only — make clear it is ` +
       `their personal code, not a mass promotion.\n` +
       `- The code is exactly ${input.discountCode}. Use EXACTLY this string, unchanged.\n` +
@@ -404,8 +433,10 @@ function discountHint(
     `- ${input.discountPercent}% Rabatt ${phrase}.` +
     (scope === "all"
       ? ""
-      : ` Er gilt NICHT für den Rest der Bestellung — sage klar, worauf er gilt, nie „auf deine Bestellung".`) +
+      : ` Er gilt NUR für die in dieser Mail vorgestellten Produkte (bei einem Produkt mit „alle Varianten“ für jede Variante) — ` +
+        `NICHT für den Rest der Bestellung. Sage klar, dass er für die persönliche Auswahl gilt, nie „auf deine Bestellung".`) +
     `\n` +
+    `- Er ist nicht mit anderen Rabattcodes oder Aktionen kombinierbar.\n` +
     `- Der Code ist EINMALIG und EXTRA für DIESEN Kunden erstellt — kein ` +
     `allgemeiner Gutschein, keine Massenaktion.\n` +
     `- Der Code lautet exakt ${input.discountCode}. Verwende GENAU diese ` +

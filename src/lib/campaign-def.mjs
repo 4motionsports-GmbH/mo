@@ -169,10 +169,13 @@ export function validateCampaignInput(raw, opts = {}) {
     else value.discountPercent = v;
   }
   if (has("discountScope")) {
-    // "set" is history (offer-mode.mjs): a set mail carries no code.
+    // A code applies only to the individual selection of the mail
+    // (discount-scope.mjs). "set" is history (a set mail carries no code);
+    // the retired whole order "all" of an older campaign is narrowed to the
+    // selection on save.
     if (r.discountScope === "all" || r.discountScope === "recommendations") {
-      value.discountScope = r.discountScope;
-    } else errors.discountScope = "Rabatt gilt für: gesamte Bestellung oder Empfehlungen.";
+      value.discountScope = "recommendations";
+    } else errors.discountScope = "Rabatt gilt für die individuelle Auswahl der Mail.";
   }
   if (has("designKey")) {
     const v = typeof r.designKey === "string" && r.designKey.trim() ? r.designKey.trim() : null;

@@ -403,7 +403,7 @@ export async function createCampaign(
          ${JSON.stringify(input.audience ?? { v: 1 })}::jsonb, ${input.audienceMode ?? "fest"},
          ${input.priority ?? 50}, ${input.startsAt ?? null}, ${input.endsAt ?? null},
          ${input.dailyTarget ?? null}, ${input.autoPreparePerDay ?? 0}, ${input.reentryDays ?? null},
-         ${input.discountPercent ?? 0}, ${input.discountScope ?? "all"}, ${input.discountValidUntil ?? null},
+         ${input.discountPercent ?? 0}, ${input.discountScope ?? "recommendations"}, ${input.discountValidUntil ?? null},
          ${input.designKey ?? null}, ${input.heroMode ?? "default"},
          ${input.heroImage ? JSON.stringify(input.heroImage) : null}::jsonb, ${input.textMode ?? null},
          ${input.moPromo ?? true}, ${input.ctaKind ?? "mo_chat"}, ${input.ctaUrl ?? null},
@@ -442,7 +442,7 @@ export async function updateCampaign(id: number, patch: CampaignInput, sql: Sql 
         auto_prepare_per_day = CASE WHEN ${has("autoPreparePerDay")} THEN ${patch.autoPreparePerDay ?? 0}::int ELSE auto_prepare_per_day END,
         reentry_days         = CASE WHEN ${has("reentryDays")} THEN ${patch.reentryDays ?? null}::int ELSE reentry_days END,
         discount_percent     = CASE WHEN ${has("discountPercent")} THEN ${patch.discountPercent ?? 0}::int ELSE discount_percent END,
-        discount_scope       = CASE WHEN ${has("discountScope")} THEN ${patch.discountScope ?? "all"} ELSE discount_scope END,
+        discount_scope       = CASE WHEN ${has("discountScope")} THEN ${patch.discountScope ?? "recommendations"} ELSE discount_scope END,
         discount_valid_until = CASE WHEN ${has("discountValidUntil")}
                                     THEN ${patch.discountValidUntil ?? null}::timestamptz ELSE discount_valid_until END,
         design_key           = CASE WHEN ${has("designKey")} THEN ${patch.designKey ?? null} ELSE design_key END,

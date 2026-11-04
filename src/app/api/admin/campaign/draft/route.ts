@@ -57,7 +57,7 @@ const MAX_SELECTION = 100;
  * recommendedProductIds may be variant-pinned refs; the id round-trips the
  * full ref while name/url show the chosen variant. */
 async function draftResponsePayload(contactId: number, draft: CampaignDraftRow) {
-  const selections = await resolveProductSelections(draft.recommendedProductIds);
+  const selections = await resolveProductSelections(draft.recommendedProductIds, { allVariants: true });
   const byRef = new Map(selections.map((s) => [s.ref, s]));
   const bundle = await getActiveBundleForCampaignContact(contactId);
   return {
@@ -140,14 +140,15 @@ export async function POST(req: Request) {
       );
     }
     // Optional discount scope (0058). Omitted/null = keep the draft's stored
-    // scope; a changed scope always regenerates (the prose states it). "set"
-    // is history (offer-mode.mjs) and refused like any unknown value.
+    // scope; a changed scope always regenerates (the prose states it). Only
+    // the individual selection is accepted — "all" and "set" are history
+    // (discount-scope.mjs) and refused like any unknown value.
     if (body.discountScope == null) {
       discountScope = null;
     } else {
       discountScope = parseEditableDiscountScope(body.discountScope);
       if (!discountScope) {
-        return adminJsonError("bad_request", "discountScope must be all or recommendations.", 400);
+        return adminJsonError("bad_request", "discountScope must be recommendations (the individual selection).", 400);
       }
     }
     // Optional prose length. Omitted/null = keep the existing draft's stored

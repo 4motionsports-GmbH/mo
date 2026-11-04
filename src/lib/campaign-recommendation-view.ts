@@ -28,6 +28,12 @@ export interface CampaignRecommendationView {
   /** Units of the variant a set would use (pinned, else default) — the set
    *  dialog caps its count with it. null = unknown. */
   unitStock: number | null;
+  /** The ref stands for the product in ALL its variants (a bare ref of a
+   *  multi-variant product): `price` is the cheapest available variant's,
+   *  `priceMax` the most expensive — the mail shows „ab <price>“. */
+  allVariants: boolean;
+  /** Upper end of the price range for an all-variants entry, else null. */
+  priceMax: number | null;
 }
 
 /**
@@ -55,5 +61,10 @@ export function recommendationView(
     stock: stock.stock,
     stockScope: stock.stockScope,
     unitStock: stock.unitStock,
+    allVariants: Boolean(resolved?.allVariants),
+    priceMax:
+      resolved?.allVariants && typeof resolved.display?.priceMax === "number"
+        ? resolved.display.priceMax
+        : null,
   };
 }

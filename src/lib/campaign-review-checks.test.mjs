@@ -21,6 +21,7 @@ function readyItem(overrides = {}) {
     subject: "Lea, drei Ergänzungen für dein Training",
     body: "Hallo Lea, mit dem Code MO-XXXX bekommst du 10 % auf deine Bestellung.",
     discountPercent: 10,
+    discountScope: "recommendations",
     lowConfidence: false,
     recommendations: [
       { id: "a", name: "A", url: "https://shop/a", available: true },
@@ -145,6 +146,18 @@ test("the retired scope \"set\" blocks while a code is set", () => {
   const withSet = reviewChecks(readyItem({ discountScope: "set", bundle: SET_MAIL.bundle }), ctx());
   assert.ok(!keys(withSet).includes("discount_scope_no_set"));
   assert.ok(keys(withSet).includes("offer_conflict"));
+});
+
+test("the retired scope \"all\" (whole order) blocks while a code is set, fixed by limiting it", () => {
+  const whole = reviewChecks(readyItem({ discountScope: "all" }), ctx());
+  const c = whole.find((x) => x.key === "discount_scope_whole_order");
+  assert.ok(c);
+  assert.equal(c.level, "blocked");
+  assert.equal(c.fix, "limit_scope");
+  assert.equal(reviewVerdict(whole), "blocked");
+  // Without a code, or on the selection, nothing to do.
+  assert.ok(!keys(reviewChecks(readyItem({ discountScope: "all", discountPercent: 0, body: "Hallo Lea, ohne Code." }), ctx())).includes("discount_scope_whole_order"));
+  assert.ok(!keys(reviewChecks(readyItem(), ctx())).includes("discount_scope_whole_order"));
 });
 
 test("a scoped discount without its target blocks (send-path rule)", () => {

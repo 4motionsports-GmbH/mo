@@ -88,7 +88,12 @@ import {
   PLACEHOLDER_DISCOUNT_CODE,
 } from "./shopify-discounts";
 import { detectDiscountTextMismatch } from "./discount-validation.mjs";
-import type { DiscountScope } from "./discount-scope.mjs";
+import {
+  discountSelectionTargets,
+  productVariantGid,
+  retiredDiscountScopeMessage,
+  type DiscountScope,
+} from "./discount-scope.mjs";
 import { fetchProductGidsByHandles } from "./shopify";
 import { applyMintedDiscountToBody, hasStrayPlaceholder } from "./discount-swap.mjs";
 import {
@@ -104,7 +109,8 @@ import { couponText } from "./discount-coupon.mjs";
 import { shouldRenderBundleBlock } from "./bundle-email-core.mjs";
 import { OFFER_CONFLICT_MESSAGE, offerConflict } from "./offer-mode.mjs";
 import { loadProductCatalog } from "./catalog-store";
-import { resolveProductSelections } from "./product-catalog";
+import { resolveProductSelections, type ResolvedSelection } from "./product-catalog";
+import { parseProductRef } from "./product-ref.mjs";
 import { reportError } from "./observability";
 import type { Product } from "./types";
 
@@ -136,10 +142,6 @@ export type CampaignSendResult =
         | "send_failed";
       message: string;
     };
-
-/** Refusal text for a draft still carrying the retired scope "set"
- * (discount-scope.mjs: history only since 12.10.2026). */
-const SET_SCOPE_RETIRED_MESSAGE = "„Gilt für: Set“ gibt es nicht mehr — bitte „Gilt für“ ändern.";
 
 // One parser for the cadence cap (campaign-flags.mjs) — the review desk shows
 // the same number, so a blocked contact is visible before the gate refuses it.
@@ -286,11 +288,15 @@ export async function campaignSendPreflight(contactId: number): Promise<Campaign
       return { ok: false, reason: "offer_conflict", message: OFFER_CONFLICT_MESSAGE };
     }
 
-    // GATE 1d — the code only on the set (scope "set") is history: only an
-    // item mail carries a code now. Never mint against a scope that no longer
-    // exists — the operator picks „Alles“ or „Empfehlungen“.
-    if (draft.discountPercent > 0 && draft.discountScope === "set") {
-      return { ok: false, reason: "discount_scope_unresolved", message: SET_SCOPE_RETIRED_MESSAGE };
+    // GATE 1d — a code applies only to the individual selection of the mail
+    // (discount-scope.mjs). A draft still carrying a retired scope — "set"
+    // (history since 12.10.2026) or "all" (the whole order, history since
+    // 04.11.2026) — is refused: its prose may promise the wrong thing, and a
+    // whole-order code is never minted any more. The desk shows the same rule
+    // as a blocked Prüfpunkt with „Auf Auswahl begrenzen“.
+    const retiredScope = retiredDiscountScopeMessage(draft.discountScope, draft.discountPercent);
+    if (retiredScope) {
+      return { ok: false, reason: "discount_scope_unresolved", message: retiredScope };
     }
 
     // GATE 2 — a working unsubscribe link is mandatory. No link → no send.
@@ -368,9 +374,10 @@ export async function approveAndSendCampaign(contactId: number): Promise<Campaig
       let discountExpiresAt: string | null = null;
 
       if (draft.discountPercent > 0 && !setBundle) {
-        // Scope (migration 0058): a code for "Empfehlungen" is minted against
-        // exactly the products the mail shows (available ones only). A scope
-        // that cannot be resolved refuses the send — never a silently wider code.
+        // Scope: the code is minted against exactly the selection the mail
+        // shows (available ones only) — a product in all its variants as the
+        // product, a pinned variant as that variant. A selection that cannot
+        // be resolved refuses the send — never a silently wider code.
         const scoped = await resolveDiscountScopeProducts(draft.discountScope, draft.recommendedProductIds);
         if (!scoped.ok) {
           await revertContactClaim(contactId);
@@ -381,10 +388,11 @@ export async function approveAndSendCampaign(contactId: number): Promise<Campaig
           codePrefix: CAMPAIGN_DISCOUNT_CODE_PREFIX,
           // An Aktion's codes all end with it (discount_valid_until, 0066).
           endsAt: campaign.discountValidUntil,
-          title: `Kampagnen-Rabatt (${draft.discountPercent}%${
-            draft.discountScope === "recommendations" ? ", Empfehlungen" : ""
-          })`,
+          title: `Kampagnen-Rabatt (${draft.discountPercent}%, individuelle Auswahl)`,
           productIds: scoped.productIds,
+          productVariantIds: scoped.productVariantIds,
+          // Never a whole-order code on this path.
+          requireItems: true,
         });
         if (!minted) {
           await revertContactClaim(contactId);
@@ -605,42 +613,61 @@ export function campaignCtaOptions(
 }
 
 /**
- * The Shopify product gids a scoped discount code is minted against
- * (discount-scope.mjs): for "Empfehlungen" exactly the products the mail
- * shows — resolveRecommendedProducts, so a sold-out recommendation is neither
- * shown nor covered — with their handles resolved in Shopify. "all" → no
- * restriction. The retired scope "set" (only the set; history since a set
- * mail carries no code) is refused — GATE 1d already stops it. Fails (ok:
- * false, German message for the desk) when the scope cannot be honoured — no
- * available recommendations, an unresolvable handle — so the send path
- * refuses instead of minting a code wider than promised.
+ * The Shopify gids a campaign code is minted against (discount-scope.mjs):
+ * exactly the selection the mail shows — resolveRecommendedSelections, so a
+ * sold-out recommendation is neither shown nor covered. A product shown in all
+ * its variants (or without a variant choice) becomes its Product gid (every
+ * variant), a pinned variant its ProductVariant gid. A retired scope ("all",
+ * "set") is refused — GATE 1d already stops it. Fails (ok: false, German
+ * message for the desk) when the selection cannot be honoured — nothing
+ * available, an unresolvable handle — so the send path refuses instead of
+ * minting a code wider than promised.
  */
 async function resolveDiscountScopeProducts(
   scope: DiscountScope,
   recommendedProductIds: string[]
-): Promise<{ ok: true; productIds: string[] } | { ok: false; message: string }> {
-  if (scope === "all") return { ok: true, productIds: [] };
-  if (scope !== "recommendations") return { ok: false, message: SET_SCOPE_RETIRED_MESSAGE };
+): Promise<
+  { ok: true; productIds: string[]; productVariantIds: string[] } | { ok: false; message: string }
+> {
+  if (scope !== "recommendations") {
+    return {
+      ok: false,
+      message:
+        retiredDiscountScopeMessage(scope, 1) ??
+        "Rabattcodes gelten nur für die individuelle Auswahl der Mail.",
+    };
+  }
   try {
-    const products = await resolveRecommendedProducts(recommendedProductIds);
-    const handles = [...new Set(products.map((p) => p.slug || p.id).filter(Boolean))];
-    if (handles.length === 0) {
+    const selections = await resolveRecommendedSelections(recommendedProductIds);
+    const targets = discountSelectionTargets(
+      selections.map((s) => ({
+        handle: s.product.slug || s.product.id,
+        variantId: s.allVariants ? null : parseProductRef(s.ref).variantId,
+      }))
+    );
+    if (targets.handles.length === 0 && targets.variantIds.length === 0) {
       return {
         ok: false,
         message:
-          "Der Rabatt soll nur für die Empfehlungen gelten, aber der Entwurf enthält keine verfügbaren Empfehlungen. " +
-          "Produkte hinzufügen oder den Rabatt-Bereich ändern.",
+          "Der Rabatt gilt nur für die individuelle Auswahl, aber der Entwurf enthält keine verfügbaren Produkte. " +
+          "Produkte hinzufügen oder den Rabatt entfernen.",
       };
     }
-    const gids = await fetchProductGidsByHandles(handles);
-    const missing = handles.filter((h) => !gids.has(h));
+    const gids = targets.handles.length > 0 ? await fetchProductGidsByHandles(targets.handles) : new Map<string, string>();
+    const missing = targets.handles.filter((h) => !gids.has(h));
     if (missing.length > 0) {
       return {
         ok: false,
-        message: `Für ${missing.length === 1 ? "ein empfohlenes Produkt" : `${missing.length} empfohlene Produkte`} konnte Shopify keine Produkt-ID liefern (${missing.join(", ")}) — der Rabatt lässt sich nicht auf die Empfehlungen begrenzen.`,
+        message: `Für ${missing.length === 1 ? "ein Produkt der Auswahl" : `${missing.length} Produkte der Auswahl`} konnte Shopify keine Produkt-ID liefern (${missing.join(", ")}) — der Rabatt lässt sich nicht auf die Auswahl begrenzen.`,
       };
     }
-    return { ok: true, productIds: handles.map((h) => gids.get(h) as string) };
+    return {
+      ok: true,
+      productIds: targets.handles.map((h) => gids.get(h) as string),
+      productVariantIds: targets.variantIds
+        .map((id) => productVariantGid(id))
+        .filter((g): g is string => g !== null),
+    };
   } catch (err) {
     reportError(err, { route: "lib/campaign-email", phase: "resolveDiscountScopeProducts" });
     return {
@@ -653,38 +680,42 @@ async function resolveDiscountScopeProducts(
 /**
  * Resolve the draft's recommended product ids (including review-time curation;
  * possibly variant-pinned refs) against the live catalog — the campaign's
- * product rows, exactly like the marketing channel's cart contents. Returns
- * variant-projected display products, so a row shows the CHOSEN variant's
- * name, price and deep link. Purely presentational: a resolve failure just
- * drops the rows (the prose keeps its product links), it never blocks a send.
+ * product rows. A bare ref of a product with a variant choice is the product
+ * in ALL its variants (one row, „ab X €“, product page without a pinned
+ * variant); a pinned ref shows the CHOSEN variant's name, price and deep link.
  *
  * Dropped:
  *   - a ref whose pinned variant no longer exists (reported) — never silently
  *     downgraded to the default variant: a marketing mail must not show a
  *     price the admin didn't approve (PAngV);
- *   - a SOLD-OUT product/variant — a mail never advertises what cannot be
- *     bought (the catalog sync keeps stock fresh; the scoped code follows,
- *     since resolveDiscountScopeProducts reads this same list).
+ *   - a SOLD-OUT product/variant (all variants sold out, for an all-variants
+ *     entry) — a mail never advertises what cannot be bought (the scoped code
+ *     follows, since resolveDiscountScopeProducts reads this same list).
+ * Throws on a catalog failure — the callers decide (rows: drop; code: refuse).
  */
-async function resolveRecommendedProducts(productIds: string[]): Promise<Product[]> {
+async function resolveRecommendedSelections(productIds: string[]): Promise<ResolvedSelection[]> {
   if (productIds.length === 0) return [];
+  const selections = await resolveProductSelections(productIds, { allVariants: true });
+  const gone = selections.filter((s) => s.missingVariant);
+  if (gone.length > 0) {
+    reportError(
+      new Error(
+        `campaign email: pinned variant(s) vanished, dropped from grid: ${gone
+          .map((s) => s.ref)
+          .join(", ")}`
+      ),
+      { route: "lib/campaign-email", phase: "resolveRecommendedProducts" }
+    );
+  }
+  return selections.filter((s) => s.available && s.display !== null);
+}
+
+/** The display products of resolveRecommendedSelections. Purely
+ * presentational: a resolve failure just drops the rows (the prose keeps its
+ * product links), it never blocks a send. */
+async function resolveRecommendedProducts(productIds: string[]): Promise<Product[]> {
   try {
-    const selections = await resolveProductSelections(productIds);
-    const gone = selections.filter((s) => s.missingVariant);
-    if (gone.length > 0) {
-      reportError(
-        new Error(
-          `campaign email: pinned variant(s) vanished, dropped from grid: ${gone
-            .map((s) => s.ref)
-            .join(", ")}`
-        ),
-        { route: "lib/campaign-email", phase: "resolveRecommendedProducts" }
-      );
-    }
-    return selections
-      .filter((s) => s.available)
-      .map((s) => s.display)
-      .filter((p): p is Product => p !== null);
+    return (await resolveRecommendedSelections(productIds)).map((s) => s.display as Product);
   } catch (err) {
     reportError(err, { route: "lib/campaign-email", phase: "resolveRecommendedProducts" });
     return [];

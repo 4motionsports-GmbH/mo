@@ -25,7 +25,7 @@
 
 import { DEFAULT_EMAIL_TEXT_MODE, parseEmailTextMode } from "./email-text-mode.mjs";
 import { parseDiscountPercent } from "./discount-validation.mjs";
-import { parseEditableDiscountScope } from "./discount-scope.mjs";
+import { NEW_DISCOUNT_SCOPE, parseEditableDiscountScope } from "./discount-scope.mjs";
 
 const TRUTHY = new Set(["1", "true", "yes", "on"]);
 
@@ -82,10 +82,11 @@ export function marketingMinSendIntervalDays(env = process.env) {
  * contacts to draft per night (CAMPAIGN_AUTO_PREPARE_COUNT, 0 = the cron does
  * nothing — the default, because generation costs API money), at which
  * discount depth, what that code applies to (CAMPAIGN_AUTO_PREPARE_DISCOUNT_SCOPE,
- * discount-scope.mjs) and in which text mode. Invalid values fall back to 0 %,
- * "all" and the modern default text mode.
+ * discount-scope.mjs — since 04.11.2026 always the individual selection) and in
+ * which text mode. Invalid values fall back to 0 %, the selection and the
+ * modern default text mode.
  * @param {Record<string, string | undefined>} [env]
- * @returns {{ count: number, discountPercent: number, discountScope: "all" | "recommendations", textMode: "detailed" | "compact" | "minimal" }}
+ * @returns {{ count: number, discountPercent: number, discountScope: "recommendations", textMode: "detailed" | "compact" | "minimal" }}
  */
 export function campaignAutoPrepareConfig(env = process.env) {
   const count = parseNonNegativeInt(env.CAMPAIGN_AUTO_PREPARE_COUNT, 0);
@@ -96,11 +97,12 @@ export function campaignAutoPrepareConfig(env = process.env) {
       : 0;
   const textMode = parseEmailTextMode(env.CAMPAIGN_AUTO_PREPARE_TEXT_MODE) ?? DEFAULT_EMAIL_TEXT_MODE;
   // "set" is no longer a scope a draft can take (a set mail carries no code,
-  // offer-mode.mjs): „x % only on the set“ means no code at all — never
-  // widened to the whole order. Any other invalid value falls back to "all".
+  // offer-mode.mjs): „x % only on the set“ means no code at all — never moved
+  // to other products. Anything else — the retired whole order "all"
+  // included — is the individual selection, the only scope a code has.
   const rawScope = env.CAMPAIGN_AUTO_PREPARE_DISCOUNT_SCOPE;
   const retiredSet = typeof rawScope === "string" && rawScope.trim() === "set";
-  const discountScope = parseEditableDiscountScope(rawScope) ?? "all";
+  const discountScope = parseEditableDiscountScope(rawScope) ?? NEW_DISCOUNT_SCOPE;
   return { count, discountPercent: retiredSet ? 0 : discountPercent, discountScope, textMode };
 }
 

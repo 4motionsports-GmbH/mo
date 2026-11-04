@@ -83,7 +83,7 @@ export async function POST(req: Request) {
 
     const existingDraft = await getDraftForContact(contactId);
     const stored = new Set(existingDraft?.recommendedProductIds ?? []);
-    const selections = await resolveProductSelections(productIds);
+    const selections = await resolveProductSelections(productIds, { allVariants: true });
     const byRef = new Map(selections.map((s) => [s.ref, s]));
     const usable = (ref: string) => {
       const s = byRef.get(ref);

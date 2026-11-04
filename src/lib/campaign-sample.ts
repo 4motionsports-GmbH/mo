@@ -15,12 +15,12 @@ import { getCampaign, type Campaign } from "./campaigns-store";
 import { formatAdmin, ADMIN_DATE } from "./admin-datetime.mjs";
 import { loadPurchaseHistory } from "./customer-orders-store";
 import { PLACEHOLDER_DISCOUNT_CODE, formatExpiryDateForLanguage } from "./shopify-discounts";
-import { generateCampaignDraft } from "./campaign-draft";
+import { generateCampaignDraft, campaignRecommendationInput } from "./campaign-draft";
 import type { EmailTextMode } from "./marketing-draft";
 import { DEFAULT_EMAIL_TEXT_MODE } from "./email-text-mode.mjs";
-import { parseEditableDiscountScope, type DiscountScope } from "./discount-scope.mjs";
+import { NEW_DISCOUNT_SCOPE, parseEditableDiscountScope, type DiscountScope } from "./discount-scope.mjs";
 import { loadCampaignPersonalization } from "./campaign-recommendations";
-import { resolveProductSelections } from "./product-catalog";
+import { campaignDisplayProduct, resolveProductSelections } from "./product-catalog";
 import { projectedExpiry, daysUntil } from "./campaign-prepare";
 import { renderCampaignSample, approveAndSendCampaign } from "./campaign-email";
 import { createTestContact, saveCampaignDraft } from "./campaign-store";
@@ -103,12 +103,14 @@ export async function composeCampaignSample(
       preloaded ?? undefined
     );
     const textMode: EmailTextMode = config.textMode ?? DEFAULT_EMAIL_TEXT_MODE;
-    // A sample is an item mail (no set is attached to a sample); the history
-    // scope "set" of an old campaign reads as "all" (offer-mode.mjs).
-    const discountScope: DiscountScope = parseEditableDiscountScope(config.discountScope) ?? "all";
+    // A sample is an item mail (no set is attached to a sample); a code
+    // applies only to the individual selection — the history scopes "all" and
+    // "set" of an old campaign read as that (discount-scope.mjs).
+    const discountScope: DiscountScope = parseEditableDiscountScope(config.discountScope) ?? NEW_DISCOUNT_SCOPE;
     const hasDiscount = config.discountPercent > 0;
     const expiry = hasDiscount ? projectedExpiry(config) : null;
-    const products = recommendations.products;
+    // The engine picks bare ids — the product in all its variants.
+    const products = recommendations.products.map(campaignDisplayProduct);
 
     const draft = await generateCampaignDraft({
       language,
@@ -122,7 +124,7 @@ export async function composeCampaignSample(
       adminNote: null,
       purchaseSummary,
       focusPurchaseTitles: null,
-      recommendations: products.map((p) => ({ name: p.name, url: p.shopifyUrl, category: p.category || null })),
+      recommendations: products.map((p) => campaignRecommendationInput(p, language)),
       lowConfidence: recommendations.lowConfidence,
       offerKind: "items",
       attachedBundle: null,
@@ -227,7 +229,7 @@ export async function sendCampaignSampleTest(input: SampleTestInput): Promise<Sa
 
     // Only products that are still in the catalog and in stock (the desk's rule).
     const selections = input.recommendedProductIds.length
-      ? await resolveProductSelections(input.recommendedProductIds)
+      ? await resolveProductSelections(input.recommendedProductIds, { allVariants: true })
       : [];
     const refs = selections.filter((s) => !s.missingVariant && s.available && s.display).map((s) => s.ref);
 
@@ -251,7 +253,7 @@ export async function sendCampaignSampleTest(input: SampleTestInput): Promise<Sa
       body: input.body,
       discountPercent: campaign.discountPercent,
       discountExpiresAt: expiry ? expiry.toISOString() : null,
-      discountScope: parseEditableDiscountScope(campaign.discountScope) ?? "all",
+      discountScope: parseEditableDiscountScope(campaign.discountScope) ?? NEW_DISCOUNT_SCOPE,
       purchaseSummary: null,
       recommendedProductIds: refs,
       productHighlights: input.productHighlights,

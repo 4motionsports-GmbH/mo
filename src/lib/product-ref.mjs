@@ -193,3 +193,72 @@ export function productPriceRange(product) {
   if (!prices.length) return null;
   return { min: Math.min(...prices), max: Math.max(...prices) };
 }
+
+// ── "All variants" — a bare ref in a campaign mail ─────────────────────────
+// In the campaign rail (recommendations, the review desk, the mail, the
+// scoped discount code) a BARE ref of a product with more than one variant
+// means "this product in all its variants": one row in the mail with the
+// product name, the price "ab X €" and the product page without a pinned
+// variant — the customer picks weight/strength/flavour in the shop, and a
+// code scoped to the selection covers every variant (Shopify product gid).
+// A pinned ref (`handle~variantId`) keeps meaning exactly that one variant.
+// Other rails (chat, carts, sets) keep the default-variant reading above.
+
+/** True when the product offers a genuine variant choice (more than one variant). */
+export function hasVariantChoice(product) {
+  return productVariants(product).length > 1;
+}
+
+/**
+ * Summary of a product "in all its variants": availability (any variant), the
+ * effective price range over the AVAILABLE variants (all of them when none is
+ * available, so a sold-out product still has a price to show in the desk) and
+ * the cheapest such variant — whose regular/sale price the "ab" line uses.
+ * @param {object|null|undefined} product
+ * @returns {{ available: boolean, min: number|null, max: number|null, cheapest: object|null, titles: string[], count: number }}
+ */
+export function allVariantsSummary(product) {
+  const variants = productVariants(product);
+  const availableVariants = variants.filter((v) => v && isVariantAvailable(product, v));
+  const pool = availableVariants.length > 0 ? availableVariants : variants;
+  let cheapest = null;
+  let min = null;
+  let max = null;
+  for (const v of pool) {
+    const p = effectiveVariantPrice(v);
+    if (typeof p !== "number" || !(p > 0)) continue;
+    if (min == null || p < min) {
+      min = p;
+      cheapest = v;
+    }
+    if (max == null || p > max) max = p;
+  }
+  const titles = pool.map((v) => String(v?.title ?? "").trim()).filter(Boolean);
+  return {
+    available: availableVariants.length > 0,
+    min,
+    max,
+    cheapest,
+    titles,
+    count: variants.length,
+  };
+}
+
+/**
+ * The drafter's note for an all-variants recommendation: which variants the
+ * customer can choose from (available ones, capped), so the prose recommends
+ * the product in general instead of one weight or strength.
+ * @param {object|null|undefined} product
+ * @param {"de" | "en"} [language]
+ * @param {number} [cap]
+ * @returns {string|null} null for a product without a variant choice
+ */
+export function allVariantsNote(product, language = "de", cap = 8) {
+  if (!hasVariantChoice(product)) return null;
+  const { titles } = allVariantsSummary(product);
+  const en = language === "en";
+  if (titles.length === 0) return en ? "all variants" : "alle Varianten";
+  const shown = titles.slice(0, cap).join(", ");
+  const more = titles.length > cap ? (en ? ", …" : ", …") : "";
+  return en ? `all variants: ${shown}${more}` : `alle Varianten: ${shown}${more}`;
+}

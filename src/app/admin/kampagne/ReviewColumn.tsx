@@ -21,7 +21,7 @@ import { offerKind } from "@/lib/offer-mode.mjs";
 import { bundleSaving } from "@/lib/bundle-email-core.mjs";
 import { campaignSegmentByKey } from "@/lib/campaign-segments.mjs";
 import { DISCOUNT_PERCENT_MAX, clampDiscountPercent } from "@/lib/discount-validation.mjs";
-import { DISCOUNT_SCOPE_OPTIONS, type DiscountScope } from "@/lib/discount-scope.mjs";
+import { NEW_DISCOUNT_SCOPE, discountScopeLabel } from "@/lib/discount-scope.mjs";
 import { abGroupOf } from "@/lib/campaign-review-checks.mjs";
 import {
   CONTACT_FREQUENCY_CHECK,
@@ -97,6 +97,7 @@ const FIX_LABEL: Record<NonNullable<ReviewCheck["fix"]>, string> = {
   swap_products: "Produkt tauschen",
   rebuild_bundle: "Set neu erstellen",
   remove_discount: "Rabatt entfernen",
+  limit_scope: "Auf Auswahl begrenzen",
   generate_hero: "Hero erzeugen",
   shorten_subject: "Betreff kürzen",
 };
@@ -189,6 +190,9 @@ export function ReviewColumn({
         break;
       case "remove_discount":
         void actions.setDiscount(id, 0);
+        break;
+      case "limit_scope":
+        void actions.setDiscountScope(id, NEW_DISCOUNT_SCOPE);
         break;
       case "generate_hero":
         heroRef.current?.generate();
@@ -298,7 +302,7 @@ export function ReviewColumn({
           <BlockHeader
             title="Empfehlungen"
             meta={num(item.recommendations.length)}
-            info="Nur verfügbare Produkte lassen sich hinzufügen; der Bestand stammt aus dem letzten Katalogabgleich mit Shopify (nur wo Shopify ihn führt). Ausgegraute Empfehlungen sind inzwischen ausverkauft oder nicht mehr im Katalog — tauschen; beim nächsten Speichern fallen sie automatisch heraus. Änderungen werden sofort gespeichert und der Text automatisch neu generiert."
+            info="Nur verfügbare Produkte lassen sich hinzufügen; der Bestand stammt aus dem letzten Katalogabgleich mit Shopify (nur wo Shopify ihn führt). Ein Produkt mit Varianten (z. B. Gewichte) lässt sich mit „Alle Varianten“ als eine Zeile empfehlen — die Mail zeigt dann den Produktnamen, „ab“-Preis und die Produktseite, der Rabattcode gilt für jede Variante; oder gezielt eine Variante. Ausgegraute Empfehlungen sind inzwischen ausverkauft oder nicht mehr im Katalog — tauschen; beim nächsten Speichern fallen sie automatisch heraus. Änderungen werden sofort gespeichert und der Text automatisch neu generiert."
             actions={
               <Button
                 variant="ghost"
@@ -351,6 +355,9 @@ export function ReviewColumn({
                       ) : (
                         <span className={cn("block truncate", !available && "line-through")}>{r.name}</span>
                       )}
+                      {r.allVariants && (
+                        <span className="block text-2xs text-muted-foreground">Alle Varianten</span>
+                      )}
                       {!available ? (
                         <StatusBadge tone="warning" className="mt-0.5">
                           {stock ?? "Nicht verfügbar"}
@@ -360,7 +367,11 @@ export function ReviewColumn({
                       ) : null}
                     </span>
                     <span className="shrink-0 text-muted-foreground tabular-nums">
-                      {r.price !== null ? eur(r.price) : ""}
+                      {r.price === null
+                        ? ""
+                        : r.allVariants && r.priceMax !== null && r.priceMax > r.price
+                          ? `ab ${eur(r.price)}`
+                          : eur(r.price)}
                     </span>
                     <IconButton
                       label={`${r.name} entfernen`}
@@ -383,6 +394,7 @@ export function ReviewColumn({
                 ariaLabel="Produkt für Empfehlung suchen"
                 maxResults={6}
                 showThumbnails
+                allVariantsOption
                 onSelect={(hit, variant) => {
                   const ref = variant?.variantId ? `${hit.productId}~${variant.variantId}` : hit.productId;
                   if (locked || recIds.includes(ref)) return;
@@ -418,7 +430,7 @@ export function ReviewColumn({
                     item.discountExpiresAt
                       ? ` (voraussichtlich gültig bis ${formatAdmin(item.discountExpiresAt, ADMIN_DATE)})`
                       : ""
-                  }. „Gilt für“ legt fest, worauf Shopify den Code anwendet: die gesamte Bestellung oder nur die empfohlenen Produkte dieser Mail — Coupon-Text und Fließtext folgen dem. Eine Mail bietet entweder Einzelprodukte (optional mit Code) oder ein Set, nie beides. Eine Änderung generiert den Text automatisch neu.`
+                  }. Shopify wendet den Code nur auf die individuelle Auswahl dieser Mail an — ein Produkt mit „Alle Varianten“ in jeder Variante, eine gewählte Variante nur in dieser; einmalig einlösbar und mit keinem anderen Rabatt kombinierbar. Eine Mail bietet entweder Einzelprodukte (optional mit Code) oder ein Set, nie beides. Eine Änderung generiert den Text automatisch neu.`
                 : "Eine Mail bietet entweder Einzelprodukte (optional mit Rabattcode) oder ein Set, nie beides. „Set“ öffnet den Set-Dialog; der Set-Preis ersetzt dann den Code. Eine Änderung generiert den Text automatisch neu; Code und Rabattzeile werden beim Versand angehängt."
           }
         />
@@ -534,18 +546,26 @@ export function ReviewColumn({
               {item.discountPercent > 0 && (
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="w-12 shrink-0 font-medium text-muted-foreground">Gilt für</span>
-                  <SegmentedControl
-                    label="Rabatt gilt für"
-                    value={item.discountScope}
-                    disabled={locked}
-                    onChange={(v) => void actions.setDiscountScope(id, v as DiscountScope)}
-                    options={DISCOUNT_SCOPE_OPTIONS.map((o) => ({ value: o.value, label: o.label }))}
-                  />
-                  {item.discountScope === "set" && (
-                    <span className="text-warning">„Set“ gibt es nicht mehr — bitte wählen</span>
+                  {item.discountScope === NEW_DISCOUNT_SCOPE ? (
+                    <span>{discountScopeLabel(item.discountScope)}</span>
+                  ) : (
+                    <>
+                      <span className="text-warning">
+                        {discountScopeLabel(item.discountScope)} — gibt es nicht mehr
+                      </span>
+                      <Button
+                        variant="outline"
+                        size="xs"
+                        disabled={locked}
+                        loading={busy === "discount"}
+                        onClick={() => void actions.setDiscountScope(id, NEW_DISCOUNT_SCOPE)}
+                      >
+                        Auf Auswahl begrenzen
+                      </Button>
+                    </>
                   )}
-                  {item.discountScope === "recommendations" && availableRecs === 0 && (
-                    <span className="text-warning">Keine verfügbaren Empfehlungen</span>
+                  {item.discountScope === NEW_DISCOUNT_SCOPE && availableRecs === 0 && (
+                    <span className="text-warning">Keine verfügbaren Produkte</span>
                   )}
                 </div>
               )}

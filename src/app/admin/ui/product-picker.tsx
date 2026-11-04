@@ -17,7 +17,8 @@
 //     (docs/archive/PRODUCT_VARIANTS_PLAN.md).
 //
 // onSelect receives (hit, variant|null): null means "the product" (default
-// variant); a variant means the operator pinned that concrete variant.
+// variant — or, with `allVariantsOption`, the product in ALL its variants);
+// a variant means the operator pinned that concrete variant.
 
 import * as React from "react";
 import { ChevronDown, Plus, Search } from "lucide-react";
@@ -137,6 +138,13 @@ export interface CatalogProductPickerProps {
   /** Thumbnails on result rows (composer style). Default true. */
   showThumbnails?: boolean;
   selectLabel?: string;
+  /**
+   * Offer „Alle Varianten“ as the first row of a multi-variant chooser: picks
+   * the product itself (variant = null), which the campaign rail reads as the
+   * product in all its variants (product-ref.mjs). Off where a concrete
+   * variant is required (sets, carts).
+   */
+  allVariantsOption?: boolean;
   className?: string;
 }
 
@@ -151,6 +159,7 @@ export function CatalogProductPicker({
   maxResults = 20,
   showThumbnails = true,
   selectLabel = "hinzufügen",
+  allVariantsOption = false,
   className,
 }: CatalogProductPickerProps) {
   const [query, setQuery] = React.useState("");
@@ -254,6 +263,30 @@ export function CatalogProductPicker({
 
                 {multi && isExpanded && (
                   <div className="mt-1 flex flex-col gap-0.5 border-t border-border pt-1">
+                    {allVariantsOption && (
+                      <div className="flex items-center gap-2 rounded px-1.5 py-0.5">
+                        <span className="min-w-0 flex-1 text-sm">
+                          <span className="font-medium">Alle Varianten</span>{" "}
+                          <span className="text-muted-foreground">· {range}</span>
+                          {!hit.inStock && <span className="text-destructive"> · ausverkauft</span>}
+                        </span>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => onSelect(hit, null)}
+                          disabled={productSelected || productDisabled != null}
+                          title={productDisabled ?? undefined}
+                        >
+                          {productSelected ? (
+                            "✓ drin"
+                          ) : (
+                            <>
+                              <Plus /> {selectLabel}
+                            </>
+                          )}
+                        </Button>
+                      </div>
+                    )}
                     {(hit.variants ?? []).map((v, i) => {
                       const vDisabled = disableReason?.(hit, v) ?? null;
                       const vSelected = isSelected?.(hit, v) ?? false;

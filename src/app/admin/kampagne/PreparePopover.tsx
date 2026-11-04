@@ -10,7 +10,6 @@ import * as React from "react";
 import { Sparkles } from "lucide-react";
 import { EMAIL_TEXT_MODE_LABELS } from "@/lib/email-text-mode.mjs";
 import { clampDiscountPercent } from "@/lib/discount-validation.mjs";
-import { DEFAULT_DISCOUNT_SCOPE, DISCOUNT_SCOPE_OPTIONS, parseEditableDiscountScope } from "@/lib/discount-scope.mjs";
 import { prepareEstimate } from "@/lib/campaign-desk-core.mjs";
 import { eur, num, plural } from "@/lib/admin-format.mjs";
 import { Button, Checkbox, InfoTip, Popover, Select } from "../ui";
@@ -67,10 +66,10 @@ export function PreparePopover({
           Nächste Entwürfe vorbereiten
           <InfoTip>
             Erzeugt die Entwürfe für die nächsten offenen Kontakte im Sendefenster — in kleinen
-            Schritten im Hintergrund, die Prüfung läuft währenddessen weiter. Rabatt-Tiefe, „Gilt
-            für“ (gesamte Bestellung, nur Empfehlungen oder nur Set) und
+            Schritten im Hintergrund, die Prüfung läuft währenddessen weiter. Rabatt-Tiefe und
             Textmodus (wie viel Fließtext die KI über den Produktkacheln schreibt) gelten für alle
             Entwürfe, die „Vorbereiten“, „Entwurf erstellen“ und „Wiederherstellen“ neu erzeugen.
+            Ein Rabattcode gilt immer nur für die individuelle Auswahl der jeweiligen Mail.
             Generierung kostet API-Geld; die Schätzung stammt aus den erfassten Kosten der letzten
             Läufe.
           </InfoTip>
@@ -116,28 +115,6 @@ export function PreparePopover({
             <option value="15">15 % Rabatt</option>
             <option value="20">20 % Rabatt</option>
           </Select>
-
-          {settings.depth > 0 && (
-            <>
-              <label htmlFor="campaign-prepare-scope" className="font-medium text-muted-foreground">
-                Gilt für
-              </label>
-              <Select
-                id="campaign-prepare-scope"
-                value={settings.scope}
-                onChange={(e) => onSettings({ scope: parseEditableDiscountScope(e.target.value) ?? DEFAULT_DISCOUNT_SCOPE })}
-                className="h-8 w-auto min-w-[8rem] py-0 pr-8 text-xs"
-                aria-label="Worauf der Rabattcode der neuen Entwürfe gilt"
-                disabled={disabled}
-              >
-                {DISCOUNT_SCOPE_OPTIONS.map((o) => (
-                  <option key={o.value} value={o.value}>
-                    {o.long}
-                  </option>
-                ))}
-              </Select>
-            </>
-          )}
 
           <label htmlFor="campaign-prepare-textmode" className="font-medium text-muted-foreground">
             Textmodus

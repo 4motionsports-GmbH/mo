@@ -25,7 +25,7 @@ import * as React from "react";
 import { useRouter } from "next/navigation";
 import { EMAIL_TEXT_MODE_LABELS, DEFAULT_EMAIL_TEXT_MODE } from "@/lib/email-text-mode.mjs";
 import {
-  DEFAULT_DISCOUNT_SCOPE,
+  NEW_DISCOUNT_SCOPE,
   parseDiscountScope,
   parseEditableDiscountScope,
   type DiscountScope,
@@ -80,6 +80,7 @@ export type ReviewFix =
   | "swap_products"
   | "rebuild_bundle"
   | "remove_discount"
+  | "limit_scope"
   | "generate_hero"
   | "shorten_subject"
   | null;
@@ -149,7 +150,8 @@ function campaignPrepareDefaults(campaign: CampaignDeskProps["campaign"]): Prepa
   return {
     count: PREPARE_TOTAL,
     depth: campaign.discountPercent,
-    scope: campaign.discountScope,
+    // An older campaign's stored whole-order scope reads as the selection.
+    scope: parseEditableDiscountScope(campaign.discountScope) ?? NEW_DISCOUNT_SCOPE,
     textMode: (campaign.textMode ?? DEFAULT_EMAIL_TEXT_MODE) as EmailTextModeValue,
     withHero: campaign.heroMode === "ai_ab" || campaign.heroMode === "ai_all",
   };
@@ -167,7 +169,7 @@ export interface PrepareSettings {
 const DEFAULT_PREPARE_SETTINGS: PrepareSettings = {
   count: PREPARE_TOTAL,
   depth: 0,
-  scope: DEFAULT_DISCOUNT_SCOPE,
+  scope: NEW_DISCOUNT_SCOPE,
   textMode: DEFAULT_EMAIL_TEXT_MODE as EmailTextModeValue,
   withHero: false,
 };
@@ -180,8 +182,8 @@ function loadPrepareSettings(campaignId: number, defaults: PrepareSettings): Pre
     return {
       count: [25, 50, 100].includes(Number(parsed.count)) ? Number(parsed.count) : PREPARE_TOTAL,
       depth: Number.isInteger(parsed.depth) ? Number(parsed.depth) : defaults.depth,
-      // A stored "set" (retired, offer-mode.mjs) falls back to the default.
-      scope: parseEditableDiscountScope(parsed.scope ?? defaults.scope) ?? DEFAULT_DISCOUNT_SCOPE,
+      // A stored retired scope ("set", "all") falls back to the selection.
+      scope: parseEditableDiscountScope(parsed.scope ?? defaults.scope) ?? NEW_DISCOUNT_SCOPE,
       textMode: (["detailed", "compact", "minimal"] as const).includes(
         parsed.textMode as EmailTextModeValue
       )
@@ -1310,10 +1312,10 @@ export function useCampaignActions({
               expiresAt: json.offer.expiresAt,
             },
             discountPercent: 0,
-            discountScope: "all",
+            discountScope: NEW_DISCOUNT_SCOPE,
           });
           toast({ variant: "success", title: "Set-Angebot erstellt", description: "Die Mail zeigt jetzt nur das Set — Text wird angepasst…" });
-          scheduleRegenerate(contactId, { depth: 0, scope: "all" });
+          scheduleRegenerate(contactId, { depth: 0, scope: NEW_DISCOUNT_SCOPE });
           return true;
         }
         setBusy(contactId, null);

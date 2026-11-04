@@ -30,7 +30,7 @@ import {
   detectDiscountTextMismatch,
   DISCOUNT_PERCENT_MAX,
 } from "@/lib/discount-validation.mjs";
-import { parseEditableDiscountScope, type DiscountScope } from "@/lib/discount-scope.mjs";
+import { NEW_DISCOUNT_SCOPE, parseEditableDiscountScope, type DiscountScope } from "@/lib/discount-scope.mjs";
 import { OFFER_CONFLICT_MESSAGE, offerConflict } from "@/lib/offer-mode.mjs";
 import { getActiveBundleForCampaignContact } from "@/lib/bundle-offers-store";
 import { shouldRenderBundleBlock } from "@/lib/bundle-email-core.mjs";
@@ -68,7 +68,7 @@ export async function POST(req: Request) {
       if (!discountScope) {
         return adminJsonError(
           "bad_request",
-          "„Gilt für“: gesamte Bestellung oder nur die Empfehlungen.",
+          "Ein Rabattcode gilt nur für die individuelle Auswahl der Mail.",
           400
         );
       }
@@ -91,8 +91,9 @@ export async function POST(req: Request) {
     if (offerConflict({ discountPercent, hasActiveBundle: Boolean(activeSet && shouldRenderBundleBlock(activeSet)) })) {
       return adminJsonError("offer_conflict", OFFER_CONFLICT_MESSAGE, 409);
     }
-    // A stored legacy "set" scope does not survive an edit.
-    const scope = discountScope ?? parseEditableDiscountScope(existing.discountScope) ?? "all";
+    // A stored retired scope ("set", the whole order "all") does not survive
+    // an edit: the code applies to the individual selection.
+    const scope = discountScope ?? parseEditableDiscountScope(existing.discountScope) ?? NEW_DISCOUNT_SCOPE;
 
     // Projected expiry for the preview; the real MK- code gets its own at send
     // (the send step swaps a stale date label — same rule as generation).

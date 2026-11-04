@@ -47,7 +47,9 @@ interface FormState {
   audienceMode: "dynamisch" | "fest";
   reentryDays: string;
   discountPercent: string;
-  discountScope: "all" | "recommendations";
+  /** Always the individual selection (discount-scope.mjs) — saving narrows
+   * an older campaign's whole-order scope. */
+  discountScope: "recommendations";
   discountValidUntil: string;
   designKey: string;
   heroMode: "none" | "default" | "ai_ab" | "ai_all";
@@ -149,7 +151,7 @@ function initialState(c: CampaignCardProps | null, presetAudience: Record<string
     reentryDays: c?.reentryDays != null ? String(c.reentryDays) : "",
     discountPercent: String(c?.discountPercent ?? 0),
     // "set" is retired (a set mail carries no code, offer-mode.mjs).
-    discountScope: c?.discountScope === "recommendations" ? "recommendations" : "all",
+    discountScope: "recommendations",
     discountValidUntil: toLocalInput(c?.discountValidUntil ?? null),
     designKey: c?.designKey ?? "",
     heroMode: c?.heroMode ?? "default",
@@ -682,17 +684,9 @@ export function CampaignEditor({
             </Field>
             <Field
               label="Gilt für"
-              info="Worauf der Rabattcode gilt: die gesamte Bestellung oder nur die empfohlenen Produkte der Mail. Mails, an die ein Set angehängt wird, tragen keinen Code — der Set-Preis ist dort das Angebot."
+              info="Der Rabattcode gilt nur für die individuelle Auswahl der Mail — genau die Produkte, die sie zeigt (ein Produkt mit allen Varianten in jeder Variante, eine gewählte Variante nur in dieser). Er ist einmalig einlösbar und mit keinem anderen Rabatt kombinierbar. Mails, an die ein Set angehängt wird, tragen keinen Code — der Set-Preis ist dort das Angebot."
             >
-              <SegmentedControl
-                label="Rabatt gilt für"
-                value={form.discountScope}
-                onChange={(discountScope) => patch({ discountScope })}
-                options={[
-                  { value: "all", label: "Alles" },
-                  { value: "recommendations", label: "Empfehlungen" },
-                ]}
-              />
+              <span className="flex h-9 items-center text-sm">Individuelle Auswahl</span>
             </Field>
             {form.kind === "aktion" && !isEinzel && (
               <Field label="Codes gültig bis" info="Alle Codes dieser Aktion enden zu diesem Zeitpunkt. Leer = übliche Gültigkeit ab Versand.">

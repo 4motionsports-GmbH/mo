@@ -29,15 +29,15 @@ import {
   discountExpiryDaysPublic,
   formatExpiryDateForLanguage,
 } from "./shopify-discounts";
-import { generateCampaignDraft } from "./campaign-draft";
+import { generateCampaignDraft, campaignRecommendationInput } from "./campaign-draft";
 import type { EmailTextMode } from "./marketing-draft";
 import { DEFAULT_EMAIL_TEXT_MODE, storedTextMode } from "./email-text-mode.mjs";
-import { DEFAULT_DISCOUNT_SCOPE, type DiscountScope } from "./discount-scope.mjs";
+import { NEW_DISCOUNT_SCOPE, parseEditableDiscountScope, type DiscountScope } from "./discount-scope.mjs";
 import { loadCampaignPersonalization } from "./campaign-recommendations";
 import { getActiveBundleForCampaignContact } from "./bundle-offers-store";
 import { bundleHeadline, bundleStattPrice, shouldRenderBundleBlock } from "./bundle-email-core.mjs";
 import { effectiveDraftOffer } from "./draft-offer.mjs";
-import { resolveProductSelections } from "./product-catalog";
+import { campaignDisplayProduct, resolveProductSelections } from "./product-catalog";
 import type { Product } from "./types";
 import {
   getDraftForContact,
@@ -183,12 +183,13 @@ export async function prepareDraftForContact(
   // nothing survives, fall back to a fresh auto-pick.
   // recommendedProducts are DISPLAY products (variant-projected for refs);
   // recommendedRefs is what gets re-saved, keeping variants intact.
-  let recommendedProducts = recommendations.products;
+  // The engine picks bare ids — the product in all its variants.
+  let recommendedProducts = recommendations.products.map(campaignDisplayProduct);
   let recommendedRefs = recommendations.products.map((p) => p.id);
   let lowConfidence = recommendations.lowConfidence;
   const keepStored = !opts.refreshRecommendations || hasActiveBundle;
   if (keepStored && existing && existing.recommendedProductIds.length > 0) {
-    const stored = (await resolveProductSelections(existing.recommendedProductIds)).filter(
+    const stored = (await resolveProductSelections(existing.recommendedProductIds, { allVariants: true })).filter(
       (s) => !s.missingVariant && s.available && s.display
     );
     if (stored.length > 0) {
@@ -250,11 +251,7 @@ export async function prepareDraftForContact(
     adminNote: contact.adminNote,
     purchaseSummary,
     focusPurchaseTitles,
-    recommendations: recommendedProducts.map((p) => ({
-      name: p.name,
-      url: p.shopifyUrl,
-      category: p.category || null,
-    })),
+    recommendations: recommendedProducts.map((p) => campaignRecommendationInput(p, contact.language)),
     lowConfidence,
     offerKind: offer.kind,
     attachedBundle,
@@ -347,7 +344,10 @@ export async function prepareNextDrafts(input: PrepareBatchInput): Promise<Prepa
   }
   const discountPercent = input.discountPercent ?? campaign.discountPercent;
   const textMode = input.textMode ?? campaign.textMode ?? DEFAULT_EMAIL_TEXT_MODE;
-  const discountScope = input.discountScope ?? campaign.discountScope ?? DEFAULT_DISCOUNT_SCOPE;
+  // A code applies only to the individual selection; an older campaign's
+  // stored whole-order scope is narrowed to it (discount-scope.mjs).
+  const discountScope: DiscountScope =
+    parseEditableDiscountScope(input.discountScope ?? campaign.discountScope) ?? NEW_DISCOUNT_SCOPE;
   const concurrency = input.concurrency ?? 3;
   const contacts = await listNextPendingContacts(campaign.id, count, { windowed: campaign.kind === "laufend" });
   const result: PrepareBatchResult = {

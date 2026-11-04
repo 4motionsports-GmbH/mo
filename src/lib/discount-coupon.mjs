@@ -35,6 +35,8 @@ export function couponCopy(language, { percent = null, expiresLabel = null, scop
   const phrase = discountScopePhrase(scope, language);
   const terms = [
     en ? "Redeemable once" : "Einmalig einlösbar",
+    // Every code Mo mints combines with no other discount (shopify-discounts).
+    en ? "cannot be combined" : "nicht kombinierbar",
     expiresLabel ? (en ? `valid until ${expiresLabel}` : `gültig bis ${expiresLabel}`) : null,
   ].filter(Boolean);
   return {

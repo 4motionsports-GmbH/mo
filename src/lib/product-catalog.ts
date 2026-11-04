@@ -7,6 +7,8 @@ import {
   variantDisplayName,
   variantPdpUrl,
   isVariantAvailable,
+  hasVariantChoice,
+  allVariantsSummary,
 } from "./product-ref.mjs";
 import type { Product, ProductVariant } from "./types";
 
@@ -55,6 +57,11 @@ export interface ResolvedSelection {
   missingVariant: boolean;
   available: boolean;
   display: Product | null;
+  /** The ref stands for the product in ALL its variants (a bare ref of a
+   * multi-variant product, resolved with `{ allVariants: true }`): `display`
+   * is the projectAllVariants view, `variant` stays the default variant (what
+   * a set built from it would use). */
+  allVariants: boolean;
 }
 
 /** Flat variant-projection of a product (see ResolvedSelection.display). */
@@ -78,12 +85,61 @@ export function projectVariant(product: Product, variant: ProductVariant | null)
 }
 
 /**
+ * The product "in all its variants" (product-ref.mjs allVariantsSummary): the
+ * bare product name, the CHEAPEST available variant's regular/sale price with
+ * priceMin/priceMax for the "ab X €" line, the product page without a pinned
+ * variant, available when any variant is. No variant/cart id — there is no
+ * single variant to put in a cart. A product without a variant choice is
+ * returned unchanged.
+ */
+export function projectAllVariants(product: Product): Product {
+  if (!hasVariantChoice(product)) return product;
+  const summary = allVariantsSummary(product) as {
+    available: boolean;
+    min: number | null;
+    max: number | null;
+    cheapest: ProductVariant | null;
+  };
+  const cheapest = summary.cheapest;
+  const projected: Product = {
+    ...product,
+    name: product.name,
+    price: cheapest?.price ?? product.price,
+    salePrice: typeof cheapest?.salePrice === "number" ? cheapest.salePrice : undefined,
+    shopifyUrl: product.shopifyUrl,
+    inStock: summary.available,
+    allVariants: true,
+  };
+  delete projected.shopifyVariantId;
+  delete projected.shopifyCartUrl;
+  if (summary.min != null) projected.priceMin = summary.min;
+  if (summary.max != null) projected.priceMax = summary.max;
+  return projected;
+}
+
+/**
+ * The display a campaign mail and its draft use for a product the
+ * recommendation engine picked (a bare id): all variants for a product with a
+ * variant choice, else the product itself.
+ */
+export function campaignDisplayProduct(product: Product): Product {
+  return projectAllVariants(product);
+}
+
+/**
  * Resolve a list of refs (or bare ids) against the catalog. Unknown products
  * are dropped; refs whose pinned variant vanished are KEPT but flagged
  * (missingVariant, display=null) so callers can hard-block or surface them.
  * Order is preserved.
  */
-export async function resolveProductSelections(refs: string[]): Promise<ResolvedSelection[]> {
+export async function resolveProductSelections(
+  refs: string[],
+  opts: {
+    /** Campaign rail: a bare ref of a multi-variant product means "all
+     * variants" (projectAllVariants) instead of its default variant. */
+    allVariants?: boolean;
+  } = {}
+): Promise<ResolvedSelection[]> {
   const catalog = await loadProductCatalog();
   const byId = new Map(catalog.map((p) => [p.id, p]));
   const out: ResolvedSelection[] = [];
@@ -95,6 +151,21 @@ export async function resolveProductSelections(refs: string[]): Promise<Resolved
     } | null;
     if (!resolved) continue;
     const { product, variant, missingVariant } = resolved;
+    const allVariants =
+      opts.allVariants === true && parseProductRef(ref).variantId == null && hasVariantChoice(product);
+    if (allVariants) {
+      const display = projectAllVariants(product);
+      out.push({
+        ref: String(ref),
+        product,
+        variant,
+        missingVariant: false,
+        available: display.inStock !== false,
+        display,
+        allVariants: true,
+      });
+      continue;
+    }
     out.push({
       ref: String(ref),
       product,
@@ -102,6 +173,7 @@ export async function resolveProductSelections(refs: string[]): Promise<Resolved
       missingVariant,
       available: !missingVariant && isVariantAvailable(product, variant),
       display: missingVariant ? null : projectVariant(product, variant),
+      allVariants: false,
     });
   }
   return out;
