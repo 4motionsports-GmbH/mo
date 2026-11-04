@@ -566,7 +566,7 @@ The sheet's sections, top to bottom (every field, column, bound and default per 
   (`campaigns/audience-preview`, debounced): total, with Mo chat, DE / EN, the
   plain-German description, a few names and — when there are any — „Ohne
   Einwilligung passen weitere N — davon M per Brief erreichbar“ (InfoTip).
-- **Angebot** — Rabatt, Gilt für (Alles / Empfehlungen), „Codes gültig bis“
+- **Angebot** — Rabatt, Gilt für (fest: „Individuelle Auswahl“ — der Code gilt nur für die Produkte der Mail), „Codes gültig bis“
   (Aktion): starting values for Vorbereiten; codes are minted at send. A card
   that gets a set carries no code (offer-mode.mjs).
 - **Gestaltung** — Design, Titelbild („Kein KI-Titelbild“ / „Standard-Titelbild“ /
@@ -688,8 +688,9 @@ clearing 100–200 e-mails a day:
   Katalog“, „+ Produkt“ with the catalog picker — or, in a set mail, „Im Set“
   with the set's counted contents), Angebot („Art: Einzelprodukte | Set“ — a
   mail offers single products with an optional code OR one set, never both;
-  Einzelprodukte: Rabatt 0/5/10/15/20/custom and „Gilt für“ Alles / Empfehlungen
-  — what Shopify applies the code to, coupon and prose follow; Set: the set
+  Einzelprodukte: Rabatt 0/5/10/15/20/custom and „Gilt für: Individuelle Auswahl“
+  — Shopify applies the code only to the products of the mail (an older draft with
+  „Gesamte Bestellung“ shows „Auf Auswahl begrenzen“); coupon and prose follow; Set: the set
   line with price, „statt“, saving badge and end date, „Rabatt: Entfällt“. „Set“
   opens the set dialog in a sheet: a fresh availability check of the
   recommendations, unavailable ones greyed out, unit price + stock + count

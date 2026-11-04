@@ -11,11 +11,16 @@ are the campaign „Einzelansprache“. The campaign path's `MK-` codes
 projected-date swap and deterministic deadline line; they are documented in
 [`CAMPAIGNS.md`](./CAMPAIGNS.md) §2.1, §4 and §5.
 
-> Combinability ("non-stackable") and excluding already-reduced (sale) items
-> are deliberately NOT handled in this backend. Shopify cannot express
-> "exclude sale items" on a basic code discount without workarounds
-> (collection scoping with product-level caveats), so those rules will live in
-> a separate dedicated app instead.
+> **Not combinable** (since 04.11.2026): every code `createUniqueDiscountCode`
+> mints (`MS5-` and `MK-`) carries `combinesWith` = false for product, order
+> and shipping discounts (`NON_COMBINABLE_DISCOUNT` in `discount-scope.mjs`),
+> so it never stacks with another code or an automatic discount; the coupon
+> says „nicht kombinierbar“. Campaign `MK-` codes additionally apply only to
+> the individual selection of the mail ([`CAMPAIGNS.md`](./CAMPAIGNS.md) §4
+> „Scope“). Excluding already-reduced (sale) items is deliberately NOT handled
+> in this backend: Shopify cannot express "exclude sale items" on a basic code
+> discount without workarounds (collection scoping with product-level
+> caveats), so that rule will live in a separate dedicated app instead.
 
 ## Expiry — 7 days, stated in the email
 

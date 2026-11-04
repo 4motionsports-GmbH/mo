@@ -140,7 +140,7 @@ again on the server (`validateCampaignInput`):
 | Grundlagen | Name 3–80 chars (`name`, a unique `slug` is derived), Art (`kind`), Start/Ende (`starts_at`/`ends_at`, end after start), Priorität 0–100 (`priority`) |
 | Briefing | `brief`, max 4,000 chars — Anlass, Ziel, Ton, Muss rein, Bitte nicht. The drafter reads it for every mail of the campaign (§4). „Briefing vorschlagen“ drafts one from name, kind, end date, discount and notes. |
 | Zielgruppe | The audience spec (`audience`, below), Fest/Dynamisch (`audience_mode`), „Erneut aufnehmen nach“ (`reentry_days`, `laufend` only, 14–3,650 days, empty = never), live count. Hidden for the Einzelansprache. |
-| Angebot | Rabatt (`discount_percent`, 0–`DISCOUNT_PERCENT_MAX`), Gilt für (`discount_scope`: all / recommendations — `set` is history, refused for new values), Codes gültig bis (`discount_valid_until`) — the starting values for Vorbereiten; each draft can still change them. A recipient with a set attached is drafted without a code whatever the default says (set XOR items, §4) |
+| Angebot | Rabatt (`discount_percent`, 0–`DISCOUNT_PERCENT_MAX`), Gilt für (`discount_scope`: always `recommendations` — the individual selection of the mail since 04.11.2026; `all` and `set` are history, an older campaign's `all` is narrowed on save, §4), Codes gültig bis (`discount_valid_until`) — the starting values for Vorbereiten; each draft can still change them. A recipient with a set attached is drafted without a code whatever the default says (set XOR items, §4) |
 | Gestaltung | Design (`design_key`; empty = the design selected for campaign mails in Einstellungen), Titelbild (`hero_mode` — it decides about the AI picture only: „Kein KI-Titelbild“ `none` / „Standard-Titelbild“ `default` / „KI-Titelbild für einen Teil (A/B)“ `ai_ab` / „KI-Titelbild für alle“ `ai_all`; §4), Kampagnenbild (`hero_image`, migration `0079` — the campaign's own picture, below), Textlänge (`text_mode`), Button führt zu (`cta_kind`: `mo_chat` / `shop`) + Shop-Link (`cta_url`, `https://` required for `shop`), Mo-Hinweis anhängen (`mo_promo`, default on — the chat button lives in the Mo hint, so `mo_chat` with `mo_promo = false` is refused: „Der Button zu Mo steht im Mo-Hinweis — Hinweis einschalten oder den Button auf den Shop zeigen lassen.“) |
 | Brief | Letters as a channel (migration `0074`, §8): „Briefe“ (`letter_mode`: „Keine Briefe“ `aus` — the default —, „An alle ohne E-Mail-Einwilligung“ `ohne_einwilligung`, „An alle (auch mit Einwilligung)“ `alle`), „Porto-Budget (€)“ (`letter_budget_cents`, 0–100,000 €, empty = no cap) and the live line „Per Brief: N Empfänger:innen (Adresse schon bekannt: M) · ≈ X € Porto bei Y € je Brief“ (M counts purchase addresses only); Callouts while `PHYSICAL_MAIL_SENDS_APPROVED` is off or Pingen is not configured. Hidden for the Einzelansprache. |
 | Automatik | Automatisch vorbereiten 0–500 drafts per night (`auto_prepare_per_day`, §5), Tagesziel (`daily_target`, 1–5,000 — no automation; shown as „Tagesziel n“ next to today's progress in the desk header) |
@@ -424,16 +424,17 @@ recommendations, optionally with a discount code) **or** one set — never both.
 mail** ([`offer-mode.mjs`](../src/lib/offer-mode.mjs) `offerKind`). `prepareDraftForContact`
 enforces it for every caller — desk depth, campaign default, Vorbereiten popover, Eingang
 suggestion, nightly auto-prepare: a set mail is generated and saved with `discount_percent = 0` and
-scope `all` whatever was requested; an item mail keeps the requested depth, and a requested or
-stored scope `set` (history: „x % only on the set“) gets **no code** — never widened to the whole
-order (`effectiveDraftOffer` in
+the selection scope whatever was requested; an item mail keeps the requested depth on the
+individual selection — a requested or stored `all` (the retired whole order) is narrowed to it, and
+a requested or stored scope `set` (history: „x % only on the set“) gets **no code** — never moved to
+other products (`effectiveDraftOffer` in
 [`draft-offer.mjs`](../src/lib/draft-offer.mjs), tested). The prompt variant follows
 (`draftPromptPlan`):
 
 | | Item mail | Set mail |
 | --- | --- | --- |
 | Prompt shows | the 2–3 recommendations with URLs | the set's contents with counts („2× Kettlebell – 16 kg“, `setContentsLines`) as **the** offer — not „außerdem ein Set“ |
-| Discount | the code block (`discountHint`), scope `all` \| `recommendations` | the „KEIN Rabattangebot“ branch: no code, no percentage — the set price is the concession |
+| Discount | the code block (`discountHint`): „auf deine individuelle Auswahl“, only the products of the mail (all variants of an all-variants product), not combinable | the „KEIN Rabattangebot“ branch: no code, no percentage — the set price is the concession |
 | Rules | link products as `[Name](URL)`, no invented prices | the mail is about this one set, no other products, no links; no price, saving or percentage from the model — the set block below the prose states price and the genuine „statt“ (PAngV). „Günstiger als einzeln“ only when the set really costs less (`hasSaving`) |
 | `product_highlights` | one per recommended product | one per set product, named exactly like the component titles the set block lists (`setHighlightNames`; `alignHighlightNames` snaps copied „2× …“ prefixes and case back), so the block can show them |
 | KI-Hero | products and reference photos from the recommendations | from the set's components, with counts ([`email-hero.ts`](../src/lib/email-hero.ts)) |
@@ -491,26 +492,38 @@ way: a live set attached to the customer makes it a set mail drafted with depth 
    code is minted **only at send**, with the same end date. Changed depth or
    explicit regenerate overwrites the open draft (`shouldReuseCampaignDraft`)
    so text and eventual code never disagree.
-   **Scope** (`discount_scope`, migration `0058`, `discount-scope.mjs`): the
-   code applies to the whole order (`all`, the default) or only to the
-   products recommended in this mail (`recommendations`). The third value,
-   `set` (the code only on the attached set), is **history** since the set XOR
-   items rule: it still parses so older sends read back, but no new draft or
-   campaign takes it (`parseEditableDiscountScope`; a draft regenerated with a
-   stored `set` and no set gets no code at all — never a whole-order code). The prompt states the scope (`discountHint`:
-   "gilt NICHT für den Rest der Bestellung"), the coupon's benefit line and
-   the text part use the same phrase (`discountScopePhrase`), and at send time
-   the code is minted with `customerGets.items.products.productsToAdd` = the
-   Shopify product gids of that scope (recommended handles resolved via
-   `fetchProductGidsByHandles`) — no code is ever minted on a set. A scope
-   that cannot be honoured (no available recommendation, unresolvable handle)
-   **refuses the send** (`discount_scope_unresolved`); so does a draft still
-   stored with `set` and a depth above 0, with or without a set („„Gilt für:
-   Set“ gibt es nicht mehr — bitte „Gilt für“ ändern.“) — the desk shows the
-   same rules as blocked Prüfpunkte beforehand
-   (`discount_scope_no_recommendations` / `discount_scope_no_set` /
-   `offer_conflict`). A changed
-   scope regenerates the prose.
+   **Scope** (`discount_scope`, migration `0058`, `discount-scope.mjs`): since
+   04.11.2026 (owner decision) a campaign code applies **only to the
+   customer's individual selection** — exactly the products the mail lists
+   (`recommendations`, the only value a new draft or campaign takes,
+   `NEW_DISCOUNT_SCOPE`). The coupon reads „x % auf deine individuelle
+   Auswahl“ (en „off your personal selection“). The two other values are
+   **history**: `all` (the whole order — the old default) and `set` (the code
+   only on the attached set, retired with the set XOR items rule). They still
+   parse so older sends read back, but `parseEditableDiscountScope` refuses
+   them; a draft regenerated with a stored `all` is narrowed to the selection,
+   one with a stored `set` and no set gets no code at all. The prompt states
+   the scope (`discountHint`: only the products of this mail, every variant of
+   an all-variants product, „NICHT für den Rest der Bestellung“, not
+   combinable), the coupon's benefit line and the text part use the same
+   phrase (`discountScopePhrase`), and at send time the code is minted with
+   `customerGets.items.products` = exactly the selection
+   (`discountSelectionTargets`): a product shown with all its variants (or
+   without a variant choice) as its Product gid in `productsToAdd` (handles
+   resolved via `fetchProductGidsByHandles`), a pinned variant as its
+   ProductVariant gid in `productVariantsToAdd`. `requireItems` makes
+   `createUniqueDiscountCode` refuse rather than mint a whole-order code, and
+   every code is minted with `combinesWith` false for product, order and
+   shipping discounts — it never stacks with another code or an automatic
+   discount (single-use, once per customer as before). A selection that
+   cannot be honoured (nothing available, unresolvable handle) **refuses the
+   send** (`discount_scope_unresolved`); so does an open draft still stored
+   with `all` or `set` and a depth above 0 (`retiredDiscountScopeMessage`) —
+   its prose may promise the whole order. The desk shows the same rules as
+   blocked Prüfpunkte beforehand (`discount_scope_no_recommendations` /
+   `discount_scope_whole_order` — fix „Auf Auswahl begrenzen“, which re-scopes
+   the draft and regenerates the prose / `discount_scope_no_set` /
+   `offer_conflict`).
    **Bundle offers** (the set mail — instead of the recommendations and
    instead of a percentage code, never in addition): the card's
    "Set-Angebot" section creates a real UNLISTED Shopify set from the card's
@@ -594,7 +607,8 @@ address inside the cross-channel frequency cap, prose naming a different percent
 discount — the same `detectDiscountTextMismatch` the send path enforces — or the
 `MO-XXXX` placeholder without a discount, a set mail that still carries a code
 (`offer_conflict`, fix „Rabatt entfernen“ — set XOR items, §4), the retired
-scope „Gilt für: Set“ with a code (`discount_scope_no_set`, also fixed by „Rabatt entfernen“), or a refusal the server returned for
+scope „Gilt für: Set“ with a code (`discount_scope_no_set`, also fixed by „Rabatt entfernen“), the retired
+whole-order scope with a code (`discount_scope_whole_order`, fixed by „Auf Auswahl begrenzen“), or a refusal the server returned for
 the last attempt), *hint* when worth a look (in an item mail: low-confidence recommendations, a
 recommended product gone or sold out; an attached set expired or expiring
 within two days, a missing KI-Hero while the campaign design has a hero —
@@ -642,7 +656,8 @@ reconcile, the audience refresh and the catalog sync). `CAMPAIGN_AUTO_PREPARE_CO
 **budget** across all campaigns; each campaign in phase `laeuft` takes its own
 `auto_prepare_per_day` from it, highest priority first (`planAutoPrepare`), with its own offer
 settings. When no campaign sets a figure, the whole budget goes to the `lebenszyklus` campaign with
-`CAMPAIGN_AUTO_PREPARE_DISCOUNT` / `_TEXT_MODE` / `_DISCOUNT_SCOPE`. **Off by default** (`0`): generation costs API money, so the budget is the deployment's
+`CAMPAIGN_AUTO_PREPARE_DISCOUNT` / `_TEXT_MODE` (`_DISCOUNT_SCOPE` is still read but only `set`
+matters — it means no code; anything else is the individual selection). **Off by default** (`0`): generation costs API money, so the budget is the deployment's
 explicit decision (`.env.example`). It never sends — every draft still needs a human on the desk.
 
 **Testkontakte** (migration `0057`, ⋯ → „Testkontakte…“). The operator's own inboxes as recipients
@@ -682,6 +697,9 @@ WITHOUT regenerating (the deterministic send-time blocks make that safe):
   (`POST /api/admin/campaign/recommendations`, clears `low_confidence`). A
   NEWLY added product must be in the sync-fresh catalog, keep its pinned
   variant and be available — refusals are German and name the product. A
+  product with variants can be added as „Alle Varianten“ (the first row of the
+  picker's variant chooser, a bare ref) or as one pinned variant (§ „Product
+  variants“). A
   product that was already on the draft and has sold out or left the catalog
   since does not block the edit: it drops out and comes back as `dropped`
   (toast „Nicht mehr verfügbare Empfehlungen entfernt“); a list with nothing
@@ -715,14 +733,17 @@ WITHOUT regenerating (the deterministic send-time blocks make that safe):
   (`purchaseHistoryCoverage` in `campaign-desk-core.mjs`).
 - **Discount** can be set/changed/cleared AFTER generation in an item mail
   (`POST /api/admin/campaign/discount { contactId, discountPercent, discountScope? }`):
-  depth and scope („Gilt für“: Alles / Empfehlungen) live on the draft,
-  the real MK- code + deadline ship deterministically outside the prose, and
-  the route warns when the current prose clearly states a different
-  percentage (which the send route would refuse — regenerate then). A scope
-  change regenerates automatically, because the prose states the scope. While
-  a set is attached a depth above 0 is refused (409 `offer_conflict`); 0 stays
-  allowed so an older draft that still has both can be cleaned up. Scope
-  `set` is no longer accepted (400) — it only still reads on old sends.
+  depth and scope live on the draft („Gilt für: Individuelle Auswahl“ — the
+  only scope; an older draft with „Gesamte Bestellung“ shows a warning and
+  „Auf Auswahl begrenzen“), the real MK- code + deadline ship
+  deterministically outside the prose, and the route warns when the current
+  prose clearly states a different percentage (which the send route would
+  refuse — regenerate then). A scope change regenerates automatically,
+  because the prose states the scope; any depth change also narrows a stored
+  retired scope. While a set is attached a depth above 0 is refused (409
+  `offer_conflict`); 0 stays allowed so an older draft that still has both
+  can be cleaned up. Scopes `all` and `set` are no longer accepted (400) —
+  they only still read on old sends.
 - **Set or single products.** A mail offers EITHER single products (with an
   optional code) OR one set — never both
   ([`offer-mode.mjs`](../src/lib/offer-mode.mjs)). The card's Angebot block
@@ -1132,15 +1153,36 @@ editor section, at 1440 and 1024 px in light and dark, plus the printed PDF).
 ## Product variants
 
 The review card's recommendations editor uses the shared catalog picker with
-a variant chooser. A pinned variant is stored as a ref (`handle~variantId`,
-see `docs/archive/PRODUCT_VARIANTS_PLAN.md`) in the existing
-`campaign_drafts.recommended_product_ids` TEXT[] — no migration. The
-recommendations route validates per variant (`variant_not_found` 409 when it
-vanished mid-review), the drafter sees "Produktname – Variante" + the
-`?variant=` deep link, and the email grid renders the chosen variant's name,
-price and link. Regenerates preserve refs; a ref whose variant disappeared
-is DROPPED from the email and reported — never silently downgraded to the
-default variant (PAngV).
+a variant chooser. Two kinds of entry, both stored as refs in the existing
+`campaign_drafts.recommended_product_ids` TEXT[] — no migration
+(`docs/archive/PRODUCT_VARIANTS_PLAN.md`):
+
+- **„Alle Varianten“** (since 04.11.2026; the first row of the chooser, the
+  bare handle). In the campaign rail a bare ref of a product with more than
+  one variant means the product **in all its variants**
+  (`resolveProductSelections(refs, { allVariants: true })` →
+  `projectAllVariants`, pure core `allVariantsSummary` in
+  [`product-ref.mjs`](../src/lib/product-ref.mjs), tested): ONE row in the
+  mail with the product name, „ab <cheapest available variant>“ (en „from …“;
+  the plain price when all variants cost the same), the product page without
+  `?variant=`, available while any variant is. The desk shows „Alle
+  Varianten“ under the name and „ab …“ as the price; the drafter gets
+  „alle Varianten: 8 kg, 12 kg, …“ and is told to recommend the product in
+  general, never one weight or strength; the scoped code covers every variant
+  (Product gid). The **recommendation engine** picks products this way: a
+  weight series is recommended as the series, and a product qualifies as soon
+  as any variant is available (the old „default variant must be available“
+  gate is gone). Other rails (chat, carts) keep reading a bare ref as the
+  default variant; a set built from an all-variants entry uses the default
+  variant (the set dialog's availability check shows which).
+- **A pinned variant** (`handle~variantId`). The recommendations route
+  validates per variant (`variant_not_found` 409 when it vanished
+  mid-review), the drafter sees "Produktname – Variante" + the `?variant=`
+  deep link, the email grid renders the chosen variant's name, price and
+  link, and the scoped code covers exactly that variant (ProductVariant gid).
+  Regenerates preserve refs; a ref whose variant disappeared is DROPPED from
+  the email and reported — never silently downgraded to the default variant
+  (PAngV).
 
 ---
 
