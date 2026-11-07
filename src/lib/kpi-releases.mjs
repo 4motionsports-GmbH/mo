@@ -157,6 +157,16 @@ export const KPI_RELEASES = Object.freeze([
     detail:
       "Neuer optionaler Schritt „Deine Hinweise“ vor der Übergabe an Mo — im Trichter die Stufe „Hinweise erreicht“; die übrigen Stufen zählen wie bisher, „An Mo übergeben“ kann sich durch den zusätzlichen Schritt verschieben. Mo plant Hantelscheiben und einzeln verkaufte Kurzhanteln nur paarweise und Bodenschutz für die ganze Raumfläche — Pläne, Warenkorbwerte und Warenkorb-Links (auch in E-Mails) enthalten dadurch mehr Stück. Den Showroom schlägt Mo nur noch vor, wenn ein empfohlenes Gerät dort ausgestellt ist. Nichts wird anders gezählt.",
   },
+  {
+    // The go-live: the team's test data of the configurator was deleted up to
+    // this day (scripts/reset-konfigurator-data.mjs, docs/CONFIGURATOR.md
+    // „Go-live: Testdaten löschen“). Re-date to the day the reset ran.
+    date: "2026-11-08",
+    key: "konfigurator-start",
+    title: "Konfigurator-Start: Testdaten gelöscht",
+    detail:
+      "Zum Start des Home-Gym-Konfigurators wurden die Testdaten des Teams gelöscht: die Konfigurator-Events, die Konfigurator-Chats mit ihren Widget-Events, Test-Bestellungen und das Feedback von der Seite. Die Konfigurator-Zahlen beginnen an diesem Tag bei null; „Chats gesamt“, Warenkorb-Klicks und Produktempfehlungen der Tage davor sind um die Testläufe kleiner. Die KI-Kosten bleiben vollständig.",
+  },
 ]);
 
 /** First day the opt-in events carry source and outcome (OI1). */
@@ -178,14 +188,26 @@ function releaseDay(key) {
 export const NOTE_STEP_FROM = releaseDay("konfigurator-hinweise-regeln");
 
 /**
- * Does the period count the stage „Hinweise erreicht“? Only when it starts on
- * or after NOTE_STEP_FROM: a period across the release mixes runs without the
- * step (their starts and handovers count, their note step cannot) and would
- * show a false drop at the new optional step — then the stage is left out.
- * @param {{ from: string } | null | undefined} range
+ * First day of real configurator data: the team's test data before the
+ * go-live was deleted (scripts/reset-konfigurator-data.mjs). DERIVED from the
+ * release `konfigurator-start` — re-date that entry to the day the reset ran.
  */
-export function noteStepCounted(range) {
-  return Boolean(range && isYmd(range.from) && range.from >= NOTE_STEP_FROM);
+export const KONFIGURATOR_DATA_FROM = releaseDay("konfigurator-start");
+
+/**
+ * Does the period count the stage „Hinweise erreicht“? Only when its data
+ * starts on or after NOTE_STEP_FROM: a period across the release mixes runs
+ * without the step (their starts and handovers count, their note step cannot)
+ * and would show a false drop at the new optional step — then the stage is
+ * left out. The data starts at the later of the period's first day and
+ * KONFIGURATOR_DATA_FROM (nothing older exists after the go-live reset).
+ * @param {{ from: string } | null | undefined} range
+ * @param {string} [dataFrom]  first day of configurator data (YYYY-MM-DD)
+ */
+export function noteStepCounted(range, dataFrom = KONFIGURATOR_DATA_FROM) {
+  if (!range || !isYmd(range.from)) return false;
+  const from = isYmd(dataFrom) && dataFrom > range.from ? dataFrom : range.from;
+  return from >= NOTE_STEP_FROM;
 }
 
 /** First day whose data a section can be read for — earlier days are not comparable. */
@@ -207,8 +229,8 @@ const MEANINGFUL_FROM = Object.freeze({
     why: "„Chat gestartet“ zählt erst, seit das Widget den Kampagnen-Token (mo_c) mitschickt",
   },
   konfigurator: {
-    date: "2026-10-21",
-    why: "den Home-Gym-Konfigurator gibt es erst seit dem Theme-Upload vom 21.10.2026",
+    date: KONFIGURATOR_DATA_FROM,
+    why: "die Testdaten des Teams vor dem Start wurden gelöscht — erst ab dem Start zählen echte Besucher:innen",
   },
   attribution: {
     date: "2026-10-05",

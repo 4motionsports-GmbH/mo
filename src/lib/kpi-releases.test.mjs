@@ -1,7 +1,16 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { KPI_RELEASES, NOTE_STEP_FROM, SIGNIN_OUTAGE, germanDay, noteStepCounted, releaseNotesFor, releasesInRange } from "./kpi-releases.mjs";
+import {
+  KONFIGURATOR_DATA_FROM,
+  KPI_RELEASES,
+  NOTE_STEP_FROM,
+  SIGNIN_OUTAGE,
+  germanDay,
+  noteStepCounted,
+  releaseNotesFor,
+  releasesInRange,
+} from "./kpi-releases.mjs";
 import { configuratorFunnel } from "./configurator-core.mjs";
 
 test("release keys are unique and dates ascend", () => {
@@ -12,7 +21,7 @@ test("release keys are unique and dates ascend", () => {
 });
 
 test("releases are ordered and dated as documented", () => {
-  assert.deepEqual(KPI_RELEASES.map((r) => r.date), ["2026-10-01", "2026-10-03", "2026-10-04", "2026-10-05", "2026-10-05", "2026-10-05", "2026-10-05", "2026-10-05", "2026-10-06", "2026-10-06", "2026-10-06", "2026-10-06", "2026-10-06", "2026-10-06", "2026-10-08", "2026-10-21", "2026-10-21", "2026-10-22", "2026-10-24", "2026-10-24", "2026-10-28"]);
+  assert.deepEqual(KPI_RELEASES.map((r) => r.date), ["2026-10-01", "2026-10-03", "2026-10-04", "2026-10-05", "2026-10-05", "2026-10-05", "2026-10-05", "2026-10-05", "2026-10-06", "2026-10-06", "2026-10-06", "2026-10-06", "2026-10-06", "2026-10-06", "2026-10-08", "2026-10-21", "2026-10-21", "2026-10-22", "2026-10-24", "2026-10-24", "2026-10-28", "2026-11-08"]);
   assert.deepEqual(SIGNIN_OUTAGE, { from: "2026-10-03", to: "2026-10-04" });
   assert.equal(germanDay("2026-10-04"), "04.10.2026");
 });
@@ -107,11 +116,21 @@ test("releasesInRange is inclusive on both ends", () => {
   assert.deepEqual(releasesInRange({ from: "bad", to: "2026-10-30" }), []);
 });
 
-test("konfigurator: one 'meaningful from' note before the launch, none after", () => {
-  const notes = releaseNotesFor("konfigurator", { from: "2026-09-22", to: "2026-10-21" });
+test("konfigurator: one 'meaningful from' note before the go-live (test data deleted), none after", () => {
+  const notes = releaseNotesFor("konfigurator", { from: "2026-10-10", to: "2026-11-08" });
   assert.equal(notes.length, 1);
-  assert.match(notes[0], /^Erst ab dem 21\.10\.2026 aussagekräftig/);
-  assert.deepEqual(releaseNotesFor("konfigurator", { from: "2026-10-21", to: "2026-11-19" }), []);
+  assert.match(notes[0], /^Erst ab dem 08\.11\.2026 aussagekräftig: die Testdaten des Teams vor dem Start wurden gelöscht/);
+  assert.deepEqual(releaseNotesFor("konfigurator", { from: "2026-11-08", to: "2026-12-07" }), []);
+});
+
+test("KONFIGURATOR_DATA_FROM is the date of the release konfigurator-start — one date to re-date", () => {
+  const release = KPI_RELEASES.find((r) => r.key === "konfigurator-start");
+  assert.ok(release);
+  assert.equal(KONFIGURATOR_DATA_FROM, release.date);
+  const src = readFileSync(new URL("./kpi-releases.mjs", import.meta.url), "utf8");
+  assert.match(src, /export const KONFIGURATOR_DATA_FROM = releaseDay\("konfigurator-start"\);/);
+  // the go-live comes after the note step, so every remaining run has the step
+  assert.ok(KONFIGURATOR_DATA_FROM > NOTE_STEP_FROM);
 });
 
 test("NOTE_STEP_FROM is the date of the release konfigurator-hinweise-regeln — one date to re-date", () => {
@@ -123,17 +142,21 @@ test("NOTE_STEP_FROM is the date of the release konfigurator-hinweise-regeln —
   assert.match(src, /export const NOTE_STEP_FROM = releaseDay\("konfigurator-hinweise-regeln"\);/);
 });
 
-test("the Konfigurator funnel shows „Hinweise erreicht“ only for periods from NOTE_STEP_FROM on", () => {
+test("the Konfigurator funnel shows „Hinweise erreicht“ only when the period's data starts on or after NOTE_STEP_FROM", () => {
   const counts = { viewed: 900, started: 300, handover: 200, chats: 190, plans: 150, carts: 40, orders: 5 };
   // what queryConfiguratorSummary passes: the stage's sessions only when the period starts on or after the day
   const funnel = (/** @type {{ from: string, to: string }} */ range, notes) =>
     configuratorFunnel({ ...counts, notes: noteStepCounted(range) ? notes : 0 }).stages.map((st) => st.key);
-  // a 30-day period across the release: no stage (it would read „13 % weiter“, then „500 % weiter“)
+  // a 30-day period across the release, with runs from before it in the data: no stage (it would read
+  // „13 % weiter“, then „500 % weiter“)
   const across = { from: "2026-10-01", to: NOTE_STEP_FROM };
-  assert.equal(noteStepCounted(across), false);
-  assert.deepEqual(funnel(across, 40), ["started", "handover", "chats", "plans", "carts", "orders"]);
+  assert.equal(noteStepCounted(across, "2026-10-21"), false);
+  // after the go-live reset no run older than KONFIGURATOR_DATA_FROM exists — the same period counts the stage
+  assert.equal(noteStepCounted(across), true);
+  assert.equal(noteStepCounted({ from: "2026-10-15", to: "2026-11-13" }), true);
   // a period that starts on the day: the stage between started and handover
   const after = { from: NOTE_STEP_FROM, to: "2026-11-25" };
+  assert.equal(noteStepCounted(after, "2026-10-21"), true);
   assert.equal(noteStepCounted(after), true);
   assert.deepEqual(funnel(after, 40), ["started", "notes", "handover", "chats", "plans", "carts", "orders"]);
   // … and without any such sessions still none

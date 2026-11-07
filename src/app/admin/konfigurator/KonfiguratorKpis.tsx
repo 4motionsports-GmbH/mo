@@ -18,7 +18,7 @@ import {
   personaAnswer,
 } from "@/lib/configurator-core.mjs";
 import { eur, num, ratio } from "@/lib/admin-format.mjs";
-import { NOTE_STEP_FROM, germanDay } from "@/lib/kpi-releases.mjs";
+import { KONFIGURATOR_DATA_FROM, NOTE_STEP_FROM, germanDay } from "@/lib/kpi-releases.mjs";
 import { ADMIN_DATE_TIME_SHORT, formatAdmin } from "@/lib/admin-datetime.mjs";
 import { adminTabHref } from "@/lib/admin-tabs.mjs";
 import {
@@ -43,7 +43,7 @@ import { KpiSection } from "../kpi/KpiSection";
 
 export const STAGE_INFO: Record<string, string> = {
   started: "Sitzungen, die einen Durchgang auf der Konfigurator-Seite begonnen haben — die erste Antwort gewählt oder, mit vorausgefüllten Angaben aus dem Link, den Schritt „Deine Hinweise“ geöffnet (mit einem älteren Widget: direkt übergeben); „Neu starten“ beginnt einen neuen Durchgang (configurator_started).",
-  notes: `Sitzungen, die nach den Grundeinstellungen den Schritt „Deine Hinweise“ (Schritt 04, optional) erreicht haben — mit „Weiter“ oder über einen vorausgefüllten Link (configurator_note_step). Die Stufe erscheint nur für Zeiträume ab dem ${germanDay(NOTE_STEP_FROM)}, dem Tag des Seiten-Updates mit diesem Schritt: Ein Zeitraum davor mischt Durchgänge ohne den Schritt und zeigte hier einen falschen Abbruch.`,
+  notes: `Sitzungen, die nach den Grundeinstellungen den Schritt „Deine Hinweise“ (Schritt 04, optional) erreicht haben — mit „Weiter“ oder über einen vorausgefüllten Link (configurator_note_step). Den Schritt gibt es seit dem Seiten-Update vom ${germanDay(NOTE_STEP_FROM)}; gezählt wird erst ab dem Start am ${germanDay(KONFIGURATOR_DATA_FROM)} (die Testdaten davor sind gelöscht), damit kein Zeitraum Durchgänge ohne den Schritt mischt und einen falschen Abbruch zeigt.`,
   handover: "Klick auf „Weiter – Mo berät mich“ oder „Überspringen“ im Schritt „Deine Hinweise“ — die Angaben gehen an Mo (configurator_handover).",
   chats: "Mo hat die Beratung mit den Angaben gestartet (serverseitig, configurator_chat_started). Weniger als „übergeben“, wenn der Chat nicht antworten konnte (z. B. Rate-Limit).",
   plans: "Mo hat einen Home-Gym-Plan gezeigt (show_gym_plan, serverseitig gezählt) oder der Besucher hat eine von Mos Optionen in seinen Plan gewählt (Schritt für Schritt, configurator_option_picked).",

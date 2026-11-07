@@ -454,3 +454,13 @@ test("the 21.10. releases: ledger money and the configurator's own metrics are m
   assert.ok(isIn("inbox.created", cfg.product));
   assert.equal(isIn("chat.reach", cfg.measurement), false);
 });
+
+test("the go-live 08.11.: deleted test data is a measurement change, the partner traffic a confounder", () => {
+  const isIn = (key, areas) => areas.some((a) => keyInArea(key, a));
+  const start = RELEASE_EFFECTS["konfigurator-start"];
+  for (const key of ["chat.configuratorHandover", "chat.configuratorPlans", "chat.configuratorCarts", "revenue.viaConfigurator", "chat.cartClicks"]) {
+    assert.ok(isIn(key, start.measurement), `${key} under konfigurator-start`);
+  }
+  assert.ok(isIn("journey.chatToOrder", start.product));
+  assert.equal(isIn("costs.roi", start.measurement), false, "the AI costs stay complete");
+});

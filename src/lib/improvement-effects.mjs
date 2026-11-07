@@ -173,6 +173,24 @@ export const RELEASE_EFFECTS = Object.freeze({
   // included) and the showroom suggested only for products on display (fewer
   // suggest_showroom anchors) — behaviour, nothing counted differently.
   "konfigurator-hinweise-regeln": { measurement: [], product: ["chat", "journey", "revenue"] },
+  // The go-live (2026-11-08): the team's configurator test data before the day
+  // was DELETED — the configurator's own metrics start at zero and the chat
+  // metrics before it lost the test runs (counting), while the launch brings
+  // the partner traffic (behaviour, a confounder like on 21.10.).
+  "konfigurator-start": {
+    measurement: [
+      "chat.cartClicks",
+      "chat.cartPerChat",
+      "chat.recommended",
+      "chat.opened",
+      "chat.engagement",
+      "chat.configuratorHandover",
+      "chat.configuratorPlans",
+      "chat.configuratorCarts",
+      "revenue.viaConfigurator",
+    ],
+    product: ["chat", "journey", "revenue", "signin", "consent", "inbox"],
+  },
 });
 
 /** What flipping a switch changes (switch keys of business-snapshot snapshotSwitches). */
