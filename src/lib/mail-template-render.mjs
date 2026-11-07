@@ -33,6 +33,13 @@ import { discountRedeemUrl } from "./discount-coupon.mjs";
 import { MO_BLOCK_TYPES, normalizeMailTemplateDoc } from "./mail-template-doc.mjs";
 
 /** Card width and the content width inside the 60 px side padding. */
+/**
+ * Marks where the fixed legal footer starts in the rendered HTML — the checks
+ * (mailing-checks.mjs) only judge what the operator wrote, not the mandatory
+ * „jederzeit kostenlos abmelden“ notice.
+ */
+export const MAIL_FOOTER_MARKER = "<!-- mo:footer -->";
+
 export const MAIL_CARD_WIDTH = 600;
 export const MAIL_CONTENT_WIDTH = 480;
 
@@ -484,6 +491,7 @@ function footerRows(b, ctx, font, locale) {
   const company = (ctx.companyLines ?? MAIL_COMPANY_LINES).map((l) => escapeHtml(l)).join("<br>");
   const year = ctx.year ?? new Date().getFullYear();
   return `
+                ${MAIL_FOOTER_MARKER}
                 <tr>
                   <td height="20" bgcolor="#ffffff" style="mso-line-height-rule: exactly; font-size: 0; line-height: 20px;">&nbsp;</td>
                 </tr>

@@ -12,6 +12,8 @@
 // frequency cap) run again for every recipient at send time
 // (mailing-send.ts → campaign-gates.mjs) — these checks never replace them.
 
+import { MAIL_FOOTER_MARKER } from "./mail-template-render.mjs";
+
 /** Gmail clips a mail above 102 KB — the unsubscribe footer would vanish. */
 export const MAILING_HTML_HARD_LIMIT = 100 * 1024;
 export const MAILING_HTML_SOFT_LIMIT = 80 * 1024;
@@ -136,7 +138,9 @@ export function mailingChecks(input) {
       warnings.push({ key: "subject_bang", level: "warning", message: "Mehrere Ausrufezeichen im Betreff — Spamfilter werten das negativ." });
     }
   }
-  const lowerAll = `${subject} ${visibleText(html)}`.toLowerCase();
+  // Only what the operator wrote: the legal footer must say „kostenlos abmelden“.
+  const contentHtml = html.split(MAIL_FOOTER_MARKER)[0];
+  const lowerAll = `${subject} ${String(input.preheader ?? "")} ${visibleText(contentHtml)}`.toLowerCase();
   const spam = SPAM_WORDS.filter((w) => lowerAll.includes(w));
   if (spam.length > 0) {
     warnings.push({ key: "spam_words", level: "warning", message: `Typische Spam-Wörter: ${spam.map((w) => `„${w}“`).join(", ")} — sparsam einsetzen.` });

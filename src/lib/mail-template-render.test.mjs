@@ -5,6 +5,7 @@ import { MAIL_TEMPLATE_STARTERS, normalizeMailTemplateDoc, applyMergeFields } fr
 import {
   MAIL_CARD_WIDTH,
   MAIL_CONTENT_WIDTH,
+  MAIL_FOOTER_MARKER,
   renderMailTemplateHtml,
   renderMailTemplateText,
   sanitizeCustomHtml,
@@ -220,4 +221,12 @@ test("docMoPlacement reports which Mo blocks a document places", () => {
     mo_offer: true,
     mo_promo: false,
   });
+});
+
+test("the legal footer is marked once, after every content block (mailing-checks.mjs relies on it)", () => {
+  for (const starter of MAIL_TEMPLATE_STARTERS) {
+    const htmlOut = renderMailTemplateHtml(normalizeMailTemplateDoc(starter.build()), base());
+    assert.equal(htmlOut.split(MAIL_FOOTER_MARKER).length, 2, starter.key);
+    assert.match(htmlOut.split(MAIL_FOOTER_MARKER)[1], /Abmelden/, starter.key);
+  }
 });

@@ -79,3 +79,13 @@ test("visibleText drops markup, comments, styles and the hidden preheader filler
     "Hallo Welt"
   );
 });
+
+test("spam words: the fixed legal footer does not count, the operator's text and preview line do", () => {
+  const withFooter = (body) =>
+    html(`<p>${"Viel Text über unsere Angebote. ".repeat(20)}</p>${body}<!-- mo:footer --><p>Du kannst dich jederzeit kostenlos abmelden.</p>`);
+  assert.ok(!keys(mailingChecks(base({ html: withFooter("") })).warnings).includes("spam_words"));
+  const inText = mailingChecks(base({ html: withFooter("<p>Versand kostenlos!</p>") }));
+  assert.match(inText.warnings.find((w) => w.key === "spam_words").message, /„kostenlos“/);
+  const inPreheader = mailingChecks(base({ html: withFooter(""), preheader: "Heute gratis Versand" }));
+  assert.match(inPreheader.warnings.find((w) => w.key === "spam_words").message, /„gratis“/);
+});
