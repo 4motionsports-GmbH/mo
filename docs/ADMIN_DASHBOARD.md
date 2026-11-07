@@ -1,6 +1,6 @@
 # Admin dashboard (`/admin`)
 
-The German back office of Mo: one shared admin login, eleven screens in a grouped
+The German back office of Mo: one shared admin login, twelve screens in a grouped
 sidebar, and a send path that concentrates every legal guarantee in one place.
 The operator reviews and approves — the **system** sends (nobody copies text
 into a personal mail client).
@@ -8,7 +8,8 @@ into a personal mail client).
 | Group | Screen | `?tab=` | Key | What it is | Detail |
 | --- | --- | --- | --- | --- | --- |
 | Arbeit | Eingang | `eingang` (bare `/admin`) | 1 | The operator inbox: ranked customer signals with AI suggestions, system strip, unassigned mail | §3.1 |
-| Arbeit | Kampagnen | `kampagne` | 2 | All campaigns (overview, editor) and the review desk per campaign, incl. the Einzelansprache | §3.2, [`CAMPAIGNS.md`](./CAMPAIGNS.md) |
+| Arbeit | Kampagnen | `kampagne` | 2 | All campaigns (overview, editor) and the review desk per campaign, incl. the Einzelansprache; the workspace of a Rundmail | §3.2, [`CAMPAIGNS.md`](./CAMPAIGNS.md) |
+| Arbeit | Vorlagen | `vorlagen` | — | The operator's e-mail templates: block editor with live preview, „Mit KI gestalten“, import/export; a template starts a Rundmail or becomes the design of Mo's personal mails | §3.12, [`EMAIL_TEMPLATES.md`](./EMAIL_TEMPLATES.md) |
 | Arbeit | Konfigurator | `konfigurator` | — | The Home-Gym-Konfigurator (Men's Health / Women's Health): Mo's assortment and notes for the guided consultation, and its funnel from the first answer to the order | §3.11, [`CONFIGURATOR.md`](./CONFIGURATOR.md) |
 | Arbeit | Kunden | `kunden` | 3 | The whole customer base (Shopify mirror + Mo leads), server-side list; one person's figures, activity, orders, chats, consent, correspondence, letter | §3.3, [`CUSTOMERS.md`](./CUSTOMERS.md) |
 | Arbeit | Wissen | `wissen` | 4 | Q&A knowledge queue (gaps → answers → published) | §3.4, [`QA_KNOWLEDGE.md`](./QA_KNOWLEDGE.md) |
@@ -22,8 +23,8 @@ into a personal mail client).
 Legacy keys still resolve: `?tab=overview` (the retired Übersicht, see §3.1) →
 Eingang, `customers` / `marketing` → Kunden, `kampagnen` → Kampagnen (the
 screen keeps the key `kampagne`; its label is „Kampagnen“). An unknown key
-falls back to the Eingang. All ten digits are taken, so the Konfigurator has
-no shortcut (its tooltip shows no key). The registry (keys, labels, groups, shortcuts,
+falls back to the Eingang. All ten digits are taken, so the Konfigurator and
+Vorlagen have no shortcut (their tooltips show no key). The registry (keys, labels, groups, shortcuts,
 descriptions, aliases, URL builder) is the pure, unit-tested
 [`src/lib/admin-tabs.mjs`](../src/lib/admin-tabs.mjs); the icons live in
 [`src/app/admin/tabs.tsx`](../src/app/admin/tabs.tsx) (Eingang: `Inbox`).
@@ -116,8 +117,8 @@ interaction state and calls the guarded `/api/admin/*` routes.
 The client workspaces are exported through `next/dynamic` in
 [`lazy.tsx`](../src/app/admin/lazy.tsx), so each screen's JavaScript is its
 own chunk (server rendering stays on — nothing flashes). The Kampagnen screen
-has two chunks: `CampaignsOverview` (overview + editor) and
-`KampagneWorkspace` (the desk). Recharts is loaded only on KPIs:
+has three chunks: `CampaignsOverview` (overview + editor),
+`KampagneWorkspace` (the desk) and `RundmailWorkspace` (a Rundmail). Recharts is loaded only on KPIs:
 [`kpi/charts.tsx`](../src/app/admin/kpi/charts.tsx) wraps every chart of
 `kpi/charts-recharts.tsx` in `next/dynamic`.
 
@@ -162,6 +163,8 @@ Everything an operator can point a colleague at is in the URL:
 | Kampagnen | `?contact=<id>` | the card on the desk (kept in sync while reviewing; a sent/skipped id falls back to the first card). Alone, without `?campaign=`, it opens the desk of the campaign the recipient belongs to (legacy desk links) |
 | Kampagnen | `?view=liste\|eingeplant\|briefe\|gesendet` | the Liste, Eingeplant („Einplanen“, shown when switched on or when mails are planned), Briefe (the campaign's letters — shown with a letter mode, or while letters exist; migration 0074) or Gesendet view of the desk (absent = Prüfen) |
 | Kampagnen | `?filter=<chip>` | desk queue filter chip: `doi`, `soi`, `en`, `discount`, `set`, `hints`, `blocked` (absent = Alle) |
+| Kampagnen | `?campaign=<id>&view=inhalt\|pruefen\|versand` | a Rundmail's workspace tab (absent = Inhalt before the release, Versand after; kept in sync with `history.replaceState`) |
+| Vorlagen | `?vorlage=<id>` | the template open in the editor (absent = the list; kept in sync) |
 | KPIs | `?kpiRange=7d\|30d\|90d\|custom`, `?kpiFrom=`, `?kpiTo=` | period (validated + clamped by [`kpi-range.mjs`](../src/lib/kpi-range.mjs)) |
 | KPIs | `?kpiFresh=<unix seconds>` | freshness floor for the Shopify cache — set by „Aktualisieren“ (§5.0) |
 | Konfigurator | `?kpiRange=7d\|30d\|90d` | period of „Wirkung“ (presets only; anything else = 30 days) |
@@ -203,12 +206,14 @@ src/app/admin/
 ├── eingang/              # EingangWorkspace (list + item detail + keys), MailReply, UnmatchedInbound, types
 ├── kampagnen/            # CampaignsOverview (cards), CampaignEditor (sheet), CampaignHeroField („Kampagnenbild“), CampaignCheckSection („Prüfen & testen“), types
 ├── kampagne/             # the desk of one campaign: KampagneWorkspace, CampaignHeader, PreparePopover, QueueRail, MailPane, ReviewColumn, sections/*, ListView, ScheduledViews („Einplanen“ dialog, view „Eingeplant“), SentHistory, LettersView, TestContactsSheet, ContactHistorySheet, EmailViewerDialog, badges, useCampaignActions, useReleaseActions, useRenderedPreview
+├── rundmail/             # RundmailWorkspace (a Rundmail: Inhalt, Prüfen & senden, Versand)
+├── vorlagen/             # VorlagenWorkspace (list + editor), BlockEditor (shared with the Rundmail), LivePreview, AssistDialog
 ├── kunden/               # KundenWorkspace, CustomerDetail, badges, useCustomerDetail, tabs/{Ueberblick (+Profil), Aktivitaet, Kaeufe, Beratungen („Gespräche“), Marketing (+OptOutControl), Korrespondenz, Brief}, BundleComposer
 ├── konfigurator/         # KonfiguratorWorkspace (settings + Sortiment), KonfiguratorKpis („Wirkung“, server), KonfiguratorRange, types
 ├── kpi/                  # KpiToolbar, KpiSection, KpiTile (+ DeltaPill), FunnelBars, Sparkline, RevenueOrders (the drill-down), revenue-view (+ revenue-colors, revenue-series), groups, KpiTopQuestions, charts (next/dynamic) → charts-recharts + chart-geometry, sections/* (one file per section, §3.5)
 ├── gespraeche/           # GespraecheWorkspace, ConversationFilters, StatsPanel, ConversationList, ConversationDetail, ReportPanel, badges
 ├── wissen/               # WissenWorkspace, QaEntryEditor, ProductField, badges, useQaQueue
-├── einstellungen/        # EmailSettingsWorkspace, ShopifySyncCard, SystemStatusCard, DesignPreviewDialog
+├── einstellungen/        # EmailSettingsWorkspace (incl. SendersCard „Absender“), ShopifySyncCard, SystemStatusCard, DesignPreviewDialog
 ├── feedback/, analytics/, verbesserung/
 ├── HeroImagePanel.tsx, useEmailHero.ts, EmailPreviewButton.tsx, EmailPreviewFrame.tsx, EmailTextModeToggle.tsx   # shared e-mail widgets
 ├── lib/                  # admin-fetch, use-async-action, use-step-loop, use-media-query, fetch-pdf, prepare-hero-upload
@@ -219,7 +224,8 @@ Shared, pure logic sits in `src/lib/*.mjs` with `node --test` suites next to it
 (`admin-tabs`, `admin-format`, `admin-datetime`, `admin-conversation-filter`,
 `admin-customer-filter`, `customer-signals`, `customer-timeline`,
 `campaign-def`, `audience-spec`, `kpi-range`, `ttl-cache`, `retention-options`,
-…).
+`mail-template-doc`, `mail-template-render`, `mailing-core`, `mailing-checks`,
+`sender-identities`, …).
 
 ### 2.4 Client helpers (`src/app/admin/lib`)
 
@@ -528,12 +534,14 @@ released by hand in the desk's view „Briefe“ (below; module:
   „Versand gesperrt“ (with InfoTip) while `CAMPAIGN_SENDS_APPROVED` is off,
   „Neue Kampagne“. An unknown `?campaign=` shows the overview with a notice.
 - **One card per campaign:** name (→ desk), phase badge, kind (Laufend /
-  Aktion / Einzelansprache), Zielgruppe fest/dynamisch, discount, the audience
+  Aktion / Einzelansprache / Rundmail), Zielgruppe fest/dynamisch (a Rundmail: „ein Inhalt
+  für alle“ and „von <Absender>“ when it has its own), discount, the audience
   in plain German (`describeAudienceSpec`, [`audience-spec.mjs`](../src/lib/audience-spec.mjs)),
   start – end, figures (Empfänger, Entwürfe, Gesendet, Klickrate — sends with
-  any click, the button or the set link, over real sends), „Prüftisch
-  öffnen (n)“, the start action and a ⋯ menu (Bearbeiten, Pausieren, Beenden,
-  Archivieren).
+  any click, the button or the set link, over real sends; a Rundmail: Empfänger, Gesendet,
+  Klickrate, Abmeldungen), „Prüftisch öffnen (n)“ (a Rundmail: „Inhalt gestalten“ while
+  Entwurf, then „Rundmail öffnen“), the start action and a ⋯ menu (Bearbeiten, Pausieren,
+  Beenden, Archivieren; a Rundmail is started, paused and ended in its workspace).
 - **Status and phase** (rules: [`CAMPAIGNS.md`](./CAMPAIGNS.md) §2.1): the
   badge shows the *phase* („Geplant“ / „Läuft“ / „Abgelaufen“, else the
   status); the start action and the ⋯ menu offer the allowed transitions
@@ -552,8 +560,11 @@ verwenden“, §3.3) the new campaign's Zielgruppe starts from that spec.
 The sheet's sections, top to bottom (every field, column, bound and default per kind:
 [`CAMPAIGNS.md`](./CAMPAIGNS.md) §2.2):
 
-- **Grundlagen** — Name, Art Aktion / Laufend (only when creating; it seeds the
-  defaults), Start, Ende, Priorität.
+- **Grundlagen** — Name, Art Aktion / Laufend / Rundmail (only when creating; it seeds the
+  defaults), Start, Ende, Priorität. A Rundmail instead shows „Versand spätestens bis“,
+  **Absender** and „Inhalt starten mit“ (a template or a starter; InfoTips) and hides Briefing,
+  Angebot, Gestaltung and Automatik — its content is made in its workspace (below); once
+  released only the name is editable (callout).
 - **Briefing** — free text the AI writer reads for every mail; „Briefing
   vorschlagen“ (`campaigns/assist`).
 - **Zielgruppe** — „Beschreiben“ + „Filter setzen“ (the AI turns a sentence into
@@ -569,7 +580,9 @@ The sheet's sections, top to bottom (every field, column, bound and default per 
 - **Angebot** — Rabatt, Gilt für (fest: „Individuelle Auswahl“ — der Code gilt nur für die Produkte der Mail), „Codes gültig bis“
   (Aktion): starting values for Vorbereiten; codes are minted at send. A card
   that gets a set carries no code (offer-mode.mjs).
-- **Gestaltung** — Design, Titelbild („Kein KI-Titelbild“ / „Standard-Titelbild“ /
+- **Gestaltung** — Absender (the standard sender or an identity from Einstellungen →
+  Absender, with where replies go below it), Design (registered designs and „Vorlage: …“ for
+  templates with „Mos persönlicher Text“), Titelbild („Kein KI-Titelbild“ / „Standard-Titelbild“ /
   „KI-Titelbild für einen Teil (A/B)“ / „KI-Titelbild für alle“; InfoTip ends „Mails
   ohne KI-Titelbild zeigen das Kampagnenbild, ohne Kampagnenbild das Standardbild des
   Designs.“), Textlänge, then the full-width field **„Kampagnenbild“**
@@ -809,6 +822,38 @@ people (drafts are written on the desk with „Vorbereiten…“). From there it
 the same desk, the same Prüfpunkte and the same send path as every campaign.
 The desk's „Zielgruppe aktualisieren“ is disabled; its
 empty state points to Kunden and the Eingang.
+
+#### Rundmail — [`rundmail/RundmailWorkspace.tsx`](../src/app/admin/rundmail/RundmailWorkspace.tsx)
+
+A campaign of the kind Rundmail (one content for everyone; module:
+[`CAMPAIGNS.md`](./CAMPAIGNS.md) §9) opens its own workspace instead of a desk
+(`?campaign=<id>`; server file [`RundmailTab.tsx`](../src/app/admin/RundmailTab.tsx)). Header:
+„← Kampagnen“, name, badges Rundmail + phase, the audience in plain German and the Absender,
+„Zielgruppe & Absender“ (the editor). Three tabs (`?view=`):
+
+- **Inhalt** — „Gespeichert · Version n“, „Vorlage laden“ (replaces the content with a template's,
+  Mo blocks dropped; unsaved, „Rückgängig“ brings the old one back), „Mit KI gestalten“ (dialog; tooltip names
+  `ANTHROPIC_API_KEY` when it is missing), Speichern; Betreff (merge fields, InfoTip), Sprache,
+  Vorschauzeile; the block editor and the live preview of the Vorlagen screen (§3.12). After the
+  release the content is read-only (callout).
+- **Prüfen & senden** (badge „!“ while the current version has no test mail) — „Prüfungen“: every
+  error, warning and info of `mailing-checks.mjs`, „Erneut prüfen“; „Testmail“: An (bis zu 5
+  Adressen), Vorname zum Testen, „Testmail senden“, the last test with „aktueller Stand ✓“ or
+  „veraltet“ (InfoTip with the mail-tester.com tip); „Senden“: Tempo Behutsam / Normal / Schnell,
+  „Engagierte zuerst“, Zeitpunkt Jetzt / Planen (Start, ≤ 60 days), „Jetzt senden“ / „Planen“
+  (confirm dialog with recipients, sender and duration) — disabled with the reason while a red
+  check is open.
+- **Versand** — the progress bar („Läuft — noch etwa n Min.“, „Fertig — n Mails versendet“,
+  „Geplant für …“, „Pausiert“ with the error), tiles Empfänger, Gesendet, Ausstehend, Übersprungen, Fehler;
+  „Ergebnis“: Zugestellt, Geklickt (share of sent), Bounces, Beschwerden, Abmeldungen; „Klicks je
+  Link“ (Personen · Klicks per frozen link); „Nicht gesendet — warum“ (reasons in German);
+  „Versendete Mail ansehen“ (the frozen mail with a sample recipient); Pausieren / Fortsetzen,
+  Abbrechen (confirmed) and, for a planned Rundmail before its first mail, „Zurücknehmen“
+  (confirmed).
+  While it sends and the page is open, the page drives the runner every 6 seconds (the cron runs
+  every minute anyway).
+
+Screenshots: `docs/screenshots/rundmail-vorlagen/` (light and dark, 1440 and 1024 px).
 
 ### 3.3 Kunden
 
@@ -1319,6 +1364,18 @@ unlike the warning). Without a database a Callout and disabled inputs (the
 default applies); before migration 0078 the page shows the default and saving
 answers „Migration 0078 fehlt — bitte zuerst ausführen.“
 
+**Absender** (migration 0081, `SendersCard` in
+[`einstellungen/EmailSettingsWorkspace.tsx`](../src/app/admin/einstellungen/EmailSettingsWorkspace.tsx),
+after „Versand-Konfiguration“; rules: [`EMAIL_DESIGNS.md`](./EMAIL_DESIGNS.md) „Sender
+identities“) — the senders a campaign or Rundmail can choose: the standard sender (read-only,
+badge „Standard“, where its replies go), then up to ten identities, each with „Testmail“ and
+remove; a row to add one — **Adresse** (only domains verified in Resend: `CONTACT_FROM_EMAIL`'s
+domain and `EMAIL_SENDER_DOMAINS`, InfoTip), **Anzeigename**, **Antworten** „An die Adresse“ /
+„An Mo“ — „Hinzufügen“; „Testmail an“ (the address the tests go to) with „Test vom Standard“;
+**„Speichern“** (`settings/senders`, validated on the server with German field errors;
+audit-logged). The Design-Bibliothek lists templates with „Mos persönlicher Text“ as „Vorlage: …“
+with „Bearbeiten“ (→ Vorlagen) next to „Vorschau“.
+
 **Shopify-Abgleich**
 ([`einstellungen/ShopifySyncCard.tsx`](../src/app/admin/einstellungen/ShopifySyncCard.tsx);
 data from `getSyncHealth` / `listSyncRuns` in
@@ -1464,6 +1521,39 @@ field `discount`); key `showroom` for the showroom (theme list, manual list, las
 `showroom-store.ts`, no migration).
 
 ---
+
+### 3.12 Vorlagen
+
+**The operator's e-mail templates** — built here without a developer, used to start a Rundmail
+or as the design of Mo's personal mails (module, format, renderer, AI and upload:
+[`EMAIL_TEMPLATES.md`](./EMAIL_TEMPLATES.md)). Server file
+[`VorlagenTab.tsx`](../src/app/admin/VorlagenTab.tsx) (the list with where each template is in
+use), client workspace [`vorlagen/VorlagenWorkspace.tsx`](../src/app/admin/vorlagen/VorlagenWorkspace.tsx).
+
+- **List** — Aktiv · Archiv, „Importieren“ (a `.json` exported here or elsewhere), „Neue Vorlage“
+  (dialog: name, the starter „Black Week“ / „Newsletter“ / „Persönliche Kampagne“ / „Leer“,
+  description). One card per template: name, badge „Persönliche Mails + Rundmail“ (has „Mos
+  persönlicher Text“) or „Rundmail“, „Aktiv: Kampagne / Marketing“ where Einstellungen uses it,
+  description, „n Bausteine · Version n · geändert …“, „Bearbeiten“. Empty state with „Neue
+  Vorlage“.
+- **Editor** (`?vorlage=<id>`) — „← Alle Vorlagen“, „Rückgängig“ (after an AI proposal),
+  „Mit KI gestalten“ (dialog: instruction, examples, optional screenshot; tooltip names
+  `ANTHROPIC_API_KEY` when it is missing; the AI's notes appear as a callout), **„Speichern“**
+  (version-checked), ⋯ Duplizieren · Exportieren (JSON) · Archivieren / Wiederherstellen. Name,
+  Beschreibung. **Bausteine** ([`vorlagen/BlockEditor.tsx`](../src/app/admin/vorlagen/BlockEditor.tsx),
+  shared with the Rundmail): „Farben & Schrift“ (Akzentfarbe, Button-Schrift, Hintergrund außen,
+  Überschriften, Text, Schrift, Button-Form), one row per block — label, summary, its errors and
+  hints, ↑ ↓ Duplizieren Entfernen; opened: the block's description behind an InfoTip and its
+  fields (pictures: „Bild hochladen“ or an https address; products: the catalog picker; colours:
+  picker + hex) — and „Baustein hinzufügen“ (menu by group; the Mo blocks only where they can
+  work). **Vorschau** ([`vorlagen/LivePreview.tsx`](../src/app/admin/vorlagen/LivePreview.tsx),
+  `vorlagen/preview`, debounced): Rundmail / Persönliche Mail (with „Mos persönlicher Text“;
+  Einzelprodukte / Set-Angebot with sample data), Desktop / Mobil, zoom; sticky beside the
+  blocks from 1280 px, below them on smaller screens.
+
+A template in use cannot lose „Mos persönlicher Text“, and one selected in Einstellungen cannot be
+archived (the save / archive answers say why). No keyboard shortcut (all ten digits are taken).
+Screenshots: `docs/screenshots/rundmail-vorlagen/`.
 
 ## 4. Marketing e-mails from the Kunden screen (former `MS5-` path)
 
@@ -2630,7 +2720,7 @@ this order:
 | Kind | Resolved by | Records | Redirects to |
 | --- | --- | --- | --- |
 | Marketing send (`marketing_sends.redirect_token`, the former `MS5-` path, §4) | [`recordEmailClick()`](../src/lib/marketing-store.ts) | `clicked_at` on the first click only; a `marketing_email_clicked` event on **every** click, `data: { sendId, captureId, firstClick }` | the stored prefilled cart (`cart_url`, `?discount=CODE` intact) |
-| Campaign send (`campaign_sends.redirect_token`, migration 0041) | `recordCampaignClick()` in [`campaign-store.ts`](../src/lib/campaign-store.ts) | `clicked_at` on the first click only (§5.9 „Geklickt“); a `campaign_email_clicked` event on every click, `data: { sendId, firstClick }` | the campaign's shop link (`cta_kind = shop`), else `CAMPAIGN_MO_DEEPLINK_URL` with the token as `mo_c` (§5.9 „Chat gestartet“) — both read at click time |
+| Campaign send (`campaign_sends.redirect_token`, migration 0041) | `recordCampaignClick()` in [`campaign-store.ts`](../src/lib/campaign-store.ts) | `clicked_at` on the first click only (§5.9 „Geklickt“); a `campaign_email_clicked` event on every click, `data: { sendId, firstClick }` — for a Rundmail `data: { sendId, firstClick, campaignId, link }` | the campaign's shop link (`cta_kind = shop`), else `CAMPAIGN_MO_DEEPLINK_URL` with the token as `mo_c` (§5.9 „Chat gestartet“) — both read at click time; a Rundmail send with `?l=N`: link N's frozen target with its UTM parameters ([`CAMPAIGNS.md`](./CAMPAIGNS.md) §9.2), any other value the shop |
 | Bundle offer (set link) | `resolveBundleRedirect()` in [`bundle-offers-store.ts`](../src/lib/bundle-offers-store.ts) | a `bundle_offer_clicked` event, `data: { offerId, status, expired }`; the first set click of a campaign send stamps `campaign_sends.bundle_clicked_at` („Set geklickt“) | an active offer's cart permalink; an expired, archived, failed or pending offer gets a branded „Angebot abgelaufen“ page (410, link to `BUNDLE_EXPIRED_REDIRECT_URL` or the shop) |
 
 All click events carry `session_id = NULL` (an e-mail click, not a widget
@@ -2651,11 +2741,11 @@ anomaly is logged server-side.
 
 ## 11. Admin API routes
 
-All under `/api/admin/*` — 108 route files —, gated by the Edge proxy **and**
+All under `/api/admin/*` — 117 route files —, gated by the Edge proxy **and**
 `guardAdminPost(req)` / `guardAdminGet()` in the handler (§1); JSON envelope
 `{ error: { code, message } }` on failure. Grouped by the screen that calls
 them. Actions that read or act on one person's data write the admin access log
-(`recordAdminAccess`, 42 route files) — among them `customers/ask`,
+(`recordAdminAccess`, 49 route files) — among them `customers/ask`,
 `customers/objection`, `campaigns/add-recipient(s)`, `campaigns/letters`,
 `customers/letter-address`, `inbox/accept`, `inbox/suggest` and
 `correspondence/assign-prospect`.
@@ -2711,6 +2801,12 @@ them. Actions that read or act on one person's data write the admin access log
 | | `POST customers/letter-draft / letter-preview`, `POST physical/send` | physical letter (`letter-draft` 409 after a postal objection; since 0074 `physical/send` answers 409 `objection`, `not_purchase_address` or `address_invalid` too) |
 | Kunden | `POST customers/letter-address { customerId }` | „Adresse aus letzter Bestellung holen“ (0074): the shipping address of the person's latest completed order, read from Shopify and stored as the purchase address → `{ checked, filled, unchanged, noOrder, noAddress, failed }`; 403 `flag_off` while `PHYSICAL_MAIL_SENDS_APPROVED` is off, 503 `shopify_not_configured`; access log `customer.letter_address` |
 | | `GET email-hero`, `POST email-hero/suggest / generate / headline / remove` | hero image of a marketing or campaign draft; the GET's `defaultUrl` is what the mail shows without a per-draft hero — for a campaign draft the Kampagnenbild when there is one (`defaultSource: "campaign"`), else the design's default (`"design"`) |
+| Kampagnen (Rundmail) | `POST rundmail { campaignId, action, … }` | the Rundmail workspace (§3.2): `state` (polling), `save` (version-checked; 409 `frozen` / `conflict`), `pacing`, `checks`, `test { addresses, firstName, expectedVersion }`, `release { startsAt?, expectedVersion }` (409 `release_refused` with the evaluation), `unschedule`, `pause`, `resume` (403 `sends_not_approved`), `cancel { confirm: true }`, `step` (one runner step); audit `rundmail.*`. [`CAMPAIGNS.md`](./CAMPAIGNS.md) §9 |
+| | `POST rundmail/frozen { campaignId }` | „Versendete Mail ansehen“: the frozen HTML with a sample recipient, links inert |
+| Vorlagen | `GET vorlagen`, `POST vorlagen { action, … }` | the templates (§3.12): `get`, `create { name, description?, starter? \| doc? }`, `save { id, name, description, doc, expectedVersion }` (409 stale; a template in use keeps „Mos persönlicher Text“), `duplicate`, `archive { id, archived }` (refused while selected in Einstellungen), `import { file }`; audit `template.*`. [`EMAIL_TEMPLATES.md`](./EMAIL_TEMPLATES.md) |
+| | `POST vorlagen/preview { doc, use, subject?, preheader?, language?, firstName?, sample? }` | the live preview of the unsaved document through the production renderers: `bulk` (the Rundmail render of test and release) or `personal` (the campaign composer with sample data inside the template design; `sample` items \| set) → `text/html`, links inert; nothing stored |
+| | `POST vorlagen/image` (raw `image/jpeg` \| `image/png` \| `image/webp` \| `image/gif` body, ≤ 4 MB) | „Bild hochladen“ for Bild, Logo and Titelbild → `{ url, width, height, warnings }`; 503 without `BLOB_READ_WRITE_TOKEN`; writes nothing to the database |
+| | `POST vorlagen/assist { instruction, doc?, use, screenshot? }` | „Mit KI gestalten“ → `{ doc, notes }` (a proposal, nothing stored; writer tier, `ai_usage` `template_assist`, audit `template.assist`) |
 | Wissen | `GET qa/list?status=`, `POST qa/scan / answer / publish / unpublish / dismiss / restore` | the Q&A queue |
 | KPIs | `POST kpi/top-questions { personaLabel, force? }` | on-demand Top-Fragen summary |
 | Konfigurator | `POST konfigurator/settings { enabled, tag, extraProductIds, focus, notes }` | „Mo im Konfigurator“: store the configurator settings (`admin_settings` key `configurator`, 0078) → `{ ok, settings }`; German 400 on invalid input, 503 without a database or before 0078; audit `settings.configurator` |
@@ -2720,8 +2816,9 @@ them. Actions that read or act on one person's data write the admin access log
 | Analyse | `GET analytics`, `GET analytics/<id>`, `GET analytics/<id>/pdf`, `POST analytics/estimate / create / step / delete` | Komplettanalysen; `estimate` also returns `strategistEur`, `minutes { low, high }` and `previousReport`; `step` answers `busy: true` while another step holds the report's claim (0077) |
 | Verbesserung | `GET improve`, `GET improve/<id>`, `GET improve/backlog`, `POST improve/run / step / suggestion / adopt / delete` | improvement runs, the open backlog |
 | | `POST directives/save / toggle`, `GET directives/versions?id=` | Mo's live directives |
-| Einstellungen | `POST email-designs/preview / assign` | design preview (`preview { designKey, kind, sample?: items \| set }` — marketing and campaign samples as an item mail or a set mail) and per-type assignment |
+| Einstellungen | `POST email-designs/preview / assign` | design preview (`preview { designKey, kind, sample?: items \| set }`; a `vorlage-<id>` key renders the template — marketing and campaign samples as an item mail or a set mail) and per-type assignment |
 | | `POST settings/contact-frequency { maxMails, windowDays }` | „Kontakthäufigkeit“: store the warning threshold (`admin_settings`, 0078; whole numbers 0–50 / 0–365, 0 = aus) → `{ ok, settings }`; German 400 on invalid input, 503 without a database or before migration 0078 („Migration 0078 fehlt — bitte zuerst ausführen.“); audit `settings.contact_frequency` |
+| | `POST settings/senders { action: save \| test, … }` | „Absender“: `save { senders: [{ id?, address, name, replies }] }` (validated: verified domains only, ≤ 10, German field errors) → `{ ok, senders }`; `test { sender \| null, to }` sends one short branded mail from that identity (`null` = the standard sender) → `{ ok, from }`, Resend's refusal as the message; audit `settings.senders` / `settings.senders_test` |
 | | `GET shopify/status` | Shopify-Abgleich: `{ health, runs, outbox, alignment, flags }` (pure DB) |
 | | `POST shopify/import { action: start \| step \| cancel }` | the full customer + order import, stepped (`useStepLoop`); a finished import computes a first batch of figures |
 | | `POST shopify/outbox { id }` | „Erneut versuchen“ for a dead write-back |

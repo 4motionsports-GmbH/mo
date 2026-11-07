@@ -30,6 +30,7 @@ actually differs.
 | `classic` | Shopify-newsletter clone (the default) | Built in, no module |
 | `studio` | Editorial-minimal (example/reference) | Tokens + one renderer override (`sectionBand`) + one variant (`doi` without the social row) |
 | `performance` | Image-first conversion design (`hasHero: true`) | Full shell: hero with an (AI) image, personal greeting, product cards + discount coupon (item mail) or the framed set card (set mail), offer countdown in the same light card style, „Frag Mo“ panel, smiley rating, hero pipeline (below) |
+| `vorlage-<id>` | An operator-built template (Vorlagen, migration `0081`) | Not in the registry: a template with „Mos persönlicher Text“ resolves at render time to a design whose `shell` lays out the template's blocks (`hasHero` when it has the block „Titelbild“); Kampagne and Marketing only — [`EMAIL_TEMPLATES.md`](./EMAIL_TEMPLATES.md) §3 |
 
 ## The two styling layers
 
@@ -76,6 +77,39 @@ The composers (`summary-email.ts`, `consent-copy.ts` (DOI), `marketing-email.ts`
 the stored selection (`email-design-store.ts`, 5-minute cache, fail-soft → classic) and render inside
 `withEmailDesign(...)`; every public render helper checks for an override first and otherwise falls
 back to the classic implementation.
+
+## Templates from the admin („Vorlagen“) and sender identities
+
+Since migration `0081` the operator can build designs without code: a template from the screen
+Vorlagen that has the block „Mos persönlicher Text“ is selectable like a registered design (design
+key `vorlage-<id>`, label „Vorlage: …“) — the format, the renderer and the rules are in
+[`EMAIL_TEMPLATES.md`](./EMAIL_TEMPLATES.md). A registered design (this recipe) is still the way
+for what a block document cannot express. The template renderer and the classic shell share their
+CSS ([`email-shell-css.mjs`](../src/lib/email-shell-css.mjs)).
+
+### Sender identities („Absender“)
+
+Every mail goes out as „Mo von motion sports <`CONTACT_FROM_EMAIL`>“ unless a **campaign** picks
+another sender. The operator keeps up to ten identities in Einstellungen → Absender (`admin_settings`
+key `email_senders`; rules and German texts in the tested
+[`sender-identities.mjs`](../src/lib/sender-identities.mjs), I/O in
+[`sender-store.ts`](../src/lib/sender-store.ts)): address, display name and where replies go —
+„An Mo“ (Reply-To = `INBOUND_EMAIL_ADDRESS`, answers land in Mo's Eingang) or „An die Adresse“
+(no Reply-To, answers go to the address itself, e.g. the team's info@ mailbox).
+
+- **Domains:** an identity may use the domain of `CONTACT_FROM_EMAIL` and the domains in
+  `EMAIL_SENDER_DOMAINS` — each only after it is verified in Resend (DKIM, SPF return path). A
+  sender on the same domain as Mo's mails shares its alignment and reputation; a new domain starts
+  without reputation.
+- **Where it applies:** a campaign's mails (`campaigns.sender`, editor → Gestaltung / Rundmail) —
+  personal campaign mails and Rundmails. The DOI confirmation, summaries, the Kunden marketing
+  mail, replies and system mails always use the standard sender.
+- **Never swapped silently:** `resolveSender` runs at send time; an identity whose domain is no
+  longer allowed refuses the mail (campaign send 409 `sender_invalid`, a Rundmail check error)
+  instead of falling back to another sender. A changed sender is part of a campaign mail's approval
+  fingerprint (`from:<address>:<name>:<replies>`), so approved mails are approved again.
+- **Test:** „Testmail“ per identity in Einstellungen sends one short branded mail from it — check
+  „Original anzeigen“ in Gmail for DKIM, SPF and DMARC „PASS“.
 
 ## Recipe: adding a new design
 

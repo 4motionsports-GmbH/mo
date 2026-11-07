@@ -47,7 +47,7 @@ the pooled one. To add a migration, drop a new file with the next number
 DDL (`--` comments and `;` statement separators; no dollar-quoted function
 bodies, which the lightweight splitter doesn't parse). Production migrations are
 run manually by the maintainer. The latest migration is
-`0080_mo_orders_shopify_updated_at.sql`; the [table index](#table-index--every-table-and-where-it-is-documented)
+`0081_templates_rundmail_senders.sql`; the [table index](#table-index--every-table-and-where-it-is-documented)
 below names the migration that created each table.
 
 ## Schema overview
@@ -211,7 +211,7 @@ The schema follows the two-cluster split whose lawful bases and windows
 
 ## Table index — every table and where it is documented
 
-Every base table in the schema (migrations `0001`–`0080`; dropped tables
+Every base table in the schema (migrations `0001`–`0081`; dropped tables
 `bestandskunden_suppression_list`, `email_templates`, `email_template_assignments`
 are gone since `0029` / `0049`). Columns of the tables marked *here* are in the
 sections above; the others are owned by the linked doc. Retention and erasure of
@@ -239,12 +239,14 @@ every table: [`DATA_RETENTION.md`](./DATA_RETENTION.md).
 | `improvement_runs`, `improvement_suggestions`, `mo_directives`, `mo_directive_versions` | 0044 (`step_claimed_at` 0045) | [`IMPROVEMENT_LOOP.md`](./IMPROVEMENT_LOOP.md) |
 | `email_design_selections` | 0049 | `email_kind` (PK: summary/doi/marketing/campaign), `design_key`, `updated_at` — [`EMAIL_DESIGNS.md`](./EMAIL_DESIGNS.md) |
 | `customer_orders`, `customer_facts`, `consent_events`, `shopify_webhook_events`, `shopify_sync_runs`, `shopify_outbox`, `erasure_tombstones` | 0062–0065 | here (Kundenstamm) |
-| `campaigns` | 0066 (`hero_image` 0079) | here + [`CAMPAIGNS.md`](./CAMPAIGNS.md) §2 |
+| `campaigns` | 0066 (`hero_image` 0079; `sender` + kind `rundmail` 0081) | here + [`CAMPAIGNS.md`](./CAMPAIGNS.md) §2 |
 | `inbox_items` | 0067 | here (Kundenstamm) |
 | view `customer_overview` | 0068 | here |
 | `customer_link_grants` | 0073 | here („The customer entity“) |
 | `campaign_letters` | 0074 | here + [`CAMPAIGNS.md`](./CAMPAIGNS.md) §8 |
 | `admin_settings` | 0078 | `key` (PK), `value` (jsonb), `updated_at` — operator settings edited in Einstellungen, parsed and clamped at read time (missing / broken → the code default). Keys: `contact_frequency` `{ maxMails, windowDays }` — the soft Kontakthäufigkeit warning ([`CAMPAIGNS.md`](./CAMPAIGNS.md) §3, [`admin-settings-store.ts`](../src/lib/admin-settings-store.ts)). Configuration: kept by `db:reset` |
+| `mail_templates` | 0081 | `name`, `description`, `doc` (jsonb object — the block document), `version` (+1 per save), `archived_at`, `created_at`, `updated_at` — the operator's e-mail templates ([`EMAIL_TEMPLATES.md`](./EMAIL_TEMPLATES.md) §5). Configuration: kept by `db:reset` |
+| `campaign_mailings`, `campaign_mailing_batches` | 0081 | the content, frozen release and run state of a Rundmail (one row per campaign, cascade) and one row per Resend batch call — [`CAMPAIGNS.md`](./CAMPAIGNS.md) §9.7 |
 | `_migrations` | runner | applied migration names (`scripts/migrate.mjs`) |
 
 ## Local database (development)

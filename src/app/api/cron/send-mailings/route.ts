@@ -3,7 +3,7 @@
 // request per batch with an idempotency key, paced to the mailing's rate —
 // until shortly before the next run. Planned mails start here at their time;
 // an open admin page drives the same step in between (POST
-// /api/admin/rundmail/step). lib/mailing-send.ts, docs/CAMPAIGNS.md §9.
+// /api/admin/rundmail, action „step“). lib/mailing-send.ts, docs/CAMPAIGNS.md §9.
 //
 // Does nothing unless a Rundmail is released; CAMPAIGN_SENDS_APPROVED off
 // pauses it. Protected by CRON_SECRET — Vercel Cron sends Authorization:

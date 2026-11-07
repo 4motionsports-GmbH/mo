@@ -10,7 +10,7 @@
 // The withdrawal goes to the ONE consent (lib/consent-flows.ts) and from there
 // to Shopify, so no Shopify-side mailer keeps writing to the person either.
 //
-// POST is the RFC 8058 ONE-CLICK unsubscribe: marketing mails carry
+// POST is the RFC 8058 ONE-CLICK unsubscribe: campaign mails and Rundmails carry
 // `List-Unsubscribe: <this URL>` + `List-Unsubscribe-Post:
 // List-Unsubscribe=One-Click` (lib/email.ts), and Gmail, Yahoo, Apple Mail …
 // show their own „Abbestellen“ button, which POSTs `List-Unsubscribe=One-Click`

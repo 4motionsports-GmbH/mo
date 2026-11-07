@@ -25,9 +25,10 @@ defaults („default off in code“), never what is currently live. Screenshots 
 | [`CUSTOMERS.md`](./CUSTOMERS.md) | The customer entity, Shopify mirror, order ledger, nightly facts, webhooks, erasure, and the design decisions of the customer platform. |
 | [`CONSENT_FLOW.md`](./CONSENT_FLOW.md) | The one marketing consent (shared with Shopify), double opt-in, suppression, audit trail, erasure — backend and legal mechanics. |
 | [`CUSTOMER_ACCOUNT.md`](./CUSTOMER_ACCOUNT.md) | Sign-in internals: Customer Account OAuth, App Proxy shop recognition, one-time link codes, tokens, merge rule, history storage. |
-| [`CAMPAIGNS.md`](./CAMPAIGNS.md) | Campaigns, audiences, the review desk, sends, letters (Pingen), Einzelansprache, discount codes. |
+| [`CAMPAIGNS.md`](./CAMPAIGNS.md) | Campaigns, audiences, the review desk, sends, letters (Pingen), Einzelansprache, discount codes, the Rundmail (one content for a whole audience, §9). |
 | [`CONFIGURATOR.md`](./CONFIGURATOR.md) | The Home-Gym-Konfigurator (Men's Health / Women's Health): the page hands its answers to Mo, the curated assortment (Shopify tag), answer chips and the home-gym plan, the admin screen „Konfigurator“, KPIs. |
-| [`EMAIL_DESIGNS.md`](./EMAIL_DESIGNS.md) | E-mail designs and hero images. |
+| [`EMAIL_DESIGNS.md`](./EMAIL_DESIGNS.md) | E-mail designs, hero images and sender identities („Absender“). |
+| [`EMAIL_TEMPLATES.md`](./EMAIL_TEMPLATES.md) | The operator's e-mail templates („Vorlagen“): the block format every Mo capability is reachable through, the renderer, templates as designs, the AI assistant, picture upload, import / export. |
 | [`ORDER_ATTRIBUTION.md`](./ORDER_ATTRIBUTION.md) | Which orders count as Mo's: tiers, window and session anchor, the `_mo` marker. |
 | [`DATA_RETENTION.md`](./DATA_RETENTION.md) | Every retention window, its default and env var (0 disables). |
 | [`DATABASE.md`](./DATABASE.md) | Migrations, schema notes, the local database, seed and reset scripts. |

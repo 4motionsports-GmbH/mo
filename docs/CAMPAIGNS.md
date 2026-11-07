@@ -23,6 +23,11 @@ Since migration `0074` a campaign can also reach its audience **by letter** (Pin
 the customers without the e-mail consent. Each letter is drafted, reviewed and released one by one
 on the desk's „Briefe“ view, behind `PHYSICAL_MAIL_SENDS_APPROVED` and its own gates (§8).
 
+Since migration `0081` a campaign of the kind **Rundmail** sends **one content to the whole
+audience** (Black Week, newsletter) — no AI text per person, no review desk: the content is built
+from blocks or a template ([`EMAIL_TEMPLATES.md`](./EMAIL_TEMPLATES.md)), checked, tested, frozen
+at the release and sent identically in batches through Resend, under the same consent gates (§9).
+
 This document owns the campaign rules, the data model, the gates and the endpoints. The screens —
 overview, editor, review desk with its views and keys — are described in
 [`ADMIN_DASHBOARD.md`](./ADMIN_DASHBOARD.md) §3.2; whether a flag is on in production is in
@@ -107,8 +112,9 @@ sends) stays in [`campaign-store.ts`](../src/lib/campaign-store.ts).
 | `laufend` | Laufend | default `dynamisch` | Re-entry after `reentry_days` (default 180); the lifecycle send window applies (Lifecycle-Segmentierung below). Seeded by `0066`: „Bestandskunden – Lebenszyklus“ (`lebenszyklus`, `dynamisch`, priority 10, hero `ai_ab`, re-entry 180 days), which holds every recipient and send from before `0066`. |
 | `aktion` | Aktion | default `fest` | Mails its whole audience (no lifecycle window). `discount_valid_until` makes every code of the Aktion end at the same moment. |
 | `einzel` | Einzelansprache | none — recipients are added by hand | Exactly one (unique index), created by `0066` (`einzelansprache`, priority 100), always `aktiv`, no status changes; only offer, design and texts are editable. |
+| `rundmail` | Rundmail | `dynamisch` until the send starts, then `fest` | One content for everyone (0081, §9): no drafts, no desk, no codes per person; its status moves only through its workspace (release, pause, cancel) — `canTransition` allows only Archivieren from `entwurf` / `beendet`. |
 
-New campaigns are created as `laufend` or `aktion` (never `einzel`) with status `entwurf`; nothing is
+New campaigns are created as `laufend`, `aktion` or `rundmail` (never `einzel`) with status `entwurf`; nothing is
 materialised or drafted until they start. Status transitions (`canTransition`):
 
 ```
@@ -141,7 +147,7 @@ again on the server (`validateCampaignInput`):
 | Briefing | `brief`, max 4,000 chars — Anlass, Ziel, Ton, Muss rein, Bitte nicht. The drafter reads it for every mail of the campaign (§4). „Briefing vorschlagen“ drafts one from name, kind, end date, discount and notes. |
 | Zielgruppe | The audience spec (`audience`, below), Fest/Dynamisch (`audience_mode`), „Erneut aufnehmen nach“ (`reentry_days`, `laufend` only, 14–3,650 days, empty = never), live count. Hidden for the Einzelansprache. |
 | Angebot | Rabatt (`discount_percent`, 0–`DISCOUNT_PERCENT_MAX`), Gilt für (`discount_scope`: always `recommendations` — the individual selection of the mail since 04.11.2026; `all` and `set` are history, an older campaign's `all` is narrowed on save, §4), Codes gültig bis (`discount_valid_until`) — the starting values for Vorbereiten; each draft can still change them. A recipient with a set attached is drafted without a code whatever the default says (set XOR items, §4) |
-| Gestaltung | Design (`design_key`; empty = the design selected for campaign mails in Einstellungen), Titelbild (`hero_mode` — it decides about the AI picture only: „Kein KI-Titelbild“ `none` / „Standard-Titelbild“ `default` / „KI-Titelbild für einen Teil (A/B)“ `ai_ab` / „KI-Titelbild für alle“ `ai_all`; §4), Kampagnenbild (`hero_image`, migration `0079` — the campaign's own picture, below), Textlänge (`text_mode`), Button führt zu (`cta_kind`: `mo_chat` / `shop`) + Shop-Link (`cta_url`, `https://` required for `shop`), Mo-Hinweis anhängen (`mo_promo`, default on — the chat button lives in the Mo hint, so `mo_chat` with `mo_promo = false` is refused: „Der Button zu Mo steht im Mo-Hinweis — Hinweis einschalten oder den Button auf den Shop zeigen lassen.“) |
+| Gestaltung | Absender (`sender`, migration `0081`; empty = the standard sender „Mo von motion sports“ — one of the identities from Einstellungen → Absender, e.g. „motion sports <info@motionsports.de>“, with its reply mode; [`EMAIL_DESIGNS.md`](./EMAIL_DESIGNS.md) „Sender identities“), Design (`design_key`; empty = the design selected for campaign mails in Einstellungen; a template with „Mos persönlicher Text“ appears as „Vorlage: …“ — [`EMAIL_TEMPLATES.md`](./EMAIL_TEMPLATES.md) §3), Titelbild (`hero_mode` — it decides about the AI picture only: „Kein KI-Titelbild“ `none` / „Standard-Titelbild“ `default` / „KI-Titelbild für einen Teil (A/B)“ `ai_ab` / „KI-Titelbild für alle“ `ai_all`; §4), Kampagnenbild (`hero_image`, migration `0079` — the campaign's own picture, below), Textlänge (`text_mode`), Button führt zu (`cta_kind`: `mo_chat` / `shop`) + Shop-Link (`cta_url`, `https://` required for `shop`), Mo-Hinweis anhängen (`mo_promo`, default on — the chat button lives in the Mo hint, so `mo_chat` with `mo_promo = false` is refused: „Der Button zu Mo steht im Mo-Hinweis — Hinweis einschalten oder den Button auf den Shop zeigen lassen.“) |
 | Brief | Letters as a channel (migration `0074`, §8): „Briefe“ (`letter_mode`: „Keine Briefe“ `aus` — the default —, „An alle ohne E-Mail-Einwilligung“ `ohne_einwilligung`, „An alle (auch mit Einwilligung)“ `alle`), „Porto-Budget (€)“ (`letter_budget_cents`, 0–100,000 €, empty = no cap) and the live line „Per Brief: N Empfänger:innen (Adresse schon bekannt: M) · ≈ X € Porto bei Y € je Brief“ (M counts purchase addresses only); Callouts while `PHYSICAL_MAIL_SENDS_APPROVED` is off or Pingen is not configured. Hidden for the Einzelansprache. |
 | Automatik | Automatisch vorbereiten 0–500 drafts per night (`auto_prepare_per_day`, §5), Tagesziel (`daily_target`, 1–5,000 — no automation; shown as „Tagesziel n“ next to today's progress in the desk header) |
 | Prüfen & testen | Nothing stored — the estimate and sample mails below. Hidden for the Einzelansprache. |
@@ -927,6 +933,8 @@ Shopify side: [`DATA_RETENTION.md`](./DATA_RETENTION.md) „Complete erasure“ 
 | Letters: the „Briefe“ view — list, purchase addresses, drafts, edit, release, send steps (§8) | `POST /api/admin/campaigns/letters` (`action`: `list`, `fill_addresses`, `draft`, `redraft`, `save`, `approve`, `unapprove`, `skip`, `unskip`, `send_step`) |
 | Letter as printed (read-only, `application/pdf`) | `POST /api/admin/campaigns/letters/preview` (`{ id, subject?, body? }`) |
 | Purchase address of one customer (Kunden → Brief) | `POST /api/admin/customers/letter-address` (`{ customerId }`) |
+| Rundmail: workspace, frozen mail, runner (§9.8) | `POST /api/admin/rundmail`, `POST /api/admin/rundmail/frozen`, `GET/POST /api/cron/send-mailings` (`CRON_SECRET`, every minute) |
+| Absender (identities, test mail) | `POST /api/admin/settings/senders` (`action`: `save`, `test`) |
 | UI | `src/app/admin/KampagneTab.tsx` (overview or desk); overview + editor in `src/app/admin/kampagnen/` (`CampaignsOverview`, `CampaignEditor`, `CampaignHeroField`, `CampaignCheckSection`); desk in `src/app/admin/kampagne/` (`KampagneWorkspace`, `CampaignHeader`, `PreparePopover`, `QueueRail`, `MailPane`, `ReviewColumn`, `ListView`, `ScheduledViews` (Einplanen dialog + view „Eingeplant“), `SentHistory`, `EmailViewerDialog`, `ContactHistorySheet`, `TestContactsSheet`, `LettersView`, `badges`, `sections/` (`BundleSection`, `HeroBlock`, `PurchaseHistorySection`), `useCampaignActions`, `useReleaseActions`, `useRenderedPreview`); the hero state hook `src/app/admin/useEmailHero.ts` |
 | Libs | `campaigns-store.ts`, `audience-store.ts`, `campaign-{store,prepare,draft,recommendations,email,recommendation-view,assist,sample,release,hero-upload}.ts`, `campaign-{def,language,flags,gates,segments,complement,draft-core,review-checks,desk-core,sample-core,release-core,hero}.mjs`, `audience-spec.mjs`, `discount-swap.mjs`, `discount-scope.mjs`, `offer-mode.mjs` (set XOR items), `draft-offer.mjs`, `stock-level.mjs`, `set-composer-core.mjs`; letters: `campaign-letters{,-store}.ts`, `campaign-letter-draft.ts`, `postal-address-fill.ts`, `campaign-letter-core.mjs`, `postal-address.mjs`, `physical-mail.ts` (`submitLetter`) |
 
@@ -1149,6 +1157,175 @@ write a person once (cycle 0).
 
 Screenshots: `docs/screenshots/kampagne-briefe/` (the view, sent letters, the send dialog, the
 editor section, at 1440 and 1024 px in light and dark, plus the printed PDF).
+
+## 9. Rundmail — one content for a whole audience (migration `0081`)
+
+A campaign of the kind `rundmail` sends **the same mail to everyone** in its audience — the Black
+Week announcement, a newsletter. There is no AI text per person and no review desk: a bulk mail
+cannot be checked one by one, so the system guarantees instead that every recipient gets exactly
+the content a person reviewed — one content, checked by machine, sent to the operator as a test,
+**frozen at the release** and rendered once. Personal offers stay the job of an Aktion (§2–§5).
+The content is a block document ([`EMAIL_TEMPLATES.md`](./EMAIL_TEMPLATES.md)); the workspace is
+described in [`ADMIN_DASHBOARD.md`](./ADMIN_DASHBOARD.md) §3.2 „Rundmail“.
+
+### 9.1 Flow
+
+1. **Neue Kampagne → Art „Rundmail“**: name, Zielgruppe (the audience builder; e-mail consent is
+   always required), **Absender** (§9.5), optionally „Versand spätestens bis“ (after it nothing more
+   is sent; the nightly job ends the campaign), „Inhalt starten mit“ a template (its Mo blocks are
+   dropped) or a starter. The workspace opens.
+2. **Inhalt**: subject (merge fields `{{vorname|Ersatz}}`), Vorschauzeile, language, the blocks with
+   the live preview, „Vorlage laden“, „Mit KI gestalten“; Speichern is version-checked
+   (`content_version`, a second window gets a conflict).
+3. **Prüfen & senden**: every check (§9.3); the **Testmail** to up to five own addresses with a
+   first name to test (required for the current content version — every change needs a new one);
+   Tempo (Behutsam 60 / Normal 300 / Schnell 1,000 per minute), „Engagierte zuerst“, Zeitpunkt
+   „Jetzt“ or „Planen“ (≤ 60 days ahead); „Jetzt senden“ / „Planen“ (confirmed).
+4. **Versand**: progress, results, clicks per link, reasons not sent, „Versendete Mail ansehen“
+   (the frozen HTML); Pausieren / Fortsetzen / Abbrechen (the rest is `skipped`, `abgebrochen`); a
+   planned Rundmail can be „Zurücknehmen“ (back to Entwurf, content editable) until its first mail
+   went out.
+
+Status: `entwurf` → (release) `aktiv` (phase `geplant` until `starts_at`) ⇄ `pausiert` →
+`beendet` (finished or cancelled) → `archiviert`. Only the workspace moves a Rundmail; the generic
+status buttons offer Archivieren from `entwurf` / `beendet` only.
+
+### 9.2 One content — frozen at the release
+
+`releaseMailing` ([`mailing-send.ts`](../src/lib/mailing-send.ts)) re-runs every check on the
+server, then `renderMailingFrozen` ([`mailing-render.ts`](../src/lib/mailing-render.ts)) renders the
+content **once**, with placeholders for the only parts that differ per recipient:
+
+| Placeholder | Becomes |
+| --- | --- |
+| `{{mo:fn:N}}`, `{{mo:greet:N}}` | the first name (merge field N with its fallback; the greeting block with and without name) |
+| `{{mo:link:N}}` | the recipient's tracked redirect `/api/r/<token>?l=N` for link N |
+| `{{mo:unsub}}`, `{{mo:erase}}` | the recipient's signed unsubscribe / erasure link |
+
+Link targets are frozen into `campaign_mailings.links` with UTM parameters
+(`utm_source=mo&utm_medium=email&utm_campaign=<slug>`, `withUtm`); `mailto:`/`tel:` and the
+unsubscribe links stay untracked. Subject, HTML, text, a hash of the content, From and Reply-To are
+stored in `frozen_*`, and `freezeAndStartMailing` sets the campaign `aktiv` with its `starts_at` in
+the same statement. From then on the content is read-only (save → 409). Every mail is
+`personalizeFrozen` ([`mailing-core.mjs`](../src/lib/mailing-core.mjs), tested) — string
+replacement of the placeholders and nothing else; a mail with a leftover placeholder is not sent.
+The test mail is the same render from the same sender with the same headers, links untracked.
+
+### 9.3 Checks before the release
+
+[`mailing-checks.mjs`](../src/lib/mailing-checks.mjs) (tested) — errors block the release (the
+route refuses too), warnings and infos are shown:
+
+- **Errors**: `CAMPAIGN_SENDS_APPROVED` off; subject missing, longer than 150 characters or with an
+  unknown merge field; content errors ([`EMAIL_TEMPLATES.md`](./EMAIL_TEMPLATES.md) §2); the
+  Absender not usable; an empty audience; no test mail of the current version; HTML over 100 KB
+  (Gmail clips at 102 KB and hides the unsubscribe link); a picture over `http://`; a
+  `javascript:`/`data:` link.
+- **Warnings**: subject over 60 characters (phones), mostly capitals, several „!“; typical spam
+  words in subject, preview line or the operator's text (not the legal footer); no preview line;
+  over 80 KB; many pictures with little text; over 30 links; link shorteners; `http://` links;
+  recipients without double opt-in who are skipped while `CAMPAIGN_ALLOW_SINGLE_OPT_IN` is off.
+- **Infos**: reach and duration at the chosen pace, the personal greeting, the sender, the
+  unsubscribe link and header.
+
+### 9.4 Sending
+
+`runMailingStep` runs from the per-minute cron `/api/cron/send-mailings` (55-second budget,
+`requireCronAuth`) and, while the workspace is open, from the page every 6 seconds (`action:
+"step"`); one runner per Rundmail at a time (`lease_until`).
+
+1. **Audience fresh at the start.** The first step matches the audience again
+   (`refreshCampaignAudience`: new subscribers in, unsubscribed people out) and fixes it
+   (`audience_mode = fest`, `materialized_at`).
+2. **Claim a batch** (`claimMailingBatch`, one statement): up to the batch size of `pending`
+   recipients (`FOR UPDATE SKIP LOCKED`; „Engagierte zuerst“ orders by last click, then last
+   order), each with a fresh redirect token, set to `sending`; a `campaign_mailing_batches` row
+   `offen` holds the ids and tokens.
+3. **Gates per recipient at send time** (`loadBatchRecipients` reads them fresh): the same
+   `evaluateCampaignSendGates` as every campaign mail (§3) — consent `subscribed`, not blocked,
+   double opt-in unless `CAMPAIGN_ALLOW_SINGLE_OPT_IN`, the cap `MARKETING_MIN_SEND_INTERVAL_DAYS` —
+   plus a sendable address and „not yet sent in this Rundmail“. Reasons (`excluded_reason`):
+   `keine_einwilligung`, `kein_doi`, `gesperrt` (suppressed); `zu_haeufig`, `ungueltige_adresse`,
+   `doppelt` (skipped).
+4. **One Resend batch call** (`sendEmailBatch` in [`email.ts`](../src/lib/email.ts), ≤ 100
+   single-recipient mails, permissive validation — one bad address does not fail the batch) with
+   the idempotency key `mo-rundmail-<campaign>-<batch>`.
+5. **Settle in one transaction** (`settleBatch`): a `campaign_sends` row per mail (Resend id,
+   redirect token, content hash, `design_key` `vorlage-<id>` or `rundmail`), the contacts `sent` /
+   `suppressed` / `skipped`, the batch `gesendet`. If the booking fails after Resend accepted, the
+   next step repeats the call under the same key — Resend answers with the same ids without
+   sending again — and books it.
+6. **Pace**: `next_batch_at` spaces the batches for the chosen rate; the batch size is
+   `MAILING_BATCH_SIZE` (default 50), smaller for a slow pace (`batchSizeFor`).
+
+**Errors** (`classifyResendError`): a rate limit puts the batch back and waits as long as Resend
+asks; a network error or 5xx (result unknown) retries the **same** batch under the same key —
+back-off 20 s … 5 min, at most 30 attempts, never after 23 hours (Resend keeps a key 24 hours) —
+then its recipients become `skipped` (`versand_unklar`) and the workspace says to check Resend;
+a quota, sender or configuration error (nothing was sent) puts the batch back and **pauses** the
+Rundmail with the message („Fortsetzen“ once fixed); an idempotency conflict marks the batch
+`unklar`. A missing `UNSUBSCRIBE_SECRET` or `CAMPAIGN_SENDS_APPROVED` switched off pauses too. When
+nothing is pending or in flight, the mailing is finished and the campaign `beendet`.
+
+### 9.5 Deliverability
+
+- **Sender** — the campaign's Absender (`campaigns.sender`, frozen as `frozen_from` /
+  `frozen_reply_to`), e.g. „motion sports <info@motionsports.de>“; only domains verified in Resend
+  ([`EMAIL_DESIGNS.md`](./EMAIL_DESIGNS.md) „Sender identities“). The same domain as Mo's other
+  mails means the same DKIM/SPF/DMARC alignment and the same reputation.
+- **Headers on every mail** — `List-Unsubscribe` (the recipient's https link) with
+  `List-Unsubscribe-Post: List-Unsubscribe=One-Click` (RFC 8058: mail clients unsubscribe with one
+  `POST /api/unsubscribe`, no page — required by Gmail and Yahoo for bulk senders), `Precedence:
+  bulk`, `X-Auto-Response-Suppress: OOF, AutoReply`, an own `Message-ID`; Resend tag
+  `kind=rundmail`.
+- No open-tracking pixel — clicks are counted by Mo's own redirect; a plain-text part next to the
+  HTML; the preview line; at most 100 KB.
+- **Engagement first** — people who clicked or bought recently get the mail first, so mailbox
+  providers see opens and clicks early; „Behutsam“ for a first large send from a new address.
+
+### 9.6 Figures
+
+`getMailingStats` ([`mailing-store.ts`](../src/lib/mailing-store.ts)): audience, sent, pending,
+skipped by reason, failed; from `campaign_sends` delivered, bounced, complained (the Resend
+webhook, „Delivery“ below), clicked and unsubscribed; clicks per link from `kpi_events`
+(`campaign_email_clicked` with `data.link`). The redirect `/api/r/<token>?l=N` leads to link N's frozen target
+(any other value → the shop; [`ADMIN_DASHBOARD.md`](./ADMIN_DASHBOARD.md) §10). The KPI
+„Kampagnen-Funnel“ counts Rundmail sends in its totals; its hero comparison and lifecycle-segment
+split leave them out, and a Rundmail never makes a customer profile due (it says nothing new about
+the person). Rundmail sends do not appear in a customer's Korrespondenz.
+
+### 9.7 Data model
+
+| Table / column | Content |
+| --- | --- |
+| `campaigns.kind` | + `rundmail` (CHECK re-created by 0081) |
+| `campaigns.sender` | JSONB object or NULL (= the standard sender) — `{ id, address, name, replies }`; any campaign kind |
+| `campaign_mailings` | One row per Rundmail: the editable content (`subject`, `preheader`, `doc`, `language`, `source_template_id`, `content_version`), pace (`rate`, `engaged_first`), the test (`test_version`, `test_sent_at`, `test_sent_to`), the frozen release (`frozen_version`, `frozen_at`, `frozen_subject/html/text/hash/from/reply_to`, `links`, `merges`), the run (`materialized_at`, `finished_at`, `lease_until`, `next_batch_at`, `last_error`, `last_error_at`) |
+| `campaign_mailing_batches` | One row per Resend call: `contact_ids`, `tokens`, `status` (`offen` \| `gesendet` \| `fehler` \| `unklar`), `attempts`, `error`, timestamps — the idempotency anchor |
+| `campaign_contacts` | The recipients as for every campaign: `pending` → `sending` → `sent` / `suppressed` / `skipped` with `excluded_reason` |
+| `campaign_sends` | One row per sent mail, as for every campaign (retention §6) |
+
+The frozen HTML holds no personal data (placeholders only); batches hold contact ids and redirect
+tokens. Everything is deleted with the campaign (`ON DELETE CASCADE`).
+
+### 9.8 Endpoints and files
+
+| Route | Purpose |
+| --- | --- |
+| `POST /api/admin/rundmail` | The workspace: `state`, `save`, `pacing`, `checks`, `test`, `release`, `unschedule`, `pause`, `resume`, `cancel` (`confirm: true`), `step` — audit-logged `rundmail.*` |
+| `POST /api/admin/rundmail/frozen` | The frozen HTML with a sample recipient, links inert („Versendete Mail ansehen“) |
+| `GET/POST /api/cron/send-mailings` | The runner, every minute (`vercel.json`, `CRON_SECRET`) |
+| `GET\|POST /api/unsubscribe` | Unsubscribe page / RFC 8058 one-click |
+| `GET /api/r/<token>?l=N` | Tracked link N of a Rundmail |
+
+Files: `mailing-core.mjs` (pace, batches, freeze helpers, Resend errors), `mailing-checks.mjs`,
+`mailing-render.ts`, `mailing-send.ts` (checks, test, release, runner), `mailing-store.ts`,
+`sender-identities.mjs` + `sender-store.ts`, `src/app/admin/RundmailTab.tsx` +
+`src/app/admin/rundmail/RundmailWorkspace.tsx`. Environment: `CAMPAIGN_SENDS_APPROVED`,
+`CAMPAIGN_ALLOW_SINGLE_OPT_IN`, `MARKETING_MIN_SEND_INTERVAL_DAYS`, `UNSUBSCRIBE_SECRET`,
+`MAILING_BATCH_SIZE`, `EMAIL_SENDER_DOMAINS`, `CRON_SECRET`.
+
+Screenshots: `docs/screenshots/rundmail-vorlagen/`.
 
 ## Product variants
 

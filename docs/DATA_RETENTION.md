@@ -183,6 +183,9 @@ delete the stored address. What was posted is a `physical_letters` row (with
 | `campaign_letters` (`0074`) | **365 days** by `updated_at` | `CAMPAIGN_CONTACT_RETENTION_DAYS` | Hard delete (step 5g; counted with the recipients in the summary). Cascade-deleted with the customer (complete erasure) and with the campaign. A person merge keeps the survivor's letter where both have one in the same campaign and cycle and moves the rest. |
 | `physical_letters` (Briefe, incl. campaign letters) | **365 days** by `created_at` | `PHYSICAL_LETTER_RETENTION_DAYS` | Hard delete (step 5c) — unchanged by `0074`; a campaign letter whose posted letter is gone keeps its row with `physical_letter_id` NULL |
 | `campaigns`         | kept           | —                                 | No personal data; archived by the operator |
+| `campaign_mailing_batches` (Rundmail, `0081`) | **365 days** by `created_at`, settled batches only | `CAMPAIGN_CONTACT_RETENTION_DAYS` | Hard delete with the sends (counted with them) — contact ids and redirect tokens of one Resend call; an open batch is never purged |
+| `campaign_mailings` (Rundmail, `0081`) | kept with the campaign | — | No personal data: the content and the frozen mail hold placeholders, never a recipient's name or link; cascade-deleted with the campaign |
+| `mail_templates` (`0081`) and template pictures (`email-heroes/template-…`) | kept | — | No personal data; archived by the operator. Pictures are never deleted (sent mails reference them) and never part of an erasure |
 | `suppression_list`  | **Kept**       | —                                 | Retained to keep honouring the opt-out (unchanged) |
 
 ---
