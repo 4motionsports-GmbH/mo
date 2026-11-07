@@ -45,12 +45,15 @@ import { getSyncHealth, listSyncRuns } from "@/lib/shopify-sync";
 import { getOutboxStats } from "@/lib/shopify-outbox";
 import { shopifySyncFlags } from "@/lib/shopify-sync-flags";
 import { getConsentAlignmentReport } from "@/lib/consent-alignment";
+import { listMailTemplateMeta } from "@/lib/mail-template-store";
+import { templateDesignKey } from "@/lib/mail-template-doc.mjs";
+import { TEMPLATE_DESIGN_KINDS } from "@/lib/mail-template-design";
+import { defaultSenderInfo, listSenderIdentities, senderDomains } from "@/lib/sender-store";
 import { EmailSettingsWorkspace } from "./lazy";
 import type { SystemStatus } from "./einstellungen/types";
 
 export async function EinstellungenTab({ dbReady }: { dbReady: boolean }) {
-  const designs = listEmailDesignMeta();
-  const [selections, health, runs, outbox, alignment, contactFrequency] = dbReady
+  const [selections, health, runs, outbox, alignment, contactFrequency, templates, senders] = dbReady
     ? await Promise.all([
         listEmailDesignSelections(),
         getSyncHealth(),
@@ -58,8 +61,27 @@ export async function EinstellungenTab({ dbReady }: { dbReady: boolean }) {
         getOutboxStats(),
         getConsentAlignmentReport(),
         getContactFrequencySettings(),
+        listMailTemplateMeta(),
+        listSenderIdentities(),
       ])
-    : [{}, null, [], null, null, { ...DEFAULT_CONTACT_FREQUENCY }];
+    : [{}, null, [], null, null, { ...DEFAULT_CONTACT_FREQUENCY }, [], []];
+  // Code designs, then the operator's templates („Vorlagen“, 0081) that carry
+  // „Mos persönlicher Text“ — selectable for the marketing kinds.
+  const designs = [
+    ...listEmailDesignMeta(),
+    ...templates
+      .filter((t) => t.supportsPersonal)
+      .map((t) => ({
+        key: templateDesignKey(t.id),
+        name: `Vorlage: ${t.name}`,
+        description: t.description ?? "Selbst gebaute Vorlage aus dem Bildschirm „Vorlagen“.",
+        addedAt: t.updatedAt ?? new Date().toISOString(),
+        supportedKinds: [...TEMPLATE_DESIGN_KINDS] as string[],
+        isDefault: false,
+        templateId: t.id,
+      })),
+  ];
+  const defaultSender = defaultSenderInfo();
 
   // Presence checks only — the values never leave the server.
   const systemStatus: SystemStatus = {
@@ -109,6 +131,12 @@ export async function EinstellungenTab({ dbReady }: { dbReady: boolean }) {
         logoOverride: process.env.EMAIL_LOGO_URL ?? null,
       }}
       contactFrequency={{ settings: contactFrequency, minSendIntervalDays: marketingMinSendIntervalDays() }}
+      senders={{
+        defaultFrom: defaultSender.from,
+        repliesTo: defaultSender.repliesTo,
+        domains: senderDomains(),
+        identities: senders,
+      }}
       systemStatus={systemStatus}
       shopifySync={dbReady ? { health, runs, outbox, alignment, flags: shopifySyncFlags() } : null}
     />

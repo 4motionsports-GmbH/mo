@@ -21,7 +21,10 @@
 // and calls the guarded /api/admin/email-designs routes.
 
 import * as React from "react";
-import { BellRing, Check, Eye, Mail, Palette, Save } from "lucide-react";
+import Link from "next/link";
+import { AtSign, BellRing, Check, Eye, Mail, Palette, Pencil, Plus, Save, Send, Trash2 } from "lucide-react";
+import { adminTabHref } from "@/lib/admin-tabs.mjs";
+import { SENDER_REPLY_LABELS, validateSenderIdentitiesInput } from "@/lib/sender-identities.mjs";
 import {
   EMAIL_THEME_KINDS,
   EMAIL_THEME_KIND_HINTS,
@@ -44,10 +47,13 @@ import {
   CardHeader,
   CardTitle,
   Field,
+  IconButton,
   InfoTip,
   Input,
+  SegmentedControl,
   Select,
   StatusBadge,
+  buttonVariants,
   toast,
 } from "../ui";
 import { adminFetch, friendlyErrorMessage } from "../lib/admin-fetch";
@@ -62,6 +68,7 @@ import type {
   ContactFrequencyCardProps,
   EmailDesignMetaItem,
   SendConfigProps,
+  SendersCardProps,
   SystemStatus,
 } from "./types";
 
@@ -76,6 +83,7 @@ export function EmailSettingsWorkspace({
   initialSelections,
   sendConfig,
   contactFrequency,
+  senders,
   systemStatus,
   shopifySync,
 }: {
@@ -84,6 +92,8 @@ export function EmailSettingsWorkspace({
   initialSelections: Partial<Record<string, string>>;
   sendConfig: SendConfigProps;
   contactFrequency: ContactFrequencyCardProps;
+  /** Einstellungen → Absender (0081). */
+  senders: SendersCardProps;
   systemStatus: SystemStatus;
   /** Einstellungen → Shopify-Abgleich (null without a database). */
   shopifySync: ShopifySyncCardProps | null;
@@ -168,11 +178,11 @@ export function EmailSettingsWorkspace({
                 unverändert.
               </p>
               <p>
-                Neue Designs werden mit Claude Code entwickelt (Anleitung:{" "}
-                <code>docs/EMAIL_DESIGNS.md</code>) und erscheinen hier nach dem
-                Deployment automatisch. Bestehende Designs bleiben dauerhaft
-                erhalten und auswählbar — ein Redesign ist immer ein neues
-                Design, kein Überschreiben.
+                Eigene Designs baust du im Bildschirm „Vorlagen“ — per
+                Baukasten oder mit KI. Eine Vorlage mit dem Baustein „Mos
+                persönlicher Text“ erscheint hier als Design für Kampagne und
+                Marketing. Größere Umbauten des Codes entstehen weiter mit
+                Claude Code (<code>docs/EMAIL_DESIGNS.md</code>).
               </p>
             </InfoTip>
           </CardTitle>
@@ -218,19 +228,31 @@ export function EmailSettingsWorkspace({
                     · {design.supportedKinds.map(kindLabel).join(", ")}
                   </p>
                 </div>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() =>
-                    openPreview(
-                      design.key,
-                      design.supportedKinds[0] ?? EMAIL_THEME_KINDS[0],
-                    )
-                  }
-                  disabled={design.supportedKinds.length === 0}
-                >
-                  <Eye /> Vorschau
-                </Button>
+                <div className="flex items-center gap-2">
+                  {design.templateId != null && (
+                    <Link
+                      href={adminTabHref("vorlagen", { vorlage: String(design.templateId) })}
+                      className={buttonVariants({ variant: "ghost", size: "sm" })}
+                    >
+                      <Pencil /> Bearbeiten
+                    </Link>
+                  )}
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() =>
+                      openPreview(
+                        design.key,
+                        design.supportedKinds.includes("campaign")
+                          ? "campaign"
+                          : (design.supportedKinds[0] ?? EMAIL_THEME_KINDS[0]),
+                      )
+                    }
+                    disabled={design.supportedKinds.length === 0}
+                  >
+                    <Eye /> Vorschau
+                  </Button>
+                </div>
               </div>
             );
           })}
@@ -335,6 +357,8 @@ export function EmailSettingsWorkspace({
         </CardContent>
       </Card>
 
+      <SendersCard dbReady={dbReady} {...senders} />
+
       <ContactFrequencyCard dbReady={dbReady} {...contactFrequency} />
 
       {shopifySync && <ShopifySyncCard {...shopifySync} />}
@@ -343,6 +367,178 @@ export function EmailSettingsWorkspace({
 
       <DesignPreviewDialog target={preview} onClose={() => setPreview(null)} />
     </div>
+  );
+}
+
+type SenderRow = SendersCardProps["identities"][number];
+
+/**
+ * „Absender“ — the From addresses campaigns and Rundmails may use besides
+ * the default (lib/sender-identities.mjs). Only addresses on a domain that is
+ * verified in Resend; „Testmail“ proves Resend accepts one before a campaign
+ * relies on it. Saved as a whole list (POST /api/admin/settings/senders).
+ */
+function SendersCard({ dbReady, defaultFrom, repliesTo, domains, identities }: SendersCardProps & { dbReady: boolean }) {
+  const [saved, setSaved] = React.useState<SenderRow[]>(identities);
+  const [rows, setRows] = React.useState<SenderRow[]>(identities);
+  const [draft, setDraft] = React.useState<{ address: string; name: string; replies: "mo" | "direct" }>({
+    address: "",
+    name: "motion sports",
+    replies: "direct",
+  });
+  const [testTo, setTestTo] = React.useState("");
+  const [testing, setTesting] = React.useState<string | null>(null);
+  const dirty = JSON.stringify(rows) !== JSON.stringify(saved);
+  const check = validateSenderIdentitiesInput(rows, { allowedDomains: domains, defaultAddress: defaultFrom ?? undefined });
+
+  const save = useAsyncAction(
+    async () => {
+      const json = await adminFetch<{ senders: SenderRow[] }>("/api/admin/settings/senders", {
+        body: { action: "save", senders: rows },
+      });
+      return json.senders;
+    },
+    {
+      errorToast: "Absender nicht gespeichert",
+      onSuccess: (next) => {
+        setSaved(next);
+        setRows(next);
+        toast({ variant: "success", title: "Absender gespeichert" });
+      },
+    },
+  );
+
+  const add = () => {
+    const next = [...rows, { id: "", address: draft.address.trim().toLowerCase(), name: draft.name.trim(), replies: draft.replies }];
+    const v = validateSenderIdentitiesInput(next, { allowedDomains: domains, defaultAddress: defaultFrom ?? undefined });
+    if (!v.ok) {
+      toast({ variant: "error", title: "Absender nicht möglich", description: v.message });
+      return;
+    }
+    setRows(v.senders);
+    setDraft({ address: "", name: "motion sports", replies: "direct" });
+  };
+
+  const sendTest = async (sender: SenderRow | null) => {
+    const key = sender?.address ?? "standard";
+    setTesting(key);
+    try {
+      const json = await adminFetch<{ from: string }>("/api/admin/settings/senders", {
+        body: { action: "test", sender, to: testTo },
+      });
+      toast({ variant: "success", title: "Testmail gesendet", description: `Von ${json.from} an ${testTo} — Posteingang (nicht Spam?) prüfen.` });
+    } catch (err) {
+      toast({ variant: "error", title: "Testmail fehlgeschlagen", description: friendlyErrorMessage(err) });
+    } finally {
+      setTesting(null);
+    }
+  };
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <AtSign className="size-4" aria-hidden /> Absender
+          <InfoTip panelClassName="max-w-md">
+            <p>
+              Von welcher Adresse Kampagnen und Rundmails kommen. Standard ist Mos Adresse aus den
+              Umgebungsvariablen (CONTACT_FROM_EMAIL). Weitere Absender — z. B. info@ für Rundmails — wählst du
+              pro Kampagne im Editor.
+            </p>
+            <p>
+              Erlaubt sind nur Adressen auf einer in Resend bestätigten Domain ({domains.join(", ") || "—"}); weitere
+              Domains: EMAIL_SENDER_DOMAINS, nachdem sie in Resend bestätigt sind. Nach dem Anlegen eine Testmail
+              schicken. „Antworten an Mo“ setzt Mos Eingangsadresse als Antwort-Adresse; sonst gehen Antworten direkt
+              an die Absender-Adresse.
+            </p>
+          </InfoTip>
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-3">
+        {!dbReady && (
+          <Callout tone="warning" compact>
+            Keine Datenbank konfiguriert — weitere Absender können nicht gespeichert werden.
+          </Callout>
+        )}
+        <ul className="flex flex-col gap-2">
+          <li className="flex flex-wrap items-center gap-2 rounded-lg border border-border p-3">
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-sm font-semibold">{defaultFrom ?? "Nicht konfiguriert"}</p>
+              <p className="text-2xs text-muted-foreground">
+                Standard · Antworten an {repliesTo ?? "die Absender-Adresse"}
+              </p>
+            </div>
+            <StatusBadge tone="neutral" dot={false}>
+              Standard
+            </StatusBadge>
+          </li>
+          {rows.map((r) => (
+            <li key={r.address} className="flex flex-wrap items-center gap-2 rounded-lg border border-border p-3">
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-sm font-semibold">
+                  {r.name} &lt;{r.address}&gt;
+                </p>
+                <p className="text-2xs text-muted-foreground">{SENDER_REPLY_LABELS[r.replies]}</p>
+              </div>
+              <Button
+                size="xs"
+                variant="ghost"
+                onClick={() => void sendTest(r)}
+                loading={testing === r.address}
+                disabled={dirty || !testTo.trim()}
+              >
+                <Send /> Testmail
+              </Button>
+              <IconButton label={`${r.address} entfernen`} size="icon-sm" onClick={() => setRows(rows.filter((x) => x.address !== r.address))} disabled={!dbReady}>
+                <Trash2 />
+              </IconButton>
+            </li>
+          ))}
+        </ul>
+        <div className="grid gap-3 rounded-lg border border-dashed border-border p-3 sm:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)_auto]">
+          <Field label="Adresse" info={`Nur auf: ${domains.join(", ") || "—"}`}>
+            <Input value={draft.address} placeholder={`info@${domains[0] ?? "motionsports.de"}`} onChange={(e) => setDraft({ ...draft, address: e.target.value })} disabled={!dbReady} />
+          </Field>
+          <Field label="Anzeigename" info="So erscheint der Absender im Posteingang, z. B. „motion sports“.">
+            <Input value={draft.name} maxLength={60} onChange={(e) => setDraft({ ...draft, name: e.target.value })} disabled={!dbReady} />
+          </Field>
+          <Field label="Antworten">
+            <SegmentedControl
+              label="Antworten"
+              size="sm"
+              value={draft.replies}
+              onChange={(replies) => setDraft({ ...draft, replies })}
+              options={[
+                { value: "direct", label: "An die Adresse" },
+                { value: "mo", label: "An Mo" },
+              ]}
+              disabled={!dbReady}
+            />
+          </Field>
+          <div className="sm:col-span-3">
+            <Button size="sm" variant="outline" onClick={add} disabled={!dbReady || !draft.address.trim() || !draft.name.trim()}>
+              <Plus /> Hinzufügen
+            </Button>
+          </div>
+        </div>
+        {!check.ok && rows.length > 0 && (
+          <Callout tone="warning" compact>
+            {check.message}
+          </Callout>
+        )}
+        <div className="flex flex-wrap items-end gap-2">
+          <Field label="Testmail an" className="w-72">
+            <Input value={testTo} type="email" placeholder="du@example.com" onChange={(e) => setTestTo(e.target.value)} />
+          </Field>
+          <Button size="sm" variant="ghost" className="mb-px" onClick={() => void sendTest(null)} loading={testing === "standard"} disabled={!testTo.trim()}>
+            <Send /> Test vom Standard
+          </Button>
+          <Button size="sm" className="mb-px ml-auto" onClick={() => void save.run()} loading={save.pending} disabled={!dbReady || !dirty || !check.ok}>
+            <Save /> Speichern
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 

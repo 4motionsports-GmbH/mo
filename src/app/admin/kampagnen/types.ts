@@ -87,6 +87,8 @@ export interface CampaignCardProps {
   ctaUrl: string | null;
   letterMode: "aus" | "ohne_einwilligung" | "alle";
   letterBudgetCents: number | null;
+  /** The From identity (0081); null = the default sender. */
+  sender: SenderOption | null;
   audienceRefreshedAt: string | null;
   stats: CampaignStatsProps;
 }
@@ -99,7 +101,19 @@ export interface CampaignDesignOption {
   hasHero: boolean;
 }
 
+/** A From identity the editor can pick (Einstellungen → Absender, 0081). */
+export interface SenderOption {
+  id: string;
+  address: string;
+  name: string;
+  replies: "mo" | "direct";
+}
+
 export interface CampaignEditorOptions {
+  /** Absender: the default (env) sender and the operator's extra identities. */
+  senders: { defaultFrom: string | null; identities: SenderOption[] };
+  /** Vorlagen a new Rundmail can start from (id, name). */
+  templates: Array<{ id: number; name: string }>;
   /** Designs a campaign can pick (non-classic, campaign-capable). */
   designs: CampaignDesignOption[];
   /** The design chosen in Einstellungen for campaigns — what „Wie in

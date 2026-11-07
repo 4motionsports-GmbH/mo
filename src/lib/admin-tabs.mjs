@@ -11,7 +11,7 @@
 // `kampagnen` → Kampagnen.
 
 /**
- * @typedef {"eingang" | "kunden" | "kampagne" | "konfigurator" | "kpi" | "feedback" |
+ * @typedef {"eingang" | "kunden" | "kampagne" | "vorlagen" | "konfigurator" | "kpi" | "feedback" |
  *   "gespraeche" | "wissen" | "analyse" | "verbesserung" | "einstellungen"} AdminTabKey
  * @typedef {"Arbeit" | "Einblicke" | "System"} AdminTabGroup
  * @typedef {{
@@ -52,6 +52,15 @@ export const ADMIN_TABS = Object.freeze([
       "Kampagnen planen und personalisierte E-Mails an Kund:innen mit Einwilligung prüfen, anpassen, senden.",
     wide: true,
     shortcut: "2",
+  },
+  {
+    key: "vorlagen",
+    label: "Vorlagen",
+    group: "Arbeit",
+    description:
+      "E-Mail-Vorlagen selbst bauen — per Baukasten oder mit KI: für Rundmails und als Design für Mos persönliche Kampagnen-Mails.",
+    wide: true,
+    shortcut: "",
   },
   {
     key: "konfigurator",

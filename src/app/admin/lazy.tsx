@@ -56,3 +56,11 @@ export const KonfiguratorWorkspace = dynamic(() =>
 export const KonfiguratorRange = dynamic(() =>
   import("./konfigurator/KonfiguratorRange").then((m) => m.KonfiguratorRange)
 );
+
+export const VorlagenWorkspace = dynamic(() =>
+  import("./vorlagen/VorlagenWorkspace").then((m) => m.VorlagenWorkspace)
+);
+
+export const RundmailWorkspace = dynamic(() =>
+  import("./rundmail/RundmailWorkspace").then((m) => m.RundmailWorkspace)
+);

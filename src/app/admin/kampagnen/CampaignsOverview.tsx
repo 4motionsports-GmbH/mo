@@ -181,8 +181,13 @@ export function CampaignsOverview({ campaigns, options, initialEdit, presetAudie
         options={options}
         presetAudience={editing === "new" ? presetAudience ?? null : null}
         onClose={() => openEditor(null)}
-        onSaved={(id) => {
+        onSaved={(id, kind) => {
           openEditor(null);
+          if (kind === "rundmail") {
+            toast({ variant: "success", title: "Rundmail angelegt", description: "Jetzt den Inhalt gestalten." });
+            router.push(adminTabHref("kampagne", { campaign: String(id) }));
+            return;
+          }
           router.refresh();
           if (editing === "new") {
             toast({ variant: "success", title: "Kampagne angelegt", description: "Prüfen und mit „Starten“ aktivieren." });
@@ -228,8 +233,10 @@ function CampaignCard({
             </div>
             <p className="mt-0.5 text-xs text-muted-foreground">
               {CAMPAIGN_KIND_LABELS[c.kind]}
-              {c.kind !== "einzel" && <> · Zielgruppe {c.audienceMode === "dynamisch" ? "dynamisch" : "fest"}</>}
+              {c.kind === "rundmail" && <> · ein Inhalt für alle</>}
+              {c.kind !== "einzel" && c.kind !== "rundmail" && <> · Zielgruppe {c.audienceMode === "dynamisch" ? "dynamisch" : "fest"}</>}
               {c.discountPercent > 0 && <> · {num(c.discountPercent)} % Rabatt</>}
+              {c.sender && <> · von {c.sender.address}</>}
             </p>
           </div>
           {c.kind !== "einzel" && (
@@ -263,12 +270,20 @@ function CampaignCard({
         )}
 
         <dl className="grid grid-cols-4 gap-2 rounded-md bg-surface-2 px-3 py-2 text-center">
-          {[
-            ["Empfänger", num(c.stats.recipients)],
-            ["Entwürfe", num(c.stats.drafted)],
-            ["Gesendet", num(c.stats.sent)],
-            ["Klickrate", ratio(clickRate)],
-          ].map(([label, value]) => (
+          {(c.kind === "rundmail"
+            ? [
+                ["Empfänger", num(c.stats.recipients)],
+                ["Gesendet", num(c.stats.sent)],
+                ["Klickrate", ratio(clickRate)],
+                ["Abmeldungen", num(c.stats.unsubscribes)],
+              ]
+            : [
+                ["Empfänger", num(c.stats.recipients)],
+                ["Entwürfe", num(c.stats.drafted)],
+                ["Gesendet", num(c.stats.sent)],
+                ["Klickrate", ratio(clickRate)],
+              ]
+          ).map(([label, value]) => (
             <div key={label} className="min-w-0">
               <dt className="truncate text-2xs text-muted-foreground">{label}</dt>
               <dd className="text-sm font-semibold tabular-nums">{value}</dd>
@@ -278,7 +293,11 @@ function CampaignCard({
 
         <div className="mt-auto flex flex-wrap items-center gap-2 pt-1">
           <Link href={href} className={buttonVariants({ size: "sm", variant: primary ? "outline" : "default" })}>
-            Prüftisch öffnen{c.stats.drafted > 0 ? ` (${num(c.stats.drafted)})` : ""}
+            {c.kind === "rundmail"
+              ? c.status === "entwurf"
+                ? "Inhalt gestalten"
+                : "Rundmail öffnen"
+              : `Prüftisch öffnen${c.stats.drafted > 0 ? ` (${num(c.stats.drafted)})` : ""}`}
           </Link>
           {primary && (
             <Button size="sm" onClick={() => onStatus(primary)} loading={busy}>

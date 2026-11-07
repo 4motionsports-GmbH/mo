@@ -231,7 +231,31 @@ export async function saveMailingContent(
   }
 }
 
-/** The pacing settings may change while unfrozen only (they are part of the release). */
+/**
+ * Pace of the send and the order of recipients — not content, so no new
+ * test mail is needed; fixed once released.
+ */
+export async function saveMailingPacing(
+  campaignId: number,
+  rate: MailingRateKey,
+  engagedFirst: boolean,
+  sql: Sql | null = getSql()
+): Promise<boolean> {
+  if (!sql) return false;
+  try {
+    const rows = (await sql`
+      UPDATE campaign_mailings SET rate = ${rate}, engaged_first = ${engagedFirst}, updated_at = now()
+       WHERE campaign_id = ${campaignId} AND frozen_at IS NULL
+      RETURNING campaign_id
+    `) as Array<unknown>;
+    return rows.length > 0;
+  } catch (err) {
+    reportError(err, { route: "lib/mailing-store", phase: "pacing" });
+    return false;
+  }
+}
+
+/** Remember the version a test mail showed (only while that version is current). */
 export async function recordMailingTest(
   campaignId: number,
   version: number,

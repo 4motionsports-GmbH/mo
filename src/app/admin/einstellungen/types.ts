@@ -6,6 +6,19 @@ export interface EmailDesignMetaItem {
   addedAt: string;
   supportedKinds: string[];
   isDefault: boolean;
+  /** Set for an operator template („Vorlage“, 0081) — editable in „Vorlagen“. */
+  templateId?: number;
+}
+
+/** Einstellungen → „Absender“ (sender-identities.mjs, 0081). */
+export interface SendersCardProps {
+  /** The default sender (CONTACT_FROM_EMAIL), formatted. */
+  defaultFrom: string | null;
+  /** Mo's receiving address (INBOUND_EMAIL_ADDRESS). */
+  repliesTo: string | null;
+  /** Domains an identity may use (verified in Resend). */
+  domains: string[];
+  identities: Array<{ id: string; address: string; name: string; replies: "mo" | "direct" }>;
 }
 
 export interface SendConfigProps {

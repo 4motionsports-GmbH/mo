@@ -274,6 +274,12 @@ export const MAIL_BLOCK_CATALOG = Object.freeze({
 /** @type {ReadonlyArray<MailBlockType>} */
 export const MAIL_BLOCK_TYPES = Object.freeze(/** @type {MailBlockType[]} */ (Object.keys(MAIL_BLOCK_CATALOG)));
 
+/**
+ * One block of a document: its id and type plus the fields of its type
+ * (MAIL_BLOCK_CATALOG[type].fields).
+ * @typedef {{ id: string, type: MailBlockType } & Record<string, any>} MailBlock
+ */
+
 /** The Mo blocks — only meaningful in a template for personal mails. */
 export const MO_BLOCK_TYPES = Object.freeze(/** @type {MailBlockType[]} */ (["hero", "mo_content", "mo_offer", "mo_promo"]));
 
@@ -391,6 +397,7 @@ export function newBlockId(taken = new Set()) {
  * Every field is clamped to its vocabulary/limits; unknown fields are dropped.
  * @param {unknown} raw
  * @param {Set<string>} takenIds
+ * @returns {MailBlock | null}
  */
 export function normalizeMailBlock(raw, takenIds = new Set()) {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
@@ -538,7 +545,7 @@ export function normalizeMailTemplateDoc(raw) {
   const r = v && typeof v === "object" && !Array.isArray(v) ? /** @type {Record<string, unknown>} */ (v) : {};
   const taken = new Set();
   const seenSingletons = new Set();
-  /** @type {any[]} */
+  /** @type {MailBlock[]} */
   const blocks = [];
   let footer = null;
   for (const entry of Array.isArray(r.blocks) ? r.blocks : []) {
@@ -554,7 +561,7 @@ export function normalizeMailTemplateDoc(raw) {
     }
     if (blocks.length < MAIL_TEMPLATE_LIMITS.blocks - 1) blocks.push(b);
   }
-  blocks.push(footer ?? normalizeMailBlock({ type: "footer" }, taken));
+  blocks.push(/** @type {MailBlock} */ (footer ?? normalizeMailBlock({ type: "footer" }, taken)));
   return { v: MAIL_TEMPLATE_DOC_VERSION, style: normalizeMailStyle(r.style), blocks };
 }
 

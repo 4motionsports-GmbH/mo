@@ -63,7 +63,11 @@ import { campaignHeroUrls } from "@/lib/campaign-hero.mjs";
 import { isShopifyConfigured } from "@/lib/shopify";
 import { countRecentMarketingMails, getContactFrequencySettings } from "@/lib/admin-settings-store";
 import { contactFrequencyEnabled } from "@/lib/contact-frequency.mjs";
+import { listSenderIdentities, defaultSenderInfo } from "@/lib/sender-store";
+import { listMailTemplateMeta } from "@/lib/mail-template-store";
+import { parseTemplateDesignKey, templateDesignKey } from "@/lib/mail-template-doc.mjs";
 import { CampaignsOverview, KampagneWorkspace } from "./lazy";
+import { RundmailTab } from "./RundmailTab";
 import type { CampaignQueueItemProps } from "./kampagne/types";
 import type { CampaignCardProps } from "./kampagnen/types";
 
@@ -107,6 +111,7 @@ function cardProps(c: CampaignWithStats, all: CampaignWithStats[]): CampaignCard
     ctaUrl: c.ctaUrl,
     letterMode: c.letterMode,
     letterBudgetCents: c.letterBudgetCents,
+    sender: c.sender,
     audienceRefreshedAt: c.audienceRefreshedAt,
     stats: c.stats,
   };
@@ -133,20 +138,28 @@ async function Overview({
   presetAudience?: Record<string, unknown> | null;
   notFound?: boolean;
 }) {
-  const [catalog, costs, designSelections] = await Promise.all([
+  const [catalog, costs, designSelections, senders, templates] = await Promise.all([
     loadProductCatalog().catch(() => []),
     estimateCampaignCosts(),
     listEmailDesignSelections(),
+    listSenderIdentities(),
+    listMailTemplateMeta({ includeArchived: true }),
   ]);
   const categories = [...new Set(catalog.map((p) => p.category).filter((c): c is string => Boolean(c)))].sort((a, b) =>
     a.localeCompare(b, "de")
   );
   const designMeta = listEmailDesignMeta();
-  const designOption = (key: string) => ({
-    key,
-    name: designMeta.find((d) => d.key === key)?.name ?? key,
-    hasHero: emailDesignHasHero(key),
-  });
+  // Code designs, then the operator's templates with „Mos persönlicher Text“
+  // (0081) — both selectable as a campaign's design.
+  const designOption = (key: string) => {
+    const tplId = parseTemplateDesignKey(key);
+    const tpl = tplId != null ? templates.find((t) => t.id === tplId) : undefined;
+    return {
+      key,
+      name: tpl ? `Vorlage: ${tpl.name}` : (designMeta.find((d) => d.key === key)?.name ?? key),
+      hasHero: tpl ? tpl.hasHero : emailDesignHasHero(key),
+    };
+  };
   return (
     <CampaignsOverview
       campaigns={campaigns.map((c) => cardProps(c, campaigns))}
@@ -155,9 +168,14 @@ async function Overview({
       notFound={notFound}
       sendsApproved={isCampaignSendsApproved()}
       options={{
-        designs: designMeta
-          .filter((d) => !d.isDefault && designSupportsKind(d.key, "campaign"))
-          .map((d) => designOption(d.key)),
+        designs: [
+          ...designMeta.filter((d) => !d.isDefault && designSupportsKind(d.key, "campaign")).map((d) => designOption(d.key)),
+          ...templates
+            .filter((t) => t.supportsPersonal && !t.archivedAt)
+            .map((t) => designOption(templateDesignKey(t.id))),
+        ],
+        senders: { defaultFrom: defaultSenderInfo().from, identities: senders },
+        templates: templates.filter((t) => !t.archivedAt).map((t) => ({ id: t.id, name: t.name })),
         // „Wie in Einstellungen“: the design selected for campaigns (none = classic).
         settingsDesign: designOption(designSelections["campaign"] ?? CLASSIC_EMAIL_DESIGN_KEY),
         heroUpload: { configured: isHeroUploadConfigured(), defaultUrl: defaultHeroImageUrl() },
@@ -228,6 +246,12 @@ export async function KampagneTab({
     );
   }
   const campaignId = campaign.id;
+
+  // A Rundmail (0081) has no review desk: its own workspace (content, test,
+  // checks, release, progress).
+  if (campaign.kind === "rundmail") {
+    return <RundmailTab campaign={campaign} audienceText={audienceText(campaign, campaigns)} />;
+  }
 
   const shopifyConfigured = isShopifyConfigured();
   const [counts, queue, skipped, design, costs, sentSummary, scheduled, letterCounts, contactFrequency] = await Promise.all([
@@ -388,9 +412,13 @@ export async function KampagneTab({
       sendsApproved={isCampaignSendsApproved()}
       allowSingleOptIn={isSingleOptInAllowed()}
       shopifyConfigured={shopifyConfigured}
-      heroDesignActive={campaign.heroMode !== "none" && emailDesignHasHero(design?.key)}
+      heroDesignActive={campaign.heroMode !== "none" && (design?.hasHero ?? emailDesignHasHero(design?.key))}
       heroDesignName={
-        design ? (listEmailDesignMeta().find((m) => m.key === design.key)?.name ?? design.key) : null
+        design
+          ? parseTemplateDesignKey(design.key) != null
+            ? "Vorlage"
+            : (listEmailDesignMeta().find((m) => m.key === design.key)?.name ?? design.key)
+          : null
       }
       heroGenerationConfigured={isHeroGenerationConfigured()}
       minSendIntervalDays={marketingMinSendIntervalDays()}

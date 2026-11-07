@@ -10,10 +10,10 @@ import {
   parseAdminTab,
 } from "./admin-tabs.mjs";
 
-test("registry has eleven screens with unique keys, labels and shortcuts", () => {
-  assert.equal(ADMIN_TABS.length, 11);
-  assert.equal(new Set(ADMIN_TAB_KEYS).size, 11);
-  assert.equal(new Set(ADMIN_TABS.map((t) => t.label)).size, 11);
+test("registry has twelve screens with unique keys, labels and shortcuts", () => {
+  assert.equal(ADMIN_TABS.length, 12);
+  assert.equal(new Set(ADMIN_TAB_KEYS).size, 12);
+  assert.equal(new Set(ADMIN_TABS.map((t) => t.label)).size, 12);
   // The ten digits are taken; a screen without one carries "".
   const digits = ADMIN_TABS.map((t) => t.shortcut).filter(Boolean);
   assert.equal(digits.length, 10);
@@ -30,6 +30,7 @@ test("every legacy tab key still resolves", () => {
     "eingang",
     "kunden",
     "kampagne",
+    "vorlagen",
     "konfigurator",
     "kpi",
     "feedback",
@@ -70,6 +71,8 @@ test("shortcuts map 1…9 and 0 in display order", () => {
   assert.equal(adminTabForShortcut("x"), null);
   assert.equal(adminTabForShortcut(""), null);
   assert.equal(adminTabMeta("konfigurator").shortcut, "");
+  assert.equal(adminTabMeta("vorlagen").shortcut, "");
+  assert.equal(adminTabMeta("vorlagen").group, "Arbeit");
   assert.equal(adminTabMeta("kampagne").wide, true);
   assert.equal(adminTabMeta("feedback").group, "Einblicke");
 });

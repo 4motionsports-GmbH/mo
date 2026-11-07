@@ -6,6 +6,7 @@
 //   state                         → { mailing, stats, campaign }   (polling)
 //   save    { subject, preheader, doc, language, rate, engagedFirst, expectedVersion }
 //                                 → { mailing }        (409 when frozen / stale)
+//   pacing  { rate, engagedFirst } → { mailing }        (no new test needed)
 //   checks                        → { evaluation }     (every pre-release check)
 //   test    { addresses, firstName, expectedVersion } → { sentTo, version }
 //   release { startsAt?, expectedVersion } → { startsAt, evaluation }   (Senden / Planen)
@@ -28,6 +29,7 @@ import {
   getMailing,
   getMailingStats,
   saveMailingContent,
+  saveMailingPacing,
   setMailingPaused,
   unfreezeMailing,
 } from "@/lib/mailing-store";
@@ -93,6 +95,12 @@ export async function POST(req: Request) {
           return adminJsonError("internal_error", "Der Inhalt konnte nicht gespeichert werden.", 500);
         }
         return adminJson({ mailing: res.mailing });
+      }
+
+      case "pacing": {
+        const ok = await saveMailingPacing(campaignId, parseMailingRate(body.rate), body.engagedFirst !== false);
+        if (!ok) return adminJsonError("frozen", "Die Rundmail ist freigegeben — das Tempo ist fest.", 409);
+        return adminJson({ mailing: await getMailing(campaignId) });
       }
 
       case "checks": {

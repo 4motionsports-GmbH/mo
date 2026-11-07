@@ -6,6 +6,7 @@ import {
   Dumbbell,
   FileText,
   Inbox,
+  LayoutTemplate,
   MessagesSquare,
   MessageSquareText,
   Send,
@@ -22,6 +23,7 @@ export type AdminTab = AdminTabKey;
 export const TAB_ICONS: Record<AdminTab, LucideIcon> = {
   eingang: Inbox,
   kampagne: Send,
+  vorlagen: LayoutTemplate,
   konfigurator: Dumbbell,
   kunden: Users,
   wissen: BookOpen,

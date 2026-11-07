@@ -31,6 +31,7 @@ import { VerbesserungTab } from "./VerbesserungTab";
 import { KampagneTab } from "./KampagneTab";
 import { EinstellungenTab } from "./EinstellungenTab";
 import { KonfiguratorTab } from "./KonfiguratorTab";
+import { VorlagenTab } from "./VorlagenTab";
 import { AdminShell, type AdminBadges } from "./AdminShell";
 import { THEME_COOKIE, type Theme } from "./theme-config";
 
@@ -108,6 +109,9 @@ async function renderScreen(tab: AdminTabKey, sp: SearchParams, dbReady: boolean
           initialFilter={firstParam(sp.filter)}
         />
       );
+    case "vorlagen":
+      // ?vorlage=<id> opens one template in the editor.
+      return <VorlagenTab dbReady={dbReady} initialId={idParam(sp.vorlage)} />;
     case "konfigurator":
       // The KPI period of the screen uses the KPI screen's ?kpiRange= (presets).
       return <KonfiguratorTab dbReady={dbReady} kpiRange={firstParam(sp.kpiRange)} />;

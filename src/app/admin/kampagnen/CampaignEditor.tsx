@@ -32,9 +32,9 @@ import {
 import { adminFetch, errorMessage } from "../lib/admin-fetch";
 import { CampaignCheckSection, type SampleConfig } from "./CampaignCheckSection";
 import { CampaignHeroField, sameHero } from "./CampaignHeroField";
-import type { AudienceSpecProps, CampaignCardProps, CampaignEditorOptions, CampaignHeroImageProps } from "./types";
+import type { AudienceSpecProps, CampaignCardProps, CampaignEditorOptions, CampaignHeroImageProps, SenderOption } from "./types";
 
-type Kind = "laufend" | "aktion";
+type Kind = "laufend" | "aktion" | "rundmail";
 
 interface FormState {
   name: string;
@@ -64,6 +64,10 @@ interface FormState {
   letterMode: "aus" | "ohne_einwilligung" | "alle";
   /** Postage cap in euros as typed; empty = none. */
   letterBudgetEur: string;
+  /** Absender (0081): an identity id, "" = the default sender. */
+  senderId: string;
+  /** A NEW Rundmail starts from: "starter:<key>" or "template:<id>". */
+  contentFrom: string;
 }
 
 interface Preview {
@@ -124,7 +128,8 @@ const intOrNull = (v: string): number | null => (v.trim() === "" ? null : Math.r
 function sampleConfigOf(f: FormState): SampleConfig {
   return {
     name: f.name,
-    kind: f.kind,
+    // Samples exist for AI campaigns only (a Rundmail has no section for them).
+    kind: f.kind === "laufend" ? "laufend" : "aktion",
     brief: f.brief,
     endsAt: fromLocalInput(f.endsAt),
     discountPercent: Math.round(Number(f.discountPercent) || 0),
@@ -141,7 +146,7 @@ function sampleConfigOf(f: FormState): SampleConfig {
 function initialState(c: CampaignCardProps | null, presetAudience: Record<string, unknown> | null = null): FormState {
   return {
     name: c?.name ?? "",
-    kind: c?.kind === "laufend" ? "laufend" : "aktion",
+    kind: c?.kind === "laufend" ? "laufend" : c?.kind === "rundmail" ? "rundmail" : "aktion",
     startsAt: toLocalInput(c?.startsAt ?? null),
     endsAt: toLocalInput(c?.endsAt ?? null),
     priority: String(c?.priority ?? 50),
@@ -164,6 +169,8 @@ function initialState(c: CampaignCardProps | null, presetAudience: Record<string
     dailyTarget: c?.dailyTarget != null ? String(c.dailyTarget) : "",
     letterMode: c?.letterMode ?? "aus",
     letterBudgetEur: c?.letterBudgetCents != null ? String(c.letterBudgetCents / 100) : "",
+    senderId: c?.sender?.id ?? "",
+    contentFrom: "starter:black-week",
   };
 }
 
@@ -239,7 +246,8 @@ export function CampaignEditor({
   /** A new campaign starts with this audience (from Kunden „Ähnliche Kunden“). */
   presetAudience?: Record<string, unknown> | null;
   onClose: () => void;
-  onSaved: (id: number) => void;
+  /** `kind` is set for a NEW Rundmail — the overview opens its workspace. */
+  onSaved: (id: number, kind?: "rundmail") => void;
 }) {
   const [form, setForm] = React.useState<FormState>(() => initialState(campaign, presetAudience));
   const [saving, setSaving] = React.useState(false);
@@ -251,6 +259,10 @@ export function CampaignEditor({
   const [assisting, setAssisting] = React.useState<null | "audience" | "brief">(null);
   const [aiNote, setAiNote] = React.useState<string | null>(null);
   const isEinzel = campaign?.kind === "einzel";
+  const isRundmail = form.kind === "rundmail";
+  // A released Rundmail keeps audience, sender and schedule (frozen with its
+  // content) — only the name can still change (the server enforces it too).
+  const rundmailLocked = isRundmail && campaign != null && campaign.status !== "entwurf";
 
   React.useEffect(() => {
     if (open) {
@@ -339,9 +351,47 @@ export function CampaignEditor({
     }
   };
 
+  // The chosen identity object, or null (the default sender). A stored
+  // identity that is no longer in the Einstellungen list keeps its own data.
+  const senderFor = (id: string): SenderOption | null =>
+    !id ? null : (options.senders.identities.find((x) => x.id === id) ?? (campaign?.sender?.id === id ? campaign.sender : null));
+
   const save = async () => {
     setSaving(true);
     setError(null);
+    if (isRundmail) {
+      const payload: Record<string, unknown> = rundmailLocked
+        ? { name: form.name }
+        : {
+            name: form.name,
+            audience: form.audience,
+            startsAt: null,
+            endsAt: fromLocalInput(form.endsAt),
+            priority: Math.round(Number(form.priority) || 0),
+            sender: senderFor(form.senderId),
+          };
+      try {
+        if (campaign) {
+          await adminFetch("/api/admin/campaigns/update", { body: { id: campaign.id, ...payload } });
+          onSaved(campaign.id);
+        } else {
+          const [fromKind, fromValue] = form.contentFrom.split(":");
+          const json = await adminFetch<{ id: number }>("/api/admin/campaigns", {
+            body: {
+              ...payload,
+              kind: "rundmail",
+              ...(fromKind === "template" ? { templateId: Number(fromValue) } : { starter: fromValue }),
+            },
+          });
+          onSaved(json.id, "rundmail");
+        }
+      } catch (err) {
+        setError(errorMessage(err));
+      } finally {
+        setSaving(false);
+      }
+      return;
+    }
     const payload: Record<string, unknown> = {
       name: form.name,
       brief: form.brief,
@@ -358,6 +408,7 @@ export function CampaignEditor({
       ctaUrl: form.ctaUrl,
       autoPreparePerDay: Math.round(Number(form.autoPreparePerDay) || 0),
       dailyTarget: intOrNull(form.dailyTarget),
+      sender: senderFor(form.senderId),
     };
     if (!isEinzel) {
       Object.assign(payload, {
@@ -434,7 +485,7 @@ export function CampaignEditor({
             {!campaign && (
               <Field
                 label="Art"
-                info="Laufend: läuft dauerhaft und nimmt Kund:innen nach einer Wartezeit erneut auf (z. B. Lebenszyklus). Aktion: ein Anlass mit Zeitraum (z. B. Black Friday)."
+                info="Aktion: ein Anlass mit Zeitraum (z. B. Black Friday) — jede Mail von Mo persönlich geschrieben und einzeln geprüft. Laufend: dauerhaft, nimmt Kund:innen nach einer Wartezeit erneut auf (z. B. Lebenszyklus). Rundmail: EIN Inhalt für alle — einmal gestaltet, getestet und an die ganze Zielgruppe gesendet (z. B. Black-Week-Newsletter)."
               >
                 <SegmentedControl
                   label="Art"
@@ -442,7 +493,7 @@ export function CampaignEditor({
                   onChange={(kind) =>
                     patch({
                       kind,
-                      audienceMode: kind === "laufend" ? "dynamisch" : "fest",
+                      audienceMode: kind === "aktion" ? "fest" : "dynamisch",
                       heroMode: kind === "laufend" ? "ai_ab" : "default",
                       reentryDays: kind === "laufend" ? "180" : "",
                     })
@@ -450,12 +501,45 @@ export function CampaignEditor({
                   options={[
                     { value: "aktion", label: "Aktion" },
                     { value: "laufend", label: "Laufend" },
+                    { value: "rundmail", label: "Rundmail" },
                   ]}
                 />
               </Field>
             )}
           </div>
-          {!isEinzel && (
+          {isRundmail && (
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Field
+                label="Versand spätestens bis"
+                info="Was bis dahin nicht gesendet ist, geht nicht mehr raus (z. B. das Ende der Black Week). Leer = offen. Den Start wählst du beim Senden."
+              >
+                <Input type="datetime-local" value={form.endsAt} onChange={(e) => patch({ endsAt: e.target.value })} disabled={rundmailLocked} />
+              </Field>
+              <Field label="Absender" info="Von welcher Adresse die Rundmail kommt. Weitere Absender (z. B. info@) legst du in Einstellungen → Absender an.">
+                <SenderSelect value={form.senderId} onChange={(senderId) => patch({ senderId })} options={options} saved={campaign?.sender ?? null} disabled={rundmailLocked} />
+              </Field>
+            </div>
+          )}
+          {isRundmail && !campaign && (
+            <Field label="Inhalt starten mit" info="Der Inhalt wird danach in der Rundmail selbst gestaltet — per Baukasten oder mit KI.">
+              <Select value={form.contentFrom} onChange={(e) => patch({ contentFrom: e.target.value })}>
+                <option value="starter:black-week">Beispiel: Black Week</option>
+                <option value="starter:newsletter">Beispiel: Newsletter</option>
+                <option value="starter:leer">Leer</option>
+                {options.templates.map((t) => (
+                  <option key={t.id} value={`template:${t.id}`}>
+                    Vorlage: {t.name}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+          )}
+          {rundmailLocked && (
+            <Callout tone="info" compact>
+              Die Rundmail ist freigegeben — Zielgruppe, Absender und Zeitraum sind fest. Nur der Name lässt sich noch ändern.
+            </Callout>
+          )}
+          {!isEinzel && !isRundmail && (
             <div className="grid gap-3 sm:grid-cols-3">
               <Field label="Start" info="Vor dem Start können Entwürfe vorbereitet und an Testkontakte gesendet werden; Kund:innen erhalten erst ab dem Start Mails. Leer = sofort.">
                 <Input type="datetime-local" value={form.startsAt} onChange={(e) => patch({ startsAt: e.target.value })} />
@@ -471,6 +555,7 @@ export function CampaignEditor({
         </section>
 
         {/* Briefing */}
+        {!isRundmail && (
         <section className="flex flex-col gap-3">
           <SectionTitle info="Anlass, Ziel, Ton, was rein muss und was nicht. Der KI-Texter liest das Briefing bei jeder Mail dieser Kampagne — die Pflichtregeln (Einwilligung, Rabatt, Abmeldelink) gelten unverändert.">
             Briefing
@@ -489,10 +574,11 @@ export function CampaignEditor({
             </Button>
           </div>
         </section>
+        )}
 
         {/* Zielgruppe */}
         {!isEinzel && (
-          <section className="flex flex-col gap-3">
+          <section className={rundmailLocked ? "pointer-events-none flex flex-col gap-3 opacity-60" : "flex flex-col gap-3"} inert={rundmailLocked || undefined}>
             <SectionTitle info="Wer die Kampagne bekommen soll. Es kommen immer nur Kund:innen mit Einwilligung in E-Mail-Werbung und ohne Sperre (Bounce, Beschwerde, Löschung) in Frage — die Filter grenzen weiter ein.">
               Zielgruppe
             </SectionTitle>
@@ -596,6 +682,11 @@ export function CampaignEditor({
                     />
                   </Field>
                 )}
+                {isRundmail ? (
+                  <p className="text-xs text-muted-foreground">
+                    Die Zielgruppe wird beim Versand-Start frisch ermittelt — wer sich bis dahin anmeldet, ist dabei; wer sich abmeldet, nicht.
+                  </p>
+                ) : (
                 <div className="grid gap-3 sm:grid-cols-2">
                   <Field
                     label="Zielgruppe"
@@ -620,6 +711,7 @@ export function CampaignEditor({
                     </Field>
                   )}
                 </div>
+                )}
               </div>
 
               <aside className="flex h-fit flex-col gap-2 rounded-md border border-border bg-card p-3 lg:sticky lg:top-0" aria-live="polite">
@@ -664,6 +756,8 @@ export function CampaignEditor({
           </section>
         )}
 
+        {!isRundmail && (
+        <>
         {/* Angebot */}
         <section className="flex flex-col gap-3">
           <SectionTitle info="Startwerte für „Vorbereiten“ — pro Entwurf weiterhin änderbar. Codes werden erst beim Senden erzeugt (eindeutig, einmal einlösbar).">
@@ -699,6 +793,9 @@ export function CampaignEditor({
         {/* Gestaltung */}
         <section className="flex flex-col gap-3">
           <SectionTitle>Gestaltung</SectionTitle>
+          <Field label="Absender" info="Von welcher Adresse die Mails dieser Kampagne kommen und wohin Antworten gehen. Weitere Absender (z. B. info@) legst du in Einstellungen → Absender an.">
+            <SenderSelect value={form.senderId} onChange={(senderId) => patch({ senderId })} options={options} saved={campaign?.sender ?? null} />
+          </Field>
           <div className="grid gap-3 sm:grid-cols-3">
             <Field label="Design" info="Leer = das in Einstellungen für Kampagnen gewählte Design.">
               <Select value={form.designKey} onChange={(e) => patch({ designKey: e.target.value })}>
@@ -832,7 +929,10 @@ export function CampaignEditor({
           </div>
         </section>
 
-        {!isEinzel && (
+        </>
+        )}
+
+        {!isEinzel && !isRundmail && (
           <CampaignCheckSection
             campaignId={campaign?.id ?? null}
             audience={form.audience}
@@ -852,5 +952,44 @@ export function CampaignEditor({
         )}
       </div>
     </Sheet>
+  );
+}
+
+/** Absender: the default sender or one of the identities from Einstellungen. */
+function SenderSelect({
+  value,
+  onChange,
+  options,
+  saved,
+  disabled,
+}: {
+  value: string;
+  onChange: (id: string) => void;
+  options: CampaignEditorOptions;
+  saved: SenderOption | null;
+  disabled?: boolean;
+}) {
+  const list = [...options.senders.identities];
+  // A stored identity removed from Einstellungen stays selectable as it is.
+  if (saved && !list.some((s) => s.id === saved.id)) list.push(saved);
+  const chosen = list.find((s) => s.id === value) ?? null;
+  return (
+    <div className="flex flex-col gap-1">
+      <Select value={value} onChange={(e) => onChange(e.target.value)} disabled={disabled}>
+        <option value="">Standard: {options.senders.defaultFrom ?? "nicht konfiguriert"}</option>
+        {list.map((s) => (
+          <option key={s.id} value={s.id}>
+            {s.name} &lt;{s.address}&gt;
+          </option>
+        ))}
+      </Select>
+      <span className="text-2xs text-muted-foreground">
+        {chosen
+          ? chosen.replies === "mo"
+            ? "Antworten landen in Mo (Eingang)."
+            : `Antworten gehen an ${chosen.address}.`
+          : "Antworten landen in Mo (Eingang)."}
+      </span>
+    </div>
   );
 }
