@@ -550,12 +550,13 @@ and booleans only — never a name, text or e-mail.
 - **Started** = once per configurator run: the first answer picked, or — when the link prefilled
   everything — the moment step 04 opens (with a version-1 widget, which gets no step 04, the handover);
   „Neu starten“ begins a new run.
-- **Hinweise erreicht** (27.10.2026) = distinct sessions with `configurator_note_step` — counted only for
-  a period that starts on or after `NOTE_STEP_FROM` (`kpi-releases.mjs`, the date of the release
-  `konfigurator-hinweise-regeln` — one date to re-date to the theme upload; `noteStepCounted`, tested):
-  a period across the release mixes runs without the step, whose starts and handovers count, and would
-  show a false drop at the new optional step (the default 30-day view for weeks after the upload). Such
-  a period leaves the stage out; so does a period without such sessions. **Hinweis vor
+- **Hinweise erreicht** (27.10.2026) = distinct sessions with `configurator_note_step` — counted only when
+  the period's data starts on or after `NOTE_STEP_FROM` (`kpi-releases.mjs`, the date of the release
+  `konfigurator-hinweise-regeln`; `noteStepCounted`, tested): a period across the release would mix runs
+  without the step, whose starts and handovers count, and show a false drop at the new optional step.
+  The data starts at the later of the period's first day and `KONFIGURATOR_DATA_FROM` — the go-live,
+  before which the test data was deleted (§9) — so since the go-live the stage shows for every period
+  with such sessions. **Hinweis vor
   der Beratung** = handovers by `configurator_handover.note` („mit Hinweis“ / „übersprungen“; the card
   shows only with such handovers). The note's **text is never stored** — not in `kpi_events`, not in a
   new column; it lives only in the request context (and in Mo's reply if Mo echoes it).
@@ -615,7 +616,11 @@ and booleans only — never a name, text or e-mail.
   `konfigurator-hinweise-regeln` (27.10.2026) the step „Deine Hinweise“ (a new funnel stage, the existing
   stages count as before), the product rules (pairs, room-sized flooring — plan quantities and cart
   values change) and the availability-based showroom (behaviour); re-date it to the theme upload if that
-  comes later. The answer
+  comes later. `konfigurator-start` (08.11.2026) the go-live: the team's test data before it was deleted
+  (§9) — the configurator's figures start at zero, „Chats gesamt“, cart clicks and recommendations of the
+  days before lost the test runs (`RELEASE_EFFECTS`: a measurement change; the partner traffic a
+  confounder). It sets `KONFIGURATOR_DATA_FROM` and the section note „Erst ab dem 08.11.2026
+  aussagekräftig“ (`MEANINGFUL_FROM.konfigurator`); re-date it to the day the reset ran. The answer
   distribution „Typ / Trainingsfokus“ counts first-version answers under the mapped persona; the goal card
   has no distribution any more.
 
@@ -809,3 +814,46 @@ first-version answers mapped, the card „Konfigurator-Rabatt“ in „Wirkung�
 - The customer's note itself is not stored: it travels in the configurator context of each request.
   It lands in the conversation only where the visitor's update message („Hinweis: …“ after „Ändern“) or
   Mo's reply contains it — under the conversation's retention like any message.
+
+## 9. Go-live: Testdaten löschen (`npm run konfigurator:reset`)
+
+Before the go-live only the team used the configurator, but its tests sit in the same tables as real
+visits — the Konfigurator screen, the KPI section „Home-Gym-Konfigurator“, „Chats gesamt“, cart clicks,
+recommendations, the order rule „über den Konfigurator“, Gespräche. The configurator has no table of its
+own, so `scripts/reset-konfigurator-data.mjs` (rules: the tested `src/lib/konfigurator-reset-core.mjs`)
+recognises its traces and deletes exactly those, everything created **before a fixed cutoff** the owner
+types (`--before`, an instant with zone or `now`, never in the future) and after the day before the first
+release (20.10.2026). Never `npm run db:reset` for this — that truncates every data table.
+
+| Deleted | How it is recognised |
+| --- | --- |
+| `kpi_events` „configurator_*“ | `starts_with(event, 'configurator_')` — the 16 page and 3 server events (§3, §6); no other event name starts so (tested) |
+| The configurator chats (`conversations`, `messages` by cascade) | a tool row `suggest_replies` / `show_gym_plan` / `offer_plan_options` (only active with a configurator context), a persona only the page sets (`design_lifestyle`, `weight_loss`), or the thread a `configurator_chat_started` opened (the first thread of that session created within 5 minutes after it, a configurator thread preferred — greeting-only handovers carry no tool row) |
+| The other widget events of those chats (`chat_opened`, `message_sent`, product clicks, popups …) | a session that only ever held configurator chats and has no sign-in (the anonymous visitor gets a fresh session at the handover): all its events in the window; a signed-in or mixed session: only the events within the configurator chat's time span ± 5 minutes |
+| Test orders in `mo_orders` | only the ones named with `--orders` — candidates are listed: „über den Konfigurator“ (the KPI's rule), placed from a configurator-only session, or with a Konfigurator-Rabatt code (current setting or settings history) |
+| `feedback` from the page or its chats | page `…home-gym-konfigurator…`, a configurator-only session, or a configurator chat key |
+| Caches built from the chats | `conversation_insights` overlapping the window, `kpi_persona_question_summaries` of the two configurator personas or generated since 20.10. (both regenerate with one click) |
+
+Kept: the `ai_usage` rows of the chats (detached from the chat — „KI-Kosten“ stay complete, „Kosten je
+Beratung“ loses the test chats), the settings (`admin_settings` 'configurator', 'showroom', the
+discount), customers, consents, e-mail captures, Shopify's own data, Komplettanalysen and
+Verbesserungsläufe (history), Wissen entries (their chat link becomes NULL — listed for a look), the
+pre-handover page session's other events. Signed-in testers' customer figures are marked dirty
+(`facts_dirty_at`) and recomputed by the nightly job.
+
+**Safety.** Without `--apply` it only reports (per event, per day, by origin; every chat with its reason;
+the other events; the candidate orders; the feedback texts; the caches). `--apply` needs
+`ALLOW_KONFIGURATOR_RESET=true`, a decision for every candidate order (`--orders "#1001,…"` or
+`--keep-orders` — a kept test order turns into ordinary „Umsatz durch Mo“ once its chat is gone), runs
+everything in ONE transaction, writes `admin_access_log` 'konfigurator.reset' (cutoff and counts) and
+refuses a second applied run without `--again`. It ends with a check (no configurator event or chat
+left before the cutoff). Rehearsed against a local database with fixtures for every case (anonymous,
+greeting-only, signed-in with a normal chat, persona-only, a normal session, events after the cutoff and
+before the release, three kinds of test orders): exactly the planned rows went, no other row changed.
+
+**What the script cannot reach** (the owner's steps — ROLLOUT_TODO): test orders in Shopify (cancel /
+refund them there; Mo's ledger then follows), the Shopify usage count of a discount code used in tests
+(a fresh code for the go-live, or accept the count), and the testers' browsers: a browser keeps its
+widget session, its last thread and the „discount shown“ flag — continuing an old test thread re-creates
+it after the go-live. Testers delete the site data of motionsports.de (or use a private window) when the
+reset runs; from then on every visit counts as real — there is no test flag.

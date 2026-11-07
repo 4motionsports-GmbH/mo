@@ -290,8 +290,10 @@ together with `NEON_FETCH_ENDPOINT`) is the destructive `TRUNCATE … RESTART ID
 data table, on any migration level. It has no table list of its own: the data tables are the
 ones `migrations/` creates and no later migration drops (read at run time, plan in the tested
 `src/lib/db-reset-plan.mjs`). It keeps `_migrations`, `campaigns` (the built-in Einzelansprache
-and Lebenszyklus exist only through migration `0066`), `email_design_selections` and
-`admin_settings` (configuration). It prints the target host and database first and **aborts before deleting
+and Lebenszyklus exist only through migration `0066`), `email_design_selections`,
+`admin_settings` and `mail_templates` (configuration). Never run it to remove test data on
+production — the Home-Gym-Konfigurator's test data has its own targeted reset,
+`npm run konfigurator:reset` ([`CONFIGURATOR.md`](./CONFIGURATOR.md) §9). It prints the target host and database first and **aborts before deleting
 anything** when the database has no `_migrations`, when a live table is created by no migration
 of the checkout (a foreign database, a table made by hand, a checkout older than the database)
 or when a kept table has a foreign key to a wiped one; the TRUNCATE runs without `CASCADE`.

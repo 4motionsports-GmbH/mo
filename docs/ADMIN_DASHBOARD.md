@@ -1457,11 +1457,12 @@ one pass), client `konfigurator/KonfiguratorWorkspace` and `KonfiguratorRange` (
   §6, the same orders as the KPI screen's cross-cut row, §5.16); the
   funnel „Vom ersten Klick zur Bestellung“ (`FunnelBars`, each stage = distinct sessions on its own,
   because the handover starts a fresh thread; since 27.10.2026 the stage „Hinweise erreicht“ —
-  `configurator_note_step` — between „Konfigurator begonnen“ and „An Mo übergeben“, shown only for a
-  period that starts on or after the note step's first day, `NOTE_STEP_FROM` (derived from the release
+  `configurator_note_step` — between „Konfigurator begonnen“ and „An Mo übergeben“, shown only when the
+  period's data starts on or after the note step's first day, `NOTE_STEP_FROM` (derived from the release
   `konfigurator-hinweise-regeln`, `kpi-releases.mjs` — a period across the release would mix runs
-  without the step and show a false drop there), and only when the period has such sessions; its
-  `InfoTip` names the day); „So antworten die Besucher“ (one `BarList` per answer —
+  without the step and show a false drop there; the data starts at the later of the period's first day
+  and the go-live `KONFIGURATOR_DATA_FROM`, before which the test data was deleted), and only when the
+  period has such sessions; its `InfoTip` names both days); „So antworten die Besucher“ (one `BarList` per answer —
   fields with nothing but „ohne Angabe“ are hidden; „Typ / Trainingsfokus“ lists Mo's six personas and
   counts answers of the first version under the mapped persona, the goal card is gone since 22.10.2026 —
   plus „Herkunft“ Men's Health / Women's Health / direct, and since 27.10.2026 „Hinweis vor der Beratung“
@@ -1772,7 +1773,11 @@ carry the day of the theme upload, 24.10.2026, not their build days), and on 27.
 Hinweise vor der Beratung, Produktregeln, Showroom nach Verfügbarkeit“ (`konfigurator-hinweise-regeln`:
 the optional step „Deine Hinweise“ with its own funnel stage, plates and single dumbbells in pairs and
 room-sized flooring — more units in plans, carts and cart links —, the showroom only for products on
-display — behaviour, no counting change) — twenty-one entries in all; the six of 06.10., the one of
+display — behaviour, no counting change), and on 08.11.2026 „Konfigurator-Start: Testdaten gelöscht“
+(`konfigurator-start`: the team's configurator test data before the go-live was deleted —
+[`CONFIGURATOR.md`](./CONFIGURATOR.md) §9; the configurator's figures start at zero, „Chats gesamt“,
+cart clicks and recommendations of the days before lost the test runs; it moves the §5.22 section note
+to „erst ab dem 08.11.2026 aussagekräftig“) — twenty-two entries in all; the six of 06.10., the one of
 08.10., the second of 21.10., the one of 22.10., the two of 24.10. and the one of 27.10. add no section
 note. The
 affected sections add a note when the period starts earlier: Anmelde-Popup,
@@ -2118,7 +2123,9 @@ Bestellungen (orders „über den Konfigurator“ with their revenue, „in ‚U
 definitions, the funnel and the detail lists are the Konfigurator screen's (§3.11,
 [`CONFIGURATOR.md`](./CONFIGURATOR.md) §6); the InfoTips are the same texts (exported from
 `konfigurator/KonfiguratorKpis.tsx`). Pure DB (`kpi_events`, `mo_orders`, `messages`), never cached; a
-period starting before 21.10.2026 notes that the feature began then (`releaseNotesFor("konfigurator")`).
+period starting before the go-live (08.11.2026, `KONFIGURATOR_DATA_FROM`) notes that the figures count
+only from then — the team's test data before it was deleted ([`CONFIGURATOR.md`](./CONFIGURATOR.md) §9;
+`releaseNotesFor("konfigurator")`).
 
 ### 5.7a Anmelde-Popup — [`getLoginGateFunnel()`](../src/lib/kpi-store.ts)
 
