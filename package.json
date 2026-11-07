@@ -21,6 +21,7 @@
     "check:email-outlook": "npx tsx scripts/check-email-outlook.mjs",
     "db:migrate": "node --env-file=.env scripts/migrate.mjs",
     "db:reset": "node --env-file=.env scripts/reset-test-data.mjs",
+    "konfigurator:reset": "node --env-file=.env scripts/reset-konfigurator-data.mjs",
     "analyze:repurchase": "node --env-file=.env scripts/analyze-repurchase.mjs",
     "hero:gradient": "node scripts/hero-gradient.mjs",
     "hero:compare": "node --env-file=.env scripts/hero-quality-compare.mjs",
