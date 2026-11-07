@@ -100,6 +100,24 @@ test("admin_settings (0078) is configuration — created by a migration and kept
   assert.deepEqual(plan.preserved, ["_migrations", "admin_settings"]);
 });
 
+test("mail_templates (0081) is configuration — kept; a Rundmail's content and batches are data", () => {
+  const tables = tablesFromMigrations(repoMigrations());
+  for (const t of ["mail_templates", "campaign_mailings", "campaign_mailing_batches"]) assert.ok(tables.includes(t), t);
+  assert.ok(Object.keys(RESET_PRESERVE_TABLES).includes("mail_templates"));
+  const plan = planReset({
+    liveTables: ["_migrations", "campaigns", "mail_templates", "campaign_mailings", "campaign_mailing_batches"],
+    migrationTables: ["campaigns", "mail_templates", "campaign_mailings", "campaign_mailing_batches"],
+    foreignKeys: [
+      { from: "campaign_mailings", to: "campaigns" },
+      { from: "campaign_mailings", to: "mail_templates" },
+      { from: "campaign_mailing_batches", to: "campaigns" },
+    ],
+  });
+  assert.deepEqual(plan.errors, []);
+  assert.deepEqual(plan.truncate, ["campaign_mailing_batches", "campaign_mailings"]);
+  assert.deepEqual(plan.preserved, ["_migrations", "campaigns", "mail_templates"]);
+});
+
 test("quoteIdent: doubles embedded quotes", () => {
   assert.equal(quoteIdent("messages"), '"messages"');
   assert.equal(quoteIdent('we"ird'), '"we""ird"');

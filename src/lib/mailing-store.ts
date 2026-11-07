@@ -848,6 +848,29 @@ export async function markBatchUnclear(batch: MailingBatch, error: string, sql: 
   }
 }
 
+/**
+ * Retention (runRetention, the campaign window): settled batch rows (contact
+ * ids + redirect tokens of a past send) leave with the sends they belong to.
+ * An open batch is never touched. Missing table (before 0081) → 0.
+ */
+export async function purgeSettledMailingBatches(cutoffIso: string, sql: Sql | null = getSql()): Promise<number> {
+  if (!sql) return 0;
+  try {
+    const rows = (await sql`
+      WITH del AS (
+        DELETE FROM campaign_mailing_batches
+         WHERE status <> 'offen' AND created_at < ${cutoffIso}::timestamptz
+        RETURNING 1
+      )
+      SELECT count(*)::int AS n FROM del
+    `) as Array<{ n: number }>;
+    return rows[0]?.n ?? 0;
+  } catch (err) {
+    if (!isMissingTable(err)) reportError(err, { route: "lib/mailing-store", phase: "purgeBatches" });
+    return 0;
+  }
+}
+
 // ── figures ──────────────────────────────────────────────────────────────────
 
 export interface MailingStats {

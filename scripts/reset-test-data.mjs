@@ -17,6 +17,7 @@
 //   email_design_selections  — which e-mail design each mail type uses
 //   admin_settings           — operator settings from Einstellungen (e.g. the
 //                              contact-frequency warning, 0078)
+//   mail_templates           — the operator's e-mail templates (Vorlagen, 0081)
 //
 // Guards, before anything is deleted (each ABORTS with exit 1):
 //   · ALLOW_DB_RESET=true is required (above all else);

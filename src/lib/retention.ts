@@ -37,6 +37,7 @@
 import { getSql } from "./db";
 import { purgeExpiredPendingAuth } from "./customer-oauth-store";
 import { purgeSessionLinkGrants } from "./session-link-grants";
+import { purgeSettledMailingBatches } from "./mailing-store";
 import { parseRetentionOptions } from "./retention-options.mjs";
 import {
   OUTBOX_FINISHED_STATUSES,
@@ -423,6 +424,10 @@ export async function runRetention(
       SELECT count(*)::int AS n FROM del
     `) as Array<{ n: number }>;
     deletedCampaignContacts = [{ n: (deletedCampaignContacts[0]?.n ?? 0) + (deletedLetters[0]?.n ?? 0) }];
+    // Rundmail batch rows (0081: contact ids + redirect tokens) leave with
+    // the sends; counted with the sends. Fail-soft before the migration ran.
+    const deletedBatches = await purgeSettledMailingBatches(campaignCutoff, sql);
+    deletedCampaignSends = [{ n: (deletedCampaignSends[0]?.n ?? 0) + deletedBatches }];
   }
 
   // 5h. Purge the DERIVED analytics caches — they were previously never purged
