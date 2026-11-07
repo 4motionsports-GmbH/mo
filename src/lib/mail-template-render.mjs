@@ -426,7 +426,7 @@ export function renderMailTemplateHtml(rawDoc, ctx) {
     <meta name="format-detection" content="telephone=no, date=no, address=no, email=no, url=no">
     <meta name="color-scheme" content="light">
     <meta name="supported-color-schemes" content="light only">
-    <title>${escapeHtml(ctx.subject)}</title>${msoHeadHtml(msoFontStackFor(style.fontFamily))}${webFontHead}
+    <title>${escapeHtml(merge(ctx.subject))}</title>${msoHeadHtml(msoFontStackFor(style.fontFamily))}${webFontHead}
     <style type="text/css">
 ${EMAIL_SHELL_CSS}
     </style>

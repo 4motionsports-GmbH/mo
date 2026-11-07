@@ -78,10 +78,21 @@ import {
 
 /** Stop starting a new batch this close to the run's deadline. */
 const RUN_SAFETY_MS = 8_000;
-/** Attempts of a batch with an unclear outcome (same idempotency key) before it is marked „unklar“. */
-const MAX_UNCLEAR_ATTEMPTS = 6;
-/** Wait between two attempts of such a batch. */
+/**
+ * Attempts of a batch with an unclear outcome (network error, Resend 5xx)
+ * before it is marked „unklar“. The idempotency key makes every retry safe,
+ * so the runner keeps trying through a Resend outage: 20 s, 40 s, 80 s, …
+ * capped at 5 minutes — about two hours in all. While such a batch is open
+ * no new batch is claimed: an outage pauses the mailing by itself.
+ */
+const MAX_UNCLEAR_ATTEMPTS = 30;
 const UNCLEAR_RETRY_MS = 20_000;
+const UNCLEAR_RETRY_MAX_MS = 5 * 60_000;
+
+/** Wait before attempt `attempts + 1` of an unclear batch. */
+function unclearRetryDelay(attempts: number): number {
+  return Math.min(UNCLEAR_RETRY_MAX_MS, UNCLEAR_RETRY_MS * 2 ** Math.max(0, attempts - 1));
+}
 /** Resend keeps an idempotency key 24 h — never retry an older batch. */
 const IDEMPOTENCY_WINDOW_MS = 23 * 60 * 60 * 1000;
 
@@ -475,7 +486,7 @@ async function sendBatch(
       }
       await noteBatchAttempt(batch.id, message);
       await setMailingRunState(campaignId, { error: message });
-      return { sent: 0, notSent: 0, stop: true, retryAfterMs: UNCLEAR_RETRY_MS };
+      return { sent: 0, notSent: 0, stop: true, retryAfterMs: unclearRetryDelay(batch.attempts + 1) };
     case "conflict":
       await markBatchUnclear(batch, message);
       return { sent: 0, notSent: 0, stop: false };
@@ -557,12 +568,15 @@ async function runOneMailing(campaignId: number, deadlineMs: number, out: Mailin
     }
     // A batch that just failed waits before the next attempt (the admin page
     // may run steps faster than the cron).
-    if (open.attemptedAt && Date.now() - Date.parse(open.attemptedAt) < UNCLEAR_RETRY_MS) return;
+    if (open.attemptedAt && Date.now() - Date.parse(open.attemptedAt) < unclearRetryDelay(open.attempts)) return;
     const result = await sendBatch(campaign, mailing, bodies, open);
     out.batches++;
     out.sent += result.sent;
     out.notSent += result.notSent;
     if (result.stop) return;
+    // Settled: the back-off of the failed attempt no longer applies.
+    await setMailingRunState(campaignId, { nextBatchAt: null, error: null });
+    mailing = { ...mailing, nextBatchAt: null };
   }
 
   const perMinute = MAILING_RATES[mailing.rate];

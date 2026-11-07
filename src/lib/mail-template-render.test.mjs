@@ -171,6 +171,12 @@ test("hero: the mail's own picture (phone crop preferred) with the EU label when
   assert.doesNotMatch(fallback, /eu-ai-icon/);
 });
 
+test("the <title> resolves the subject's merge fields like every other text", () => {
+  const doc = normalizeMailTemplateDoc({ blocks: [{ type: "text", text: "x" }] });
+  const html = renderMailTemplateHtml(doc, base({ subject: "{{vorname|Hey}}, Black Week", merge: (t) => applyMergeFields(t, { firstName: "tom" }) }));
+  assert.match(html, /<title>Tom, Black Week<\/title>/);
+});
+
 test("greeting: the name text with a name, the fallback without; freezable per recipient", () => {
   const doc = normalizeMailTemplateDoc({ blocks: [{ type: "greeting", text: "Hallo {{vorname}},", fallback: "Guten Tag," }] });
   assert.match(renderMailTemplateHtml(doc, base({ merge: (t) => applyMergeFields(t, { firstName: "tom" }) })), /Hallo Tom,/);
