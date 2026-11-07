@@ -4,8 +4,9 @@
 
 import { normalizeAudienceSpec } from "./audience-spec.mjs";
 import { normalizeCampaignHeroImage } from "./campaign-hero.mjs";
+import { normalizeSenderIdentity } from "./sender-identities.mjs";
 
-export const CAMPAIGN_KINDS = /** @type {const} */ (["laufend", "aktion", "einzel"]);
+export const CAMPAIGN_KINDS = /** @type {const} */ (["laufend", "aktion", "einzel", "rundmail"]);
 export const CAMPAIGN_STATUSES = /** @type {const} */ (["entwurf", "aktiv", "pausiert", "beendet", "archiviert"]);
 export const HERO_MODES = /** @type {const} */ (["none", "default", "ai_ab", "ai_all"]);
 export const CTA_KINDS = /** @type {const} */ (["mo_chat", "shop"]);
@@ -15,6 +16,7 @@ export const CAMPAIGN_KIND_LABELS = {
   laufend: "Laufend",
   aktion: "Aktion",
   einzel: "Einzelansprache",
+  rundmail: "Rundmail",
 };
 
 export const CAMPAIGN_STATUS_LABELS = {
@@ -50,8 +52,34 @@ const TRANSITIONS = {
  */
 export function canTransition(from, to, kind) {
   if (kind === "einzel") return false;
+  // A Rundmail is released, paused, resumed and cancelled only through its
+  // own routes (api/admin/rundmail — they freeze the content and settle the
+  // recipients); the generic status change may only archive it.
+  if (kind === "rundmail") return to === "archiviert" && (from === "entwurf" || from === "beendet");
   return Array.isArray(TRANSITIONS[from]) && TRANSITIONS[from].includes(to);
 }
+
+/**
+ * The fields a Rundmail always has (docs/CAMPAIGNS.md §9): no AI drafts, no
+ * letters, no AI hero, no per-recipient code — whatever a request says. Laid
+ * over the validated input of create and update. The audience mode is NOT
+ * here: a Rundmail is created `dynamisch` (matched fresh when the send
+ * starts) and the runner fixes it (`fest`) at the first batch — an edit
+ * afterwards must never reopen the audience.
+ */
+export const RUNDMAIL_FIXED_FIELDS = Object.freeze({
+  autoPreparePerDay: 0,
+  dailyTarget: null,
+  reentryDays: null,
+  letterMode: "aus",
+  letterBudgetCents: null,
+  heroMode: "none",
+  discountPercent: 0,
+  discountValidUntil: null,
+  textMode: null,
+  moPromo: false,
+  ctaKind: "shop",
+});
 
 /** German verb for the status button ("Starten", "Pausieren", …). */
 export function transitionLabel(from, to) {
@@ -80,6 +108,7 @@ export function slugifyCampaignName(name) {
 
 /** Sensible defaults per kind (the wizard's starting point). */
 export function campaignDefaults(kind) {
+  if (kind === "rundmail") return { ...RUNDMAIL_FIXED_FIELDS, audienceMode: "dynamisch", priority: 50 };
   if (kind === "laufend") {
     return { audienceMode: "dynamisch", reentryDays: 180, heroMode: "ai_ab", priority: 10, autoPreparePerDay: 0 };
   }
@@ -104,7 +133,8 @@ const intIn = (v, lo, hi) => (Number.isInteger(v) && v >= lo && v <= hi ? v : un
  *
  * @param {Record<string, unknown>} raw
  * @param {{ create?: boolean, maxDiscountPercent?: number,
- *           current?: { ctaKind?: string, moPromo?: boolean } | null }} [opts]
+ *           current?: { ctaKind?: string, moPromo?: boolean, kind?: string } | null,
+ *           senderDomains?: ReadonlyArray<string> }} [opts]
  */
 export function validateCampaignInput(raw, opts = {}) {
   const r = raw && typeof raw === "object" ? raw : {};
@@ -121,8 +151,18 @@ export function validateCampaignInput(raw, opts = {}) {
     else value.name = name;
   }
   if (opts.create || has("kind")) {
-    if (r.kind === "laufend" || r.kind === "aktion") value.kind = r.kind;
-    else errors.kind = "Art wählen: Laufend oder Aktion.";
+    if (r.kind === "laufend" || r.kind === "aktion" || r.kind === "rundmail") value.kind = r.kind;
+    else errors.kind = "Art wählen: Laufend, Aktion oder Rundmail.";
+  }
+  if (has("sender")) {
+    // The From identity (sender-identities.mjs, migration 0081): null = the
+    // default sender. Must lie on a domain verified in Resend.
+    if (r.sender == null || r.sender === "") value.sender = null;
+    else {
+      const s = normalizeSenderIdentity(r.sender, { allowedDomains: opts.senderDomains ?? [] });
+      if (s) value.sender = s;
+      else errors.sender = "Absender ungültig — in Einstellungen → Absender anlegen und hier wählen.";
+    }
   }
   if (has("brief")) {
     const brief = typeof r.brief === "string" ? r.brief.trim() : "";
@@ -225,6 +265,16 @@ export function validateCampaignInput(raw, opts = {}) {
   if (ctaKind === "shop" && has("ctaUrl") && !value.ctaUrl && !errors.ctaUrl) {
     errors.ctaUrl = "Für einen Shop-Button einen Link angeben.";
   }
+  // A Rundmail carries its own buttons in the content (no Mo block, no CTA kind).
+  const isRundmail = (value.kind ?? opts.current?.kind) === "rundmail";
+  if (isRundmail) {
+    delete errors.moPromo;
+    delete errors.ctaUrl;
+    delete errors.audienceMode;
+    const { audienceMode: _ignored, ...rest } = value;
+    void _ignored;
+    return { ok: Object.keys(errors).length === 0, value: { ...rest, ...RUNDMAIL_FIXED_FIELDS }, errors };
+  }
   // The chat button lives in the Mo block — without it the mail has no button at all.
   const effectiveCta = value.ctaKind ?? opts.current?.ctaKind ?? (opts.create ? "mo_chat" : undefined);
   const effectivePromo = has("moPromo") ? value.moPromo : opts.current?.moPromo ?? (opts.create ? true : undefined);
@@ -295,7 +345,7 @@ export function planAutoPrepare(campaigns, budget, now = new Date()) {
   let left = Math.max(0, budget);
   const plan = [];
   const live = campaigns
-    .filter((c) => c.kind !== "einzel" && c.autoPreparePerDay > 0 && isCampaignLive(c, now))
+    .filter((c) => c.kind !== "einzel" && c.kind !== "rundmail" && c.autoPreparePerDay > 0 && isCampaignLive(c, now))
     .sort((a, b) => b.priority - a.priority || a.id - b.id);
   for (const c of live) {
     if (left <= 0) break;

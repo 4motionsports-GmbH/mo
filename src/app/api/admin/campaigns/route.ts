@@ -9,6 +9,10 @@
 import { guardAdminGet, guardAdminPost, adminJson, adminJsonError } from "@/lib/admin-api";
 import { createCampaign, listCampaigns, type CampaignInput } from "@/lib/campaigns-store";
 import { validateCampaignInput } from "@/lib/campaign-def.mjs";
+import { senderDomains } from "@/lib/sender-store";
+import { createMailing } from "@/lib/mailing-store";
+import { getMailTemplate } from "@/lib/mail-template-store";
+import { MAIL_TEMPLATE_STARTERS, stripMoBlocks } from "@/lib/mail-template-doc.mjs";
 import { DISCOUNT_PERCENT_MAX } from "@/lib/discount-validation.mjs";
 import { isDbConfigured } from "@/lib/db";
 import { reportError } from "@/lib/observability";
@@ -31,13 +35,37 @@ export async function POST(req: Request) {
   } catch {
     return adminJsonError("bad_request", "Invalid JSON body", 400);
   }
-  const v = validateCampaignInput(raw, { create: true, maxDiscountPercent: DISCOUNT_PERCENT_MAX });
+  const v = validateCampaignInput(raw, {
+    create: true,
+    maxDiscountPercent: DISCOUNT_PERCENT_MAX,
+    senderDomains: senderDomains(),
+  });
   if (!v.ok) {
     return adminJsonError("invalid", Object.values(v.errors)[0] ?? "Ungültige Eingabe.", 400);
   }
   try {
-    const id = await createCampaign(v.value as unknown as CampaignInput & { name: string; kind: "laufend" | "aktion" });
+    const rundmail = v.value.kind === "rundmail";
+    const input = (rundmail ? { ...v.value, audienceMode: "dynamisch" } : v.value) as unknown as CampaignInput & {
+      name: string;
+      kind: "laufend" | "aktion" | "rundmail";
+    };
+    const id = await createCampaign(input);
     if (!id) return adminJsonError("internal_error", "Die Kampagne konnte nicht angelegt werden.", 500);
+    if (rundmail) {
+      // The content starts from a template (its Mo blocks dropped — a
+      // Rundmail has no per-recipient AI content) or a starter.
+      const templateId = Number(raw.templateId);
+      const template = Number.isInteger(templateId) && templateId > 0 ? await getMailTemplate(templateId) : null;
+      const starter =
+        MAIL_TEMPLATE_STARTERS.find((s) => s.key === raw.starter && s.use !== "personal") ??
+        MAIL_TEMPLATE_STARTERS.find((s) => s.key === "newsletter")!;
+      const ok = await createMailing(id, {
+        doc: template ? stripMoBlocks(template.doc) : starter.build(),
+        subject: "",
+        sourceTemplateId: template?.id ?? null,
+      });
+      if (!ok) return adminJsonError("internal_error", "Der Inhalt der Rundmail konnte nicht angelegt werden (Migration 0081?).", 500);
+    }
     return adminJson({ id });
   } catch (err) {
     reportError(err, { route: "api/admin/campaigns", phase: "create" });

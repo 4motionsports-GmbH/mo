@@ -30,8 +30,9 @@ import { canTransition, slugifyCampaignName, campaignPhase } from "./campaign-de
 import { effectiveEmailLanguage } from "./campaign-language.mjs";
 import { parseDiscountScope, type DiscountScope } from "./discount-scope.mjs";
 import { normalizeCampaignHeroImage } from "./campaign-hero.mjs";
+import { parseStoredSender, type SenderIdentity } from "./sender-identities.mjs";
 
-export type CampaignKind = "laufend" | "aktion" | "einzel";
+export type CampaignKind = "laufend" | "aktion" | "einzel" | "rundmail";
 export type CampaignStatus = "entwurf" | "aktiv" | "pausiert" | "beendet" | "archiviert";
 export type HeroMode = "none" | "default" | "ai_ab" | "ai_all";
 
@@ -89,6 +90,8 @@ export interface Campaign {
   letterMode: "aus" | "ohne_einwilligung" | "alle";
   /** Postage cap of the campaign in cents; null = none. */
   letterBudgetCents: number | null;
+  /** The From identity (0081, sender-identities.mjs); null = the default sender. */
+  sender: SenderIdentity | null;
   audienceRefreshedAt: string | null;
   startedAt: string | null;
   endedAt: string | null;
@@ -147,6 +150,8 @@ export function mapCampaign(r: Record<string, unknown>): Campaign {
     ctaUrl: (r.cta_url as string | null) ?? null,
     letterMode: r.letter_mode === "ohne_einwilligung" || r.letter_mode === "alle" ? r.letter_mode : "aus",
     letterBudgetCents: r.letter_budget_cents == null ? null : Number(r.letter_budget_cents),
+    // Absent before 0081 runs (SELECT * has no column) → the default sender.
+    sender: parseStoredSender(r.sender),
     audienceRefreshedAt: iso(r.audience_refreshed_at),
     startedAt: iso(r.started_at),
     endedAt: iso(r.ended_at),
@@ -353,7 +358,7 @@ export async function listCampaignParticipation(
 
 export interface CampaignInput {
   name?: string;
-  kind?: "laufend" | "aktion";
+  kind?: "laufend" | "aktion" | "rundmail";
   brief?: string | null;
   audience?: AudienceSpec;
   audienceMode?: "dynamisch" | "fest";
@@ -376,11 +381,13 @@ export interface CampaignInput {
   ctaUrl?: string | null;
   letterMode?: "aus" | "ohne_einwilligung" | "alle";
   letterBudgetCents?: number | null;
+  /** null = the default sender (0081). */
+  sender?: SenderIdentity | null;
 }
 
 /** Create a campaign (status entwurf). Returns the new id, or null. */
 export async function createCampaign(
-  input: CampaignInput & { name: string; kind: "laufend" | "aktion" },
+  input: CampaignInput & { name: string; kind: "laufend" | "aktion" | "rundmail" },
   sql: Sql | null = getSql()
 ): Promise<number | null> {
   if (!sql) return null;
@@ -397,7 +404,7 @@ export async function createCampaign(
         (name, slug, kind, status, brief, audience, audience_mode, priority, starts_at, ends_at,
          daily_target, auto_prepare_per_day, reentry_days, discount_percent, discount_scope,
          discount_valid_until, design_key, hero_mode, hero_image, text_mode, mo_promo, cta_kind, cta_url,
-         letter_mode, letter_budget_cents)
+         letter_mode, letter_budget_cents, sender)
       VALUES
         (${input.name}, ${slug}, ${input.kind}, 'entwurf', ${input.brief ?? null},
          ${JSON.stringify(input.audience ?? { v: 1 })}::jsonb, ${input.audienceMode ?? "fest"},
@@ -407,7 +414,8 @@ export async function createCampaign(
          ${input.designKey ?? null}, ${input.heroMode ?? "default"},
          ${input.heroImage ? JSON.stringify(input.heroImage) : null}::jsonb, ${input.textMode ?? null},
          ${input.moPromo ?? true}, ${input.ctaKind ?? "mo_chat"}, ${input.ctaUrl ?? null},
-         ${input.letterMode ?? "aus"}, ${input.letterBudgetCents ?? null})
+         ${input.letterMode ?? "aus"}, ${input.letterBudgetCents ?? null},
+         ${input.sender ? JSON.stringify(input.sender) : null}::jsonb)
       RETURNING id
     `) as Array<{ id: number }>;
     return rows[0] ? Number(rows[0].id) : null;
@@ -457,6 +465,8 @@ export async function updateCampaign(id: number, patch: CampaignInput, sql: Sql 
                                     THEN ${patch.letterMode ?? "aus"} ELSE letter_mode END,
         letter_budget_cents  = CASE WHEN ${has("letterBudgetCents")}
                                     THEN ${patch.letterBudgetCents ?? null}::int ELSE letter_budget_cents END,
+        sender               = CASE WHEN ${has("sender")}
+                                    THEN ${patch.sender ? JSON.stringify(patch.sender) : null}::jsonb ELSE sender END,
         updated_at           = now()
        WHERE id = ${id}
       RETURNING id

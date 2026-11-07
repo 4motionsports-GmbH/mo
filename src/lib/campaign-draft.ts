@@ -163,7 +163,7 @@ export interface GenerateCampaignDraftInput extends DraftDiscountInput {
    */
   campaign?: {
     name: string;
-    kind: "laufend" | "aktion" | "einzel";
+    kind: "laufend" | "aktion" | "einzel" | "rundmail";
     brief: string | null;
     endsLabel: string | null;
   } | null;

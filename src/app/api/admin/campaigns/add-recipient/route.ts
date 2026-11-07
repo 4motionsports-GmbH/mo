@@ -42,6 +42,10 @@ export async function POST(req: Request) {
       ? await getCampaign(Number(body.campaignId))
       : await getEinzelCampaign();
     if (!campaign) return adminJsonError("not_found", "Kampagne nicht gefunden.", 404);
+    // A Rundmail's audience comes from its Zielgruppe — nobody is added by hand (0081).
+    if (campaign.kind === "rundmail") {
+      return adminJsonError("rundmail", "Eine Rundmail geht an ihre Zielgruppe — Personen werden nicht einzeln hinzugefügt.", 409);
+    }
     const res = await addRecipient({ campaignId: campaign.id, customerId, adminNote: note, conversationId });
     if (!res.ok) {
       const [status, message] = REASONS[res.reason] ?? [500, "Fehler."];

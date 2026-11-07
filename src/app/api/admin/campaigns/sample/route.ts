@@ -50,6 +50,8 @@ const STATUS_BY_REASON: Record<string, number> = {
   too_soon: 429,
   no_unsubscribe: 503,
   email_not_configured: 503,
+  // The campaign's sender identity is not on a verified domain (0081).
+  sender_invalid: 409,
   discount_failed: 502,
   send_failed: 502,
   failed: 500,

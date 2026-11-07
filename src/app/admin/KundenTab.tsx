@@ -62,7 +62,7 @@ export async function KundenTab({
         .filter((m) => m.id !== "unknown")
         .map((m) => ({ key: m.id, label: m.label }))}
       campaigns={campaigns
-        .filter((c) => c.status !== "beendet" && c.status !== "archiviert")
+        .filter((c) => c.status !== "beendet" && c.status !== "archiviert" && c.kind !== "rundmail")
         .sort((a, b) => (a.kind === "einzel" ? -1 : b.kind === "einzel" ? 1 : 0))
         .map((c) => ({ id: c.id, name: c.name, kind: c.kind }))}
       initialCustomerId={initialCustomerId ?? null}

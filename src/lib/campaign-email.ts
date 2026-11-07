@@ -60,7 +60,8 @@ import {
   moPromoIntroText,
   moPromoCtaLabel,
 } from "./campaign-draft-core.mjs";
-import { sendEmail, senderAddress } from "./email";
+import { sendEmail } from "./email";
+import { resolveCampaignSender } from "./sender-store";
 import { outboundThreading } from "./email-inbound";
 import { withEmailDesign, withEmailRenderData } from "./email-design-context";
 import { getEmailDesignForKey } from "./email-design-store";
@@ -139,6 +140,7 @@ export type CampaignSendResult =
         | "offer_conflict"
         | "discount_failed"
         | "email_not_configured"
+        | "sender_invalid"
         | "send_failed";
       message: string;
     };
@@ -164,6 +166,8 @@ type CampaignSendPreflight =
        * mail). The gates decided on THIS row and the send renders it, so the
        * offer kind checked is the offer kind shipped. */
       bundle: BundleOfferRow | null;
+      /** From + Reply-To of the campaign's sender identity (0081). */
+      sender: { from: string; replyTo: string | undefined };
     }
   | CampaignSendRefusal;
 
@@ -313,7 +317,22 @@ export async function campaignSendPreflight(contactId: number): Promise<Campaign
       `${getBaseUrl()}/api/unsubscribe?token=${encodeURIComponent(unsubToken)}` +
       (contact.language === "en" ? "&locale=en" : "");
 
-    return { ok: true, contact, draft, campaign, person, recipient, unsubscribeUrl, bundle };
+    // GATE 3 — the sender identity (0081): the campaign's chosen From must
+    // still lie on a domain verified in Resend; never silently swapped.
+    const sender = resolveCampaignSender(campaign.sender);
+    if (!sender.ok) return { ok: false, reason: "sender_invalid", message: sender.message };
+
+    return {
+      ok: true,
+      contact,
+      draft,
+      campaign,
+      person,
+      recipient,
+      unsubscribeUrl,
+      bundle,
+      sender: { from: sender.from, replyTo: sender.replyTo },
+    };
   } catch (err) {
     reportError(err, { route: "lib/campaign-email", phase: "campaignSendPreflight" });
     return { ok: false, reason: "send_failed", message: "Unexpected error while checking the send." };
@@ -506,7 +525,10 @@ export async function approveAndSendCampaign(contactId: number): Promise<Campaig
         html,
         kind: "campaign",
         messageId: threading.messageId,
-        replyTo: threading.replyTo,
+        // The campaign's sender identity (0081): its From and its reply rule
+        // (the default identity replies to Mo — today's behaviour).
+        from: pre.sender.from,
+        replyTo: pre.sender.replyTo,
         listUnsubscribeUrl: unsubscribeUrl,
       });
 
@@ -549,7 +571,7 @@ export async function approveAndSendCampaign(contactId: number): Promise<Campaig
           designKey: emailDesign?.key ?? "classic",
           heroVariant: heroVariantForSnapshot({
             source: hero.source,
-            designHasHero: emailDesignHasHero(emailDesign?.key),
+            designHasHero: emailDesign?.hasHero ?? emailDesignHasHero(emailDesign?.key),
             hasDesign: Boolean(emailDesign),
           }),
           heroImageUrl: hero.snapshotImageUrl,
@@ -567,7 +589,7 @@ export async function approveAndSendCampaign(contactId: number): Promise<Campaig
           await recordSentMessage({
             customerId: person.id,
             messageId: threading.messageId,
-            fromAddress: senderAddress() ?? "",
+            fromAddress: pre.sender.from,
             toAddress: recipient,
             subject: draft.subject,
             bodyText: text,
@@ -1051,6 +1073,11 @@ export function renderCampaignEmail(opts: {
       })
     : "";
 
+  // The offer as one piece: product rows or the set, the coupon, the countdown.
+  const offerRows = `${productsRows}${bundle ? bundle.html : ""}${couponRows}${
+    offerExpiresAt ? renderOfferCountdown({ expiresAt: offerExpiresAt, language }) : ""
+  }`;
+
   const html = renderBrandedEmail({
     subject,
     preheader: textBody.split("\n")[0]?.slice(0, 140) || undefined,
@@ -1065,10 +1092,11 @@ export function renderCampaignEmail(opts: {
     // Full-width newsletter sections between the body and the CTA pill: the
     // offer (product rows + coupon, or the set block), its countdown, and last
     // the Mo-promo media row — directly above its "Beratung starten" CTA.
-    preCtaRowsHtml:
-      `${productsRows}${bundle ? bundle.html : ""}${couponRows}${
-        offerExpiresAt ? renderOfferCountdown({ expiresAt: offerExpiresAt, language }) : ""
-      }${promoRows}` || undefined,
+    preCtaRowsHtml: `${offerRows}${promoRows}` || undefined,
+    // The same rows as pieces, for block templates that place the offer and
+    // the Mo hint separately (mail-template-design.ts); classic and the code
+    // designs ignore it.
+    blocks: { offerRowsHtml: offerRows, promoRowsHtml: promoRows },
     ctas: shopCta?.url
       ? [{ label: shopCta.label, url: shopCta.url }]
       : moPromo

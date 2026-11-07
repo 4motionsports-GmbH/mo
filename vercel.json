@@ -41,6 +41,10 @@
     {
       "path": "/api/cron/inbox",
       "schedule": "20 * * * *"
+    },
+    {
+      "path": "/api/cron/send-mailings",
+      "schedule": "* * * * *"
     }
   ]
 }

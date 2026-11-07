@@ -158,6 +158,8 @@ export async function prepareDraftForContact(
   // An Art. 21 objection to profiling: no AI profile is read for the mail.
   const profileCustomer = loadedCustomer?.profileObjectionAt ? null : loadedCustomer;
   const campaign = await getCampaignForContact(contact.id);
+  // A Rundmail has ONE shared content — never a per-recipient AI draft (0081).
+  if (campaign?.kind === "rundmail") return null;
   // The purchase history comes from the local order ledger once the person
   // is mirrored; a Testkontakt without a mirrored source reads Shopify.
   const preloaded = loadedCustomer ? await loadPurchaseHistory(loadedCustomer) : undefined;
@@ -342,6 +344,8 @@ export async function prepareNextDrafts(input: PrepareBatchInput): Promise<Prepa
   if (!campaign || campaign.status !== "aktiv" || (campaign.endsAt && new Date(campaign.endsAt) <= new Date())) {
     return { ...empty, campaignClosed: true };
   }
+  // A Rundmail has ONE shared content and never per-recipient AI drafts (0081).
+  if (campaign.kind === "rundmail") return { ...empty, campaignClosed: true };
   const discountPercent = input.discountPercent ?? campaign.discountPercent;
   const textMode = input.textMode ?? campaign.textMode ?? DEFAULT_EMAIL_TEXT_MODE;
   // A code applies only to the individual selection; an older campaign's

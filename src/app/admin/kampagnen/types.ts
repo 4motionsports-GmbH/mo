@@ -61,7 +61,7 @@ export interface CampaignCardProps {
   id: number;
   name: string;
   slug: string;
-  kind: "laufend" | "aktion" | "einzel";
+  kind: "laufend" | "aktion" | "einzel" | "rundmail";
   status: "entwurf" | "aktiv" | "pausiert" | "beendet" | "archiviert";
   phase: string;
   brief: string | null;

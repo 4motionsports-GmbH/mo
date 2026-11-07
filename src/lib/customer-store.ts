@@ -1064,7 +1064,11 @@ export async function listCustomersForProfileUpkeep(
                GREATEST(
                  (SELECT max(v.last_activity_at) FROM conversations v WHERE v.customer_id = c.id),
                  (SELECT max(m.occurred_at) FROM email_messages m WHERE m.customer_id = c.id),
-                 (SELECT max(s.sent_at) FROM campaign_sends s WHERE s.customer_id = c.id AND s.is_test = false),
+                 -- A Rundmail (identical content for everyone, 0081) says nothing
+                 -- new about the person: it never makes a profile due.
+                 (SELECT max(s.sent_at) FROM campaign_sends s
+                   WHERE s.customer_id = c.id AND s.is_test = false
+                     AND NOT EXISTS (SELECT 1 FROM campaigns k WHERE k.id = s.campaign_id AND k.kind = 'rundmail')),
                  f.last_order_at
                ) AS last_activity_at
           FROM customers c

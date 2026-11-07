@@ -1347,6 +1347,8 @@ export async function recoverStuckSending(
        WHERE c.status = 'sending' AND c.is_test = false
          AND c.claimed_at < now() - make_interval(mins => ${olderThanMinutes})
          AND EXISTS (SELECT 1 FROM campaign_sends s WHERE s.contact_id = c.id AND s.is_test = false)
+         -- A Rundmail settles its own batches (mailing-send.ts, idempotent retry).
+         AND NOT EXISTS (SELECT 1 FROM campaigns k WHERE k.id = c.campaign_id AND k.kind = 'rundmail')
       RETURNING c.id
     `) as Array<Record<string, unknown>>;
     const returned = (await sql`
@@ -1356,6 +1358,7 @@ export async function recoverStuckSending(
        WHERE c.status = 'sending' AND c.is_test = false
          AND c.claimed_at < now() - make_interval(mins => ${olderThanMinutes})
          AND NOT EXISTS (SELECT 1 FROM campaign_sends s WHERE s.contact_id = c.id)
+         AND NOT EXISTS (SELECT 1 FROM campaigns k WHERE k.id = c.campaign_id AND k.kind = 'rundmail')
       RETURNING c.id
     `) as Array<Record<string, unknown>>;
     return { sent: sent.length, returned: returned.length };
@@ -1584,16 +1587,24 @@ export async function markCampaignUnsubscribed(
  */
 export async function recordCampaignClick(
   token: string,
+  opts: { link?: number | null } = {},
   sql: Sql | null = getSql()
-): Promise<{ sendId: number; firstClick: boolean; shopUrl: string | null } | null> {
+): Promise<{
+  sendId: number;
+  firstClick: boolean;
+  shopUrl: string | null;
+  campaignId: number | null;
+  kind: string | null;
+} | null> {
   if (!sql) return null;
   const t = token.trim();
   if (!t) return null;
   try {
     // The campaign's CTA target (0066): a shop link for `cta_kind = shop`,
-    // else null (the caller opens Mo).
+    // else null (the caller opens Mo). A Rundmail (0081) resolves its link
+    // index in the caller (campaign_mailings.links).
     const rows = (await sql`
-      SELECT s.id, s.clicked_at,
+      SELECT s.id, s.clicked_at, s.campaign_id, k.kind,
              CASE WHEN k.cta_kind = 'shop' THEN k.cta_url END AS shop_url
         FROM campaign_sends s
         LEFT JOIN campaigns k ON k.id = s.campaign_id
@@ -1606,6 +1617,9 @@ export async function recordCampaignClick(
 
     const sendId = Number(row.id);
     const firstClick = row.clicked_at == null;
+    const campaignId = row.campaign_id == null ? null : Number(row.campaign_id);
+    const kind = (row.kind as string | null) ?? null;
+    const link = kind === "rundmail" && Number.isInteger(opts.link) ? Number(opts.link) : null;
 
     await sql`
       UPDATE campaign_sends
@@ -1615,9 +1629,11 @@ export async function recordCampaignClick(
     await sql`
       INSERT INTO kpi_events (session_id, event, data)
       VALUES (NULL, ${KPI_CAMPAIGN_EMAIL_CLICKED},
-              ${JSON.stringify({ sendId, firstClick })}::jsonb)
+              ${JSON.stringify(
+                kind === "rundmail" ? { sendId, firstClick, campaignId, link: link ?? 0 } : { sendId, firstClick }
+              )}::jsonb)
     `;
-    return { sendId, firstClick, shopUrl };
+    return { sendId, firstClick, shopUrl, campaignId, kind };
   } catch (err) {
     reportError(err, { route: "lib/campaign-store", phase: "recordCampaignClick" });
     return null;
@@ -1823,6 +1839,8 @@ export async function getCampaignKpis(
          WHERE is_test = false
            AND sent_at >= ${range.from}::date
            AND sent_at < (${range.to}::date + 1)
+           -- The hero comparison is about personal mails; a Rundmail (0081) has no hero variant.
+           AND NOT EXISTS (SELECT 1 FROM campaigns k WHERE k.id = campaign_sends.campaign_id AND k.kind = 'rundmail')
          GROUP BY 1
       `,
         sql`
@@ -1840,6 +1858,8 @@ export async function getCampaignKpis(
          WHERE is_test = false
            AND sent_at >= ${range.from}::date
            AND sent_at < (${range.to}::date + 1)
+           -- Lifecycle segments steer personal mails; a Rundmail (0081) has none.
+           AND NOT EXISTS (SELECT 1 FROM campaigns k WHERE k.id = campaign_sends.campaign_id AND k.kind = 'rundmail')
          GROUP BY 1
       `,
         sql`

@@ -225,7 +225,7 @@ export interface CampaignDeskCampaign {
   id: number;
   name: string;
   slug: string;
-  kind: "laufend" | "aktion" | "einzel";
+  kind: "laufend" | "aktion" | "einzel" | "rundmail";
   status: string;
   /** campaign-def.campaignPhase: laeuft | geplant | abgelaufen | pausiert | … */
   phase: string;
@@ -252,7 +252,7 @@ export interface CampaignSwitchItem {
   id: number;
   name: string;
   slug: string;
-  kind: "laufend" | "aktion" | "einzel";
+  kind: "laufend" | "aktion" | "einzel" | "rundmail";
   phase: string;
   drafted: number;
 }

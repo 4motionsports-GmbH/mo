@@ -1,0 +1,198 @@
+// Rundmail (bulk mail) — the checks before release („Prüfen & senden“).
+// Pure and tested (mailing-checks.test.mjs). A Rundmail goes to thousands of
+// people at once and nobody looks at each mail, so everything that can be
+// checked by a machine is checked here, ONCE, on the exact content that will
+// be frozen:
+//
+//   errors   — block the release (the route refuses too)
+//   warnings — deliverability and quality hints (spam filters, phones)
+//   infos    — what will happen (recipients, duration, personalisation)
+//
+// The legal gates per recipient (consent, opt-in level, block list,
+// frequency cap) run again for every recipient at send time
+// (mailing-send.ts → campaign-gates.mjs) — these checks never replace them.
+
+/** Gmail clips a mail above 102 KB — the unsubscribe footer would vanish. */
+export const MAILING_HTML_HARD_LIMIT = 100 * 1024;
+export const MAILING_HTML_SOFT_LIMIT = 80 * 1024;
+export const SUBJECT_MAX_CHARS = 150;
+export const SUBJECT_MOBILE_CHARS = 60;
+
+const SHORTENERS = ["bit.ly", "tinyurl.com", "goo.gl", "t.co", "ow.ly", "is.gd", "buff.ly", "rebrand.ly", "cutt.ly", "shorturl.at"];
+// Words spam filters weigh — a hint, never a block (German shop copy uses
+// some of them legitimately).
+const SPAM_WORDS = [
+  "gratis",
+  "kostenlos",
+  "100%",
+  "100 %",
+  "gewinn",
+  "gewinnspiel",
+  "jetzt kaufen",
+  "nur heute",
+  "garantiert",
+  "free",
+  "winner",
+  "click here",
+  "hier klicken",
+  "€€€",
+  "!!!",
+];
+
+/**
+ * @typedef {{ key: string, level: "error" | "warning" | "info", message: string, blockId?: string | null }} MailingCheck
+ */
+
+/** Visible text of mail HTML (rough — for the text/image balance). */
+export function visibleText(html) {
+  return String(html ?? "")
+    .replace(/<!--[\s\S]*?-->/g, " ")
+    .replace(/<(style|script|title)\b[\s\S]*?<\/\1>/gi, " ")
+    .replace(/<div style="display: none[\s\S]*?<\/div>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;|&#8204;|&#847;/g, " ")
+    .replace(/&[a-z#0-9]+;/gi, "x")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
+ * Run every check.
+ * @param {{
+ *   subject: string,
+ *   preheader: string | null,
+ *   html: string,
+ *   docIssues: { errors: Array<{ blockId: string | null, message: string }>, warnings: Array<{ blockId: string | null, message: string }> },
+ *   sender: { ok: true, from: string } | { ok: false, message: string },
+ *   sendsApproved: boolean,
+ *   allowSingleOptIn: boolean,
+ *   audience: { total: number, confirmed: number } | null,
+ *   contentVersion: number,
+ *   testVersion: number | null,
+ *   usesFirstName: boolean,
+ *   ratePerMinute: number,
+ *   unknownSubjectFields: string[],
+ *   bytes?: number,
+ * }} input
+ * @returns {{ errors: MailingCheck[], warnings: MailingCheck[], infos: MailingCheck[], ok: boolean }}
+ */
+export function mailingChecks(input) {
+  /** @type {MailingCheck[]} */
+  const errors = [];
+  /** @type {MailingCheck[]} */
+  const warnings = [];
+  /** @type {MailingCheck[]} */
+  const infos = [];
+  const subject = String(input.subject ?? "").trim();
+  const html = String(input.html ?? "");
+  const bytes = input.bytes ?? new TextEncoder().encode(html).length;
+
+  // ── blocking ──
+  if (!input.sendsApproved) {
+    errors.push({ key: "sends_not_approved", level: "error", message: "Versand gesperrt: CAMPAIGN_SENDS_APPROVED ist aus — ohne diesen Schalter verlässt keine Kampagnen-Mail das System." });
+  }
+  if (!subject) errors.push({ key: "subject_missing", level: "error", message: "Betreff fehlt." });
+  else if (subject.length > SUBJECT_MAX_CHARS) errors.push({ key: "subject_long", level: "error", message: `Betreff ist zu lang (max. ${SUBJECT_MAX_CHARS} Zeichen).` });
+  for (const bad of input.unknownSubjectFields ?? []) {
+    errors.push({ key: "subject_field", level: "error", message: `Unbekannter Platzhalter im Betreff: ${bad} — erlaubt ist {{vorname}} bzw. {{vorname|Ersatz}}.` });
+  }
+  for (const issue of input.docIssues?.errors ?? []) errors.push({ key: "content", level: "error", message: issue.message, blockId: issue.blockId });
+  if (!input.sender.ok) errors.push({ key: "sender", level: "error", message: input.sender.message });
+  if (input.audience && input.audience.total === 0) {
+    errors.push({ key: "audience_empty", level: "error", message: "Die Zielgruppe ist leer — niemand mit Einwilligung passt." });
+  }
+  if (input.testVersion !== input.contentVersion) {
+    errors.push({
+      key: "test_missing",
+      level: "error",
+      message: "Testmail fehlt: Schicke den aktuellen Stand an dich selbst und prüfe ihn auf dem Handy und am Rechner (nach jeder Änderung neu).",
+    });
+  }
+  if (bytes > MAILING_HTML_HARD_LIMIT) {
+    errors.push({
+      key: "size",
+      level: "error",
+      message: `Die Mail ist ${Math.round(bytes / 1024)} KB groß — Gmail kürzt ab 102 KB und versteckt dann den Abmelde-Link. Bausteine oder eigenes HTML kürzen.`,
+    });
+  }
+  if (/<img\b[^>]*\ssrc\s*=\s*"http:\/\//i.test(html)) {
+    errors.push({ key: "insecure_image", level: "error", message: "Ein Bild wird über http:// geladen — nur https-Bilder werden sicher angezeigt." });
+  }
+  if (/\shref\s*=\s*"(?:javascript|data|vbscript):/i.test(html)) {
+    errors.push({ key: "bad_link", level: "error", message: "Ein Link hat ein unzulässiges Ziel (javascript:/data:)." });
+  }
+
+  // ── deliverability hints ──
+  if (subject) {
+    if (subject.length > SUBJECT_MOBILE_CHARS) {
+      warnings.push({ key: "subject_mobile", level: "warning", message: `Betreff hat ${subject.length} Zeichen — auf dem Handy sind nur etwa ${SUBJECT_MOBILE_CHARS} sichtbar.` });
+    }
+    const letters = subject.replace(/[^A-Za-zÄÖÜäöüß]/g, "");
+    const upper = letters.replace(/[^A-ZÄÖÜ]/g, "");
+    if (letters.length >= 10 && upper.length / letters.length > 0.7) {
+      warnings.push({ key: "subject_caps", level: "warning", message: "Betreff fast nur in GROSSBUCHSTABEN — Spamfilter werten das negativ." });
+    }
+    if ((subject.match(/!/g) ?? []).length >= 2) {
+      warnings.push({ key: "subject_bang", level: "warning", message: "Mehrere Ausrufezeichen im Betreff — Spamfilter werten das negativ." });
+    }
+  }
+  const lowerAll = `${subject} ${visibleText(html)}`.toLowerCase();
+  const spam = SPAM_WORDS.filter((w) => lowerAll.includes(w));
+  if (spam.length > 0) {
+    warnings.push({ key: "spam_words", level: "warning", message: `Typische Spam-Wörter: ${spam.map((w) => `„${w}“`).join(", ")} — sparsam einsetzen.` });
+  }
+  if (!String(input.preheader ?? "").trim()) {
+    warnings.push({ key: "preheader", level: "warning", message: "Vorschauzeile fehlt — sie steht im Posteingang neben dem Betreff und erhöht die Öffnungsrate." });
+  }
+  if (bytes > MAILING_HTML_SOFT_LIMIT && bytes <= MAILING_HTML_HARD_LIMIT) {
+    warnings.push({ key: "size_soft", level: "warning", message: `Die Mail ist ${Math.round(bytes / 1024)} KB groß — nah an Gmails Grenze von 102 KB.` });
+  }
+  const imgCount = (html.match(/<img\b/gi) ?? []).length;
+  const textChars = visibleText(html).length;
+  if (imgCount >= 2 && textChars < 400) {
+    warnings.push({ key: "image_heavy", level: "warning", message: "Viele Bilder, wenig Text — Spamfilter mögen reine Bild-Mails nicht, und bei blockierten Bildern sieht man kaum etwas. Etwas Text ergänzen." });
+  }
+  const hrefs = Array.from(html.matchAll(/\shref\s*=\s*"([^"]*)"/gi), (m) => m[1]);
+  const httpLinks = hrefs.filter((h) => /^https?:\/\//i.test(h));
+  if (new Set(httpLinks).size > 30) {
+    warnings.push({ key: "many_links", level: "warning", message: `${new Set(httpLinks).size} verschiedene Links — weniger Links wirken seriöser.` });
+  }
+  const shortened = httpLinks.filter((h) => {
+    try {
+      return SHORTENERS.includes(new URL(h.replace(/&amp;/g, "&")).hostname.replace(/^www\./, "").toLowerCase());
+    } catch {
+      return false;
+    }
+  });
+  if (shortened.length > 0) {
+    warnings.push({ key: "shortener", level: "warning", message: "Link-Kürzer (bit.ly & Co.) sind ein starkes Spam-Signal — den vollständigen Link verwenden." });
+  }
+  if (httpLinks.some((h) => /^http:\/\//i.test(h))) {
+    warnings.push({ key: "http_link", level: "warning", message: "Ein Link beginnt mit http:// — besser https://." });
+  }
+  for (const issue of input.docIssues?.warnings ?? []) warnings.push({ key: "content", level: "warning", message: issue.message, blockId: issue.blockId });
+  if (input.audience && !input.allowSingleOptIn) {
+    const unconfirmed = Math.max(0, input.audience.total - input.audience.confirmed);
+    if (unconfirmed > 0) {
+      warnings.push({
+        key: "single_opt_in",
+        level: "warning",
+        message: `${unconfirmed} Empfänger:innen ohne nachweisbares Double-Opt-in werden übersprungen (CAMPAIGN_ALLOW_SINGLE_OPT_IN ist aus).`,
+      });
+    }
+  }
+
+  // ── what will happen ──
+  if (input.audience) {
+    const reach = input.allowSingleOptIn ? input.audience.total : input.audience.confirmed;
+    const minutes = Math.max(1, Math.ceil(reach / Math.max(1, input.ratePerMinute)));
+    infos.push({ key: "reach", level: "info", message: `Geht an etwa ${reach} Empfänger:innen — Dauer etwa ${minutes} Minute${minutes === 1 ? "" : "n"} bei ${input.ratePerMinute} pro Minute.` });
+  }
+  if (input.usesFirstName) {
+    infos.push({ key: "first_name", level: "info", message: "Persönliche Anrede: Wo kein Vorname bekannt ist, steht der Ersatztext." });
+  }
+  if (input.sender.ok) infos.push({ key: "from", level: "info", message: `Absender: ${input.sender.from}` });
+  infos.push({ key: "unsubscribe", level: "info", message: "Abmelde-Link und Ein-Klick-Abmeldung (List-Unsubscribe) sind in jeder Mail." });
+
+  return { errors, warnings, infos, ok: errors.length === 0 };
+}

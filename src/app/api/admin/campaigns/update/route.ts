@@ -8,6 +8,7 @@
 import { guardAdminPost, adminJson, adminJsonError } from "@/lib/admin-api";
 import { getCampaign, refreshCampaignAudience, updateCampaign, type CampaignInput } from "@/lib/campaigns-store";
 import { validateCampaignInput } from "@/lib/campaign-def.mjs";
+import { senderDomains } from "@/lib/sender-store";
 import { DISCOUNT_PERCENT_MAX } from "@/lib/discount-validation.mjs";
 import { reportError } from "@/lib/observability";
 
@@ -30,12 +31,21 @@ export async function POST(req: Request) {
   try {
     const current = await getCampaign(id);
     if (!current) return adminJsonError("not_found", "Kampagne nicht gefunden.", 404);
-    const v = validateCampaignInput(fields, { maxDiscountPercent: DISCOUNT_PERCENT_MAX, current });
+    // A released Rundmail (0081) keeps its audience, sender and schedule —
+    // they are frozen with the content; only the name may still change.
+    const locked = current.kind === "rundmail" && current.status !== "entwurf";
+    const input = locked ? { ...(typeof fields.name === "string" ? { name: fields.name } : {}) } : fields;
+    const v = validateCampaignInput(input, {
+      maxDiscountPercent: DISCOUNT_PERCENT_MAX,
+      current,
+      senderDomains: senderDomains(),
+    });
     if (!v.ok) return adminJsonError("invalid", Object.values(v.errors)[0] ?? "Ungültige Eingabe.", 400);
-    const ok = await updateCampaign(id, v.value as unknown as CampaignInput);
+    const value = locked ? { ...(v.value.name ? { name: v.value.name } : {}) } : v.value;
+    const ok = await updateCampaign(id, value as unknown as CampaignInput);
     if (!ok) return adminJsonError("not_found", "Kampagne nicht gefunden.", 404);
     let campaign = await getCampaign(id);
-    if (campaign && campaign.status === "aktiv" && ("audience" in v.value || "audienceMode" in v.value)) {
+    if (campaign && campaign.status === "aktiv" && campaign.kind !== "rundmail" && ("audience" in value || "audienceMode" in value)) {
       await refreshCampaignAudience(id);
       campaign = await getCampaign(id);
     }

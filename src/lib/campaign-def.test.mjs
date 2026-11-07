@@ -183,3 +183,38 @@ test("discount scope: always the individual selection, an old whole-order value 
   assert.equal(bad.ok, false);
   assert.ok(bad.errors.discountScope);
 });
+
+test("Rundmail: valid kind, fixed fields laid over any input, no audience mode, only archiving via the generic status change", async () => {
+  const { RUNDMAIL_FIXED_FIELDS } = await import("./campaign-def.mjs");
+  const r = validateCampaignInput(
+    { name: "Black Week", kind: "rundmail", audienceMode: "fest", discountPercent: 20, moPromo: true, ctaKind: "mo_chat", letterMode: "alle" },
+    { create: true }
+  );
+  assert.equal(r.ok, true);
+  assert.equal(r.value.kind, "rundmail");
+  assert.equal(r.value.audienceMode, undefined);
+  assert.equal(r.value.discountPercent, 0);
+  assert.equal(r.value.letterMode, "aus");
+  assert.equal(r.value.autoPreparePerDay, 0);
+  assert.deepEqual(Object.keys(RUNDMAIL_FIXED_FIELDS).every((k) => k in r.value), true);
+  // An update of a Rundmail keeps the fixed fields too (kind from `current`).
+  const u = validateCampaignInput({ name: "Black Week 2", moPromo: true }, { current: { kind: "rundmail" } });
+  assert.equal(u.ok, true);
+  assert.equal(u.value.moPromo, false);
+  assert.equal(canTransition("entwurf", "aktiv", "rundmail"), false);
+  assert.equal(canTransition("aktiv", "pausiert", "rundmail"), false);
+  assert.equal(canTransition("entwurf", "archiviert", "rundmail"), true);
+  assert.equal(canTransition("beendet", "archiviert", "rundmail"), true);
+  assert.deepEqual(planAutoPrepare([{ id: 1, kind: "rundmail", priority: 9, autoPreparePerDay: 50, status: "aktiv" }], 100), []);
+});
+
+test("sender: null = default, an identity on an allowed domain, anything else refused", () => {
+  const domains = ["motionsports.de"];
+  assert.equal(validateCampaignInput({ sender: null }, { senderDomains: domains }).value.sender, null);
+  const ok = validateCampaignInput({ sender: { address: "info@motionsports.de", name: "motion sports", replies: "direct" } }, { senderDomains: domains });
+  assert.equal(ok.ok, true);
+  assert.equal(ok.value.sender.address, "info@motionsports.de");
+  const bad = validateCampaignInput({ sender: { address: "info@gmail.com", name: "x", replies: "mo" } }, { senderDomains: domains });
+  assert.equal(bad.ok, false);
+  assert.match(bad.errors.sender, /Absender ungültig/);
+});

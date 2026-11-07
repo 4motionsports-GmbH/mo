@@ -2,7 +2,8 @@
 //
 // Three kinds of token resolve here, tried in order:
 //   1. MARKETING send token  → the prefilled Shopify cart (?discount=CODE intact).
-//   2. CAMPAIGN send token    → the Mo-promo deep link (opens the chat widget).
+//   2. CAMPAIGN send token    → the Mo-promo deep link (opens the chat widget);
+//      a Rundmail send (0081) → link `?l=<n>` of its frozen link table.
 //   3. BUNDLE OFFER token     → the bundle's materialized /cart permalink.
 // Either way we record the click (clicked_at / a kpi_event), then 302 to the
 // real destination. The customer experiences a perfectly normal click.
@@ -20,6 +21,7 @@
 
 import { recordEmailClick } from "@/lib/marketing-store";
 import { recordCampaignClick } from "@/lib/campaign-store";
+import { mailingLinkTarget } from "@/lib/mailing-store";
 import { campaignMoDeeplinkUrl } from "@/lib/campaign-flags.mjs";
 import { resolveBundleRedirect } from "@/lib/bundle-offers-store";
 import { SHOP_DOMAIN } from "@/lib/shopify-cart-url.mjs";
@@ -105,7 +107,20 @@ export async function GET(
     // change (CAMPAIGN_MO_DEEPLINK_URL) applies to already-sent emails too.
     // A campaign whose button leads to the shop (cta_kind 'shop', 0066)
     // redirects there instead.
-    const campaign = await recordCampaignClick(token);
+    // A Rundmail (0081) tracks every link: `?l=<n>` is the index into the
+    // link table frozen at its release — the target is read from there, never
+    // from the URL (no open redirect). An unknown index falls back to the
+    // first link, then the shop.
+    const linkParam = new URL(req.url).searchParams.get("l");
+    const link = linkParam && /^\d{1,3}$/.test(linkParam) ? Number(linkParam) : null;
+    const campaign = await recordCampaignClick(token, { link });
+    if (campaign?.kind === "rundmail" && campaign.campaignId != null) {
+      const target =
+        (link != null ? await mailingLinkTarget(campaign.campaignId, link) : null) ??
+        (await mailingLinkTarget(campaign.campaignId, 0)) ??
+        SHOP_DOMAIN;
+      return Response.redirect(target, 302);
+    }
     if (campaign?.shopUrl) {
       return Response.redirect(campaign.shopUrl, 302);
     }

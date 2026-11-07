@@ -40,6 +40,10 @@ export async function POST(req: Request) {
     if (campaign.status === "beendet" || campaign.status === "archiviert") {
       return adminJsonError("campaign_closed", "Die Kampagne ist beendet.", 409);
     }
+    // A Rundmail's audience comes from its Zielgruppe — nobody is added by hand (0081).
+    if (campaign.kind === "rundmail") {
+      return adminJsonError("rundmail", "Eine Rundmail geht an ihre Zielgruppe — Personen werden nicht einzeln hinzugefügt.", 409);
+    }
     const out = { added: 0, alreadyIn: 0, noConsent: 0, blocked: 0, notFound: 0, failed: 0 };
     for (const customerId of ids) {
       const res = await addRecipient({ campaignId: campaign.id, customerId, adminNote: note });

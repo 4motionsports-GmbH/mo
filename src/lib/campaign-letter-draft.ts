@@ -40,7 +40,7 @@ const letterSchema = z.object({
 
 export interface CampaignLetterDraftInput {
   firstName: string | null;
-  campaign: { name: string; kind: "laufend" | "aktion" | "einzel"; brief: string | null; endsLabel: string | null };
+  campaign: { name: string; kind: "laufend" | "aktion" | "einzel" | "rundmail"; brief: string | null; endsLabel: string | null };
   adminNote: string | null;
   purchaseSummary: CampaignPurchaseSummary | null;
   segment: { key: string | null; days: number | null } | null;
