@@ -15,7 +15,16 @@ import { isTemplateImageUploadConfigured } from "@/lib/mail-template-image";
 import { RundmailWorkspace } from "./lazy";
 import { Callout } from "./ui";
 
-export async function RundmailTab({ campaign, audienceText }: { campaign: Campaign; audienceText: string }) {
+export async function RundmailTab({
+  campaign,
+  audienceText,
+  initialView,
+}: {
+  campaign: Campaign;
+  audienceText: string;
+  /** `?view=inhalt|pruefen|versand` — the workspace tab to open. */
+  initialView?: string;
+}) {
   let mailing = await getMailing(campaign.id);
   if (!mailing) {
     // A Rundmail whose content row is missing (created before 0081 ran, or
@@ -50,6 +59,7 @@ export async function RundmailTab({ campaign, audienceText }: { campaign: Campai
       uploadConfigured={isTemplateImageUploadConfigured()}
       aiConfigured={Boolean(process.env.ANTHROPIC_API_KEY)}
       templates={templates.map((t) => ({ id: t.id, name: t.name }))}
+      initialView={initialView}
     />
   );
 }

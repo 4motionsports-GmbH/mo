@@ -360,7 +360,7 @@ function BlockSettings({
       return (
         <>
           <ImageFields block={block} patch={onPatch} uploadConfigured={uploadConfigured} disabled={disabled} showWidth={false} />
-          <Field label="Hero-Überschrift zeigen" inline info="Die Überschrift des KI-Titelbilds unter dem Bild.">
+          <Field label="Hero-Überschrift zeigen" inline className="w-fit" info="Die Überschrift des KI-Titelbilds unter dem Bild.">
             <Checkbox checked={r.showHeadline !== false} onChange={(e) => onPatch({ showHeadline: e.target.checked })} disabled={disabled} />
           </Field>
         </>
@@ -378,7 +378,7 @@ function BlockSettings({
           </div>
           <div className="grid gap-3 sm:grid-cols-2">
             {align()}
-            <Field label="Ganze Breite" inline>
+            <Field label="Ganze Breite" inline className="w-fit">
               <Checkbox checked={r.fullWidth === true} onChange={(e) => onPatch({ fullWidth: e.target.checked })} disabled={disabled} />
             </Field>
           </div>
@@ -441,13 +441,13 @@ function BlockSettings({
       );
     case "mo_content":
       return (
-        <Field label="Überschrift der Mail zeigen" inline info="z. B. „Deine persönliche Empfehlung“ über Mos Text.">
+        <Field label="Überschrift der Mail zeigen" inline className="w-fit" info="z. B. „Deine persönliche Empfehlung“ über Mos Text.">
           <Checkbox checked={r.showHeading !== false} onChange={(e) => onPatch({ showHeading: e.target.checked })} disabled={disabled} />
         </Field>
       );
     case "footer":
       return (
-        <Field label="Social-Media-Symbole" inline>
+        <Field label="Social-Media-Symbole" inline className="w-fit">
           <Checkbox checked={r.showSocial !== false} onChange={(e) => onPatch({ showSocial: e.target.checked })} disabled={disabled} />
         </Field>
       );
@@ -669,6 +669,7 @@ export function BlockEditor({
                     <span className="ml-auto shrink-0 text-2xs font-medium text-warning">Hinweis</span>
                   )}
                 </button>
+                {open && meta?.description && <InfoTip panelClassName="max-w-sm">{meta.description}</InfoTip>}
                 {!isFooter && !disabled && (
                   <>
                     <IconButton label="Nach oben" size="icon-sm" onClick={() => move(i, -1)} disabled={i === 0}>
@@ -702,10 +703,6 @@ export function BlockEditor({
               )}
               {open && (
                 <div className="flex flex-col gap-3 border-t border-border px-3 py-3">
-                  <p className="flex items-center gap-1 text-2xs text-muted-foreground">
-                    {meta?.description}
-                    {isFooter && <InfoTip>Pflicht: Abmelde-Link, Impressum und Firmenangaben stehen in jeder Mail.</InfoTip>}
-                  </p>
                   <BlockSettings block={b} onPatch={(p) => patchBlock(b.id, p)} uploadConfigured={uploadConfigured} disabled={disabled} />
                 </div>
               )}

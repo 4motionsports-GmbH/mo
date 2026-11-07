@@ -250,7 +250,7 @@ export async function KampagneTab({
   // A Rundmail (0081) has no review desk: its own workspace (content, test,
   // checks, release, progress).
   if (campaign.kind === "rundmail") {
-    return <RundmailTab campaign={campaign} audienceText={audienceText(campaign, campaigns)} />;
+    return <RundmailTab campaign={campaign} audienceText={audienceText(campaign, campaigns)} initialView={initialView} />;
   }
 
   const shopifyConfigured = isShopifyConfigured();

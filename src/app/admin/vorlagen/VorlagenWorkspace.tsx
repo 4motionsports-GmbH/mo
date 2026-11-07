@@ -54,6 +54,7 @@ import {
   Select,
   StatusBadge,
   toast,
+  Tooltip,
   useConfirm,
 } from "../ui";
 import { adminFetch, errorMessage } from "../lib/admin-fetch";
@@ -463,9 +464,11 @@ function TemplateEditorView({
               <Undo2 /> Rückgängig
             </Button>
           )}
-          <Button variant="outline" size="sm" onClick={() => setAssistOpen(true)} disabled={!aiConfigured}>
-            <Sparkles /> Mit KI gestalten
-          </Button>
+          <Tooltip content="„Mit KI gestalten“ braucht ANTHROPIC_API_KEY." disabled={aiConfigured}>
+            <Button variant="outline" size="sm" onClick={() => setAssistOpen(true)} disabled={!aiConfigured}>
+              <Sparkles /> Mit KI gestalten
+            </Button>
+          </Tooltip>
           <Button size="sm" onClick={() => void save()} loading={saving} disabled={!dirty || name.trim().length < 3}>
             <Save /> Speichern
           </Button>
@@ -501,9 +504,6 @@ function TemplateEditorView({
         <Callout tone="info" title="Hinweis der KI">
           {aiNotes}
         </Callout>
-      )}
-      {!aiConfigured && (
-        <p className="text-2xs text-muted-foreground">„Mit KI gestalten“ braucht ANTHROPIC_API_KEY.</p>
       )}
 
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)]">

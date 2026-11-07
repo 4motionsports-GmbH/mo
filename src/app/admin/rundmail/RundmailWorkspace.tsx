@@ -34,7 +34,7 @@ import {
   XCircle,
 } from "lucide-react";
 import { ADMIN_DATE_TIME_SHORT, formatAdmin } from "@/lib/admin-datetime.mjs";
-import { num, pct } from "@/lib/admin-format.mjs";
+import { num, plural, ratio } from "@/lib/admin-format.mjs";
 import { adminTabHref } from "@/lib/admin-tabs.mjs";
 import { CAMPAIGN_PHASE_LABELS } from "@/lib/campaign-def.mjs";
 import { MAILING_RATES, MAILING_RATE_LABELS, mailingProgress, minutesLeft } from "@/lib/mailing-core.mjs";
@@ -58,6 +58,7 @@ import {
   TabsContent,
   TabsList,
   TabsTrigger,
+  Tooltip,
   buttonVariants,
   toast,
   useConfirm,
@@ -194,6 +195,9 @@ function CheckList({ evaluation }: { evaluation: Evaluation }) {
   );
 }
 
+/** The workspace tabs, in the URL as `?view=`. */
+const RUNDMAIL_VIEWS = ["inhalt", "pruefen", "versand"] as const;
+
 export function RundmailWorkspace({
   campaign,
   initialMailing,
@@ -204,6 +208,7 @@ export function RundmailWorkspace({
   uploadConfigured,
   aiConfigured,
   templates,
+  initialView,
 }: {
   campaign: {
     id: number;
@@ -223,6 +228,7 @@ export function RundmailWorkspace({
   uploadConfigured: boolean;
   aiConfigured: boolean;
   templates: Array<{ id: number; name: string }>;
+  initialView?: string;
 }) {
   const router = useRouter();
   const { confirm, confirmDialog } = useConfirm();
@@ -260,7 +266,16 @@ export function RundmailWorkspace({
   const sendingNow = status === "aktiv" && frozen && !mailing.finishedAt;
   const planned = sendingNow && campaign.startsAt != null && new Date(campaign.startsAt) > new Date() && stats.sent === 0;
   const defaultTab = !frozen ? "inhalt" : "versand";
-  const [tab, setTab] = React.useState(defaultTab);
+  const [tab, setTab] = React.useState(
+    initialView && (RUNDMAIL_VIEWS as readonly string[]).includes(initialView) ? initialView : defaultTab
+  );
+  // The tab is linkable (`?view=`), kept in sync without a server render.
+  React.useEffect(() => {
+    const url = new URL(window.location.href);
+    if (url.searchParams.get("view") === tab) return;
+    url.searchParams.set("view", tab);
+    window.history.replaceState(window.history.state, "", url.toString());
+  }, [tab]);
 
   // ── data refresh + driving the send while the page is open ──
   const refresh = React.useCallback(async () => {
@@ -583,9 +598,11 @@ export function RundmailWorkspace({
                       items={templates.map((t) => ({ key: String(t.id), label: t.name, onSelect: () => void loadTemplate(t.id) }))}
                     />
                   )}
-                  <Button size="sm" variant="outline" onClick={() => setAssistOpen(true)} disabled={!aiConfigured}>
-                    <Sparkles /> Mit KI gestalten
-                  </Button>
+                  <Tooltip content="„Mit KI gestalten“ braucht ANTHROPIC_API_KEY." disabled={aiConfigured}>
+                    <Button size="sm" variant="outline" onClick={() => setAssistOpen(true)} disabled={!aiConfigured}>
+                      <Sparkles /> Mit KI gestalten
+                    </Button>
+                  </Tooltip>
                   <Button size="sm" onClick={() => void save()} loading={saving} disabled={!dirty}>
                     <Save /> Speichern
                   </Button>
@@ -669,7 +686,8 @@ export function RundmailWorkspace({
                       <InfoTip>
                         Pflicht vor dem Versand: der aktuelle Stand an deine eigenen Adressen — genau so, wie er an alle geht
                         (gleicher Absender, Abmelde-Link). Auf dem Handy und am Rechner ansehen, Links anklicken. Nach jeder
-                        Änderung neu.
+                        Änderung neu. Tipp: zusätzlich an eine Adresse von mail-tester.com schicken — die Bewertung (Ziel: 9/10
+                        oder besser) zeigt Spam-Risiken.
                       </InfoTip>
                     </CardTitle>
                   </CardHeader>
@@ -693,10 +711,6 @@ export function RundmailWorkspace({
                         </span>
                       )}
                     </div>
-                    <p className="text-2xs text-muted-foreground">
-                      Tipp: zusätzlich an eine Adresse von mail-tester.com schicken — die Bewertung (Ziel: 9/10 oder besser) zeigt
-                      Spam-Risiken.
-                    </p>
                   </CardContent>
                 </Card>
 
@@ -726,7 +740,7 @@ export function RundmailWorkspace({
                       />
                     </Field>
                     <p className="-mt-2 text-2xs text-muted-foreground">{MAILING_RATE_LABELS[mailing.rate]}</p>
-                    <Field label="Engagierte zuerst" inline>
+                    <Field label="Engagierte zuerst" inline className="w-fit">
                       <Checkbox checked={mailing.engagedFirst} onChange={(e) => void setPacing(mailing.rate, e.target.checked)} />
                     </Field>
                     <Field label="Zeitpunkt">
@@ -816,7 +830,7 @@ export function RundmailWorkspace({
                 <CardContent className="flex flex-col gap-4">
                   <dl className="grid grid-cols-2 gap-2 sm:grid-cols-5">
                     <Stat label="Zugestellt" value={num(stats.delivered)} />
-                    <Stat label="Geklickt" value={`${num(stats.clicked)} (${pct(stats.sent ? stats.clicked / stats.sent : null)})`} />
+                    <Stat label="Geklickt" value={`${num(stats.clicked)} (${ratio(stats.sent ? stats.clicked / stats.sent : null)})`} />
                     <Stat label="Bounces" value={`${num(stats.bounced)}${stats.bouncedHard ? ` · ${num(stats.bouncedHard)} hart` : ""}`} />
                     <Stat label="Beschwerden" value={num(stats.complained)} hint="Spam-Meldungen. Über 0,3 % gefährdet die Zustellung aller Mails — dann Zielgruppe und Inhalt prüfen." />
                     <Stat label="Abmeldungen" value={num(stats.unsubscribed)} />
@@ -833,7 +847,7 @@ export function RundmailWorkspace({
                                 {l.url.replace(/^https?:\/\//, "").replace(/[?#].*$/, "")}
                               </span>
                               <span className="shrink-0 tabular-nums text-muted-foreground">
-                                {num(c?.recipients ?? 0)} Personen · {num(c?.clicks ?? 0)} Klicks
+                                {plural(c?.recipients ?? 0, "Person", "Personen")} · {plural(c?.clicks ?? 0, "Klick", "Klicks")}
                               </span>
                             </li>
                           );
