@@ -21,6 +21,8 @@ import {
   type EmailDesignPreviewSample,
 } from "@/lib/email-design-preview";
 import { parseEmailThemeKind } from "@/lib/email-theme.mjs";
+import { parseTemplateDesignKey } from "@/lib/mail-template-doc.mjs";
+import { resolveTemplateDesign } from "@/lib/mail-template-design";
 import { reportError } from "@/lib/observability";
 
 export const maxDuration = 15;
@@ -40,10 +42,19 @@ export async function POST(req: Request) {
       return adminJsonError("bad_request", "Unbekannter E-Mail-Typ.", 400);
     }
     kind = parsedKind as EmailDesignKind;
-    if (typeof body.designKey !== "string" || !isKnownEmailDesign(body.designKey)) {
+    if (typeof body.designKey !== "string") return adminJsonError("not_found", "Design nicht gefunden.", 404);
+    designKey = body.designKey;
+    // An operator template („Vorlage“, 0081): resolved from the database.
+    if (parseTemplateDesignKey(designKey) != null) {
+      const design = await resolveTemplateDesign(designKey, kind);
+      if (!design) {
+        return adminJsonError("bad_request", "Diese Vorlage passt nicht zu diesem E-Mail-Typ (oder fehlt).", 400);
+      }
+      return adminEmailHtml(await renderEmailDesignPreview(kind, design, sample));
+    }
+    if (!isKnownEmailDesign(designKey)) {
       return adminJsonError("not_found", "Design nicht gefunden.", 404);
     }
-    designKey = body.designKey;
     if (!designSupportsKind(designKey, kind)) {
       return adminJsonError(
         "bad_request",

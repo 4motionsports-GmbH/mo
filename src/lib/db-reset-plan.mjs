@@ -29,6 +29,7 @@ export const RESET_PRESERVE_TABLES = Object.freeze({
     "campaign definitions — incl. the built-in Einzelansprache and Lebenszyklus, which only migration 0066 creates (1:1 mails and the Eingang need them)",
   email_design_selections: "which e-mail design each mail type uses (configuration, 0049)",
   admin_settings: "operator settings from Einstellungen, e.g. the contact-frequency warning (configuration, 0078)",
+  mail_templates: "the operator's e-mail templates from the screen „Vorlagen“ (configuration, 0081)",
 });
 
 // A table name as migrations write it: optionally `public.`, optionally quoted.

@@ -26,6 +26,9 @@ import {
   type EmailDesignKind,
 } from "./email-designs/registry";
 import { parseEmailThemeKind } from "./email-theme.mjs";
+import { docSupportsPersonal, parseTemplateDesignKey } from "./mail-template-doc.mjs";
+import { isTemplateDesignKind, resolveTemplateDesign } from "./mail-template-design";
+import { getMailTemplate } from "./mail-template-store";
 
 /** kind → selected design key (only kinds that HAVE a row appear). */
 export type EmailDesignSelections = Partial<Record<string, string>>;
@@ -78,6 +81,9 @@ export async function getCachedEmailDesignForKind(
     }
     const key = selectionCache.byKind[parsedKind];
     if (!key) return null;
+    // An operator template („Vorlage“, 0081) — resolved from the database
+    // through its own short cache; unreadable → classic.
+    if (parseTemplateDesignKey(key) != null) return await resolveTemplateDesign(key, parsedKind);
     // Unknown keys (design removed from code, or a newer deploy's key on an
     // older instance) resolve to null inside — classic, never a broken send.
     return resolveEmailDesignForKind(key, parsedKind as EmailDesignKind);
@@ -100,6 +106,9 @@ export async function getEmailDesignForKey(
   const parsedKind = parseEmailThemeKind(kind);
   if (!parsedKind) return null;
   try {
+    if (parseTemplateDesignKey(key) != null) {
+      return (await resolveTemplateDesign(key, parsedKind)) ?? getCachedEmailDesignForKind(kind);
+    }
     return resolveEmailDesignForKind(key, parsedKind as EmailDesignKind) ?? getCachedEmailDesignForKind(kind);
   } catch (err) {
     reportError(err, { route: "lib/email-design-store", phase: "resolveByKey" });
@@ -132,9 +141,20 @@ export async function setEmailDesignSelection(
       invalidateEmailDesignCache();
       return { ok: true };
     }
-    if (!isKnownEmailDesign(designKey)) return { ok: false, error: "unknown_design" };
-    if (!designSupportsKind(designKey, parsedKind as EmailDesignKind)) {
-      return { ok: false, error: "unsupported_kind" };
+    const templateId = parseTemplateDesignKey(designKey);
+    if (templateId != null) {
+      // A template is selectable for the marketing kinds when it exists, is
+      // not archived and carries „Mos persönlicher Text“.
+      const template = await getMailTemplate(templateId, sql);
+      if (!template || template.archivedAt) return { ok: false, error: "unknown_design" };
+      if (!isTemplateDesignKind(parsedKind) || !docSupportsPersonal(template.doc)) {
+        return { ok: false, error: "unsupported_kind" };
+      }
+    } else {
+      if (!isKnownEmailDesign(designKey)) return { ok: false, error: "unknown_design" };
+      if (!designSupportsKind(designKey, parsedKind as EmailDesignKind)) {
+        return { ok: false, error: "unsupported_kind" };
+      }
     }
     await sql`
       INSERT INTO email_design_selections (email_kind, design_key)

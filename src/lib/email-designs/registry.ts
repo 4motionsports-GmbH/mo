@@ -139,6 +139,7 @@ export function resolveEmailDesignForKind(
     : null;
   return {
     key: d.key,
+    hasHero: d.hasHero === true,
     theme,
     renderers: { ...(d.renderers ?? {}), ...(variant?.renderers ?? {}) },
   };

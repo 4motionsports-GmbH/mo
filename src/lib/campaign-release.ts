@@ -19,6 +19,7 @@ import {
 import { getLatestBundleStateForCampaignContact } from "./bundle-offers-store";
 import { campaignReleaseConfig, isCampaignReleaseEnabled } from "./campaign-flags.mjs";
 import { approvalFingerprint, parseReleaseAt, releaseBlockers } from "./campaign-release-core.mjs";
+import { templateDesignVersion } from "./mail-template-design";
 
 export type ApproveResult =
   | { ok: true; releaseAt: string }
@@ -39,11 +40,14 @@ async function heldReason(pre: Extract<Preflight, { ok: true }>, contactId: numb
   return blockers.length ? blockers.map((b) => b.message).join(" ") : null;
 }
 
-function fingerprintOf(pre: Extract<Preflight, { ok: true }>): string {
+async function fingerprintOf(pre: Extract<Preflight, { ok: true }>): Promise<string> {
   return approvalFingerprint({
     draftUpdatedAt: pre.draft.updatedAt ?? null,
     language: pre.contact.language,
     campaign: pre.campaign,
+    // A template design's version (0081): edited after the approval → the
+    // planned mail goes back for a new review. Null for code designs.
+    templateVersion: await templateDesignVersion(pre.campaign.designKey),
   });
 }
 
@@ -68,7 +72,7 @@ export async function approveForRelease(contactId: number, releaseAtInput: unkno
     if (held) return { ok: false, reason: "blocked", message: held };
     const releaseAt = parseReleaseAt(releaseAtInput);
     if (!releaseAt) return { ok: false, reason: "too_far", message: "Höchstens 30 Tage im Voraus." };
-    const approved = await approveContactForRelease(contactId, { releaseAt, fingerprint: fingerprintOf(pre) });
+    const approved = await approveContactForRelease(contactId, { releaseAt, fingerprint: await fingerprintOf(pre) });
     if (!approved) return { ok: false, reason: "not_open", message: "Diese Mail ist nicht mehr offen." };
     return { ok: true, releaseAt };
   } catch (err) {
@@ -117,7 +121,7 @@ export async function releaseDueCampaignMails(
         await hold(pre.message);
         continue;
       }
-      if (fingerprintOf(pre) !== fingerprint) {
+      if ((await fingerprintOf(pre)) !== fingerprint) {
         await hold("Nach der Freigabe geändert — bitte erneut prüfen.");
         continue;
       }

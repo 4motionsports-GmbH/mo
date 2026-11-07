@@ -132,6 +132,7 @@ import { countdownSecret, signCountdownToken } from "./email-countdown-token.mjs
 import { COUNTDOWN_HEIGHT, COUNTDOWN_MOBILE_WIDTH, COUNTDOWN_WIDTH } from "./email-countdown-image.mjs";
 import { buttonRadiusFor, fontNeedsWebFont, fontStackFor, msoFontStackFor } from "./email-theme.mjs";
 import { MSO_HTML_ATTRS, msoHeadHtml, msoPaddingAlt } from "./email-outlook.mjs";
+import { EMAIL_SHELL_CSS } from "./email-shell-css.mjs";
 import type { Locale } from "./locale";
 export { escapeHtml, escapeAttr };
 
@@ -174,6 +175,14 @@ export interface BrandedEmailOptions {
    * newsletter-style sections (black band + product grid) at full card width.
    */
   preCtaRowsHtml?: string;
+  /**
+   * The same pre-CTA rows split into their pieces, for block templates
+   * („Vorlagen“, mail-template-design.ts) that place them separately: the
+   * offer (product rows or the set, the coupon, the countdown) and the Mo
+   * hint. When given, preCtaRowsHtml === offerRowsHtml + promoRowsHtml. The
+   * classic shell and the code designs ignore it.
+   */
+  blocks?: { offerRowsHtml: string; promoRowsHtml: string };
   /** Table-based "bulletproof" pill CTA button(s) rendered after the body. */
   ctas?: EmailCta[];
   /** Small-print HTML under the CTA(s) (e.g. discount code + expiry note). */
@@ -538,35 +547,7 @@ export function renderBrandedEmail(opts: BrandedEmailOptions): string {
     <meta name="supported-color-schemes" content="light only">
     <title>${escapeHtml(opts.subject)}</title>${msoHeadHtml(msoFontStackFor(theme.fontFamily))}${webFontHead}
     <style type="text/css">
-      /* Progressive enhancement ONLY — every critical style is inline. */
-      html, body { Margin: 0 auto !important; padding: 0 !important; width: 100% !important; }
-      * { -ms-text-size-adjust: 100%; -webkit-text-size-adjust: 100%; }
-      table, th, td { mso-table-lspace: 0pt; mso-table-rspace: 0pt; }
-      table { border-spacing: 0 !important; border-collapse: collapse !important; border: none; Margin: 0 auto; }
-      img { -ms-interpolation-mode: bicubic; border: none !important; outline: none !important; text-decoration: none !important; }
-      .grid-column { max-width: 50%; }
-      @media only screen and (max-width:480px) {
-        .email-container { width: 100% !important; min-width: 100% !important; }
-        .content-pad { padding-right: 15px !important; padding-left: 15px !important; }
-        .grid-tile { width: 100% !important; max-width: 100% !important; }
-        .grid-image { width: 100% !important; height: auto !important; }
-        /* Product ROWS keep image-left | text-right on phones — the image
-           just shrinks into its third so rows stay one symmetric block. */
-        .prow-image { width: 100% !important; height: auto !important; }
-        /* The set frame (bundle-email.ts): eyecatcher text and badge stack
-           centred; each item row keeps a smaller picture on the left and
-           stacks name and price beside it. */
-        .set-eye-text, .set-eye-badge, .set-item-text, .set-item-price { display: block !important; width: 100% !important; box-sizing: border-box !important; }
-        .set-eye-text { padding: 0 !important; }
-        .set-eye-text p { text-align: center !important; }
-        .set-eye-badge { padding-top: 14px !important; }
-        .set-badge { float: none !important; margin: 0 auto !important; }
-        .set-item-img { width: 64px !important; height: 64px !important; }
-        .set-item-img-cell { width: 74px !important; padding-right: 10px !important; }
-        .set-item-text { padding: 14px 0 4px 0 !important; }
-        .set-item-price { padding: 0 0 14px 0 !important; }
-        .set-item-price p { text-align: left !important; }
-      }
+${EMAIL_SHELL_CSS}
     </style>
   </head>
   <body id="body" bgcolor="${outerBg}" style="-webkit-text-size-adjust: none; -ms-text-size-adjust: none; background-color: ${outerBg}; Margin: 0; padding: 0;">${preheaderHtml}

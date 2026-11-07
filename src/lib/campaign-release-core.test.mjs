@@ -91,3 +91,16 @@ test("release flags: off by default, pace clamped", () => {
   assert.deepEqual(campaignReleaseConfig({ CAMPAIGN_RELEASE_MAX_PER_RUN: "999", CAMPAIGN_RELEASE_SPACING_MS: "10" }), { maxPerRun: 200, spacingMs: 500 });
   assert.deepEqual(campaignReleaseConfig({ CAMPAIGN_RELEASE_MAX_PER_RUN: "0" }), { maxPerRun: 30, spacingMs: 1500 });
 });
+
+test("approvalFingerprint: a template version and a sender identity count only when set", () => {
+  const base = { draftUpdatedAt: "2026-10-03T10:00:00.000Z", language: "de", campaign: { designKey: "vorlage-3", heroMode: "none", ctaKind: "shop", ctaUrl: "https://x.de", moPromo: true, discountValidUntil: null } };
+  const plain = approvalFingerprint(base);
+  assert.equal(approvalFingerprint({ ...base, templateVersion: null }), plain);
+  assert.notEqual(approvalFingerprint({ ...base, templateVersion: 4 }), approvalFingerprint({ ...base, templateVersion: 5 }));
+  const withSender = { ...base, campaign: { ...base.campaign, sender: { address: "info@motionsports.de", name: "motion sports", replies: "direct" } } };
+  assert.notEqual(approvalFingerprint(withSender), plain);
+  assert.notEqual(
+    approvalFingerprint(withSender),
+    approvalFingerprint({ ...withSender, campaign: { ...withSender.campaign, sender: { ...withSender.campaign.sender, replies: "mo" } } })
+  );
+});

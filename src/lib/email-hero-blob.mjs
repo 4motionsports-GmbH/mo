@@ -38,11 +38,12 @@ export const CAMPAIGN_DEFAULT_HERO_KIND = "campaign-default";
  * (default: now).
  * @param {string} kind
  * @param {number | string} id
- * @param {{ variant?: string, ext?: "png" | "jpg", stamp?: number }} [opts]
+ * @param {{ variant?: string, ext?: "png" | "jpg" | "gif", stamp?: number }} [opts]
  */
 export function heroBlobKey(kind, id, opts = {}) {
   const variant = opts.variant ? `-${opts.variant}` : "";
-  const ext = opts.ext === "jpg" ? "jpg" : "png";
+  // GIF only for template pictures (parseHeroBlobFile serves no other GIF).
+  const ext = opts.ext === "jpg" ? "jpg" : opts.ext === "gif" && kind === TEMPLATE_IMAGE_KIND ? "gif" : "png";
   const stamp = Number.isSafeInteger(opts.stamp) && Number(opts.stamp) > 0 ? opts.stamp : Date.now();
   return `${HERO_BLOB_PREFIX}${kind}-${id}-${stamp}${variant}.${ext}`;
 }
@@ -59,7 +60,24 @@ export function isCampaignDefaultHeroFile(fileOrPathname) {
 
 /** The MIME type a hero file is served with, from its extension. */
 export function heroBlobContentType(file) {
-  return /\.jpe?g$/i.test(String(file ?? "")) ? "image/jpeg" : "image/png";
+  const f = String(file ?? "");
+  if (/\.gif$/i.test(f)) return "image/gif";
+  return /\.jpe?g$/i.test(f) ? "image/jpeg" : "image/png";
+}
+
+/**
+ * Pictures uploaded for e-mail TEMPLATES („Vorlagen“ / Rundmail, migration
+ * 0081): `template-<stamp>…` — shared by every mail that shows them, never a
+ * person's file (erasure never deletes one). Only these may be GIFs
+ * (animated banners); a hero stays PNG / JPEG.
+ */
+export const TEMPLATE_IMAGE_KIND = "template";
+
+/** Whether a file name or pathname is a template picture. */
+export function isTemplateImageFile(fileOrPathname) {
+  const s = String(fileOrPathname ?? "");
+  const file = s.slice(s.lastIndexOf("/") + 1);
+  return file.startsWith(`${TEMPLATE_IMAGE_KIND}-`);
 }
 
 /**
@@ -83,8 +101,10 @@ export function parseHeroBlobFile(file) {
     return null;
   }
   if (decoded.includes("/") || decoded.includes("\\") || decoded.includes("..")) return null;
-  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,150}\.(png|jpe?g)$/i.test(decoded)) return null;
-  return decoded;
+  if (/^[A-Za-z0-9][A-Za-z0-9._-]{0,150}\.(png|jpe?g)$/i.test(decoded)) return decoded;
+  // Template pictures may also be GIFs (animated banners).
+  if (/^template-[A-Za-z0-9._-]{1,150}\.gif$/i.test(decoded)) return decoded;
+  return null;
 }
 
 /**
@@ -148,7 +168,7 @@ export function erasableHeroPathnames(urls) {
   const out = new Set();
   for (const url of urls ?? []) {
     const path = heroBlobPathnameFromUrl(url);
-    if (path && !isCampaignDefaultHeroFile(path)) out.add(path);
+    if (path && !isCampaignDefaultHeroFile(path) && !isTemplateImageFile(path)) out.add(path);
   }
   return [...out];
 }

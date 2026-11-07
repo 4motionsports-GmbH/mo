@@ -137,3 +137,21 @@ test("heroBlobPathnameFromUrl inverts the public URL and rejects everything else
   assert.equal(heroBlobPathnameFromUrl("https://mo.example/api/email-hero-image/..%2Fcatalog.json"), null);
   assert.equal(heroBlobPathnameFromUrl(null), null);
 });
+
+test("template pictures: GIFs allowed only as template-… files, never erasable", async () => {
+  const { isTemplateImageFile } = await import("./email-hero-blob.mjs");
+  assert.equal(parseHeroBlobFile("template-1730000000000-abc.gif"), "template-1730000000000-abc.gif");
+  assert.equal(parseHeroBlobFile("template-1730000000000-abc.jpg"), "template-1730000000000-abc.jpg");
+  assert.equal(parseHeroBlobFile("campaign-42-123.gif"), null);
+  assert.equal(parseHeroBlobFile("template-../x.gif"), null);
+  assert.equal(heroBlobContentType("template-1.gif"), "image/gif");
+  assert.equal(isTemplateImageFile("email-heroes/template-1.png"), true);
+  assert.equal(isTemplateImageFile("email-heroes/campaign-1.png"), false);
+  assert.deepEqual(
+    erasableHeroPathnames([
+      "https://mo.example.com/api/email-hero-image/template-1-abc.png",
+      "https://mo.example.com/api/email-hero-image/campaign-9-1.jpg",
+    ]),
+    ["email-heroes/campaign-9-1.jpg"]
+  );
+});

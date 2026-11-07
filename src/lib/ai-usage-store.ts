@@ -71,6 +71,10 @@ export type AiCallSite =
   // Kampagnen wizard (docs/CAMPAIGNS.md §2): "Zielgruppe beschreiben" and the
   // briefing suggestion. Dashboard/admin-side spend (no conversation FK).
   | "campaign_assist"
+  // Vorlagen / Rundmail editor (docs/EMAIL_TEMPLATES.md): „Mit KI gestalten“ —
+  // a block document built or changed from the operator's instruction.
+  // Admin-side spend (no conversation FK).
+  | "template_assist"
   // Eingang (docs/ADMIN_DASHBOARD.md §3.1): the AI suggestion per inbox item.
   // Dashboard/admin-side spend (no conversation FK).
   | "inbox_suggestion"

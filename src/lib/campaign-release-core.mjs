@@ -19,10 +19,11 @@ export const MAX_RELEASE_AHEAD_DAYS = 30;
  * fingerprint stored before it existed stays byte-identical (no mass hold
  * after the deploy); a new picture or a changed AI statement after the
  * approval holds the mail.
- * @param {{ draftUpdatedAt: string | null, language: string | null,
+ * @param {{ draftUpdatedAt: string | null, language: string | null, templateVersion?: number | null,
  *   campaign: { designKey?: string | null, heroMode?: string | null, ctaKind?: string | null,
  *     ctaUrl?: string | null, moPromo?: boolean | null, discountValidUntil?: string | null,
- *     heroImage?: { file?: string | null, ai?: boolean | null } | null } }} v
+ *     heroImage?: { file?: string | null, ai?: boolean | null } | null,
+ *     sender?: { address?: string | null, name?: string | null, replies?: string | null } | null } }} v
  */
 export function approvalFingerprint(v) {
   const c = v.campaign ?? {};
@@ -37,6 +38,11 @@ export function approvalFingerprint(v) {
     c.discountValidUntil ?? "",
   ];
   if (c.heroImage?.file) parts.push(`hero:${c.heroImage.file}:${c.heroImage.ai ? 1 : 0}`);
+  // Only when set, so fingerprints from before 0081 stay valid: the version of
+  // a template design („Vorlage“ — edited after approval → review again) and
+  // a chosen sender identity.
+  if (Number.isInteger(v.templateVersion)) parts.push(`tpl:${v.templateVersion}`);
+  if (c.sender?.address) parts.push(`from:${c.sender.address}:${c.sender.name ?? ""}:${c.sender.replies ?? ""}`);
   return JSON.stringify(parts);
 }
 

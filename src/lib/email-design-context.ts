@@ -210,6 +210,9 @@ export interface MoPromoBlockInput {
 /** A design resolved for ONE email kind: merged tokens + merged renderers. */
 export interface ResolvedEmailDesign {
   key: string;
+  /** The design opens with a hero section (registry `hasHero`, or a template
+   * with the block „Titelbild (KI-Hero)“ — mail-template-design.ts). */
+  hasHero?: boolean;
   /** Merged theme tokens, or null → default tokens. */
   theme: EmailTheme | null;
   /** Merged renderer overrides (base + kind variant). May be empty. */
