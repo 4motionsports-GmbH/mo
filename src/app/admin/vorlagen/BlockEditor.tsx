@@ -40,6 +40,7 @@ import {
   Menu,
   SegmentedControl,
   Select,
+  StatusBadge,
   Textarea,
   toast,
 } from "../ui";
@@ -506,7 +507,33 @@ function ProductsFields({
 }) {
   const r = block as Record<string, unknown>;
   const refs = (r.refs as string[]) ?? [];
-  const [names, setNames] = React.useState<Record<string, string>>({});
+  // Name and availability per ref — from the picker when added, from the
+  // live catalog for saved ones (all variants, as the mail shows them).
+  const [info, setInfo] = React.useState<Record<string, { name: string; available: boolean | null }>>({});
+  const asked = React.useRef(new Set<string>());
+  const refsKey = refs.join("|");
+  React.useEffect(() => {
+    const missing = refsKey ? refsKey.split("|").filter((ref) => !asked.current.has(ref)) : [];
+    if (missing.length === 0) return;
+    for (const ref of missing) asked.current.add(ref);
+    // Not cancelled when the list changes again: the answer only fills refs
+    // that have no entry yet, so a late one is harmless — a dropped one would
+    // never be asked again.
+    adminFetch<{ items: Array<{ id: string; name: string; available: boolean | null }> }>("/api/admin/catalog/availability", {
+      body: { refs: missing, allVariants: true },
+    })
+      .then((json) => {
+        setInfo((cur) => {
+          const next = { ...cur };
+          for (const it of json.items ?? []) if (!next[it.id]) next[it.id] = { name: it.name, available: it.available };
+          return next;
+        });
+      })
+      .catch(() => {
+        // best effort: the list shows the catalog ids; asked again on the next change
+        for (const ref of missing) asked.current.delete(ref);
+      });
+  }, [refsKey]);
   const full = refs.length >= MAIL_TEMPLATE_LIMITS.productsPerBlock;
   return (
     <>
@@ -530,14 +557,16 @@ function ProductsFields({
       </div>
       <Field
         label={`Produkte (${refs.length}/${MAIL_TEMPLATE_LIMITS.productsPerBlock})`}
-        info="Bild, Name, aktueller Preis und Link kommen beim Freigeben aus dem Katalog. Ausverkaufte Produkte fallen automatisch weg."
+        info="Bild, Name, aktueller Preis und Link kommen beim Freigeben aus dem Katalog. Ausverkaufte Produkte lassen sich vorbereiten: In der Mail erscheinen sie erst, wenn sie wieder lieferbar sind — bis dahin fehlen sie (ein Baustein ganz ohne lieferbares Produkt entfällt)."
       >
         <div className="flex flex-col gap-2">
           {refs.length > 0 && (
             <ul className="flex flex-col gap-1">
               {refs.map((ref) => (
                 <li key={ref} className="flex items-center gap-2 rounded-md border border-border px-2 py-1 text-xs">
-                  <span className="min-w-0 flex-1 truncate">{names[ref] ?? ref}</span>
+                  <span className="min-w-0 flex-1 truncate">{info[ref]?.name ?? ref}</span>
+                  {info[ref]?.available === false && <StatusBadge tone="warning">Ausverkauft</StatusBadge>}
+                  {info[ref] && info[ref].available === null && <StatusBadge tone="destructive">Nicht im Katalog</StatusBadge>}
                   <IconButton
                     label="Produkt entfernen"
                     size="icon-sm"
@@ -555,12 +584,23 @@ function ProductsFields({
               allVariantsOption
               selectLabel="hinzufügen"
               isSelected={(hit, v) => refs.includes(v?.variantId ? `${hit.productId}~${v.variantId}` : hit.productId)}
-              disableReason={(hit) => (hit.inStock === false ? "Ausverkauft" : null)}
               onSelect={(hit, v) => {
                 const ref = v?.variantId ? `${hit.productId}~${v.variantId}` : hit.productId;
                 if (refs.includes(ref)) return;
-                setNames((n) => ({ ...n, [ref]: v?.variantId ? `${hit.title} — ${v.title ?? ""}` : hit.title }));
+                const name = v?.variantId ? `${hit.title} — ${v.title ?? ""}` : hit.title;
+                const available = v ? v.available !== false : hit.inStock !== false;
+                asked.current.add(ref);
+                setInfo((cur) => ({ ...cur, [ref]: { name, available } }));
                 onPatch({ refs: [...refs, ref] });
+                if (!available) {
+                  // Allowed on purpose (a mail prepared for an item that is back
+                  // soon) — but never by accident.
+                  toast({
+                    variant: "warning",
+                    title: "Ausverkauftes Produkt hinzugefügt",
+                    description: `${name} ist gerade nicht lieferbar. In der Mail erscheint es erst, wenn es wieder lieferbar ist — bis dahin fehlt es.`,
+                  });
+                }
               }}
             />
           )}

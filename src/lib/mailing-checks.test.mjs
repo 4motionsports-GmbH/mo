@@ -89,3 +89,16 @@ test("spam words: the fixed legal footer does not count, the operator's text and
   const inPreheader = mailingChecks(base({ html: withFooter(""), preheader: "Heute gratis Versand" }));
   assert.match(inPreheader.warnings.find((w) => w.key === "spam_words").message, /„gratis“/);
 });
+
+test("products prepared ahead: sold out, gone and empty blocks are warnings, never errors", () => {
+  const r = mailingChecks(base({ products: { soldOut: ["ATX® Hantelbank"], unknown: ["alt-handle"], emptyBlocks: 1 } }));
+  assert.equal(r.ok, true);
+  assert.ok(keys(r.warnings).includes("products_sold_out"));
+  assert.match(r.warnings.find((w) => w.key === "products_sold_out").message, /Gerade ausverkauft: ATX® Hantelbank — fehlt in der Rundmail, wenn es beim Freigeben noch nicht lieferbar ist/);
+  assert.match(r.warnings.find((w) => w.key === "products_unknown").message, /alt-handle/);
+  assert.match(r.warnings.find((w) => w.key === "products_block_empty").message, /^Ein Produkt-Baustein hat gerade kein lieferbares Produkt/);
+  const two = mailingChecks(base({ products: { soldOut: [], unknown: [], emptyBlocks: 2 } }));
+  assert.match(two.warnings.find((w) => w.key === "products_block_empty").message, /^2 Produkt-Bausteine/);
+  // nothing to say without products
+  assert.ok(!keys(mailingChecks(base()).warnings).some((k) => k.startsWith("products_")));
+});

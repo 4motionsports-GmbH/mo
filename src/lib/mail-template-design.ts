@@ -118,6 +118,41 @@ export async function preloadDocProducts(doc: MailTemplateDoc): Promise<Map<stri
   return out;
 }
 
+/**
+ * What the products blocks would show right now — for the Rundmail checks:
+ * names of products that are sold out (prepared ahead, left out of the mail
+ * while sold out), refs no longer in the catalog, and products blocks with
+ * nothing to show (left out entirely). Never throws: a catalog failure
+ * reports nothing (the checks are hints).
+ */
+export async function docProductAvailability(
+  doc: MailTemplateDoc
+): Promise<{ soldOut: string[]; unknown: string[]; emptyBlocks: number }> {
+  const out = { soldOut: [] as string[], unknown: [] as string[], emptyBlocks: 0 };
+  const refs = docProductRefs(doc);
+  if (refs.length === 0) return out;
+  try {
+    const selections = await resolveProductSelections(refs, { allVariants: true });
+    const byRef = new Map(selections.map((s) => [s.ref, s]));
+    for (const ref of refs) {
+      const s = byRef.get(ref);
+      if (!s || s.missingVariant) out.unknown.push(ref);
+      else if (!s.available) out.soldOut.push(s.display?.name ?? s.product.name ?? ref);
+    }
+    for (const b of doc.blocks) {
+      if (b.type !== "products" || !Array.isArray(b.refs) || b.refs.length === 0) continue;
+      const showable = (b.refs as string[]).some((ref) => {
+        const s = byRef.get(ref);
+        return Boolean(s && !s.missingVariant && s.available && s.display);
+      });
+      if (!showable) out.emptyBlocks++;
+    }
+  } catch (err) {
+    reportError(err, { route: "lib/mail-template-design", phase: "docProductAvailability" });
+  }
+  return out;
+}
+
 const priceFmt = {
   de: new Intl.NumberFormat("de-DE", { style: "currency", currency: "EUR" }),
   en: new Intl.NumberFormat("en-GB", { style: "currency", currency: "EUR" }),

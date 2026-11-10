@@ -75,6 +75,7 @@ export function visibleText(html) {
  *   ratePerMinute: number,
  *   unknownSubjectFields: string[],
  *   bytes?: number,
+ *   products?: { soldOut: string[], unknown: string[], emptyBlocks: number },
  * }} input
  * @returns {{ errors: MailingCheck[], warnings: MailingCheck[], infos: MailingCheck[], ok: boolean }}
  */
@@ -175,6 +176,34 @@ export function mailingChecks(input) {
     warnings.push({ key: "http_link", level: "warning", message: "Ein Link beginnt mit http:// — besser https://." });
   }
   for (const issue of input.docIssues?.warnings ?? []) warnings.push({ key: "content", level: "warning", message: issue.message, blockId: issue.blockId });
+  // Products prepared ahead (sold out may be added on purpose): the content is
+  // frozen at the release, so what is still sold out then is missing from the
+  // whole Rundmail.
+  const products = input.products;
+  if (products?.soldOut?.length) {
+    warnings.push({
+      key: "products_sold_out",
+      level: "warning",
+      message: `Gerade ausverkauft: ${products.soldOut.join(", ")} — fehlt in der Rundmail, wenn es beim Freigeben noch nicht lieferbar ist.`,
+    });
+  }
+  if (products?.unknown?.length) {
+    warnings.push({
+      key: "products_unknown",
+      level: "warning",
+      message: `Nicht mehr im Katalog: ${products.unknown.join(", ")} — fehlt in der Rundmail.`,
+    });
+  }
+  if (products?.emptyBlocks) {
+    warnings.push({
+      key: "products_block_empty",
+      level: "warning",
+      message:
+        products.emptyBlocks === 1
+          ? "Ein Produkt-Baustein hat gerade kein lieferbares Produkt — er fehlt in der Rundmail samt Überschrift."
+          : `${products.emptyBlocks} Produkt-Bausteine haben gerade kein lieferbares Produkt — sie fehlen in der Rundmail samt Überschrift.`,
+    });
+  }
   if (input.audience && !input.allowSingleOptIn) {
     const unconfirmed = Math.max(0, input.audience.total - input.audience.confirmed);
     if (unconfirmed > 0) {

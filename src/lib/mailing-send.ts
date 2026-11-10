@@ -36,6 +36,7 @@ import { evaluateCampaignSendGates, GATE_REASONS, optInLevelFromConsent } from "
 import { resolveCampaignSender } from "./sender-store";
 import { normalizeAudienceSpec } from "./audience-spec.mjs";
 import { unknownMergeFields, validateMailTemplateDoc, normalizeMailTemplateDoc, templateDesignKey } from "./mail-template-doc.mjs";
+import { docProductAvailability } from "./mail-template-design";
 import {
   MAILING_BATCH_DEFAULT,
   MAILING_RATES,
@@ -135,12 +136,13 @@ export interface MailingEvaluation {
 /** Every check on the CURRENT content (the release runs this again). */
 export async function evaluateMailing(campaign: Campaign, mailing: Mailing): Promise<MailingEvaluation> {
   const doc = normalizeMailTemplateDoc(mailing.doc);
-  const [audience, preview] = await Promise.all([
+  const [audience, preview, products] = await Promise.all([
     mailingAudienceCounts(campaign),
     renderMailingPreview(
       { doc, subject: mailing.subject, preheader: mailing.preheader, language: mailing.language },
       "Alex"
     ),
+    docProductAvailability(doc),
   ]);
   const sender = resolveCampaignSender(campaign.sender);
   const usesFirstName =
@@ -160,6 +162,7 @@ export async function evaluateMailing(campaign: Campaign, mailing: Mailing): Pro
     usesFirstName,
     ratePerMinute: MAILING_RATES[mailing.rate],
     unknownSubjectFields: unknownMergeFields(mailing.subject),
+    products,
   });
   return { ...result, audience };
 }

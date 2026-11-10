@@ -1,5 +1,10 @@
-// POST /api/admin/catalog/availability  { refs: string[] }
+// POST /api/admin/catalog/availability  { refs: string[], allVariants?: boolean }
 //   → { items: CampaignRecommendationView[] }  (same order as refs)
+//
+// allVariants: a bare ref of a multi-variant product counts as the product in
+// all its variants (available while ANY is) — how a template's products block
+// shows it (the Vorlagen editor's „Ausverkauft“ badges). Default: the set
+// dialog's per-variant check.
 //
 // The set dialog's final check: re-resolves the card's recommendation refs
 // (bare ids or "handle~variantId") against the CURRENT catalog right before a
@@ -23,8 +28,10 @@ export async function POST(req: Request) {
   if (blocked) return blocked;
 
   let refs: string[];
+  let allVariants = false;
   try {
-    const body = (await req.json()) as { refs?: unknown };
+    const body = (await req.json()) as { refs?: unknown; allVariants?: unknown };
+    allVariants = body.allVariants === true;
     if (!Array.isArray(body.refs) || body.refs.length === 0 || body.refs.length > MAX_REFS) {
       return adminJsonError("bad_request", `refs: 1 bis ${MAX_REFS} Produkt-Referenzen.`, 400);
     }
@@ -35,7 +42,7 @@ export async function POST(req: Request) {
   }
 
   try {
-    const selections = await resolveProductSelections(refs);
+    const selections = await resolveProductSelections(refs, { allVariants });
     const byRef = new Map(selections.map((s) => [s.ref, s]));
     return adminJson({ items: refs.map((ref) => recommendationView(ref, byRef.get(ref))) });
   } catch (err) {
