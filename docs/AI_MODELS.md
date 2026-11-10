@@ -92,7 +92,14 @@ at runtime, `USD_EUR_RATE` (default 0.92) converts for the dashboard's
 - **Thinking counts toward `max_tokens`** — see `maxOutputTokensFor`.
 - **Structured output** (`generateObject`) uses native `output_config.format`,
   which needs `@ai-sdk/anthropic` ≥ 3.0.125 (older versions fell back to a forced
-  `json` tool, which the 5.5 models reject).
+  `json` tool, which the 5.5 models reject). Anthropic compiles that schema and
+  **rejects the whole request (HTTP 400) above 16 union-typed parameters or 24
+  optional ones** — every zod `.nullable()` is a union (`anyOf` with `null`). A
+  schema over a limit fails every call before the model runs (until 10.11.2026
+  „Mit KI gestalten“ with 34 and the campaign editor's „Filter setzen“ with 22).
+  So schemas use plain required fields with an empty value for „not set“ (`""`,
+  `[]`, `0`, `-1`, `""` in an enum); [`ai-assist-schemas.mjs`](../src/lib/ai-assist-schemas.mjs)
+  holds both assistant schemas and the tested counter `structuredOutputCounts`.
 
 ### Long strategist calls (Komplettanalyse, Verbesserung)
 

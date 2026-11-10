@@ -62,7 +62,7 @@ limits, there is **exactly one footer and it is last**, and each Mo block occurs
 | `greeting` | Anrede | `text` („Hallo {{vorname}},“), `fallback` („Hallo,“), `align` | ✓ | ✓ |
 | `image` | Bild | `src` (https), `alt` (required), `href`, `width` `full` (600 px) \| `content` (480 px) | ✓ | ✓ |
 | `button` | Button | `label` (≤ 60), `href`, `align`, `color`, `textColor`, `fullWidth` | ✓ | ✓ |
-| `products` | Produkte | `title`, `refs` (1–8 catalog refs `handle` or `handle~variantId`), `layout` `rows` \| `grid` | ✓ | ✓ |
+| `products` | Produkte | `title`, `refs` (1–8 catalog refs `handle` or `handle~variantId` — the shop's handles, symbols included: `atx®-hantelbank-…`; `product-ref.mjs`), `layout` `rows` \| `grid` | ✓ | ✓ |
 | `coupon` | Gutschein-Code | `code` (exactly as in Shopify), `headline`, `terms` — card with „Code einlösen“ (`/discount/<code>`) | ✓ | ✓ |
 | `countdown` | Countdown | `until` (ISO), `heading` — the live countdown picture | ✓ | ✓ |
 | `divider`, `spacer`, `social` | Trennlinie, Abstand (8–80 px), Social-Media | colour / height | ✓ | ✓ |
@@ -151,7 +151,10 @@ or a hand-edited one is safe to import; a file from a newer format version is re
 describes the mail („Black-Week-Mail, schwarz-gelb, großer Banner, 25 % mit BLACKWEEK25,
 Countdown bis Sonntag“) or a change of the current one, optionally with a screenshot of a mail to
 rebuild (≤ 3 MB). The model gets the block catalog (`blockCatalogForPrompt`) and returns a block
-document plus notes. The answer is never trusted: it is normalised, kept pictures, product refs
+document plus notes, in the structured-output schema `TEMPLATE_ASSIST_SCHEMA`
+([`ai-assist-schemas.mjs`](../src/lib/ai-assist-schemas.mjs): every field of every block required
+and plain — empty means „not set“ — because Anthropic rejects schemas with more than 16 nullable /
+union fields, [`AI_MODELS.md`](./AI_MODELS.md); `fromAssistFields` turns it back into the raw shape). The answer is never trusted: it is normalised, kept pictures, product refs
 and codes are restored from the current document, Mo blocks are stripped for a Rundmail, and the
 editor shows it as an **unsaved change** to review, undo or save. The model cannot invent
 pictures, products or codes that ship — it leaves them empty with a note, and the validation
