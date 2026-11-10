@@ -701,15 +701,26 @@ WITHOUT regenerating (the deterministic send-time blocks make that safe):
   the shared catalog picker (`/api/admin/catalog/search`, which shows the stock
   per product and variant); each change persists immediately
   (`POST /api/admin/campaign/recommendations`, clears `low_confidence`). A
-  NEWLY added product must be in the sync-fresh catalog, keep its pinned
-  variant and be available — refusals are German and name the product. A
+  NEWLY added product must be in the sync-fresh catalog and keep its pinned
+  variant — refusals are German and name the product. Since 10.11.2026 a
+  **sold-out** product can be added on purpose (a mail prepared for an item
+  that is back soon): it is kept, the response names it in `soldOut` and the
+  desk shows the toast „Ausverkauftes Produkt hinzugefügt“ (only for the ones
+  just added). At send a sold-out product is left out of the mail while it is
+  sold out (`resolveRecommendedSelections`); a mail whose products are ALL
+  still sold out is refused (`no_available_products`, campaign-email GATE 1e —
+  the release job holds it with that reason) and the desk shows the same rule
+  as a blocked Prüfpunkt „Kein empfohlenes Produkt ist lieferbar“ (only a hint
+  while at least one is available). A
   product with variants can be added as „Alle Varianten“ (the first row of the
   picker's variant chooser, a bare ref) or as one pinned variant (§ „Product
   variants“). A
-  product that was already on the draft and has sold out or left the catalog
-  since does not block the edit: it drops out and comes back as `dropped`
-  (toast „Nicht mehr verfügbare Empfehlungen entfernt“); a list with nothing
-  available left is refused (`nothing_available`). The card shows each
+  product that was already on the draft and has left the catalog (or lost its
+  pinned variant) since does not block the edit: it drops out and comes back as
+  `dropped` (toast „Nicht mehr verfügbare Empfehlungen entfernt“); a list with
+  no catalog product left is refused (`nothing_available`). The set composer
+  still refuses sold-out parts: a set is a buyable Shopify product with its own
+  price at once. The card shows each
   recommendation's price and — where Shopify tracks it — the stock („12 auf
   Lager“, for a multi-variant product without a pinned variant the total, „(gesamt)“, [`stock-level.mjs`](../src/lib/stock-level.mjs)); sold-out or
   vanished ones are greyed out with „Ausverkauft“ / „Nicht im Katalog“. While a
@@ -1224,7 +1235,11 @@ route refuses too), warnings and infos are shown:
 - **Warnings**: subject over 60 characters (phones), mostly capitals, several „!“; typical spam
   words in subject, preview line or the operator's text (not the legal footer); no preview line;
   over 80 KB; many pictures with little text; over 30 links; link shorteners; `http://` links;
-  recipients without double opt-in who are skipped while `CAMPAIGN_ALLOW_SINGLE_OPT_IN` is off.
+  recipients without double opt-in who are skipped while `CAMPAIGN_ALLOW_SINGLE_OPT_IN` is off;
+  products that are sold out right now (they may be added on purpose — they are missing from the
+  whole Rundmail if still sold out at the release, because the content is frozen), products no
+  longer in the catalog, and products blocks without a single available product (left out with
+  their title) — `docProductAvailability`.
 - **Infos**: reach and duration at the chosen pace, the personal greeting, the sender, the
   unsubscribe link and header.
 

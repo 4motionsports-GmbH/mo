@@ -1545,7 +1545,9 @@ use), client workspace [`vorlagen/VorlagenWorkspace.tsx`](../src/app/admin/vorla
   shared with the Rundmail): „Farben & Schrift“ (Akzentfarbe, Button-Schrift, Hintergrund außen,
   Überschriften, Text, Schrift, Button-Form), one row per block — label, summary, its errors and
   hints, ↑ ↓ Duplizieren Entfernen; opened: the block's description behind an InfoTip and its
-  fields (pictures: „Bild hochladen“ or an https address; products: the catalog picker; colours:
+  fields (pictures: „Bild hochladen“ or an https address; products: the catalog picker — a sold-out
+  product can be added with the toast „Ausverkauftes Produkt hinzugefügt“ and shows „Ausverkauft“ in
+  the list (names and badges from `catalog/availability`); colours:
   picker + hex; every change goes into the document at once — normalised, the preview follows —
   while a one-line field shows what was typed as long as it has the focus: the space before the next
   word, a half-typed link or number; `DraftInput`) — and „Baustein hinzufügen“ (menu by group; the Mo blocks only where they can
@@ -2804,7 +2806,7 @@ them. Actions that read or act on one person's data write the admin access log
 | | `POST marketing/update / email-preview / send / delete` | edit, preview, approve & send (`approveAndSend`), delete an open draft of the former path; `send` answers 409 `contact_frequency` (with `frequency`) unless `ignoreContactFrequency: true`, and 409 `offer_conflict` for a set mail that still has a code |
 | | `POST bundles/suggest / create / archive / delete` | Set-Angebot composer (`create`: `quantity` 1–10 per component, else 400 `bad_quantity`; a ref `handle~variantId` as `productId` is split; refusals carry `offenders` + `offenderNames` and a German message naming the products; on success the attached campaign or legacy draft's code is cleared → `discountCleared`) |
 | | `POST catalog/search { query }` | product search for the composer and pickers (with `stock` per product and variant — null when unknown or not tracked) |
-| Kampagnen (desk) | `POST catalog/availability { refs }` | the set dialog's final check: the card's recommendation refs re-resolved against the current catalog (availability, unit price, stock) |
+| Kampagnen (desk) | `POST catalog/availability { refs, allVariants? }` | the set dialog's final check: the card's recommendation refs re-resolved against the current catalog (availability, unit price, stock); with `allVariants: true` a bare ref counts as the product in all its variants — the Vorlagen editor's names and „Ausverkauft“ badges |
 | | `POST correspondence/send / message / assign / email-preview` | reply (closes the person's open „E-Mail beantworten“ item → `closedItems`), lazy body, assign unmatched inbound (now from the Eingang; opens the item → `itemId`), preview |
 | Eingang | `POST correspondence/assign-prospect { messageId }` | „Als Interessent anlegen“: a customer from the sender (no consent), the mail assigned, the item opened → `{ customerId, itemId }` (access log `correspondence.assign_prospect`) |
 | | `POST customers/letter-draft / letter-preview`, `POST physical/send` | physical letter (`letter-draft` 409 after a postal objection; since 0074 `physical/send` answers 409 `objection`, `not_purchase_address` or `address_invalid` too) |

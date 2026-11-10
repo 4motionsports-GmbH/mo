@@ -74,7 +74,9 @@ limits, there is **exactly one footer and it is last**, and each Mo block occurs
 | `footer` | Fußzeile | `showSocial` — company lines, unsubscribe, imprint; mandatory, last | ✓ | ✓ |
 
 The fixed blocks reuse the production renderers: product rows/grid and the coupon are the
-classic ones (prices, PAngV, variants), the countdown is the signed `/api/email-countdown/<token>`
+classic ones (prices, PAngV, variants; a sold-out product may be added on purpose — the editor
+warns and marks it „Ausverkauft“ — and is left out of the mail while it is sold out, a block with no
+available product is left out with its title), the countdown is the signed `/api/email-countdown/<token>`
 picture.
 
 **Merge fields.** `{{vorname}}` → the first name or nothing; `{{vorname|Ersatz}}` → the first
