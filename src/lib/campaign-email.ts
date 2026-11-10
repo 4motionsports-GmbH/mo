@@ -141,6 +141,7 @@ export type CampaignSendResult =
         | "discount_failed"
         | "email_not_configured"
         | "sender_invalid"
+        | "no_available_products"
         | "send_failed";
       message: string;
     };
@@ -301,6 +302,32 @@ export async function campaignSendPreflight(contactId: number): Promise<Campaign
     const retiredScope = retiredDiscountScopeMessage(draft.discountScope, draft.discountPercent);
     if (retiredScope) {
       return { ok: false, reason: "discount_scope_unresolved", message: retiredScope };
+    }
+
+    // GATE 1e — an item mail needs at least one product that can be bought
+    // NOW. A sold-out recommendation is left out at send
+    // (resolveRecommendedSelections) — and since 10.11.2026 the desk may add
+    // sold-out products on purpose (a mail prepared for an item that is back
+    // soon), so a draft whose picks are ALL still sold out would go out
+    // without a single product. Refused until one is available again; the
+    // desk shows the same rule as a blocked Prüfpunkt. A catalog outage does
+    // not block (the rows are presentational — resolveRecommendedProducts).
+    if (!bundle && draft.recommendedProductIds.length > 0) {
+      let availableCount: number | null = null;
+      try {
+        availableCount = (await resolveRecommendedSelections(draft.recommendedProductIds)).length;
+      } catch (err) {
+        reportError(err, { route: "lib/campaign-email", phase: "gate-available-products" });
+      }
+      if (availableCount === 0) {
+        return {
+          ok: false,
+          reason: "no_available_products",
+          message:
+            "Kein empfohlenes Produkt dieser Mail ist gerade lieferbar — sie hätte keine Produkte. " +
+            "Senden, sobald eines wieder lieferbar ist, oder ein lieferbares Produkt hinzufügen.",
+        };
+      }
     }
 
     // GATE 2 — a working unsubscribe link is mandatory. No link → no send.

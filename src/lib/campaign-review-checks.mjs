@@ -296,7 +296,20 @@ export function reviewChecks(item, ctx = {}) {
   }
   const recs = !setMail && Array.isArray(item.recommendations) ? item.recommendations : [];
   const unavailable = recs.filter((r) => r && (r.available !== true || r.url == null));
-  if (unavailable.length > 0) {
+  if (recs.length > 0 && unavailable.length === recs.length) {
+    // Same rule as the send path (campaign-email GATE 1e): without a single
+    // product that can be bought, the mail is refused — sold-out products may
+    // be added on purpose (prepared for when they are back).
+    if (!blocked.some((c) => c.key === "discount_scope_no_recommendations")) {
+      blocked.push({
+        key: "no_available_products",
+        level: "blocked",
+        title: "Kein empfohlenes Produkt ist lieferbar",
+        detail: `${unavailable.map((r) => r.name || r.id || "?").join(", ")} — die Mail hätte keine Produkte. Senden, sobald eines wieder lieferbar ist, oder ein lieferbares hinzufügen.`,
+        fix: "swap_products",
+      });
+    }
+  } else if (unavailable.length > 0) {
     hints.push({
       key: "product_unavailable",
       level: "hint",
@@ -304,7 +317,7 @@ export function reviewChecks(item, ctx = {}) {
         unavailable.length === 1
           ? "Ein empfohlenes Produkt ist nicht verfügbar"
           : `${unavailable.length} empfohlene Produkte sind nicht verfügbar`,
-      detail: unavailable.map((r) => r.name || r.id || "?").join(", "),
+      detail: `${unavailable.map((r) => r.name || r.id || "?").join(", ")} — fehlt in der Mail, solange es nicht lieferbar ist; der Text erwähnt es eventuell trotzdem.`,
       fix: "swap_products",
     });
   }

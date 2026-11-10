@@ -209,8 +209,26 @@ test("low confidence and unavailable products are hints in an item mail", () => 
   const checks = reviewChecks(item, ctx());
   assert.deepEqual(keys(checks), ["low_confidence", "product_unavailable", "hero_present"]);
   // sold out, no link, and no longer in the catalog all count
-  assert.equal(checks[1].detail, "A, B, C");
+  assert.match(checks[1].detail, /^A, B, C — fehlt in der Mail, solange es nicht lieferbar ist/);
   assert.equal(reviewVerdict(checks), "hints");
+});
+
+test("ALL recommendations sold out (added on purpose, prepared ahead) blocks — like the send gate", () => {
+  const recommendations = [
+    { id: "a", name: "A", url: "https://shop/a", available: false },
+    { id: "b", name: "B", url: "https://shop/b", available: false },
+  ];
+  const checks = reviewChecks(readyItem({ discountPercent: 0, recommendations }), ctx());
+  assert.ok(keys(checks).includes("no_available_products"));
+  assert.ok(!keys(checks).includes("product_unavailable"));
+  assert.match(checks.find((c) => c.key === "no_available_products").detail, /^A, B — die Mail hätte keine Produkte/);
+  assert.equal(reviewVerdict(checks), "blocked");
+  // with a code scoped to the selection the existing discount check already blocks — no second entry
+  const withCode = reviewChecks(readyItem({ discountPercent: 10, discountScope: "recommendations", recommendations }), ctx());
+  assert.ok(keys(withCode).includes("discount_scope_no_recommendations"));
+  assert.ok(!keys(withCode).includes("no_available_products"));
+  // a set mail shows only the set — no product checks
+  assert.ok(!keys(reviewChecks(readyItem({ recommendations, bundle: { expiresAt: null } }), ctx())).includes("no_available_products"));
 });
 
 test("a set mail ignores the recommendation hints; expiring and expired sets are hints", () => {
