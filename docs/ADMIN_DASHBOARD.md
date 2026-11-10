@@ -1546,7 +1546,9 @@ use), client workspace [`vorlagen/VorlagenWorkspace.tsx`](../src/app/admin/vorla
   Überschriften, Text, Schrift, Button-Form), one row per block — label, summary, its errors and
   hints, ↑ ↓ Duplizieren Entfernen; opened: the block's description behind an InfoTip and its
   fields (pictures: „Bild hochladen“ or an https address; products: the catalog picker; colours:
-  picker + hex) — and „Baustein hinzufügen“ (menu by group; the Mo blocks only where they can
+  picker + hex; every change goes into the document at once — normalised, the preview follows —
+  while a one-line field shows what was typed as long as it has the focus: the space before the next
+  word, a half-typed link or number; `DraftInput`) — and „Baustein hinzufügen“ (menu by group; the Mo blocks only where they can
   work). **Vorschau** ([`vorlagen/LivePreview.tsx`](../src/app/admin/vorlagen/LivePreview.tsx),
   `vorlagen/preview`, debounced): Rundmail / Persönliche Mail (with „Mos persönlicher Text“;
   Einzelprodukte / Set-Angebot with sample data), Desktop / Mobil, zoom; sticky beside the

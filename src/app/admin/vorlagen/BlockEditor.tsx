@@ -135,6 +135,37 @@ function ColorField({
   );
 }
 
+/**
+ * A one-line field of the block editor. Every keystroke goes straight into
+ * the document (normalizeMailTemplateDoc: trimmed, links and numbers
+ * validated), so the preview follows live — but while the field has the
+ * focus it shows what was typed: otherwise a trailing space (the start of the
+ * next word), a half-typed https link or a number on its way to its value
+ * would be normalised away under the cursor. On blur it shows the stored value.
+ */
+function DraftInput({
+  value,
+  onCommit,
+  ...props
+}: Omit<React.InputHTMLAttributes<HTMLInputElement>, "value" | "onChange" | "onFocus" | "onBlur"> & {
+  value: string;
+  onCommit: (raw: string) => void;
+}) {
+  const [draft, setDraft] = React.useState<string | null>(null);
+  return (
+    <Input
+      {...props}
+      value={draft ?? value}
+      onFocus={() => setDraft(value)}
+      onChange={(e) => {
+        setDraft(e.target.value);
+        onCommit(e.target.value);
+      }}
+      onBlur={() => setDraft(null)}
+    />
+  );
+}
+
 /** Upload a picture (raw body) → its public URL. */
 function useImageUpload(onUrl: (url: string) => void) {
   const inputRef = React.useRef<HTMLInputElement>(null);
@@ -193,7 +224,7 @@ function ImageFields({
     <>
       <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
         <Field label="Bild (https-Adresse)" className="flex-1" info="Hochladen oder die https-Adresse eines Bildes einfügen (z. B. aus Shopify → Inhalte → Dateien). JPG, PNG oder GIF; mindestens 1200 px breit für ein vollbreites Bild.">
-          <Input value={String(r.src ?? "")} placeholder="https://…" onChange={(e) => patch({ src: e.target.value })} disabled={disabled} />
+          <DraftInput value={String(r.src ?? "")} placeholder="https://…" onCommit={(v) => patch({ src: v })} disabled={disabled} />
         </Field>
         {upload.input}
         <Button
@@ -214,10 +245,10 @@ function ImageFields({
       )}
       <div className="grid gap-3 sm:grid-cols-2">
         <Field label="Alternativtext" info="Wird gezeigt, wenn Bilder blockiert sind, und vorgelesen — kurz beschreiben, was zu sehen ist.">
-          <Input value={String(r.alt ?? "")} onChange={(e) => patch({ alt: e.target.value })} disabled={disabled} />
+          <DraftInput value={String(r.alt ?? "")} onCommit={(v) => patch({ alt: v })} disabled={disabled} />
         </Field>
         <Field label="Link beim Klick" info="https://… oder leer.">
-          <Input value={String(r.href ?? "")} placeholder="https://motionsports.de/…" onChange={(e) => patch({ href: e.target.value })} disabled={disabled} />
+          <DraftInput value={String(r.href ?? "")} placeholder="https://motionsports.de/…" onCommit={(v) => patch({ href: v })} disabled={disabled} />
         </Field>
       </div>
       {showWidth && (
@@ -276,7 +307,7 @@ function BlockSettings({
         <div className="grid gap-3 sm:grid-cols-2">
           {align(ALIGN_OPTIONS.filter((o) => o.value !== "right"))}
           <Field label="Breite (px)" info="60–300 px.">
-            <Input type="number" min={60} max={300} value={String(r.width ?? 144)} onChange={(e) => onPatch({ width: Number(e.target.value) })} disabled={disabled} />
+            <DraftInput type="number" min={60} max={300} value={String(r.width ?? 144)} onCommit={(v) => onPatch({ width: Number(v) })} disabled={disabled} />
           </Field>
         </div>
       );
@@ -284,7 +315,7 @@ function BlockSettings({
       return (
         <>
           <Field label="Text" info="Platzhalter: {{vorname}} oder {{vorname|Ersatz}}.">
-            <Input value={String(r.text ?? "")} maxLength={MAIL_TEMPLATE_LIMITS.headingChars} onChange={(e) => onPatch({ text: e.target.value })} disabled={disabled} />
+            <DraftInput value={String(r.text ?? "")} maxLength={MAIL_TEMPLATE_LIMITS.headingChars} onCommit={(v) => onPatch({ text: v })} disabled={disabled} />
           </Field>
           <div className="grid gap-3 sm:grid-cols-2">
             <Field label="Größe">
@@ -346,10 +377,10 @@ function BlockSettings({
       return (
         <div className="grid gap-3 sm:grid-cols-2">
           <Field label="Mit Vornamen" info="Muss {{vorname}} enthalten, z. B. „Hallo {{vorname}},“.">
-            <Input value={String(r.text ?? "")} onChange={(e) => onPatch({ text: e.target.value })} disabled={disabled} />
+            <DraftInput value={String(r.text ?? "")} onCommit={(v) => onPatch({ text: v })} disabled={disabled} />
           </Field>
           <Field label="Ohne Vornamen" info="Steht da, wenn kein Vorname bekannt ist.">
-            <Input value={String(r.fallback ?? "")} onChange={(e) => onPatch({ fallback: e.target.value })} disabled={disabled} />
+            <DraftInput value={String(r.fallback ?? "")} onCommit={(v) => onPatch({ fallback: v })} disabled={disabled} />
           </Field>
           {align(ALIGN_OPTIONS.filter((o) => o.value !== "right"))}
         </div>
@@ -370,10 +401,10 @@ function BlockSettings({
         <>
           <div className="grid gap-3 sm:grid-cols-2">
             <Field label="Beschriftung">
-              <Input value={String(r.label ?? "")} maxLength={MAIL_TEMPLATE_LIMITS.labelChars} onChange={(e) => onPatch({ label: e.target.value })} disabled={disabled} />
+              <DraftInput value={String(r.label ?? "")} maxLength={MAIL_TEMPLATE_LIMITS.labelChars} onCommit={(v) => onPatch({ label: v })} disabled={disabled} />
             </Field>
             <Field label="Link" info="https://… — Links in den Shop bekommen automatisch UTM-Parameter, jeder Klick wird gezählt.">
-              <Input value={String(r.href ?? "")} placeholder="https://motionsports.de/…" onChange={(e) => onPatch({ href: e.target.value })} disabled={disabled} />
+              <DraftInput value={String(r.href ?? "")} placeholder="https://motionsports.de/…" onCommit={(v) => onPatch({ href: v })} disabled={disabled} />
             </Field>
           </div>
           <div className="grid gap-3 sm:grid-cols-2">
@@ -398,11 +429,11 @@ function BlockSettings({
               <Input value={String(r.code ?? "")} className="font-mono uppercase" onChange={(e) => onPatch({ code: e.target.value })} disabled={disabled} />
             </Field>
             <Field label="Was er bringt" info="z. B. „25 % auf alles“ — muss zum Rabatt in Shopify passen.">
-              <Input value={String(r.headline ?? "")} onChange={(e) => onPatch({ headline: e.target.value })} disabled={disabled} />
+              <DraftInput value={String(r.headline ?? "")} onCommit={(v) => onPatch({ headline: v })} disabled={disabled} />
             </Field>
           </div>
           <Field label="Bedingungen" info="z. B. „Gültig bis 30.11.2026 · nicht mit anderen Rabatten kombinierbar“.">
-            <Input value={String(r.terms ?? "")} onChange={(e) => onPatch({ terms: e.target.value })} disabled={disabled} />
+            <DraftInput value={String(r.terms ?? "")} onCommit={(v) => onPatch({ terms: v })} disabled={disabled} />
           </Field>
         </>
       );
@@ -418,7 +449,7 @@ function BlockSettings({
             />
           </Field>
           <Field label="Text darüber">
-            <Input value={String(r.heading ?? "")} onChange={(e) => onPatch({ heading: e.target.value })} disabled={disabled} />
+            <DraftInput value={String(r.heading ?? "")} onCommit={(v) => onPatch({ heading: v })} disabled={disabled} />
           </Field>
         </div>
       );
@@ -427,7 +458,7 @@ function BlockSettings({
     case "spacer":
       return (
         <Field label="Höhe (px)" info="8–80 px.">
-          <Input type="number" min={8} max={80} value={String(r.height ?? 24)} onChange={(e) => onPatch({ height: Number(e.target.value) })} disabled={disabled} />
+          <DraftInput type="number" min={8} max={80} value={String(r.height ?? 24)} onCommit={(v) => onPatch({ height: Number(v) })} disabled={disabled} />
         </Field>
       );
     case "html":
@@ -481,7 +512,7 @@ function ProductsFields({
     <>
       <div className="grid gap-3 sm:grid-cols-2">
         <Field label="Überschrift">
-          <Input value={String(r.title ?? "")} onChange={(e) => onPatch({ title: e.target.value })} disabled={disabled} />
+          <DraftInput value={String(r.title ?? "")} onCommit={(v) => onPatch({ title: v })} disabled={disabled} />
         </Field>
         <Field label="Darstellung">
           <SegmentedControl
@@ -635,7 +666,7 @@ export function BlockEditor({
             />
           </Field>
           <Field label="Eigenes Logo" className="sm:col-span-2" info="https-Adresse eines Logos (PNG/JPG). Leer = das motion-sports-Logo.">
-            <Input value={style.logoUrl ?? ""} placeholder="Standard-Logo" onChange={(e) => patchStyle({ logoUrl: e.target.value || null })} disabled={disabled} />
+            <DraftInput value={style.logoUrl ?? ""} placeholder="Standard-Logo" onCommit={(v) => patchStyle({ logoUrl: v || null })} disabled={disabled} />
           </Field>
         </div>
       </Disclosure>
