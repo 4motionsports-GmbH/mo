@@ -16,70 +16,24 @@
 
 import { generateObject } from "ai";
 import { anthropic } from "@ai-sdk/anthropic";
-import { z } from "zod";
 import { anthropicOptionsFor, maxOutputTokensFor, modelFor } from "./ai-models.mjs";
 import { recordAiUsage } from "./ai-usage-store";
 import { reportError } from "./observability";
-import {
-  MAIL_BLOCK_TYPES,
-  MO_BLOCK_TYPES,
-  blockCatalogForPrompt,
-  normalizeMailTemplateDoc,
-} from "./mail-template-doc.mjs";
+import { MO_BLOCK_TYPES, blockCatalogForPrompt, normalizeMailTemplateDoc } from "./mail-template-doc.mjs";
+import { TEMPLATE_ASSIST_SCHEMA, fromAssistFields } from "./ai-assist-schemas.mjs";
 import { EMAIL_BUTTON_SHAPES, EMAIL_FONT_KEYS } from "./email-theme.mjs";
 
 const MODEL = modelFor("writer");
 
-const nstr = z.string().nullable();
-const blockSchema = z.object({
-  id: nstr,
-  type: z.enum(MAIL_BLOCK_TYPES as unknown as [string, ...string[]]),
-  text: nstr,
-  size: nstr,
-  align: nstr,
-  color: nstr,
-  background: nstr,
-  src: nstr,
-  alt: nstr,
-  href: nstr,
-  width: z.union([z.string(), z.number()]).nullable(),
-  label: nstr,
-  textColor: nstr,
-  fullWidth: z.boolean().nullable(),
-  title: nstr,
-  refs: z.array(z.string()).nullable(),
-  layout: nstr,
-  code: nstr,
-  headline: nstr,
-  terms: nstr,
-  until: nstr,
-  heading: nstr,
-  height: z.number().nullable(),
-  html: nstr,
-  fallback: nstr,
-  showHeadline: z.boolean().nullable(),
-  showHeading: z.boolean().nullable(),
-  showSocial: z.boolean().nullable(),
-});
-
-const docSchema = z.object({
-  style: z.object({
-    accentColor: nstr,
-    buttonTextColor: nstr,
-    textColor: nstr,
-    headingColor: nstr,
-    outerBackground: nstr,
-    fontFamily: nstr,
-    buttonShape: nstr,
-  }),
-  blocks: z.array(blockSchema),
-  notes: z.string(),
-});
-
-function dropNulls(o: Record<string, unknown>): Record<string, unknown> {
-  const out: Record<string, unknown> = {};
-  for (const [k, v] of Object.entries(o)) if (v != null) out[k] = v;
-  return out;
+/** The operator's message for a failed call — the error itself goes to reportError. */
+function failureMessage(err: unknown): string {
+  const e = err as { statusCode?: unknown; status?: unknown; finishReason?: unknown; name?: unknown } | null;
+  const status = Number(e?.statusCode ?? e?.status);
+  if (status === 429 || status === 529 || status === 503) {
+    return "Die KI ist gerade ausgelastet — bitte in einer Minute erneut versuchen.";
+  }
+  if (e?.finishReason === "length") return "Die Mail wurde für die KI zu lang — bitte mit weniger Bausteinen oder kürzer beschreiben.";
+  return "Die KI konnte die Mail gerade nicht gestalten — bitte erneut versuchen.";
 }
 
 export type TemplateAssistResult =
@@ -126,7 +80,7 @@ export async function assistMailTemplate(input: {
     "- Zustellbarkeit: keine GROSSBUCHSTABEN-Sätze, höchstens ein Ausrufezeichen, keine Spam-Wörter („gratis“, „100 %“), genug Text neben Bildern, Alternativtexte für Bilder.",
     "- Keine erfundenen Fristen, Preise oder Prozente — nur, was die Anweisung nennt. Für den Vornamen {{vorname}} oder {{vorname|Ersatz}} verwenden.",
     `- Heute ist ${today}. Countdown-Enden als ISO-Zeitpunkt mit Zeitzone (z. B. 2026-11-30T23:59:00+01:00).`,
-    "- Behalte die id unveränderter Bausteine. Felder, die ein Baustein nicht hat, sind null.",
+    "- Behalte die id unveränderter Bausteine (neue Bausteine: id leer). Jeder Baustein hat alle Felder: Felder, die er nicht braucht, sind leer (\"\" bzw. [] bei refs); Ja/Nein-Felder sind \"true\", \"false\" oder leer (= Standard); width und height als Zahl in Anführungszeichen (\"144\") oder width \"full\" / \"content\" beim Bild. Im style leer = Standard.",
     "- notes: 1–4 deutsche Sätze — was du gemacht hast und was noch fehlt.",
   ].join("\n");
   const prompt = [
@@ -145,7 +99,7 @@ export async function assistMailTemplate(input: {
       model: anthropic(MODEL),
       providerOptions: anthropicOptionsFor("writer"),
       maxOutputTokens: maxOutputTokensFor("writer", 8000),
-      schema: docSchema,
+      schema: TEMPLATE_ASSIST_SCHEMA,
       system,
       ...(screenshot
         ? {
@@ -171,19 +125,19 @@ export async function assistMailTemplate(input: {
     // dropped or changed on a kept block is restored from the current doc.
     const before = new Map((current?.blocks ?? []).map((b) => [b.id, b as Record<string, unknown>]));
     const blocks = object.blocks.map((raw) => {
-      const b = dropNulls(raw as Record<string, unknown>);
+      const b = fromAssistFields(raw as Record<string, unknown>);
       const prev = typeof b.id === "string" ? before.get(b.id) : undefined;
       if (prev && prev.type === b.type) {
         for (const k of ["src", "refs"]) if (prev[k] && (Array.isArray(prev[k]) ? (prev[k] as unknown[]).length : true)) b[k] = prev[k];
       }
       return b;
     });
-    let doc = normalizeMailTemplateDoc({ style: dropNulls(object.style as Record<string, unknown>), blocks });
+    let doc = normalizeMailTemplateDoc({ style: fromAssistFields(object.style as Record<string, unknown>), blocks });
     if (input.use === "bulk") doc = { ...doc, blocks: doc.blocks.filter((b) => !MO_BLOCK_TYPES.includes(b.type)) };
     if (doc.blocks.length <= 1) return { ok: false, message: "Die KI hat keine verwendbare Mail geliefert — bitte genauer beschreiben." };
     return { ok: true, doc, notes: object.notes.trim().slice(0, 800) };
   } catch (err) {
     reportError(err, { route: "lib/mail-template-assist", phase: "assist" });
-    return { ok: false, message: "Die KI konnte die Mail gerade nicht gestalten — bitte erneut versuchen." };
+    return { ok: false, message: failureMessage(err) };
   }
 }

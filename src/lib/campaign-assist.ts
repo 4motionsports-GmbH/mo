@@ -12,42 +12,9 @@ import { normalizeAudienceSpec, AUDIENCE_SPEC_FIELDS } from "./audience-spec.mjs
 import { ARCHETYPE_META } from "./persona";
 import { recordAiUsage } from "./ai-usage-store";
 import { reportError } from "./observability";
+import { AUDIENCE_ASSIST_SCHEMA } from "./ai-assist-schemas.mjs";
 
 const MODEL = modelFor("writer");
-
-const rangeSchema = z.object({ min: z.number().nullable(), max: z.number().nullable() }).nullable();
-
-const specSchema = z.object({
-  optInLevels: z.array(z.string()).nullable(),
-  lifecycle: z.array(z.string()).nullable(),
-  valueTier: z.array(z.string()).nullable(),
-  churn: z.array(z.string()).nullable(),
-  lastOrderDays: rangeSchema,
-  ordersCount: rangeSchema,
-  totalSpentEur: rangeSchema,
-  boughtAny: z.array(z.string()).nullable(),
-  boughtNone: z.array(z.string()).nullable(),
-  categories: z.array(z.string()).nullable(),
-  persona: z.array(z.string()).nullable(),
-  moContact: z.enum(["yes", "no"]).nullable(),
-  language: z.array(z.string()).nullable(),
-  country: z.array(z.string()).nullable(),
-  clickedWithinDays: z.number().nullable(),
-  excludeMailedWithinDays: z.number().nullable(),
-  explanation: z.string(),
-});
-
-function dropNulls(o: Record<string, unknown>): Record<string, unknown> {
-  const out: Record<string, unknown> = {};
-  for (const [k, v] of Object.entries(o)) {
-    if (v == null) continue;
-    if (typeof v === "object" && !Array.isArray(v)) {
-      const inner = dropNulls(v as Record<string, unknown>);
-      if (Object.keys(inner).length > 0) out[k] = inner;
-    } else out[k] = v;
-  }
-  return out;
-}
 
 export type AudienceSuggestion =
   | { ok: true; spec: ReturnType<typeof normalizeAudienceSpec>; explanation: string }
@@ -66,11 +33,12 @@ export async function suggestAudienceSpec(
     const { object, usage } = await generateObject({
       model: anthropic(MODEL),
       providerOptions: anthropicOptionsFor("writer"),
-      schema: specSchema,
+      schema: AUDIENCE_ASSIST_SCHEMA,
       system:
         "Du übersetzt die Beschreibung einer Kampagnen-Zielgruppe eines Fitnessgeräte-Shops " +
         "in Filterfelder. Setze nur Felder, die die Beschreibung wirklich verlangt; alles " +
-        "andere ist null. Erfinde keine Produkt-Handles. Die Einwilligung in E-Mail-Werbung " +
+        "andere bleibt leer: Listen [], Bereiche {min: -1, max: -1} (-1 = offenes Ende), " +
+        "Tage 0, moContact \"\". Erfinde keine Produkt-Handles. Die Einwilligung in E-Mail-Werbung " +
         "wird immer automatisch verlangt — dafür brauchst du kein Feld.\n\n" +
         `Erlaubte Werte:\n- optInLevels: ${AUDIENCE_SPEC_FIELDS.optInLevels.join(", ")}\n` +
         `- lifecycle (Tage seit letztem Kauf: frisch <7, ausbauen_frueh 7–30, ausbauen 31–90, ` +
@@ -95,7 +63,8 @@ export async function suggestAudienceSpec(
       outputTokens: usage?.outputTokens ?? 0,
     });
     const { explanation, ...rest } = object;
-    return { ok: true, spec: normalizeAudienceSpec(dropNulls(rest)), explanation };
+    // [] / -1 / 0 / "" are „not set“ for normalizeAudienceSpec (ai-assist-schemas.mjs).
+    return { ok: true, spec: normalizeAudienceSpec(rest), explanation };
   } catch (err) {
     reportError(err, { route: "lib/campaign-assist", phase: "suggestAudienceSpec" });
     return { ok: false, message: "Die KI konnte die Beschreibung gerade nicht übersetzen." };
