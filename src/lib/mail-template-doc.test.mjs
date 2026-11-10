@@ -212,3 +212,37 @@ test("design keys of templates: vorlage-<id> round trip, code designs are not te
   assert.equal(parseTemplateDesignKey("vorlage-12"), 12);
   for (const k of ["classic", "performance", "vorlage-", "vorlage-x", "vorlage-1-2", null, undefined]) assert.equal(parseTemplateDesignKey(k), null, String(k));
 });
+
+test("product refs: real catalog handles with ® and other symbols are kept (the picker added them, the normaliser dropped them)", () => {
+  const taken = new Set();
+  const p = normalizeMailBlock(
+    {
+      type: "products",
+      refs: [
+        "atx®-hantelbank-klappbar-schwarz-silber",
+        "airex®-balance-pad~45678901234",
+        "kurzhantel-für-zuhause",
+        " rack-plain ",
+        "with space",
+        "a/b",
+        "<x>",
+        "x~16kg",
+        "y~123456789012345678901",
+      ],
+    },
+    taken
+  );
+  assert.deepEqual(p?.refs, ["atx®-hantelbank-klappbar-schwarz-silber", "airex®-balance-pad~45678901234", "kurzhantel-für-zuhause", "rack-plain"]);
+});
+
+test("every product of the bundled catalog survives as a template ref", async () => {
+  const { readFileSync } = await import("node:fs");
+  const raw = JSON.parse(readFileSync(new URL("../data/product-catalog.json", import.meta.url), "utf8"));
+  const ids = (Array.isArray(raw) ? raw : raw.products ?? Object.values(raw)).map((x) => x.id).filter(Boolean);
+  assert.ok(ids.length > 500);
+  const taken = new Set();
+  for (let i = 0; i < ids.length; i += MAIL_TEMPLATE_LIMITS.productsPerBlock) {
+    const chunk = ids.slice(i, i + MAIL_TEMPLATE_LIMITS.productsPerBlock);
+    assert.deepEqual(normalizeMailBlock({ type: "products", refs: chunk }, taken)?.refs, chunk);
+  }
+});

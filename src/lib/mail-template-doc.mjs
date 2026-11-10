@@ -27,6 +27,7 @@
 // The AI assistant gets MAIL_BLOCK_CATALOG verbatim as its "interface".
 
 import { EMAIL_FONT_KEYS, EMAIL_BUTTON_SHAPES, parseHexColor } from "./email-theme.mjs";
+import { formatProductRef, parseProductRef } from "./product-ref.mjs";
 
 /** A template selected as a design is stored as this key (email_design_selections / campaigns.design_key). */
 export const TEMPLATE_DESIGN_PREFIX = "vorlage-";
@@ -368,13 +369,24 @@ function isoDate(v) {
   return Number.isNaN(d.getTime()) ? null : d.toISOString();
 }
 
-/** Catalog refs: handle or handle~variantId, deduplicated. */
+/**
+ * A catalog id as the shop keeps it: the Shopify handle, which may carry
+ * letters beyond ASCII and symbols — more than half of the catalog reads like
+ * „atx®-hantelbank-klappbar-schwarz-silber“. Letters, digits, marks, symbols
+ * (®, ™, ©), dot, underscore, hyphen; never whitespace, „~“, quotes or slashes.
+ */
+const CATALOG_HANDLE = /^[\p{L}\p{N}\p{M}\p{So}][\p{L}\p{N}\p{M}\p{So}._-]{0,254}$/u;
+
+/** Catalog refs: a handle or handle~variantId (product-ref.mjs), deduplicated. */
 function refs(v) {
   if (!Array.isArray(v)) return [];
   const out = [];
   for (const r of v) {
-    const s = typeof r === "string" ? r.trim() : "";
-    if (/^[A-Za-z0-9][A-Za-z0-9._-]{0,150}(?:~\d{1,20})?$/.test(s) && !out.includes(s)) out.push(s);
+    if (typeof r !== "string") continue;
+    const { productId, variantId } = parseProductRef(r);
+    if (!CATALOG_HANDLE.test(productId) || (variantId != null && variantId.length > 20)) continue;
+    const ref = formatProductRef(productId, variantId);
+    if (!out.includes(ref)) out.push(ref);
     if (out.length >= MAIL_TEMPLATE_LIMITS.productsPerBlock) break;
   }
   return out;
