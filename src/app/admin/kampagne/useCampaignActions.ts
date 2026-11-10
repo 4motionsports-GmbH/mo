@@ -1236,6 +1236,7 @@ export function useCampaignActions({
         const json = await adminFetch<{
           recommendations?: CampaignRecommendation[];
           dropped?: string[];
+          soldOut?: Array<{ ref: string; name: string }>;
         }>("/api/admin/campaign/recommendations", { body: { contactId, productIds } });
         patchItem(contactId, {
           recommendations: json.recommendations ?? item.recommendations,
@@ -1246,6 +1247,19 @@ export function useCampaignActions({
             variant: "warning",
             title: "Nicht mehr verfügbare Empfehlungen entfernt",
             description: offenderList(json.dropped, item.recommendations),
+          });
+        }
+        // A sold-out product may be added on purpose (prepared for when it is
+        // back) — the hint only for the ones added just now.
+        const before = new Set(item.recommendations.map((r) => r.id));
+        const newlySoldOut = (json.soldOut ?? []).filter((s) => !before.has(s.ref));
+        if (newlySoldOut.length > 0) {
+          toast({
+            variant: "warning",
+            title: newlySoldOut.length === 1 ? "Ausverkauftes Produkt hinzugefügt" : "Ausverkaufte Produkte hinzugefügt",
+            description:
+              `${newlySoldOut.map((s) => s.name).join(", ")} — gerade nicht lieferbar. Die Mail lässt es weg, ` +
+              "solange es ausverkauft ist; ist kein Produkt der Mail lieferbar, wird sie nicht gesendet.",
           });
         }
         scheduleRegenerate(contactId);

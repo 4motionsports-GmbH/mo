@@ -7,11 +7,14 @@
 // list cannot change (409 set_attached; remove the set first).
 //
 // Validation against the sync-fresh catalog, per ref ("handle~variantId" pins a
-// variant): a NEWLY added ref must be in the catalog, keep its variant and be
-// available — same bar as generation's filterAvailable. A ref that was ALREADY
-// on the draft and has since sold out or vanished is dropped instead of
-// blocking the edit (returned as `dropped`), so a stale pick can always be
-// replaced. Refusals are German and name the products.
+// variant): a NEWLY added ref must be in the catalog and keep its variant.
+// A SOLD-OUT product may be added on purpose (10.11.2026: a mail prepared for
+// an item that is back soon) — it is kept and named in `soldOut` (the desk
+// warns); the send leaves it out while it is sold out, and refuses a mail
+// whose picks are ALL sold out (campaign-email GATE 1e). A ref that was
+// ALREADY on the draft and has since vanished from the catalog (or lost its
+// pinned variant) is dropped instead of blocking the edit (returned as
+// `dropped`). Refusals are German and name the products.
 //
 // The PROSE is not touched here — the UI chains a regenerate right after,
 // which PRESERVES this curated list (prepareDraftForContact), so the fresh
@@ -85,13 +88,14 @@ export async function POST(req: Request) {
     const stored = new Set(existingDraft?.recommendedProductIds ?? []);
     const selections = await resolveProductSelections(productIds, { allVariants: true });
     const byRef = new Map(selections.map((s) => [s.ref, s]));
-    const usable = (ref: string) => {
+    // In the catalog with its variant (a pinned variant that vanished is not).
+    const known = (ref: string) => {
       const s = byRef.get(ref);
-      return Boolean(s && !s.missingVariant && s.available);
+      return Boolean(s && !s.missingVariant);
     };
     const nameOf = (ref: string) => byRef.get(ref)?.product.name ?? ref;
 
-    // Newly added refs must be recommendable now.
+    // Newly added refs must be in the catalog.
     const added = productIds.filter((ref) => !stored.has(ref));
     const unknown = added.filter((ref) => !byRef.has(ref));
     if (unknown.length > 0) {
@@ -114,30 +118,16 @@ export async function POST(req: Request) {
         409
       );
     }
-    const soldOut = added.filter((ref) => !usable(ref));
-    if (soldOut.length > 0) {
-      return adminJson(
-        {
-          error: {
-            code: "sold_out",
-            message: `Ausverkauft — kann nicht empfohlen werden: ${soldOut.map(nameOf).join(", ")}.`,
-          },
-          offenders: soldOut,
-          offenderNames: Object.fromEntries(soldOut.map((r) => [r, nameOf(r)])),
-        },
-        409
-      );
-    }
 
-    // Refs that were already on the draft but are no longer available drop out.
-    const dropped = productIds.filter((ref) => stored.has(ref) && !usable(ref));
+    // Refs that were already on the draft but are no longer in the catalog drop out.
+    const dropped = productIds.filter((ref) => stored.has(ref) && !known(ref));
     const kept = productIds.filter((ref) => !dropped.includes(ref));
     if (kept.length === 0) {
       return adminJson(
         {
           error: {
             code: "nothing_available",
-            message: `Keine verfügbare Empfehlung übrig (${dropped.map(nameOf).join(", ")}) — bitte ein verfügbares Produkt hinzufügen.`,
+            message: `Kein Produkt mehr im Katalog (${dropped.map(nameOf).join(", ")}) — bitte ein anderes hinzufügen.`,
           },
           offenders: dropped,
           offenderNames: Object.fromEntries(dropped.map((r) => [r, nameOf(r)])),
@@ -145,6 +135,8 @@ export async function POST(req: Request) {
         409
       );
     }
+    // Sold out right now: kept (prepared ahead), named for the desk's hint.
+    const soldOut = kept.filter((ref) => byRef.get(ref)?.available === false);
 
     const draft = await updateCampaignDraftRecommendations(contactId, kept);
     if (!draft) {
@@ -157,6 +149,7 @@ export async function POST(req: Request) {
       // name/url are the variant-projected display values.
       recommendations: kept.map((ref) => recommendationView(ref, byRef.get(ref))),
       dropped,
+      soldOut: soldOut.map((ref) => ({ ref, name: nameOf(ref) })),
     });
   } catch (err) {
     reportError(err, { route: "api/admin/campaign/recommendations" });

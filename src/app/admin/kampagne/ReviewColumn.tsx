@@ -404,11 +404,7 @@ export function ReviewColumn({
                 isSelected={(hit, variant) =>
                   recIds.includes(variant?.variantId ? `${hit.productId}~${variant.variantId}` : hit.productId)
                 }
-                disableReason={(hit, variant) => {
-                  if (locked) return "Speichert…";
-                  if (variant ? !variant.available : !hit.inStock) return "Ausverkauft";
-                  return null;
-                }}
+                disableReason={() => (locked ? "Speichert…" : null)}
                 onError={(err) =>
                   toast({ variant: "error", title: "Katalogsuche fehlgeschlagen", description: err.message })
                 }
