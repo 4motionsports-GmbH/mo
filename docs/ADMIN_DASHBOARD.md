@@ -1542,18 +1542,23 @@ use), client workspace [`vorlagen/VorlagenWorkspace.tsx`](../src/app/admin/vorla
 - **Editor** (`?vorlage=<id>`) — „← Alle Vorlagen“, „Rückgängig“ (several steps: every AI result
   is one, up to 20; saving clears them), „Mit KI gestalten“ (opens the KI-Gestalter, below; tooltip
   names `ANTHROPIC_API_KEY` when it is missing), **„Speichern“** (version-checked), ⋯ Duplizieren ·
-  Exportieren (JSON) · Archivieren / Wiederherstellen. Name, Beschreibung.
+  Exportieren (JSON) · Archivieren / Wiederherstellen (Duplizieren asks first with unsaved changes —
+  the copy is made from the saved version). Name, Beschreibung.
 - **KI-Gestalter** ([`vorlagen/DesignerPanel.tsx`](../src/app/admin/vorlagen/DesignerPanel.tsx),
   shared with the Rundmail; module: [`EMAIL_TEMPLATES.md`](./EMAIL_TEMPLATES.md) §6) — a panel docked
   above the blocks, so the preview stays visible: the conversation (the operator's turns with their
-  attachments, the AI's notes as replies, warnings, errors), example chips while it is empty
+  attachments, the AI's notes as replies — plain text, never links —, warnings, errors), example chips while it is empty
   („Bau diese Mail nach“, „Black-Week-Mail“, „Newsletter mit Produkt-Spalten“ …), the instruction
   (Ctrl/⌘+Enter sends), „Datei anhängen“ — or drag & drop onto the panel, or paste a screenshot —
   up to six screenshots, pictures, PDFs, HTML files or saved mails (`.eml`); while it works the
   latest step („Sucht Produkte …“, „Prüft den Entwurf …“), the elapsed time and „Abbrechen“;
-  „Neues Gespräch“. Each result replaces the document as an unsaved change. The conversation and a
-  running request survive closing the panel (closing is disabled while it runs); leaving the
-  editor aborts it. Explanations behind InfoTips („Was der KI-Gestalter kann“, „Was Anhänge
+  „Neues Gespräch“. Each result replaces the document as an unsaved change; „Rückgängig“ of a result
+  marks that reply „rückgängig gemacht“, adds a notice, and the next request tells the AI. A long
+  reply is shown from its start. The conversation and a running request survive closing the panel
+  (closing is disabled while it runs); leaving the editor (← Alle Vorlagen, Duplizieren; in the
+  Rundmail „← Kampagnen“, „Zielgruppe & Absender“) asks first while it runs, then aborts it — the
+  sidebar, screen shortcuts and browser navigation are not guarded. In a template with „Mos
+  persönlicher Text“ it works as a personal template (Mo's blocks must stay). Explanations behind InfoTips („Was der KI-Gestalter kann“, „Was Anhänge
   bewirken“).
 - **Bausteine** ([`vorlagen/BlockEditor.tsx`](../src/app/admin/vorlagen/BlockEditor.tsx), shared
   with the Rundmail; logic in [`block-editor-core.mjs`](../src/lib/block-editor-core.mjs)) —
@@ -2852,7 +2857,7 @@ them. Actions that read or act on one person's data write the admin access log
 | Vorlagen | `GET vorlagen`, `POST vorlagen { action, … }` | the templates (§3.12): `get`, `create { name, description?, starter? \| doc? }`, `save { id, name, description, doc, expectedVersion }` (409 stale; a template in use keeps „Mos persönlicher Text“), `duplicate`, `archive { id, archived }` (refused while selected in Einstellungen), `import { file }`; audit `template.*`. [`EMAIL_TEMPLATES.md`](./EMAIL_TEMPLATES.md) |
 | | `POST vorlagen/preview { doc, use, subject?, preheader?, language?, firstName?, sample? }` | the live preview of the unsaved document through the production renderers: `bulk` (the Rundmail render of test and release) or `personal` (the campaign composer with sample data inside the template design; `sample` items \| set) → `text/html`, links inert; nothing stored |
 | | `POST vorlagen/image` (raw `image/jpeg` \| `image/png` \| `image/webp` \| `image/gif` body, ≤ 4 MB) | „Bild hochladen“ for Bild, Logo and Titelbild → `{ url, width, height, warnings }`; 503 without `BLOB_READ_WRITE_TOKEN`; writes nothing to the database |
-| | `POST vorlagen/assist { instruction (≤ 6,000; may be empty with attachments), doc?, use: bulk\|personal\|template, history? (≤ 8 turns), attachments? (≤ 6 × { name, mediaType, data base64 }), context? { subject, preheader } }` | the KI-Gestalter: errors before the stream as the JSON envelope (400, 413 above ≈ 4.4 MB, 503 without `ANTHROPIC_API_KEY`); then `application/x-ndjson` — `{type:"progress",stage,text}` lines (heartbeat every 15 s), exactly one `{type:"result",doc,notes,subject,preheader,warnings}` or `{type:"error",message}`; `maxDuration` 300, the model stops at 285 s. A proposal — nothing stored but the attachment pictures the accepted design uses. Tier `designer`, `ai_usage` `template_assist`, audit `template.assist { use, attachments, kinds }`. [`EMAIL_TEMPLATES.md`](./EMAIL_TEMPLATES.md) §6 |
+| | `POST vorlagen/assist { instruction (≤ 6,000; may be empty with attachments), doc?, use: bulk\|personal\|template, history? (≤ 8 turns), attachments? (≤ 6 × { name, mediaType, data base64 }), context? { subject, preheader, language? de\|en } }` | the KI-Gestalter: errors before the stream as the JSON envelope (400, 413 above ≈ 4.4 MB, 503 without `ANTHROPIC_API_KEY`); then `application/x-ndjson` — `{type:"progress",stage,text}` lines (heartbeat every 15 s), exactly one `{type:"result",doc,notes,subject,preheader,warnings}` or `{type:"error",message}`; `maxDuration` 300, the model stops at 285 s. A proposal — nothing stored but the attachment pictures the accepted design uses. Tier `designer`, `ai_usage` `template_assist`, audit `template.assist { use, attachments, kinds }`. [`EMAIL_TEMPLATES.md`](./EMAIL_TEMPLATES.md) §6 |
 | Wissen | `GET qa/list?status=`, `POST qa/scan / answer / publish / unpublish / dismiss / restore` | the Q&A queue |
 | KPIs | `POST kpi/top-questions { personaLabel, force? }` | on-demand Top-Fragen summary |
 | Konfigurator | `POST konfigurator/settings { enabled, tag, extraProductIds, focus, notes }` | „Mo im Konfigurator“: store the configurator settings (`admin_settings` key `configurator`, 0078) → `{ ok, settings }`; German 400 on invalid input, 503 without a database or before 0078; audit `settings.configurator` |

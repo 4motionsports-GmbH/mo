@@ -311,9 +311,13 @@ overlapping parts (≤ 6 per picture, ≤ 20 in total) the model reads top to bo
 files; HTML, `.eml` (MIME decoded by charset) and text as labelled text (≤ 120,000 characters
 each; the server refuses a text file above 500 KB, an `.eml` above 400 KB, before decoding). The browser prepares them first
 ([`mail-designer-attachments.mjs`](../src/lib/mail-designer-attachments.mjs): WebP and large
-pictures re-encoded as JPEG, Office and SVG files refused with a hint, the whole request ≤ about
-4 MB). A picture the accepted design uses (`"src": "anhang:N"`, also `bgImage` and `logoUrl`) is
+pictures re-encoded as JPEG, Office, SVG and Outlook files (`.msg`, `.oft`: a screenshot or „Speichern
+unter → HTML“) refused with a hint — several files at once are sorted first, so a refused file never
+takes one of the six places —, the whole request ≤ about 4 MB). A picture the accepted design uses (`"src": "anhang:N"`, also `bgImage` and `logoUrl`) is
 stored as a template picture (§7); without `BLOB_READ_WRITE_TOKEN` it is cleared with a note.
+
+**Preview size.** The live preview shows the mail's size from 90 KB on (`X-Mail-Bytes`), red above
+100 KB.
 
 **Route.** `POST /api/admin/vorlagen/assist` (`maxDuration` 300 s): errors before the stream are
 the usual JSON envelope (400, 413, 503 without `ANTHROPIC_API_KEY`); then NDJSON lines
