@@ -83,8 +83,12 @@ back to the classic implementation.
 Since migration `0081` the operator can build designs without code: a template from the screen
 Vorlagen that has the block „Mos persönlicher Text“ is selectable like a registered design (design
 key `vorlage-<id>`, label „Vorlage: …“) — the format, the renderer and the rules are in
-[`EMAIL_TEMPLATES.md`](./EMAIL_TEMPLATES.md). A registered design (this recipe) is still the way
-for what a block document cannot express. The template renderer and the classic shell share their
+[`EMAIL_TEMPLATES.md`](./EMAIL_TEMPLATES.md). Since format v2 (2026-11-11) a block document
+expresses free layouts — sections with up to four columns, background pictures, web fonts,
+per-block styling — and the KI-Gestalter builds them from a brief or a screenshot; inside a
+template the classic rows (product rows / grid, countdown, Mo's buttons) follow its card colour
+and side padding through a `sectionRow` override. A registered design (this recipe) is still the
+way for what a block document cannot express. The template renderer and the classic shell share their
 CSS ([`email-shell-css.mjs`](../src/lib/email-shell-css.mjs)).
 
 ### Sender identities („Absender“)
@@ -176,7 +180,13 @@ deliberate change visible everywhere is the coupon code size, below). The shared
 - **Images:** every `<img>` has a numeric `width` attribute no wider than the content area —
   Word sizes images by the attribute and ignores `width:100%` / `max-width`.
 - **Hero background:** VML `v:rect` + `v:fill type="frame"` with `aspect="atleast"` (cover) and
-  `v:textbox style="mso-fit-shape-to-text:true"`.
+  `v:textbox style="mso-fit-shape-to-text:true"` — the same pattern carries a template section's
+  background picture.
+- **Columns** (templates, `mail-template-render.mjs`): `td` cells with px `width` attributes plus
+  gap cells, stacked on phones by the shell's `col-stack` / `col-gap` / `col-img` rules (Word ignores
+  the media query and keeps them side by side); padding on an inner cell so every column keeps its
+  computed width; `dir` swaps the order for „letzte Spalte zuerst“ without changing the reading
+  order.
 - **Check:** `npm run check:email-outlook` renders every design × mail type (and the 1:1 reply
   mail) through the production renderers and runs `lintOutlookHtml` — 0 findings and under the
   90-KB budget (Gmail clips at 102 KB, which would hide the unsubscribe footer). It also lists

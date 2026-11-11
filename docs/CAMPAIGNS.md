@@ -1186,7 +1186,8 @@ described in [`ADMIN_DASHBOARD.md`](./ADMIN_DASHBOARD.md) §3.2 „Rundmail“.
    is sent; the nightly job ends the campaign), „Inhalt starten mit“ a template (its Mo blocks are
    dropped) or a starter. The workspace opens.
 2. **Inhalt**: subject (merge fields `{{vorname|Ersatz}}`), Vorschauzeile, language, the blocks with
-   the live preview, „Vorlage laden“, „Mit KI gestalten“; Speichern is version-checked
+   the live preview, „Vorlage laden“, „Mit KI gestalten“ (the KI-Gestalter, also for Betreff and
+   Vorschauzeile — [`EMAIL_TEMPLATES.md`](./EMAIL_TEMPLATES.md) §6); Speichern is version-checked
    (`content_version`, a second window gets a conflict).
 3. **Prüfen & senden**: every check (§9.3); the **Testmail** to up to five own addresses with a
    first name to test (required for the current content version — every change needs a new one);
@@ -1215,7 +1216,13 @@ content **once**, with placeholders for the only parts that differ per recipient
 
 Link targets are frozen into `campaign_mailings.links` with UTM parameters
 (`utm_source=mo&utm_medium=email&utm_campaign=<slug>`, `withUtm`); `mailto:`/`tel:` and the
-unsubscribe links stay untracked. Subject, HTML, text, a hash of the content, From and Reply-To are
+unsubscribe links stay untracked. Only **click targets** are tracked — the double-quoted `href` of
+`<a>`, `<area>` and `<v:roundrect>` (Outlook's twin of a button shares its original's index;
+`rewriteLinkHrefs`); the web-font stylesheet (`<link>`), `<base>` and every other tag stay direct.
+Rundmails released before 2026-11-11 froze the Google-Fonts stylesheet as a link, so mail clients
+that loaded it looked like clicks: `recordCampaignClick` now records nothing for such a link (the
+redirect still delivers the stylesheet), `getMailingStats` leaves it out of „Geklickt“ and „Klicks
+je Link“, and an unknown link index never falls back to it (`isWebFontStylesheetUrl`). Subject, HTML, text, a hash of the content, From and Reply-To are
 stored in `frozen_*`, and `freezeAndStartMailing` sets the campaign `aktiv` with its `starts_at` in
 the same statement. From then on the content is read-only (save → 409). Every mail is
 `personalizeFrozen` ([`mailing-core.mjs`](../src/lib/mailing-core.mjs), tested) — string

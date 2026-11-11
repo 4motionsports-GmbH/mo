@@ -9,7 +9,7 @@ into a personal mail client).
 | --- | --- | --- | --- | --- | --- |
 | Arbeit | Eingang | `eingang` (bare `/admin`) | 1 | The operator inbox: ranked customer signals with AI suggestions, system strip, unassigned mail | §3.1 |
 | Arbeit | Kampagnen | `kampagne` | 2 | All campaigns (overview, editor) and the review desk per campaign, incl. the Einzelansprache; the workspace of a Rundmail | §3.2, [`CAMPAIGNS.md`](./CAMPAIGNS.md) |
-| Arbeit | Vorlagen | `vorlagen` | — | The operator's e-mail templates: block editor with live preview, „Mit KI gestalten“, import/export; a template starts a Rundmail or becomes the design of Mo's personal mails | §3.12, [`EMAIL_TEMPLATES.md`](./EMAIL_TEMPLATES.md) |
+| Arbeit | Vorlagen | `vorlagen` | — | The operator's e-mail templates: free layouts (sections with columns, per-block styling) in the block editor with live preview, the KI-Gestalter (instructions, screenshots and files), import/export; a template starts a Rundmail or becomes the design of Mo's personal mails | §3.12, [`EMAIL_TEMPLATES.md`](./EMAIL_TEMPLATES.md) |
 | Arbeit | Konfigurator | `konfigurator` | — | The Home-Gym-Konfigurator (Men's Health / Women's Health): Mo's assortment and notes for the guided consultation, and its funnel from the first answer to the order | §3.11, [`CONFIGURATOR.md`](./CONFIGURATOR.md) |
 | Arbeit | Kunden | `kunden` | 3 | The whole customer base (Shopify mirror + Mo leads), server-side list; one person's figures, activity, orders, chats, consent, correspondence, letter | §3.3, [`CUSTOMERS.md`](./CUSTOMERS.md) |
 | Arbeit | Wissen | `wissen` | 4 | Q&A knowledge queue (gaps → answers → published) | §3.4, [`QA_KNOWLEDGE.md`](./QA_KNOWLEDGE.md) |
@@ -207,7 +207,7 @@ src/app/admin/
 ├── kampagnen/            # CampaignsOverview (cards), CampaignEditor (sheet), CampaignHeroField („Kampagnenbild“), CampaignCheckSection („Prüfen & testen“), types
 ├── kampagne/             # the desk of one campaign: KampagneWorkspace, CampaignHeader, PreparePopover, QueueRail, MailPane, ReviewColumn, sections/*, ListView, ScheduledViews („Einplanen“ dialog, view „Eingeplant“), SentHistory, LettersView, TestContactsSheet, ContactHistorySheet, EmailViewerDialog, badges, useCampaignActions, useReleaseActions, useRenderedPreview
 ├── rundmail/             # RundmailWorkspace (a Rundmail: Inhalt, Prüfen & senden, Versand)
-├── vorlagen/             # VorlagenWorkspace (list + editor), BlockEditor (shared with the Rundmail), LivePreview, AssistDialog
+├── vorlagen/             # VorlagenWorkspace (list + editor), BlockEditor + SectionEditor/BlockSettings/BlockStyleFields/DocStyleFields (shared with the Rundmail), LivePreview, DesignerPanel (KI-Gestalter)
 ├── kunden/               # KundenWorkspace, CustomerDetail, badges, useCustomerDetail, tabs/{Ueberblick (+Profil), Aktivitaet, Kaeufe, Beratungen („Gespräche“), Marketing (+OptOutControl), Korrespondenz, Brief}, BundleComposer
 ├── konfigurator/         # KonfiguratorWorkspace (settings + Sortiment), KonfiguratorKpis („Wirkung“, server), KonfiguratorRange, types
 ├── kpi/                  # KpiToolbar, KpiSection, KpiTile (+ DeltaPill), FunnelBars, Sparkline, RevenueOrders (the drill-down), revenue-view (+ revenue-colors, revenue-series), groups, KpiTopQuestions, charts (next/dynamic) → charts-recharts + chart-geometry, sections/* (one file per section, §3.5)
@@ -832,10 +832,12 @@ A campaign of the kind Rundmail (one content for everyone; module:
 „Zielgruppe & Absender“ (the editor). Three tabs (`?view=`):
 
 - **Inhalt** — „Gespeichert · Version n“, „Vorlage laden“ (replaces the content with a template's,
-  Mo blocks dropped; unsaved, „Rückgängig“ brings the old one back), „Mit KI gestalten“ (dialog; tooltip names
-  `ANTHROPIC_API_KEY` when it is missing), Speichern; Betreff (merge fields, InfoTip), Sprache,
-  Vorschauzeile; the block editor and the live preview of the Vorlagen screen (§3.12). After the
-  release the content is read-only (callout).
+  Mo blocks dropped; unsaved), „Rückgängig“ (several steps: every AI result and „Vorlage laden“),
+  „Mit KI gestalten“ (the KI-Gestalter panel of §3.12 — here it also proposes Betreff and
+  Vorschauzeile with „Übernehmen“; tooltip names `ANTHROPIC_API_KEY` when it is missing; the
+  conversation survives switching tabs, a run is aborted at the release), Speichern; Betreff
+  (merge fields, InfoTip), Sprache, Vorschauzeile; the block editor and the live preview of the
+  Vorlagen screen (§3.12). After the release the content is read-only (callout).
 - **Prüfen & senden** (badge „!“ while the current version has no test mail) — „Prüfungen“: every
   error, warning and info of `mailing-checks.mjs`, „Erneut prüfen“; „Testmail“: An (bis zu 5
   Adressen), Vorname zum Testen, „Testmail senden“, the last test with „aktueller Stand ✓“ or
@@ -1537,21 +1539,51 @@ use), client workspace [`vorlagen/VorlagenWorkspace.tsx`](../src/app/admin/vorla
   persönlicher Text“) or „Rundmail“, „Aktiv: Kampagne / Marketing“ where Einstellungen uses it,
   description, „n Bausteine · Version n · geändert …“, „Bearbeiten“. Empty state with „Neue
   Vorlage“.
-- **Editor** (`?vorlage=<id>`) — „← Alle Vorlagen“, „Rückgängig“ (after an AI proposal),
-  „Mit KI gestalten“ (dialog: instruction, examples, optional screenshot; tooltip names
-  `ANTHROPIC_API_KEY` when it is missing; the AI's notes appear as a callout), **„Speichern“**
-  (version-checked), ⋯ Duplizieren · Exportieren (JSON) · Archivieren / Wiederherstellen. Name,
-  Beschreibung. **Bausteine** ([`vorlagen/BlockEditor.tsx`](../src/app/admin/vorlagen/BlockEditor.tsx),
-  shared with the Rundmail): „Farben & Schrift“ (Akzentfarbe, Button-Schrift, Hintergrund außen,
-  Überschriften, Text, Schrift, Button-Form), one row per block — label, summary, its errors and
-  hints, ↑ ↓ Duplizieren Entfernen; opened: the block's description behind an InfoTip and its
-  fields (pictures: „Bild hochladen“ or an https address; products: the catalog picker — a sold-out
-  product can be added with the toast „Ausverkauftes Produkt hinzugefügt“ and shows „Ausverkauft“ in
-  the list (names and badges from `catalog/availability`); colours:
-  picker + hex; every change goes into the document at once — normalised, the preview follows —
-  while a one-line field shows what was typed as long as it has the focus: the space before the next
-  word, a half-typed link or number; `DraftInput`) — and „Baustein hinzufügen“ (menu by group; the Mo blocks only where they can
-  work). **Vorschau** ([`vorlagen/LivePreview.tsx`](../src/app/admin/vorlagen/LivePreview.tsx),
+- **Editor** (`?vorlage=<id>`) — „← Alle Vorlagen“, „Rückgängig“ (several steps: every AI result
+  is one, up to 20; saving clears them), „Mit KI gestalten“ (opens the KI-Gestalter, below; tooltip
+  names `ANTHROPIC_API_KEY` when it is missing), **„Speichern“** (version-checked), ⋯ Duplizieren ·
+  Exportieren (JSON) · Archivieren / Wiederherstellen. Name, Beschreibung.
+- **KI-Gestalter** ([`vorlagen/DesignerPanel.tsx`](../src/app/admin/vorlagen/DesignerPanel.tsx),
+  shared with the Rundmail; module: [`EMAIL_TEMPLATES.md`](./EMAIL_TEMPLATES.md) §6) — a panel docked
+  above the blocks, so the preview stays visible: the conversation (the operator's turns with their
+  attachments, the AI's notes as replies, warnings, errors), example chips while it is empty
+  („Bau diese Mail nach“, „Black-Week-Mail“, „Newsletter mit Produkt-Spalten“ …), the instruction
+  (Ctrl/⌘+Enter sends), „Datei anhängen“ — or drag & drop onto the panel, or paste a screenshot —
+  up to six screenshots, pictures, PDFs, HTML files or saved mails (`.eml`); while it works the
+  latest step („Sucht Produkte …“, „Prüft den Entwurf …“), the elapsed time and „Abbrechen“;
+  „Neues Gespräch“. Each result replaces the document as an unsaved change. The conversation and a
+  running request survive closing the panel (closing is disabled while it runs); leaving the
+  editor aborts it. Explanations behind InfoTips („Was der KI-Gestalter kann“, „Was Anhänge
+  bewirken“).
+- **Bausteine** ([`vorlagen/BlockEditor.tsx`](../src/app/admin/vorlagen/BlockEditor.tsx), shared
+  with the Rundmail; logic in [`block-editor-core.mjs`](../src/lib/block-editor-core.mjs)) —
+  „Farben & Schrift“ ([`DocStyleFields.tsx`](../src/app/admin/vorlagen/DocStyleFields.tsx); Farben ·
+  Schrift — standard and web fonts, heading font — · Karte & Buttons — card colour, side padding,
+  card corners, button form — · Logo with upload); document-level hints on top; the blocks as a
+  **tree**: one row per block — label, summary, its errors and hints, ↑ ↓, ⋯ Duplizieren ·
+  Verschieben (into another column, out of a section, into the section above or below) · Entfernen
+  (a section with content asks first, `useConfirm`). A **section**
+  ([`SectionEditor.tsx`](../src/app/admin/vorlagen/SectionEditor.tsx)) opens to its settings —
+  Layout (1 Spalte … 4 Spalten; a layout that would put more than 12 blocks into one column is
+  disabled), Hintergrund, Hintergrundbild (upload or URL) and Mindesthöhe, its „Gestaltung“
+  (spacing, side spacing, column gap, corners, border, „Auf dem Handy untereinander / letzte Spalte
+  zuerst“) — and one disclosure per column („Spalte n · w %“: width, vertical alignment,
+  background, inner spacing) with its own block list and „+ Baustein“ (column blocks only). A
+  collapsed section shows its children's errors and „2 Spalten · 5 Bausteine“. An opened block
+  ([`BlockSettings.tsx`](../src/app/admin/vorlagen/BlockSettings.tsx)) shows its fields (pictures:
+  „Bild hochladen“ or an https address; products and Produkt-Highlight: the catalog picker — a
+  sold-out product can be added with the toast „Ausverkauftes Produkt hinzugefügt“ and shows
+  „Ausverkauft“ in the list (names and badges from `catalog/availability`); Navigation: link rows;
+  colours: picker + hex showing the colour in effect) and its **„Gestaltung“**
+  ([`BlockStyleFields.tsx`](../src/app/admin/vorlagen/BlockStyleFields.tsx): spacing, background,
+  font size, weight, italic, uppercase, letter spacing, line height, font — empty = Standard).
+  Every change goes into the document at once — normalised, the preview follows — while a field
+  shows what was typed as long as it has the focus (`DraftInput` / `DraftTextarea`: the space
+  before the next word, a trailing line break, a half-typed link or number). „Baustein
+  hinzufügen“ (menu by group, „Aufbau & Spalten“ first, inserted after the open block; the Mo blocks
+  only where they can work; every menu and item is disabled with the reason at a limit — 80 blocks,
+  40 at the top level, 12 per column). A new block opens and scrolls into view.
+- **Vorschau** ([`vorlagen/LivePreview.tsx`](../src/app/admin/vorlagen/LivePreview.tsx),
   `vorlagen/preview`, debounced): Rundmail / Persönliche Mail (with „Mos persönlicher Text“;
   Einzelprodukte / Set-Angebot with sample data), Desktop / Mobil, zoom; sticky beside the
   blocks from 1280 px, below them on smaller screens.
@@ -2817,7 +2849,7 @@ them. Actions that read or act on one person's data write the admin access log
 | Vorlagen | `GET vorlagen`, `POST vorlagen { action, … }` | the templates (§3.12): `get`, `create { name, description?, starter? \| doc? }`, `save { id, name, description, doc, expectedVersion }` (409 stale; a template in use keeps „Mos persönlicher Text“), `duplicate`, `archive { id, archived }` (refused while selected in Einstellungen), `import { file }`; audit `template.*`. [`EMAIL_TEMPLATES.md`](./EMAIL_TEMPLATES.md) |
 | | `POST vorlagen/preview { doc, use, subject?, preheader?, language?, firstName?, sample? }` | the live preview of the unsaved document through the production renderers: `bulk` (the Rundmail render of test and release) or `personal` (the campaign composer with sample data inside the template design; `sample` items \| set) → `text/html`, links inert; nothing stored |
 | | `POST vorlagen/image` (raw `image/jpeg` \| `image/png` \| `image/webp` \| `image/gif` body, ≤ 4 MB) | „Bild hochladen“ for Bild, Logo and Titelbild → `{ url, width, height, warnings }`; 503 without `BLOB_READ_WRITE_TOKEN`; writes nothing to the database |
-| | `POST vorlagen/assist { instruction, doc?, use, screenshot? }` | „Mit KI gestalten“ → `{ doc, notes }` (a proposal, nothing stored; writer tier, `ai_usage` `template_assist`, audit `template.assist`) |
+| | `POST vorlagen/assist { instruction (≤ 6,000; may be empty with attachments), doc?, use: bulk\|personal\|template, history? (≤ 8 turns), attachments? (≤ 6 × { name, mediaType, data base64 }), context? { subject, preheader } }` | the KI-Gestalter: errors before the stream as the JSON envelope (400, 413 above ≈ 4.4 MB, 503 without `ANTHROPIC_API_KEY`); then `application/x-ndjson` — `{type:"progress",stage,text}` lines (heartbeat every 15 s), exactly one `{type:"result",doc,notes,subject,preheader,warnings}` or `{type:"error",message}`; `maxDuration` 300, the model stops at 285 s. A proposal — nothing stored but the attachment pictures the accepted design uses. Tier `designer`, `ai_usage` `template_assist`, audit `template.assist { use, attachments, kinds }`. [`EMAIL_TEMPLATES.md`](./EMAIL_TEMPLATES.md) §6 |
 | Wissen | `GET qa/list?status=`, `POST qa/scan / answer / publish / unpublish / dismiss / restore` | the Q&A queue |
 | KPIs | `POST kpi/top-questions { personaLabel, force? }` | on-demand Top-Fragen summary |
 | Konfigurator | `POST konfigurator/settings { enabled, tag, extraProductIds, focus, notes }` | „Mo im Konfigurator“: store the configurator settings (`admin_settings` key `configurator`, 0078) → `{ ok, settings }`; German 400 on invalid input, 503 without a database or before 0078; audit `settings.configurator` |
