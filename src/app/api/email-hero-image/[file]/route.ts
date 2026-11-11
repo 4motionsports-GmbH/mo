@@ -10,11 +10,21 @@
 // The image itself is written privately (the store is private — see
 // email-hero-blob.mjs) and streamed back here with a long immutable cache:
 // filenames carry a random suffix, so a stored image never changes.
+//
+// Shared pictures — template pictures (Vorlagen / Rundmail) and a campaign's
+// default picture, never a person's file — are also kept on Vercel's CDN
+// (`Vercel-CDN-Cache-Control`; max-age alone does not cache a function
+// response there). A Rundmail shows the same picture to thousands of
+// recipients and Apple Mail's privacy proxy fetches it at every delivery:
+// without the CDN every fetch would run this function and a private Blob
+// read. Per-person heroes stay off the CDN, so an erasure removes them at once.
 
 import { get } from "@vercel/blob";
 import {
   heroBlobContentType,
   heroBlobPathname,
+  isCampaignDefaultHeroFile,
+  isTemplateImageFile,
   parseHeroBlobFile,
 } from "@/lib/email-hero-blob.mjs";
 import { reportError } from "@/lib/observability";
@@ -39,6 +49,7 @@ export async function GET(req: Request, ctx: { params: Promise<{ file: string }>
       token: process.env.BLOB_READ_WRITE_TOKEN,
     });
     if (!res || res.statusCode !== 200) return notFound();
+    const shared = isTemplateImageFile(safeFile) || isCampaignDefaultHeroFile(safeFile);
     return new Response(res.stream as unknown as BodyInit, {
       status: 200,
       headers: {
@@ -49,6 +60,7 @@ export async function GET(req: Request, ctx: { params: Promise<{ file: string }>
         // Immutable: the filename carries a random suffix, so this byte stream
         // never changes — mail-client and CDN caches may keep it indefinitely.
         "Cache-Control": "public, max-age=31536000, immutable",
+        ...(shared ? { "Vercel-CDN-Cache-Control": "max-age=31536000" } : {}),
         "X-Content-Type-Options": "nosniff",
       },
     });

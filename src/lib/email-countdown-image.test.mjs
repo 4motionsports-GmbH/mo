@@ -6,6 +6,9 @@ import {
   COUNTDOWN_HEIGHT,
   COUNTDOWN_MOBILE_WIDTH,
   COUNTDOWN_WIDTH,
+  COUNTDOWN_CACHE_WINDOW_MS,
+  countdownCacheSeconds,
+  countdownCacheWindow,
   countdownFrameTimes,
   countdownLayout,
   countdownRemaining,
@@ -43,6 +46,31 @@ test("frame times: one per minute for an hour, stopping right after the deadline
   assert.equal(countdownFrameTimes("2026-09-01T00:00:00Z", now).length, 1);
   assert.equal(countdownFrameTimes("2026-09-11T23:59:00Z", now, 5).length, 5);
   assert.equal(countdownFrameTimes("2026-09-11T23:59:00Z", now, 500).length, COUNTDOWN_FRAMES);
+});
+
+test("cache window: every fetch of a minute shares one image drawn for the minute's end", () => {
+  assert.equal(COUNTDOWN_CACHE_WINDOW_MS, 60_000);
+  const t = Date.parse("2026-11-13T09:00:12.500Z");
+  const w = countdownCacheWindow(t);
+  assert.equal(w.endsAt, Date.parse("2026-11-13T09:01:00Z"));
+  // Same window for the whole minute, a new one at the boundary.
+  assert.equal(countdownCacheWindow(Date.parse("2026-11-13T09:00:00Z")).index, w.index);
+  assert.equal(countdownCacheWindow(Date.parse("2026-11-13T09:00:59.999Z")).index, w.index);
+  assert.equal(countdownCacheWindow(Date.parse("2026-11-13T09:01:00Z")).index, w.index + 1);
+  // Drawn for the END: served anywhere in the window, it never shows more time than is left.
+  const deadline = "2026-11-13T23:59:00Z";
+  for (const at of ["2026-11-13T09:00:00Z", "2026-11-13T09:00:30Z", "2026-11-13T09:00:59.999Z"]) {
+    const shown = countdownRemaining(deadline, new Date(w.endsAt));
+    const actual = countdownRemaining(deadline, new Date(at));
+    const minutes = (r) => r.days * 1440 + r.hours * 60 + r.minutes;
+    assert.ok(minutes(shown) <= minutes(actual), at);
+    assert.ok(minutes(actual) - minutes(shown) <= 1, at);
+  }
+  // A shared cache keeps it only until the window ends (whole seconds, rounded down).
+  assert.equal(countdownCacheSeconds(w.endsAt, t), 47);
+  assert.equal(countdownCacheSeconds(w.endsAt, w.endsAt - 999), 0);
+  assert.equal(countdownCacheSeconds(w.endsAt, w.endsAt + 500), 0);
+  assert.equal(countdownCacheSeconds(Number.NaN, t), 0);
 });
 
 test("layout centres three equal tiles inside the image", () => {

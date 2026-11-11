@@ -104,6 +104,43 @@ export const COUNTDOWN_FRAMES = 60;
 export const COUNTDOWN_FRAME_MS = 60_000;
 
 /**
+ * One image per minute, shared by every fetch in that minute. A Rundmail
+ * sends the SAME countdown URL to every recipient, and Apple Mail's privacy
+ * proxy fetches it for every delivered mail — rendering each fetch anew
+ * (~0.7 s of CPU) would make the countdown the hot spot of a big send. So
+ * time is cut into fixed windows; every fetch in a window gets the image drawn
+ * for the window's END (a copy served at any moment of the window therefore
+ * only ever understates the time left, by less than a minute), and the server
+ * instance and Vercel's CDN keep it until the window ends — never longer.
+ */
+export const COUNTDOWN_CACHE_WINDOW_MS = 60_000;
+
+/**
+ * The cache window a fetch at `nowMs` belongs to.
+ * @param {number} nowMs
+ * @param {number} [windowMs]
+ * @returns {{ index: number, endsAt: number }} `endsAt` — also the moment the
+ *   window's image is drawn for
+ */
+export function countdownCacheWindow(nowMs, windowMs = COUNTDOWN_CACHE_WINDOW_MS) {
+  const size = Math.max(1, Math.floor(windowMs) || COUNTDOWN_CACHE_WINDOW_MS);
+  const index = Math.floor(nowMs / size);
+  return { index, endsAt: (index + 1) * size };
+}
+
+/**
+ * Whole seconds a shared cache may still keep an image of a window that ends
+ * at `endsAtMs`, asked at `nowMs` — rounded DOWN, so a cached copy is never
+ * served past the window; 0 means: do not cache.
+ * @param {number} endsAtMs
+ * @param {number} nowMs
+ */
+export function countdownCacheSeconds(endsAtMs, nowMs) {
+  const s = Math.floor((endsAtMs - nowMs) / 1000);
+  return Number.isFinite(s) && s > 0 ? s : 0;
+}
+
+/**
  * The moments the frames show: `now`, then one per minute, at most `frames`
  * of them. Stops right after the first frame past the deadline, so an offer
  * that ends within the hour counts down to "expired" and holds there.
