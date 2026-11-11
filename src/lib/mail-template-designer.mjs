@@ -452,6 +452,17 @@ Weitere Werte: menu.separator ${MENU_SEPARATORS.join(" ")} · text.bullet ${TEXT
 Antworte nie nur mit Text: Dein Ergebnis gibst du ausschließlich über submit_design ab.`;
 
 /**
+ * The provider options of a run: the tier's (anthropicOptionsFor("designer"):
+ * adaptive thinking, effort, fallbacks) plus top-level automatic prompt
+ * caching, so every later step of the loop reads the conversation so far from
+ * the cache (the system prompt carries its own breakpoint in runDesigner).
+ * @param {Record<string, any>} base
+ */
+export function designerProviderOptions(base) {
+  return { ...(base ?? {}), anthropic: { ...(base?.anthropic ?? {}), cacheControl: { type: "ephemeral" } } };
+}
+
+/**
  * The system prompt of a run — stable per use (no dates, no ids), so
  * Anthropic's prompt cache serves it to every run of the same use.
  * @param {{ use: "bulk" | "personal" | "template" }} opts

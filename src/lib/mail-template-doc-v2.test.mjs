@@ -314,3 +314,15 @@ test("product contrast: the name in the heading colour is judged too", () => {
   const ok = validateMailTemplateDoc(normalizeMailTemplateDoc({ blocks: [{ id: "p", type: "product", ref: "x" }, { id: "f", type: "footer" }] }), "bulk");
   assert.ok(!ok.warnings.some((w) => /Kontrast/.test(w.message)));
 });
+
+test("text on a background picture is judged against the fallback colour", () => {
+  const sec = (background) =>
+    normalizeMailTemplateDoc({
+      blocks: [
+        { id: "s", type: "section", bgImage: "https://x.de/banner.jpg", background, columns: [{ id: "c", blocks: [{ id: "h", type: "heading", text: "Black Week", color: "#111111" }] }] },
+        { id: "f", type: "footer" },
+      ],
+    });
+  assert.ok(validateMailTemplateDoc(sec("#000000"), "bulk").warnings.some((w) => w.blockId === "h" && /Kontrast/.test(w.message)));
+  assert.ok(!validateMailTemplateDoc(sec(null), "bulk").warnings.some((w) => w.blockId === "h" && /Kontrast/.test(w.message)));
+});

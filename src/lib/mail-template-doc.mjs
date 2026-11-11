@@ -1308,7 +1308,9 @@ export function validateMailTemplateDoc(doc, use, opts = {}) {
       const sec = sections.get(sectionId);
       const col = sec?.columns?.[columnIndex ?? 0];
       if (col?.background) return col.background;
-      if (sec?.background && !sec?.bgImage) return sec.background;
+      // On a background picture the text is judged against its fallback colour
+      // (what shows while pictures are blocked); without one it is not judged.
+      if (sec?.background) return sec.background;
       if (sec?.bgImage) return null;
     }
     return style.cardBackground ?? "#ffffff";

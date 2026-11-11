@@ -29,6 +29,7 @@ import {
   checkDesignSubmission,
   describeDocProducts,
   designerFailureMessage,
+  designerProviderOptions,
   designerSystemPrompt,
   designerUserContent,
   resolveRefsAgainstCatalog,
@@ -127,7 +128,6 @@ export async function assistMailTemplate(
       isCatalogImage,
       ownOrigin: ownOrigin(),
     };
-    const base = anthropicOptionsFor(TIER);
     const run = await runDesigner({
       model: anthropic(MODEL),
       system: designerSystemPrompt({ use: input.use }),
@@ -141,7 +141,7 @@ export async function assistMailTemplate(
         today: new Date(),
         docProducts: current ? describeDocProducts(catalog, docProductRefs(current)) : [],
       }),
-      providerOptions: { ...base, anthropic: { ...(base.anthropic ?? {}), cacheControl: { type: "ephemeral" } } },
+      providerOptions: designerProviderOptions(anthropicOptionsFor(TIER)),
       maxOutputTokens: maxOutputTokensFor(TIER, DESIGNER_LIMITS.answerTokens),
       searchProducts: (query: string, max?: number) => searchDesignerProducts(catalog, query, max),
       listCollections: listShopCollections,
