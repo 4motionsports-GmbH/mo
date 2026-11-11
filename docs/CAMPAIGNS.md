@@ -1230,6 +1230,11 @@ the same statement. From then on the content is read-only (save → 409). Every 
 `personalizeFrozen` ([`mailing-core.mjs`](../src/lib/mailing-core.mjs), tested) — string
 replacement of the placeholders and nothing else; a mail with a leftover placeholder is not sent.
 The test mail is the same render from the same sender with the same headers, links untracked.
+Changing the Absender after the test mail clears it (`clearMailingTest`): the release needs a test
+that showed the From, DKIM alignment and Reply-To that will go out.
+A tracked Rundmail link (`?l=`) that cannot be resolved — the database unreachable, or a copy of a
+batch whose result stayed unclear — redirects to the shop's start page (personal mails fall back to
+the cart).
 
 ### 9.3 Checks before the release
 
@@ -1243,7 +1248,9 @@ route refuses too), warnings and infos are shown:
   `javascript:`/`data:` link.
 - **Warnings**: subject over 60 characters (phones), mostly capitals, several „!“; typical spam
   words in subject, preview line or the operator's text (not the legal footer); no preview line;
-  over 80 KB; many pictures with little text; over 30 links; link shorteners; `http://` links;
+  over 80 KB; many pictures with little text (counted on the operator's content — the legal
+  footer's ~480 characters and icons would hide every image-only mail); over 30 links; link
+  shorteners; `http://` links;
   recipients without double opt-in who are skipped while `CAMPAIGN_ALLOW_SINGLE_OPT_IN` is off;
   products that are sold out right now (they may be added on purpose — they are missing from the
   whole Rundmail if still sold out at the release, because the content is frozen), products no
@@ -1288,8 +1295,16 @@ back-off 20 s … 5 min, at most 30 attempts, never after 23 hours (Resend keeps
 then its recipients become `skipped` (`versand_unklar`) and the workspace says to check Resend;
 a quota, sender or configuration error (nothing was sent) puts the batch back and **pauses** the
 Rundmail with the message („Fortsetzen“ once fixed); an idempotency conflict marks the batch
-`unklar`. A missing `UNSUBSCRIBE_SECRET` or `CAMPAIGN_SENDS_APPROVED` switched off pauses too. When
-nothing is pending or in flight, the mailing is finished and the campaign `beendet`.
+`unklar`. A missing `UNSUBSCRIBE_SECRET` or `CAMPAIGN_SENDS_APPROVED` switched off pauses too.
+A Resend call that has not answered after 30 seconds is aborted (`RESEND_BATCH_TIMEOUT_MS` in
+`email.ts`, shorter than the run's lease) and counts as a result unknown — the same batch again
+under the same key, never a second runner on a call still in flight.
+„Puts the batch back“ applies only to a batch that has certainly never reached Resend — freshly
+claimed and never attempted (`mayRequeueBatch`). A batch that may already be delivered (an earlier
+attempt with unknown result, or left open by a run that died during the call) is never put back
+for a new batch and a new key: it stays `offen` and is tried again under its own key, where Resend
+answers with the first result — so a rate limit or quota error on the retry cannot mail anyone twice.
+When nothing is pending or in flight, the mailing is finished and the campaign `beendet`.
 
 ### 9.5 Deliverability
 
@@ -1300,8 +1315,8 @@ nothing is pending or in flight, the mailing is finished and the campaign `beend
 - **Headers on every mail** — `List-Unsubscribe` (the recipient's https link) with
   `List-Unsubscribe-Post: List-Unsubscribe=One-Click` (RFC 8058: mail clients unsubscribe with one
   `POST /api/unsubscribe`, no page — required by Gmail and Yahoo for bulk senders), `Precedence:
-  bulk`, `X-Auto-Response-Suppress: OOF, AutoReply`, an own `Message-ID`; Resend tag
-  `kind=rundmail`.
+  bulk`, `X-Auto-Response-Suppress: OOF, AutoReply`; the `Message-ID` is Resend's; Resend tags
+  `campaign=<id>` and `kind=rundmail`.
 - No open-tracking pixel — clicks are counted by Mo's own redirect; a plain-text part next to the
   HTML; the preview line; at most 100 KB.
 - **Engagement first** — people who clicked or bought recently get the mail first, so mailbox

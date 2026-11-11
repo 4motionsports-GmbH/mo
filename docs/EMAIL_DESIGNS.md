@@ -218,6 +218,17 @@ image is served `no-store`, so the image proxies of Gmail and Apple Mail reload 
 nothing is stored or counted per request. `?w=m` renders the 350-px phone variant the mail swaps in
 on small screens.
 
+**One image per minute.** A Rundmail sends the same countdown URL to every recipient, and Apple
+Mail's privacy proxy fetches it at every delivery — rendering each fetch anew (~0.7 s of CPU) made
+the countdown the hot spot of a big send. Time is therefore cut into one-minute windows
+(`countdownCacheWindow`, tested): every fetch of a token and variant within a minute gets the same
+image, drawn for the **end** of that minute, so a copy served at any moment of the minute only
+understates the time left (by less than a minute). The image is kept only until the minute ends —
+per server instance (concurrent fetches share one render) and on Vercel's CDN
+(`Vercel-CDN-Cache-Control: max-age=<seconds left in the minute>`, which Vercel strips before the
+response leaves its network); browsers and mail proxies still get `no-store`. After a deploy, two
+fetches of a countdown URL within the same minute show `x-vercel-cache: HIT` on the second.
+
 The image is an **animated GIF that keeps counting after the request**: one frame per minute for the
 next hour (`COUNTDOWN_FRAMES` × `COUNTDOWN_FRAME_MS`), played once, the last frame stays. Mail
 clients load an image **once per open** — Apple Mail with Mail Privacy Protection even only once at
@@ -594,7 +605,11 @@ app's own public route `GET /api/email-hero-image/<file>` (mail clients load pic
 from the mailbox). The route can reach only files under `email-heroes/` — `parseHeroBlobFile`
 (tested) refuses separators, traversal and names that are not `.png`, `.jpg` or `.jpeg`; that is the
 boundary that keeps the private catalogue blobs unreachable. It is served with
-`Cache-Control: public, max-age=31536000, immutable` (file names carry a random suffix).
+`Cache-Control: public, max-age=31536000, immutable` (file names carry a random suffix). Shared
+pictures — template pictures and a campaign's default picture, never a person's file — also carry
+`Vercel-CDN-Cache-Control: max-age=31536000`, so Vercel's CDN keeps them (`max-age` alone does not
+cache a function response there) and the fetches of a big send do not each run the route and a
+private Blob read; per-person heroes stay off the CDN, so an erasure removes them at once.
 
 Generation needs `OPENAI_API_KEY` + `BLOB_READ_WRITE_TOKEN`; the Kampagnenbild upload only
 `BLOB_READ_WRITE_TOKEN`. Everything is fail-soft: without configuration or a picture the default image
