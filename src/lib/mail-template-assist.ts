@@ -16,7 +16,10 @@
 // every later step of the loop and every run of the same use within five
 // minutes reads the long prompt from the cache), the I/O of
 // mail-template-designer-io.ts, the usage meter (summed over all steps, also
-// for a run that fails late) and the error report. Never throws.
+// for a run that fails late) and the error report. When the operator cancels
+// (the client disconnects) nothing more happens after the model: no picture
+// is stored for a result nobody receives — the usage is still recorded.
+// Never throws.
 
 import { anthropic } from "@ai-sdk/anthropic";
 import { anthropicOptionsFor, maxOutputTokensFor, modelFor } from "./ai-models.mjs";
@@ -29,6 +32,7 @@ import {
   checkDesignSubmission,
   describeDocProducts,
   designerFailureMessage,
+  designerMoChatUrl,
   designerProviderOptions,
   designerSystemPrompt,
   designerUserContent,
@@ -39,7 +43,7 @@ import {
   type DesignerRequest,
 } from "./mail-template-designer.mjs";
 import {
-  isKnownCollectionUrl,
+  isKnownShopPage,
   listShopCollections,
   loadDesignerCatalog,
   prepareDesignerAttachments,
@@ -78,6 +82,9 @@ function isDisconnect(signal: AbortSignal | undefined): boolean {
   return Boolean(signal?.aborted) && reason?.name === "AbortError";
 }
 
+/** The answer for a client that went away — nobody reads it. */
+const CANCELLED: TemplateAssistResult = { ok: false, message: "Abgebrochen — die Verbindung wurde getrennt." };
+
 /**
  * Build or change a block document from the operator's instruction, the
  * session's earlier turns and the attachments. `onProgress` gets German status
@@ -110,7 +117,8 @@ export async function assistMailTemplate(
       originals = prepared.originals;
     }
 
-    const { catalog, isCatalogImage } = await loadDesignerCatalog();
+    const { catalog, isCatalogImage, shopFilePrefixes } = await loadDesignerCatalog();
+    if (isDisconnect(opts.signal)) return CANCELLED;
     const current = input.doc ? normalizeMailTemplateDoc(input.doc) : null;
     const operatorText = [
       input.instruction,
@@ -118,19 +126,23 @@ export async function assistMailTemplate(
       input.context.subject ?? "",
       input.context.preheader ?? "",
     ].join("\n");
+    const moChatUrl = designerMoChatUrl();
     const checkContext = {
       use: input.use,
       operatorText,
       currentDoc: current,
-      attachments: attachments.map((a) => ({ index: a.index, kind: a.kind, name: a.name })),
+      // the text of HTML / EML / TXT attachments as the model reads it — a second source of named values
+      attachments: attachments.map((a) => ({ index: a.index, kind: a.kind, name: a.name, text: a.text ?? null, subject: a.subject ?? null })),
       resolveRefs: (refs: string[]) => resolveRefsAgainstCatalog(catalog, refs),
-      isKnownShopUrl: isKnownCollectionUrl,
+      isKnownShopUrl: isKnownShopPage,
       isCatalogImage,
+      shopFilePrefixes,
       ownOrigin: ownOrigin(),
+      moChatUrl,
     };
     const run = await runDesigner({
       model: anthropic(MODEL),
-      system: designerSystemPrompt({ use: input.use }),
+      system: designerSystemPrompt({ use: input.use, moChatUrl }),
       userContent: designerUserContent({
         instruction: input.instruction,
         history: input.history,
@@ -160,6 +172,8 @@ export async function assistMailTemplate(
       cacheReadTokens: run.usage.cacheReadTokens,
       cacheWriteTokens: run.usage.cacheWriteTokens,
     });
+    // The operator cancelled: no picture is stored for a draft nobody receives (template files are never deleted).
+    if (isDisconnect(opts.signal)) return CANCELLED;
 
     if (!run.ok) {
       if (run.error && !isDisconnect(opts.signal)) {

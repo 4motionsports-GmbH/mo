@@ -7,8 +7,10 @@
 //     use: "bulk" | "personal" | "template",
 //     history: [{ role: "user" | "assistant", text }]   — ≤ 8 turns of this session,
 //     attachments: [{ name, mediaType, data /* base64 */ }]  — ≤ 6: image/png|jpeg|webp|gif,
-//                  application/pdf, text/html, text/plain, message/rfc822 (text kinds: base64 of UTF-8),
-//     context?: { subject?, preheader? } }
+//                  application/pdf, text/html, text/plain, message/rfc822 (text kinds: base64 of UTF-8;
+//                  HTML / TXT ≤ 500 KB, .eml ≤ 400 KB decoded — refused with 400 before decoding),
+//     context?: { subject?, preheader?, language?: "de" | "en" } }  — the Rundmail's subject, preview
+//                  line and „Sprache“ ("en": texts, subject and preview line in English)
 //
 // Errors before the stream starts (guard, bad JSON, invalid body, 413 too
 // large, no ANTHROPIC_API_KEY) are the usual JSON envelope with their status.
@@ -20,9 +22,10 @@
 // A heartbeat line (repeating the current status) every 15 s keeps proxies
 // from closing the idle connection while the model thinks. The model is
 // aborted at 285 s (a German timeout message, or the last checked draft) so
-// the answer always arrives inside maxDuration. Only PROPOSES: nothing is
-// stored except attachment pictures the accepted design uses. Metered in
-// ai_usage (template_assist), audit-logged (template.assist).
+// the answer always arrives inside maxDuration; a client that disconnects
+// („Abbrechen“) aborts it too, and then no picture is stored. Only PROPOSES:
+// nothing is stored except attachment pictures the accepted design uses.
+// Metered in ai_usage (template_assist), audit-logged (template.assist).
 
 import { guardAdminPost, adminJsonError } from "@/lib/admin-api";
 import { recordAdminAccess } from "@/lib/admin-access-log";

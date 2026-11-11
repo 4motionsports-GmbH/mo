@@ -4,11 +4,21 @@ import assert from "node:assert/strict";
 import {
   compactUrlLabel,
   emailLinkHtml,
+  isLinkableProseUrl,
+  proseLinks,
+  proseLinkUrls,
   renderEmailProseHtml,
   emailProseToText,
   plainTextEmailHtml,
   productNameLookup,
 } from "./email-prose.mjs";
+
+/** The hrefs of rendered prose, entity-decoded (what a mail client opens). */
+function renderedHrefs(html) {
+  return [...html.matchAll(/<a href="([^"]*)"/g)].map((m) =>
+    m[1].replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&")
+  );
+}
 
 // ---------------------------------------------------------------------------
 // renderEmailProseHtml — markdown links
@@ -275,4 +285,89 @@ test("emailProseToText strips bold markers", () => {
     emailProseToText("**Rücken und Core:** Die [Bank](https://s.example/p) hilft."),
     "Rücken und Core: Die Bank (https://s.example/p) hilft."
   );
+});
+
+// ---------------------------------------------------------------------------
+// links with a user name / password — a disguised host is never a link
+// ---------------------------------------------------------------------------
+
+/** The reviewer's payloads: each LOOKS like the shop and would open evil.example. */
+const USERINFO_PAYLOADS = {
+  mdApostrophe: "Jetzt [Konto bestätigen](https://motionsports.de'@evil.example/login) und sparen.",
+  mdQuote: 'Jetzt [Konto bestätigen](https://motionsports.de"@evil.example/login) und sparen.',
+  mdBracket: "Jetzt [Konto bestätigen](https://motionsports.de]@evil.example/login) und sparen.",
+  mdBrace: "Jetzt [Konto bestätigen](https://motionsports.de{@evil.example/login) und sparen.",
+  bareBrace: "Hier entlang: https://motionsports.de{@evil.example/login und sparen.",
+  anchorSingleQ: `Jetzt <a href='https://motionsports.de"@evil.example/login'>Konto bestätigen</a> und sparen.`,
+  plainUserinfo: "Jetzt [Konto](https://user:pass@motionsports.de/login) prüfen.",
+};
+
+test("a URL with a user name or password is shown as text, never as a link", () => {
+  for (const [name, body] of Object.entries(USERINFO_PAYLOADS)) {
+    const html = renderEmailProseHtml(body);
+    assert.doesNotMatch(html, /<a /, name);
+    assert.deepEqual(proseLinkUrls(body), [], name);
+    // the check still sees the URL (to tell the author) — just not as linkable
+    const links = proseLinks(body);
+    assert.equal(links.length, 1, name);
+    assert.equal(links[0].linkable, false, name);
+  }
+  assert.equal(renderEmailProseHtml(USERINFO_PAYLOADS.mdApostrophe), "Jetzt Konto bestätigen und sparen.");
+  assert.equal(emailLinkHtml("https://motionsports.de'@evil.example/x", "Shop"), "Shop");
+  assert.equal(emailLinkHtml("https://a:b@a.example/", "<x>"), "&lt;x&gt;");
+  assert.equal(isLinkableProseUrl("https://motionsports.de/products/x?a=1&b=2"), true);
+  assert.equal(isLinkableProseUrl("HTTPS://MOTIONSPORTS.DE/"), true);
+  assert.equal(isLinkableProseUrl("https://motionsports.de@evil.example/"), false);
+  assert.equal(isLinkableProseUrl("https://a.example:99999/"), false, "an unparseable URL is no link");
+  assert.equal(isLinkableProseUrl("javascript:alert(1)"), false);
+  assert.equal(isLinkableProseUrl(null), false);
+});
+
+// ---------------------------------------------------------------------------
+// proseLinks / proseLinkUrls — exactly the links the renderer makes
+// ---------------------------------------------------------------------------
+
+test("proseLinks: kind, URL, label and where it stands — the same scan as the renderer", () => {
+  const body = 'A [Bank](https://a.example/bank) und <a class="x" href="https://a.example/z">Z</a>, dann https://a.example/y. Ende';
+  const links = proseLinks(body);
+  assert.deepEqual(
+    links.map((l) => [l.kind, l.url, l.label, l.linkable]),
+    [
+      ["markdown", "https://a.example/bank", "Bank", true],
+      ["anchor", "https://a.example/z", "Z", true],
+      ["bare", "https://a.example/y", "", true],
+    ]
+  );
+  for (const l of links) assert.equal(body.slice(l.urlStart, l.urlEnd), l.url);
+  assert.equal(body.slice(links[0].start, links[0].end), "[Bank](https://a.example/bank)");
+  assert.equal(body.slice(links[1].start, links[1].end), '<a class="x" href="https://a.example/z">Z</a>');
+  assert.deepEqual(proseLinkUrls(body), renderedHrefs(renderEmailProseHtml(body)));
+  // an anchor href across lines: the URL as linked (no line break), the span as written
+  const multi = '<a href="https://a.example/x\n/y">L</a>';
+  const [m] = proseLinks(multi);
+  assert.equal(m.url, "https://a.example/x/y");
+  assert.equal(multi.slice(m.urlStart, m.urlEnd), "https://a.example/x\n/y");
+  assert.deepEqual(proseLinks("kein Link, nur Text"), []);
+});
+
+test("proseLinkUrls equals the rendered hrefs — also where a narrower URL pattern would stop early", () => {
+  const bodies = [
+    ...Object.values(USERINFO_PAYLOADS),
+    "Mehr [im Blog](https://motionsports.de/blogs/x) und auf https://fremd.example/x.",
+    "[a](https://a.example/x{y}) https://b.example/p{q}r 'https://c.example/q'",
+    "<a data-href=\"https://a.example/first\" href=\"https://a.example/second\">x</a>",
+    "**[Name](https://a.example/n)** und **fett**",
+    "x https://a.example/**y** z",
+  ];
+  for (const body of bodies) assert.deepEqual(proseLinkUrls(body), renderedHrefs(renderEmailProseHtml(body)), body);
+  // the anchor pattern takes the first href-like attribute — and so does the scan
+  assert.deepEqual(proseLinkUrls("<a data-href=\"https://a.example/first\" href=\"https://a.example/second\">x</a>"), ["https://a.example/first"]);
+});
+
+test("asterisks inside a linked URL never become <strong> inside the href", () => {
+  const html = renderEmailProseHtml("x https://a.example/**y** z **fett**");
+  assert.match(html, /<a href="https:\/\/a\.example\/\*\*y\*\*"/);
+  assert.match(html, /<strong>fett<\/strong>/);
+  // a bold span around a link still works
+  assert.match(renderEmailProseHtml("**[Laufband X](https://a.example/l)** ist super."), /^<strong><a [^>]*>Laufband X<\/a><\/strong>/);
 });

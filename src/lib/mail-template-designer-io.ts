@@ -2,15 +2,21 @@
 // wiring mail-template-assist.ts). docs/EMAIL_TEMPLATES.md §6.
 //
 //   * the catalog behind search_products and the submission checks
-//     (loadProductCatalog, cached 60 s by catalog-store) and the set of its
-//     picture URLs (a product picture is only allowed when it is one);
-//   * the shop's collections for list_collections and the link check —
-//     Shopify Admin GraphQL, cached 10 minutes per instance, fail-soft (an
-//     empty list with a German note when Shopify is not configured or down);
-//   * the attachments: decoded and checked, pictures through sharp for the
-//     MODEL only (EXIF-rotated, at most 1600 px wide, long screenshots cut
-//     into parts — the stored original is untouched), PDFs as they are,
-//     HTML / EML / TXT as text (EML → its HTML part);
+//     (loadProductCatalog, cached 60 s by catalog-store), the set of its
+//     picture URLs (a product picture is only allowed when it is one) and
+//     the shop's own Shopify file paths (where an attachment's pictures may
+//     come from);
+//   * the shop's collections and pages for list_collections and the link
+//     check — Shopify Admin GraphQL, cached 10 minutes per instance (a failed
+//     or empty answer 60 seconds; callers at the same time share one
+//     request), fail-soft (an empty list with a German note when Shopify is
+//     not configured or down);
+//   * the attachments: decoded and checked (a text file over the size limit
+//     is refused before it is decoded), pictures through sharp for the MODEL
+//     only (EXIF-rotated, at most 1600 px wide, long screenshots cut into
+//     parts, a transparent one laid on a background it stands out on — the
+//     stored original is untouched), PDFs as they are, HTML / EML / TXT as
+//     text (EML → its HTML part);
 //   * after an accepted design, the attachment pictures it uses („anhang:N“)
 //     stored with storeTemplateImage and swapped in (or cleared with a note
 //     when Blob is not configured or the upload fails).
@@ -26,11 +32,17 @@ import { reportError } from "./observability";
 import {
   DESIGNER_LIMITS,
   SHOP_URL,
+  base64DecodedBytes,
   catalogImageKeys,
   cleanHtmlForModel,
   collectionsFromGraphql,
+  pagesFromGraphql,
   parseEml,
+  pickFlattenBackground,
   replaceAttachmentPlaceholders,
+  shopFilePrefixes,
+  shopListCache,
+  textAttachmentSizeProblem,
   tilePlan,
   tilesPerImageFor,
   urlKey,
@@ -57,6 +69,9 @@ export interface PreparedDesignerAttachment {
   text?: string;
   subject?: string | null;
   truncated?: boolean;
+  /** A picture with transparency: the model's copy lies on `shownOn` (#rrggbb). */
+  transparent?: boolean;
+  shownOn?: string;
 }
 
 export interface ShopCollection {
@@ -65,9 +80,14 @@ export interface ShopCollection {
   url: string;
 }
 
+/** A page of the shop (/pages/<handle>: Ratgeber, Service, Aktionsseiten). */
+export type ShopPage = ShopCollection;
+
 /** Pixels sharp may decode for the model's copy (a full-page phone screenshot is ~30 MP). */
 const MODEL_IMAGE_PIXELS = 60_000_000;
 const COLLECTIONS_TTL_MS = 10 * 60 * 1000;
+/** A failed or empty lookup is kept this long — a slow or broken Shopify is not asked again for every link. */
+const COLLECTIONS_FAILED_TTL_MS = 60 * 1000;
 const COLLECTIONS_TIMEOUT_MS = 8_000;
 /** One picture upload may take this long (storeTemplateImage's own Blob timeout is 25 s). */
 const IMAGE_STORE_MAX_MS = 25_000;
@@ -76,26 +96,29 @@ const IMAGE_STORE_AFTER_DEADLINE_MS = 8_000;
 
 // ── catalog ──────────────────────────────────────────────────────────────────
 
-const imageKeysByCatalog = new WeakMap<readonly Product[], Set<string>>();
+const imageKeysByCatalog = new WeakMap<readonly Product[], { keys: Set<string>; prefixes: string[] }>();
 
-/** The catalog of one run and a check for its product pictures. Fail-soft: an empty catalog. */
-export async function loadDesignerCatalog(): Promise<{ catalog: Product[]; isCatalogImage: (url: string) => boolean }> {
+/**
+ * The catalog of one run, a check for its product pictures and the shop's own
+ * Shopify file paths (shopFilePrefixes). Fail-soft: an empty catalog.
+ */
+export async function loadDesignerCatalog(): Promise<{ catalog: Product[]; isCatalogImage: (url: string) => boolean; shopFilePrefixes: string[] }> {
   let catalog: Product[] = [];
   try {
     catalog = await loadProductCatalog();
   } catch (err) {
     reportError(err, { route: "lib/mail-template-designer-io", phase: "catalog" });
   }
-  let keys = imageKeysByCatalog.get(catalog);
-  if (!keys) {
-    keys = catalogImageKeys(catalog) as Set<string>;
-    imageKeysByCatalog.set(catalog, keys);
+  let derived = imageKeysByCatalog.get(catalog);
+  if (!derived) {
+    derived = { keys: catalogImageKeys(catalog) as Set<string>, prefixes: shopFilePrefixes(catalog) };
+    imageKeysByCatalog.set(catalog, derived);
   }
-  const set = keys;
-  return { catalog, isCatalogImage: (url: string) => set.has(urlKey(url)) };
+  const { keys, prefixes } = derived;
+  return { catalog, isCatalogImage: (url: string) => keys.has(urlKey(url)), shopFilePrefixes: prefixes };
 }
 
-// ── collections ──────────────────────────────────────────────────────────────
+// ── collections and pages ────────────────────────────────────────────────────
 
 const COLLECTIONS_QUERY = /* GraphQL */ `
   query DesignerCollections($query: String) {
@@ -108,50 +131,111 @@ const COLLECTIONS_QUERY = /* GraphQL */ `
   }
 `;
 
-let collectionsCache: { at: number; list: ShopCollection[] } | null = null;
+const PAGES_QUERY = /* GraphQL */ `
+  query DesignerPages($query: String) {
+    pages(first: 100, query: $query) {
+      nodes {
+        handle
+        title
+        isPublished
+      }
+    }
+  }
+`;
 
 const SEARCH_LINK_HINT = `für Kategorie-Links ${SHOP_URL}/search?q=<Begriff> verwenden`;
 
-/**
- * The shop's collections (published ones first; when the filter finds none,
- * all), cached 10 minutes. Never throws.
- */
-export async function listShopCollections(): Promise<{ collections: ShopCollection[]; note?: string }> {
-  if (!isShopifyConfigured()) return { collections: [], note: `Shopify ist nicht verbunden — ${SEARCH_LINK_HINT}.` };
-  if (collectionsCache && Date.now() - collectionsCache.at < COLLECTIONS_TTL_MS) return { collections: collectionsCache.list };
-  try {
-    const opts = { timeoutMs: COLLECTIONS_TIMEOUT_MS, retry: false } as const;
-    let list = collectionsFromGraphql(await adminGraphql(COLLECTIONS_QUERY, { query: "published_status:published" }, opts));
-    if (list.length === 0) list = collectionsFromGraphql(await adminGraphql(COLLECTIONS_QUERY, { query: null }, opts));
-    collectionsCache = { at: Date.now(), list };
-    return list.length ? { collections: list } : { collections: [], note: `Der Shop hat keine Kollektionen — ${SEARCH_LINK_HINT}.` };
-  } catch (err) {
-    reportError(err, { route: "lib/mail-template-designer-io", phase: "collections" });
-    return { collections: [], note: `Die Kollektionen konnten gerade nicht geladen werden — ${SEARCH_LINK_HINT}.` };
-  }
+/** A cached Shopify list (shopListCache: 10 minutes, a failed or empty answer 60 seconds, one request at a time). */
+function cachedShopList(phase: string, load: () => Promise<ShopCollection[]>) {
+  return shopListCache<ShopCollection>(load, {
+    okTtlMs: COLLECTIONS_TTL_MS,
+    emptyTtlMs: COLLECTIONS_FAILED_TTL_MS,
+    onError: (err) => reportError(err, { route: "lib/mail-template-designer-io", phase }),
+  });
 }
 
-/** Is this a /collections/<handle> page of the shop? (the submission check's isKnownShopUrl) */
-export async function isKnownCollectionUrl(url: string): Promise<boolean> {
+const SHOP_QUERY_OPTS = { timeoutMs: COLLECTIONS_TIMEOUT_MS, retry: false } as const;
+
+/** The shop's collections (published ones first; when the filter finds none, all). */
+const shopCollections = cachedShopList("collections", async () => {
+  let list = collectionsFromGraphql(await adminGraphql(COLLECTIONS_QUERY, { query: "published_status:published" }, SHOP_QUERY_OPTS));
+  if (list.length === 0) list = collectionsFromGraphql(await adminGraphql(COLLECTIONS_QUERY, { query: null }, SHOP_QUERY_OPTS));
+  return list;
+});
+
+/** The shop's published pages (Ratgeber, Service, Aktionsseiten). */
+const shopPages = cachedShopList("pages", async () => pagesFromGraphql(await adminGraphql(PAGES_QUERY, { query: "published_status:published" }, SHOP_QUERY_OPTS)));
+
+/**
+ * The tool list_collections: the shop's collections and pages, each with its
+ * shop URL. Never throws — without Shopify, or when it is down, empty lists
+ * with a German note.
+ */
+export async function listShopCollections(): Promise<{ collections: ShopCollection[]; pages: ShopPage[]; note?: string }> {
+  if (!isShopifyConfigured()) return { collections: [], pages: [], note: `Shopify ist nicht verbunden — ${SEARCH_LINK_HINT}; Seiten (/pages/…) nur, wenn die Person sie nennt.` };
+  const [collections, pages] = await Promise.all([shopCollections(), shopPages()]);
+  const notes: string[] = [];
+  if (collections.failed) notes.push(`Die Kollektionen konnten gerade nicht geladen werden — ${SEARCH_LINK_HINT}.`);
+  else if (collections.list.length === 0) notes.push(`Der Shop hat keine Kollektionen — ${SEARCH_LINK_HINT}.`);
+  if (pages.failed) notes.push("Die Seiten des Shops konnten gerade nicht geladen werden — Seiten (/pages/…) nur, wenn die Person sie nennt.");
+  return { collections: collections.list, pages: pages.list, ...(notes.length ? { note: notes.join(" ") } : {}) };
+}
+
+/**
+ * Does this /collections/<handle> or /pages/<handle> page of the shop exist?
+ * (the submission check's isKnownShopUrl — one cached lookup per list)
+ */
+export async function isKnownShopPage(url: string): Promise<boolean> {
+  let kind: string;
   let handle: string;
   try {
-    const m = /^\/collections\/([^/]+)\/?$/.exec(new URL(url).pathname);
+    const m = /^\/(collections|pages)\/([^/]+)\/?$/.exec(new URL(url).pathname);
     if (!m) return false;
-    handle = decodeURIComponent(m[1]);
+    kind = m[1];
+    handle = decodeURIComponent(m[2]);
   } catch {
     return false;
   }
-  const { collections } = await listShopCollections();
-  return collections.some((c) => c.handle === handle);
+  if (!isShopifyConfigured()) return false;
+  const { list } = await (kind === "pages" ? shopPages() : shopCollections());
+  return list.some((c) => c.handle === handle);
 }
 
 // ── attachments ──────────────────────────────────────────────────────────────
 
-type PreparedImage = { width: number; height: number; parts: Array<{ data: Uint8Array; mediaType: string }> };
+type PreparedImage = {
+  width: number;
+  height: number;
+  parts: Array<{ data: Uint8Array; mediaType: string }>;
+  transparent: boolean;
+  background: string;
+};
+
+/**
+ * The background a picture's model copy is laid on: white, unless the picture
+ * has transparent pixels — then the one its visible pixels stand out on
+ * (pickFlattenBackground over a small copy: a white logo cut-out would
+ * otherwise reach the model as a blank white picture).
+ */
+async function flattenBackground(bytes: Buffer, hasAlpha: boolean): Promise<{ transparent: boolean; background: string }> {
+  if (!hasAlpha) return { transparent: false, background: "#ffffff" };
+  try {
+    const { data } = await sharp(bytes, { limitInputPixels: MODEL_IMAGE_PIXELS })
+      .rotate()
+      .resize({ width: 64, height: 64, fit: "inside" })
+      .ensureAlpha()
+      .raw()
+      .toBuffer({ resolveWithObject: true });
+    return pickFlattenBackground(data);
+  } catch {
+    return { transparent: false, background: "#ffffff" };
+  }
+}
 
 /**
  * A picture for the model: oriented, at most 1600 px wide, a long screenshot
- * in parts (JPEG). "unreadable" / "too_large" when it cannot be used.
+ * in parts (JPEG), a transparent one on a contrasting background.
+ * "unreadable" / "too_large" when it cannot be used.
  */
 async function prepareImage(bytes: Buffer, maxTiles: number): Promise<PreparedImage | "unreadable" | "too_large"> {
   let meta: sharp.Metadata;
@@ -172,14 +256,15 @@ async function prepareImage(bytes: Buffer, maxTiles: number): Promise<PreparedIm
   const sw = Math.max(1, Math.round(width * scale));
   const sh = Math.max(1, Math.round(height * scale));
   try {
+    const { transparent, background } = await flattenBackground(bytes, Boolean(meta.hasAlpha));
     const parts: Array<{ data: Uint8Array; mediaType: string }> = [];
     for (const tile of tilePlan({ width: sw, height: sh, maxTiles })) {
       let img = sharp(bytes, { limitInputPixels: MODEL_IMAGE_PIXELS }).rotate().resize({ width: sw, height: sh, fit: "fill" });
       if (tile.top > 0 || tile.height < sh) img = img.extract({ left: 0, top: tile.top, width: sw, height: tile.height });
-      const data = await img.flatten({ background: "#ffffff" }).jpeg({ quality: 85, mozjpeg: true }).toBuffer();
+      const data = await img.flatten({ background }).jpeg({ quality: 85, mozjpeg: true }).toBuffer();
       parts.push({ data, mediaType: "image/jpeg" });
     }
-    return { width, height, parts };
+    return { width, height, parts, transparent, background };
   } catch (err) {
     reportError(err, { route: "lib/mail-template-designer-io", phase: "image" });
     return "unreadable";
@@ -208,6 +293,9 @@ export async function prepareDesignerAttachments(
   for (const [i, a] of list.entries()) {
     const index = i + 1;
     const label = `Anhang ${index} („${a.name}“)`;
+    // A text file over the limit is refused BEFORE it is decoded (parseAssistRequest checks the same).
+    const tooBig = textAttachmentSizeProblem(a.kind, a.mediaType, base64DecodedBytes(a.data), a.name);
+    if (tooBig) return { ok: false, message: `Anhang ${index}: ${tooBig}` };
     const bytes = Buffer.from(a.data, "base64");
     if (bytes.length === 0) return { ok: false, message: `${label} ist leer.` };
     if (a.kind === "image") {
@@ -216,7 +304,15 @@ export async function prepareDesignerAttachments(
       if (img === "too_large") {
         return { ok: false, message: `${label} ist zu groß (über ${MODEL_IMAGE_PIXELS / 1_000_000} Megapixel) — bitte verkleinern oder in Teilen anhängen.` };
       }
-      attachments.push({ index, name: a.name, kind: "image", width: img.width, height: img.height, parts: img.parts });
+      attachments.push({
+        index,
+        name: a.name,
+        kind: "image",
+        width: img.width,
+        height: img.height,
+        parts: img.parts,
+        ...(img.transparent ? { transparent: true, shownOn: img.background } : {}),
+      });
       originals.set(index, bytes);
       continue;
     }

@@ -187,15 +187,20 @@ tested with `MockLanguageModelV3`):
 
 - **Tools, never forced** — `search_products` (the configurator's ranked catalog
   search, cards with ref, price label, stock, product page and JPG/PNG pictures),
-  `list_collections` (Shopify Admin, cached 10 minutes, fail-soft) and
+  `list_collections` (the shop's collections and pages from Shopify Admin — the
+  link check verifies `/collections/…` and `/pages/…` against the same lists;
+  cached 10 minutes, a failed or empty answer 60 seconds, callers at the same
+  time share one request, fail-soft) and
   `submit_design` (the whole document; the server normalises and checks it and
   answers `{ ok }` or `{ ok: false, problems }`, at most three rounds — after the
   third the offending values are cleared and the draft is accepted with a note).
   Tool choice stays `auto` (the 5.5 models reject a forced one); a model that
   answers in text only gets one reminder. The tool list is the same on every
   step, so replayed thinking blocks and the cache stay valid. At most 8 steps.
-- **Caching** — the system prompt (stable per use, no dates) carries a cache
-  breakpoint and the call sets top-level automatic caching
+- **Caching** — the system prompt (stable per use and deployment: no dates; the
+  only configured value in it is Mo's chat deep link `CAMPAIGN_MO_DEEPLINK_URL`
+  without its `utm_*`) carries a cache breakpoint and the call sets top-level
+  automatic caching
   (`providerOptions.anthropic.cacheControl`), so every later step of the loop reads
   the prompt, the attachments and the steps so far from the cache.
 - **Output cap** — `maxOutputTokensFor("designer", 32000)` = 64,000 (thinking
@@ -205,7 +210,11 @@ tested with `MockLanguageModelV3`):
   285 s; a watchdog settles the run 5 s later even if the transport ignores the
   abort. With less than 60 s left a submission is accepted (cleaned) instead of
   starting another round; a run cut off after a rejected draft returns that draft,
-  cleaned, with a warning instead of nothing.
+  cleaned, with a warning instead of nothing. When the operator cancels (the
+  client disconnects), the run ends there: its usage is recorded, no attachment
+  picture is stored. The submission checks are linear in their input (a crafted
+  HTML / EML attachment or model HTML never blocks the function); text
+  attachments over the browser's size limit are refused before decoding.
 - **Errors** — `designerFailureMessage` reads a `RetryError`'s `lastError` (the
   SDK's two retries of a 429 / 529 / 503 surface as a `RetryError`, so the old
   `err.statusCode` check never said „ausgelastet“), maps a cut-off answer
