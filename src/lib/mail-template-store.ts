@@ -17,6 +17,7 @@ import { getSql, type Sql } from "./db";
 import { reportError } from "./observability";
 import {
   MAIL_TEMPLATE_LIMITS,
+  docBlockCount,
   docHasHero,
   docSupportsPersonal,
   normalizeMailTemplateDoc,
@@ -46,6 +47,7 @@ export interface MailTemplateMeta {
   /** Has „Mos persönlicher Text“ → selectable as the design of Kampagne / Marketing mails. */
   supportsPersonal: boolean;
   hasHero: boolean;
+  /** Every block, the ones inside the columns of a section included (the footer too). */
   blockCount: number;
 }
 
@@ -74,7 +76,7 @@ export function templateMeta(t: MailTemplate): MailTemplateMeta {
     updatedAt: t.updatedAt,
     supportsPersonal: docSupportsPersonal(t.doc),
     hasHero: docHasHero(t.doc),
-    blockCount: t.doc.blocks.length,
+    blockCount: docBlockCount(t.doc),
   };
 }
 

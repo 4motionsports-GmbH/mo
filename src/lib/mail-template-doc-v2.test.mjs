@@ -303,3 +303,14 @@ test("unknown merge fields are found in every text field, also in columns and me
   const { errors } = validateMailTemplateDoc(doc, "bulk");
   for (const id of ["m", "p", "c"]) assert.ok(errors.some((e) => e.blockId === id && /Unbekannter Platzhalter/.test(e.message)), id);
 });
+
+test("product contrast: the name in the heading colour is judged too", () => {
+  const doc = normalizeMailTemplateDoc({
+    style: { headingColor: "#fafafa", textColor: "#111111", cardBackground: "#ffffff" },
+    blocks: [{ id: "p", type: "product", ref: "atx-hantelbank" }, { id: "f", type: "footer" }],
+  });
+  const v = validateMailTemplateDoc(doc, "bulk");
+  assert.ok(v.warnings.some((w) => w.blockId === "p" && /Kontrast/.test(w.message)));
+  const ok = validateMailTemplateDoc(normalizeMailTemplateDoc({ blocks: [{ id: "p", type: "product", ref: "x" }, { id: "f", type: "footer" }] }), "bulk");
+  assert.ok(!ok.warnings.some((w) => /Kontrast/.test(w.message)));
+});

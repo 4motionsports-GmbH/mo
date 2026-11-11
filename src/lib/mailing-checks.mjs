@@ -13,6 +13,7 @@
 // (mailing-send.ts → campaign-gates.mjs) — these checks never replace them.
 
 import { MAIL_FOOTER_MARKER } from "./mail-template-render.mjs";
+import { rewriteLinkHrefs } from "./mailing-core.mjs";
 
 /** Gmail clips a mail above 102 KB — the unsubscribe footer would vanish. */
 export const MAILING_HTML_HARD_LIMIT = 100 * 1024;
@@ -157,7 +158,12 @@ export function mailingChecks(input) {
   if (imgCount >= 2 && textChars < 400) {
     warnings.push({ key: "image_heavy", level: "warning", message: "Viele Bilder, wenig Text — Spamfilter mögen reine Bild-Mails nicht, und bei blockierten Bildern sieht man kaum etwas. Etwas Text ergänzen." });
   }
-  const hrefs = Array.from(html.matchAll(/\shref\s*=\s*"([^"]*)"/gi), (m) => m[1]);
+  // The click targets only — the web-font stylesheet (<link href>) is no link.
+  const hrefs = [];
+  rewriteLinkHrefs(html, (value) => {
+    hrefs.push(value);
+    return null;
+  });
   const httpLinks = hrefs.filter((h) => /^https?:\/\//i.test(h));
   if (new Set(httpLinks).size > 30) {
     warnings.push({ key: "many_links", level: "warning", message: `${new Set(httpLinks).size} verschiedene Links — weniger Links wirken seriöser.` });
@@ -200,8 +206,8 @@ export function mailingChecks(input) {
       level: "warning",
       message:
         products.emptyBlocks === 1
-          ? "Ein Produkt-Baustein hat gerade kein lieferbares Produkt — er fehlt in der Rundmail samt Überschrift."
-          : `${products.emptyBlocks} Produkt-Bausteine haben gerade kein lieferbares Produkt — sie fehlen in der Rundmail samt Überschrift.`,
+          ? "Ein Produkt-Baustein hat gerade kein lieferbares Produkt — er fehlt in der Rundmail."
+          : `${products.emptyBlocks} Produkt-Bausteine haben gerade kein lieferbares Produkt — sie fehlen in der Rundmail.`,
     });
   }
   if (input.audience && !input.allowSingleOptIn) {

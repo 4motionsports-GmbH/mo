@@ -31,6 +31,7 @@ import { isShopifyConfigured } from "./shopify";
 import { KPI_CAMPAIGN_CHAT_STARTED, KPI_CAMPAIGN_EMAIL_CLICKED } from "./kpi-events";
 import type { KpiRange } from "./kpi-range";
 import { stripMarkdown } from "./tts-text.mjs";
+import { isWebFontStylesheetUrl } from "./mailing-core.mjs";
 
 export type CampaignContactStatus =
   | "pending"
@@ -1620,6 +1621,15 @@ export async function recordCampaignClick(
     const campaignId = row.campaign_id == null ? null : Number(row.campaign_id);
     const kind = (row.kind as string | null) ?? null;
     const link = kind === "rundmail" && Number.isInteger(opts.link) ? Number(opts.link) : null;
+
+    // A Rundmail released before 2026-11-11 froze its web-font stylesheet as a
+    // link: a mail client loading it is no click — redirect, record nothing.
+    if (kind === "rundmail" && campaignId != null && link != null && link >= 0) {
+      const target = (await sql`
+        SELECT links -> ${link}::int ->> 'url' AS url FROM campaign_mailings WHERE campaign_id = ${campaignId}
+      `) as Array<{ url: string | null }>;
+      if (isWebFontStylesheetUrl(target[0]?.url)) return { sendId, firstClick: false, shopUrl, campaignId, kind };
+    }
 
     await sql`
       UPDATE campaign_sends

@@ -35,8 +35,20 @@ import {
   normalizeMailTemplateDoc,
   parseTemplateImport,
 } from "@/lib/mail-template-doc.mjs";
+import { docBlockLimitProblem } from "@/lib/mail-template-slots.mjs";
 
 export const maxDuration = 30;
+
+/**
+ * A document body the route refuses before normalising it: too large, or more
+ * blocks than a template may hold (the blocks inside sections counted) —
+ * the normaliser would cut those silently.
+ */
+function docBodyError(raw: unknown): Response | null {
+  if (JSON.stringify(raw ?? {}).length > 400_000) return adminJsonError("too_large", "Die Vorlage ist zu groß.", 413);
+  const tooMany = docBlockLimitProblem(raw);
+  return tooMany ? adminJsonError("too_large", tooMany, 400) : null;
+}
 
 function writeError(res: Extract<TemplateWriteResult, { ok: false }>): Response {
   switch (res.reason) {
@@ -85,6 +97,10 @@ export async function POST(req: Request) {
         const description = cleanTemplateDescription(body.description);
         if (description === undefined) return adminJsonError("bad_request", "Beschreibung zu lang (max. 300 Zeichen).", 400);
         const starter = MAIL_TEMPLATE_STARTERS.find((s) => s.key === body.starter);
+        if (body.doc != null) {
+          const bad = docBodyError(body.doc);
+          if (bad) return bad;
+        }
         const doc = body.doc != null ? normalizeMailTemplateDoc(body.doc) : (starter ?? MAIL_TEMPLATE_STARTERS[1]).build();
         const res = await createMailTemplate({ name, description, doc });
         if (!res.ok) return writeError(res);
@@ -99,7 +115,8 @@ export async function POST(req: Request) {
         if (!name) return adminJsonError("bad_request", "Name mit 3–80 Zeichen angeben.", 400);
         const description = cleanTemplateDescription(body.description);
         if (description === undefined) return adminJsonError("bad_request", "Beschreibung zu lang (max. 300 Zeichen).", 400);
-        if (JSON.stringify(body.doc ?? {}).length > 400_000) return adminJsonError("too_large", "Die Vorlage ist zu groß.", 413);
+        const bad = docBodyError(body.doc);
+        if (bad) return bad;
         const doc = normalizeMailTemplateDoc(body.doc);
         // A template that is the design of personal mails must keep Mo's text.
         if (docSupportsPersonal(current.doc) && !docSupportsPersonal(doc)) {

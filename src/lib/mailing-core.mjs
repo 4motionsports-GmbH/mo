@@ -14,7 +14,7 @@
 //   {{mo:fn:N}}      first-name merge field N ({{vorname|Ersatz}})
 //   {{mo:greet:N}}   greeting N: its text with the name, or its fallback
 
-import { applyMergeFields, normalizeFirstName } from "./mail-template-doc.mjs";
+import { applyMergeFields, normalizeFirstName, walkMailBlocks } from "./mail-template-doc.mjs";
 
 /** Batch size bounds — Resend's batch endpoint takes at most 100 messages. */
 export const MAILING_BATCH_MAX = 100;
@@ -200,10 +200,60 @@ export function isTrackableUrl(url, opts = {}) {
 }
 
 /**
- * Freeze the links of a rendered mail: every trackable href in the HTML and
- * every trackable URL in the text part becomes {{mo:link:N}}; the table holds
- * the real target (with UTM for shop links). One index per distinct URL —
- * the Outlook twin of a button links to the same index as the original.
+ * The opening tag of a click target: a link, an image-map area or Outlook's
+ * VML button (<v:roundrect href>). Quoted attribute values may hold ">"; a
+ * "<" outside quotes ends the attempt (an unclosed tag never makes the scan
+ * run to the end of the mail for every later "<a"). Never <link> (the
+ * web-font stylesheet — a client that loads it is no click), <base> or any
+ * other tag.
+ */
+const CLICK_TAG_RE = /<(?:a|area|v:roundrect)(?=[\s/>])(?:[^<>"']|"[^"]*"|'[^']*')*>/gi;
+/** One attribute of a tag: its name and, optionally, `=` and a quoted or bare value. */
+const TAG_ATTR_RE = /(\s+)([^\s"'<>/=]+)(?:(\s*=\s*)("[^"]*"|'[^']*'|[^\s"'=<>`]+))?/g;
+
+/**
+ * Is this a web-font stylesheet (Google Fonts)? Rundmails released before
+ * 2026-11-11 froze the font <link> of the head as link 0 — a mail client that
+ * loads it is no click (recordCampaignClick skips it, the statistics leave it
+ * out).
+ * @param {unknown} url
+ */
+export function isWebFontStylesheetUrl(url) {
+  try {
+    const host = new URL(String(url ?? "")).hostname.toLowerCase();
+    return host === "fonts.googleapis.com" || host === "fonts.gstatic.com";
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Rewrite the href of every click target of an HTML document (<a>, <area>,
+ * <v:roundrect> — inside conditional comments too, where Outlook's twin of a
+ * button lives). Only double-quoted values, the way the renderer writes every
+ * link (it rewrites custom HTML to double quotes as well); stylesheets
+ * (<link>), <base> and every other tag stay as they are.
+ * @param {string} html
+ * @param {(value: string) => string | null} rewrite  the raw (still escaped)
+ *   attribute value → the new, already escaped value, or null to keep it
+ * @returns {string}
+ */
+export function rewriteLinkHrefs(html, rewrite) {
+  return String(html ?? "").replace(CLICK_TAG_RE, (tag) =>
+    tag.replace(TAG_ATTR_RE, (all, space, name, eq, value) => {
+      if (!eq || name.toLowerCase() !== "href" || !value?.startsWith('"')) return all;
+      const next = rewrite(value.slice(1, -1));
+      return next === null ? all : `${space}${name}${eq}"${next}"`;
+    })
+  );
+}
+
+/**
+ * Freeze the links of a rendered mail: the href of every click target in the
+ * HTML (rewriteLinkHrefs) and every trackable URL in the text part becomes
+ * {{mo:link:N}}; the table holds the real target (with UTM for shop links).
+ * One index per distinct URL — the Outlook twin of a button links to the same
+ * index as the original. The web-font stylesheet in the head stays direct.
  * @param {{ html: string, text: string }} rendered
  * @param {{ campaign: string, untracked?: ReadonlyArray<string> }} opts
  * @returns {{ html: string, text: string, links: Array<{ url: string }> }}
@@ -220,11 +270,11 @@ export function freezeLinks(rendered, opts) {
     index.set(raw, n);
     return n;
   };
-  const html = rendered.html.replace(/(\shref\s*=\s*)"([^"]*)"/gi, (all, pre, value) => {
+  const html = rewriteLinkHrefs(rendered.html, (value) => {
     const url = unescapeAttr(value).trim();
-    if (!isTrackableUrl(url, opts)) return all;
+    if (!isTrackableUrl(url, opts)) return null;
     const n = indexOf(url);
-    return n === null ? all : `${pre}"{{mo:link:${n}}}"`;
+    return n === null ? null : `{{mo:link:${n}}}`;
   });
   const text = rendered.text.replace(/https?:\/\/[^\s<>()"']+/g, (raw) => {
     const url = raw.replace(/[.,;:!?…]+$/, "");
@@ -285,6 +335,21 @@ export function personalizeFrozen(template, values, mode) {
 /** Placeholders left after personalisation — a send must never ship one. */
 export function leftoverPlaceholders(s) {
   return Array.from(new Set(String(s).match(/\{\{\s*mo:[^}]*\}\}|\{\{\s*vorname[^}]*\}\}/gi) ?? []));
+}
+
+/**
+ * Does a Rundmail address people by their first name — {{vorname}} in the
+ * subject, a greeting block, or {{vorname}} in any field of any block, the
+ * blocks inside the columns of a section included? (The checks then say what
+ * stands where no first name is known.)
+ * @param {unknown} subject
+ * @param {{ blocks?: unknown } | null | undefined} doc  a normalised document
+ */
+export function mailingUsesFirstName(subject, doc) {
+  const field = /\{\{\s*vorname/i;
+  if (field.test(String(subject ?? ""))) return true;
+  // A section holds no text of its own; its blocks are visited one by one.
+  return walkMailBlocks(doc).some(({ block }) => block.type === "greeting" || (block.type !== "section" && field.test(JSON.stringify(block))));
 }
 
 /**

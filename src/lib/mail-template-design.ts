@@ -15,17 +15,21 @@
 //
 // The renderers that need data run here, inside the design context: the
 // fixed product blocks (catalog, loaded before rendering, so the synchronous
-// shell can lay them out through the classic product renderers) and the live
-// countdown (signed token). Everything is fail-soft: an unreadable template
-// resolves to null (the caller falls back to the selected / classic design).
+// shell can lay them out through the classic product renderers), the
+// „Produkt-Highlight“ blocks (the same catalog data handed over as DATA — the
+// template renderer draws their card in the template's own look; they may
+// stand inside the columns of a section) and the live countdown (signed
+// token). Everything is fail-soft: an unreadable template resolves to null
+// (the caller falls back to the selected / classic design).
 
-import type { ResolvedEmailDesign } from "./email-design-context";
+import type { EmailSectionRowOptions, ResolvedEmailDesign } from "./email-design-context";
 import { activeEmailRenderData } from "./email-design-context";
 import type { EmailTheme } from "./email-theme-context";
 import type { BrandedEmailOptions } from "./email-template";
 import {
   EMAIL_IMPRINT_URL,
   EMAIL_SOCIAL_LINKS,
+  classicSectionRowHtml,
   emailLogoUrl,
   emailMoIconUrl,
   renderCtaButton,
@@ -44,16 +48,27 @@ import { reportError } from "./observability";
 import { getCachedMailTemplate, type MailTemplateDoc } from "./mail-template-store";
 import {
   applyMergeFields,
+  classicFontFor,
+  contrastRatio,
   docHasHero,
   docProductRefs,
   docSupportsPersonal,
   normalizeMailTemplateDoc,
   parseTemplateDesignKey,
   templateDesignKey,
+  walkMailBlocks,
 } from "./mail-template-doc.mjs";
 import { renderMailTemplateHtml, type MailRenderContext } from "./mail-template-render.mjs";
+import { emptyProductBlocks, productHighlightSlot, productListText } from "./mail-template-slots.mjs";
 import { countdownText } from "./offer-countdown.mjs";
 import type { Product } from "./types";
+
+/**
+ * A slot of the template renderer (MailRenderContext.slots): the pre-rendered
+ * card rows and text of a products / countdown block, or — `product` — the
+ * card data of a „Produkt-Highlight“ block (html "").
+ */
+export type MailSlot = { html: string; text: string; product?: ReturnType<typeof productHighlightSlot>["product"] };
 
 /** The kinds a template may be the design of (marketing mails only — DOI and summary keep the code designs). */
 export const TEMPLATE_DESIGN_KINDS = ["marketing", "campaign"] as const;
@@ -71,7 +86,11 @@ function textOn(hex: string): string {
   return lum > 0.6 ? "#111111" : "#ffffff";
 }
 
-/** The template's style as theme tokens for the classic renderers (product rows, coupon, countdown …). */
+/**
+ * The template's style as theme tokens for the classic renderers (product
+ * rows, coupon, countdown …). Those know the theme fonts only: a template web
+ * font (Oswald, Poppins …) maps to the closest of them.
+ */
 export function templateTheme(doc: MailTemplateDoc): EmailTheme {
   const s = doc.style;
   return {
@@ -79,11 +98,52 @@ export function templateTheme(doc: MailTemplateDoc): EmailTheme {
     bandBackground: s.headingColor,
     bandTextColor: textOn(s.headingColor),
     outerBackground: s.outerBackground,
-    fontFamily: s.fontFamily,
+    fontFamily: classicFontFor(s.fontFamily),
     buttonShape: s.buttonShape,
     logoUrl: s.logoUrl,
     showSocial: true,
   } as EmailTheme;
+}
+
+/** Swap the classic 60px side padding of a CSS padding shorthand for the template's. */
+function withSidePadding(padding: string, side: number): string {
+  if (side === 60) return padding;
+  const parts = padding.trim().split(/\s+/);
+  const swap = (v: string) => (v === "60px" ? `${side}px` : v);
+  if (parts.length === 2) return `${parts[0]} ${swap(parts[1])}`;
+  if (parts.length === 3) return `${parts[0]} ${swap(parts[1])} ${parts[2]}`;
+  if (parts.length === 4) return `${parts[0]} ${swap(parts[1])} ${parts[2]} ${swap(parts[3])}`;
+  return padding;
+}
+
+/** A white rounded panel — the classic pieces write dark text, so on a dark card they sit on one. */
+function whitePanel(innerHtml: string): string {
+  return `
+                    <table role="presentation" width="100%" border="0" cellpadding="0" cellspacing="0" style="border-collapse: separate; mso-table-lspace: 0pt; mso-table-rspace: 0pt;">
+                      <tr>
+                        <td bgcolor="#ffffff" align="center" style="background-color: #ffffff; border-radius: 8px; padding: 16px;">${innerHtml}
+                        </td>
+                      </tr>
+                    </table>`;
+}
+
+/**
+ * The classic content rows inside a template (the `products` rows / grid, the
+ * countdown, Mo's buttons and footnote, the composer's offer rows): the
+ * template's card colour and side padding instead of white and 60px. The
+ * classic renderers write dark text, so on a dark card (black below 4.5:1)
+ * the piece sits on a white panel instead of turning unreadable. With the
+ * default style the row is byte-identical to the classic one.
+ */
+export function templateSectionRow(doc: MailTemplateDoc) {
+  const s = doc.style;
+  const darkCard = (contrastRatio("#000000", s.cardBackground) ?? 21) < 4.5;
+  return (innerHtml: string, opts: EmailSectionRowOptions = {}): string =>
+    classicSectionRowHtml(darkCard && !opts.bgcolor ? whitePanel(innerHtml) : innerHtml, {
+      ...opts,
+      padding: withSidePadding(opts.padding ?? "20px 60px", s.contentPadding),
+      bgcolor: opts.bgcolor ?? s.cardBackground,
+    });
 }
 
 /** The static assets every template render needs. */
@@ -99,7 +159,8 @@ export function templateAssets(): MailRenderContext["assets"] {
 }
 
 /**
- * The display products of every fixed product block (catalog refs → live
+ * The display products of every product block — `products` and
+ * „Produkt-Highlight“, the ones inside sections too (catalog refs → live
  * products; sold-out and vanished ones are left out — a mail never
  * advertises what cannot be bought). Never throws: a catalog failure leaves
  * the blocks empty.
@@ -119,11 +180,13 @@ export async function preloadDocProducts(doc: MailTemplateDoc): Promise<Map<stri
 }
 
 /**
- * What the products blocks would show right now — for the Rundmail checks:
+ * What the product blocks would show right now — for the Rundmail checks:
  * names of products that are sold out (prepared ahead, left out of the mail
- * while sold out), refs no longer in the catalog, and products blocks with
- * nothing to show (left out entirely). Never throws: a catalog failure
- * reports nothing (the checks are hints).
+ * while sold out), refs no longer in the catalog, and the blocks with nothing
+ * to show (left out entirely): `products` blocks none of whose products can
+ * be shown and „Produkt-Highlight“ blocks whose product cannot — the ones
+ * inside sections included. Never throws: a catalog failure reports nothing
+ * (the checks are hints).
  */
 export async function docProductAvailability(
   doc: MailTemplateDoc
@@ -139,52 +202,53 @@ export async function docProductAvailability(
       if (!s || s.missingVariant) out.unknown.push(ref);
       else if (!s.available) out.soldOut.push(s.display?.name ?? s.product.name ?? ref);
     }
-    for (const b of doc.blocks) {
-      if (b.type !== "products" || !Array.isArray(b.refs) || b.refs.length === 0) continue;
-      const showable = (b.refs as string[]).some((ref) => {
-        const s = byRef.get(ref);
-        return Boolean(s && !s.missingVariant && s.available && s.display);
-      });
-      if (!showable) out.emptyBlocks++;
-    }
+    // The same rule as preloadDocProducts: only an available product with a display is shown.
+    out.emptyBlocks = emptyProductBlocks(doc, (ref) => {
+      const s = byRef.get(ref);
+      return Boolean(s && !s.missingVariant && s.available && s.display);
+    });
   } catch (err) {
     reportError(err, { route: "lib/mail-template-design", phase: "docProductAvailability" });
   }
   return out;
 }
 
-const priceFmt = {
-  de: new Intl.NumberFormat("de-DE", { style: "currency", currency: "EUR" }),
-  en: new Intl.NumberFormat("en-GB", { style: "currency", currency: "EUR" }),
-};
-
 /**
- * The pre-rendered slots of the fixed product and countdown blocks. MUST run
- * inside withEmailDesign(...) of the template, so the classic renderers use
- * its colours and font.
+ * The slots of the blocks that need live data, by block id — every block of
+ * the tree, the ones inside sections included:
+ *   * `products` — the classic product rows / grid as a card row + the text;
+ *   * `countdown` — the live countdown (until it has expired);
+ *   * `product` („Produkt-Highlight“) — no HTML, the card DATA (the grid's
+ *     price line, a mail-safe picture, the short description) + the text.
+ * A block whose products are not available gets no slot (it is left out of a
+ * send). MUST run inside withEmailDesign(...) of the template, so the classic
+ * renderers use its colours and font.
  */
 export function renderDocSlots(
   doc: MailTemplateDoc,
   products: Map<string, Product>,
   language: "de" | "en"
-): Record<string, { html: string; text: string }> {
-  const slots: Record<string, { html: string; text: string }> = {};
-  for (const b of doc.blocks) {
+): Record<string, MailSlot> {
+  const slots: Record<string, MailSlot> = {};
+  for (const { block: b } of walkMailBlocks(doc)) {
     try {
       if (b.type === "products") {
         const list = (b.refs as string[]).map((r) => products.get(r)).filter((p): p is Product => Boolean(p));
         if (list.length === 0) continue;
+        const items = list.map((p) => productGridItem(p, language));
         const inner =
           b.layout === "grid"
-            ? renderEmailProductGrid(list.map((p) => productGridItem(p, language)))
+            ? renderEmailProductGrid(items)
             : renderEmailProductRows(productRowItems(list, { locale: language }));
-        const text = list
-          .map((p) => {
-            const price = typeof p.price === "number" ? priceFmt[language].format(p.salePrice ?? p.price) : "";
-            return `- ${p.name}${price ? ` — ${price}` : ""}${p.shopifyUrl ? `\n  ${p.shopifyUrl}` : ""}`;
-          })
-          .join("\n");
-        slots[b.id] = { html: renderSectionRow(inner, { padding: "10px 60px 20px", align: "center" }), text };
+        slots[b.id] = {
+          html: renderSectionRow(inner, { padding: "10px 60px 20px", align: "center" }),
+          text: productListText(items),
+        };
+      } else if (b.type === "product" && b.ref) {
+        const display = products.get(b.ref as string);
+        if (display) {
+          slots[b.id] = productHighlightSlot(productGridItem(display, language), display, { showPrice: b.showPrice !== false });
+        }
       } else if (b.type === "countdown" && b.until) {
         const html = renderOfferCountdown({ expiresAt: b.until, language });
         if (html) slots[b.id] = { html, text: countdownText(b.until, language) };
@@ -231,6 +295,7 @@ export function templateDesignFromDoc(
     hasHero: docHasHero(doc),
     theme: templateTheme(doc),
     renderers: {
+      sectionRow: templateSectionRow(doc),
       shell: (opts: BrandedEmailOptions) => {
         const rd = activeEmailRenderData();
         const language = opts.locale === "en" ? "en" : "de";

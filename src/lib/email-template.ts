@@ -273,6 +273,18 @@ export function renderSectionRow(
 ): string {
   const override = activeEmailDesignRenderers()?.sectionRow;
   if (override) return override(innerHtml, opts);
+  return classicSectionRowHtml(innerHtml, opts);
+}
+
+/**
+ * The classic content row itself (no design override) — renderSectionRow's
+ * markup, for a design hook that only adjusts the options (a template's card
+ * colour and side padding, mail-template-design.ts).
+ */
+export function classicSectionRowHtml(
+  innerHtml: string,
+  opts: { padding?: string; align?: "left" | "center"; bgcolor?: string } = {}
+): string {
   const padding = opts.padding ?? "20px 60px";
   const align = opts.align ?? "left";
   const bgcolor = opts.bgcolor ?? "#ffffff";

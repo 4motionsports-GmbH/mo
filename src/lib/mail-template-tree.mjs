@@ -203,7 +203,9 @@ export function insertMailBlock(doc, block, where = {}) {
 /**
  * Give section `sectionId` the column widths `widths` (1–4 columns). New
  * columns start empty; when columns are dropped, their blocks join the last
- * column that stays — nothing is lost.
+ * column that stays — nothing is lost as long as that column keeps within its
+ * 12 blocks (the normaliser cuts the rest; the editor offers such a layout
+ * only when it fits — block-editor-core.mjs sectionLayoutFits).
  */
 export function setSectionColumns(doc, sectionId, widths) {
   const next = clone(doc);

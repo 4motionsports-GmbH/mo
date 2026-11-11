@@ -102,3 +102,11 @@ test("products prepared ahead: sold out, gone and empty blocks are warnings, nev
   // nothing to say without products
   assert.ok(!keys(mailingChecks(base()).warnings).some((k) => k.startsWith("products_")));
 });
+
+test("the web-font stylesheet is no link — many_links counts click targets only", () => {
+  const head = '<link href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;700&amp;display=swap" rel="stylesheet">';
+  const links = Array.from({ length: 30 }, (_, i) => `<a href="https://motionsports.de/p/${i}">p${i}</a>`).join("");
+  assert.ok(!keys(mailingChecks(base({ html: html(head + links) })).warnings).includes("many_links"));
+  const more = mailingChecks(base({ html: html(head + links + '<a href="https://motionsports.de/x">x</a>') }));
+  assert.match(more.warnings.find((w) => w.key === "many_links").message, /^31 verschiedene Links/);
+});

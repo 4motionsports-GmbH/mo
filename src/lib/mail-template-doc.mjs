@@ -1353,7 +1353,9 @@ export function validateMailTemplateDoc(doc, use, opts = {}) {
         break;
       case "product":
         if (!b.ref) err(b, `${label}: noch kein Produkt gewählt.`);
-        contrast(b, b.color ?? style.textColor, bg, 4.5);
+        // price and description in the text colour, the name in the heading colour (b.color: both)
+        if (bg && (contrastRatio(b.color ?? style.textColor, bg) ?? 21) < 4.5) contrast(b, b.color ?? style.textColor, bg, 4.5);
+        else if (!b.color) contrast(b, style.headingColor, bg, 3);
         break;
       case "coupon":
         if (!b.code) err(b, `${label}: Code fehlt.`);

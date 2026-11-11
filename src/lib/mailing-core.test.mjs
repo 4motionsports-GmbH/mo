@@ -1,24 +1,28 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  MAILING_BATCH_MAX,
-  MAILING_MAX_TEST_ADDRESSES,
   batchSizeFor,
   batchSpacingMs,
   classifyResendError,
   freezeLinks,
   isSendableAddress,
   isTrackableUrl,
+  isWebFontStylesheetUrl,
   leftoverPlaceholders,
+  MAILING_BATCH_MAX,
+  MAILING_MAX_TEST_ADDRESSES,
   mailingIdempotencyKey,
   mailingProgress,
+  mailingUsesFirstName,
   minutesLeft,
   parseMailingRate,
   parseTestAddresses,
   personalizeFrozen,
   resendErrorMessage,
+  rewriteLinkHrefs,
   withUtm,
 } from "./mailing-core.mjs";
+import { normalizeMailTemplateDoc } from "./mail-template-doc.mjs";
 
 test("rates: presets parse, unknown values fall back to normal", () => {
   assert.equal(parseMailingRate("schnell"), "schnell");
@@ -105,6 +109,100 @@ test("freezeLinks: one index per URL in HTML and text; legal and placeholder lin
   assert.equal(out.text, "A: {{mo:link:0}}.\nB ({{mo:link:1}})\nAbmelden: {{mo:unsub}}");
 });
 
+const FONT_HEAD =
+  '<head><!--[if !mso]><!--><link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;700&amp;display=swap" rel="stylesheet" type="text/css">' +
+  "<style>@import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@400;700&display=swap');</style><!--<![endif]--></head>";
+
+test("freezeLinks: the web-font stylesheet stays direct — the first real link is link 0", () => {
+  const html = `${FONT_HEAD}<body><a href="https://motionsports.de/">Logo</a><base href="https://motionsports.de/base"></body>`;
+  const out = freezeLinks({ html, text: "" }, { campaign: "bw" });
+  assert.deepEqual(out.links, [{ url: "https://motionsports.de/?utm_source=mo&utm_medium=email&utm_campaign=bw" }]);
+  assert.match(out.html, /<link href="https:\/\/fonts\.googleapis\.com\/css2\?family=Montserrat:wght@400;700&amp;display=swap" rel="stylesheet"/);
+  assert.match(out.html, /@import url\('https:\/\/fonts\.googleapis\.com\//);
+  assert.match(out.html, /<a href="\{\{mo:link:0\}\}">Logo/);
+  assert.match(out.html, /<base href="https:\/\/motionsports\.de\/base">/, "<base> is no click target");
+});
+
+test("freezeLinks: a link inside <!--[if mso]> and its twin share one index — <a>, <v:roundrect> and <area>", () => {
+  const html =
+    '<!--[if mso]><v:roundrect xmlns:v="urn:schemas-microsoft-com:vml" href="https://motionsports.de/sale" style="height:44px;" arcsize="50%" fillcolor="#008ccb"><center>Los</center></v:roundrect><![endif]-->' +
+    '<!--[if !mso]><!--><a href="https://motionsports.de/sale" target="_blank">Los</a><!--<![endif]-->' +
+    '<!--[if mso]><table><tr><td><a href="https://motionsports.de/b">B</a></td></tr></table><![endif]--><a href="https://motionsports.de/b">B</a>' +
+    '<map name="m"><area shape="rect" coords="0,0,10,10" href="https://motionsports.de/area" alt="x"></map>';
+  const out = freezeLinks({ html, text: "" }, { campaign: "bw" });
+  assert.deepEqual(
+    out.links.map((l) => l.url.replace(/\?.*$/, "")),
+    ["https://motionsports.de/sale", "https://motionsports.de/b", "https://motionsports.de/area"]
+  );
+  assert.equal(out.html.split('href="{{mo:link:0}}"').length - 1, 2, "VML button and its HTML twin");
+  assert.equal(out.html.split('href="{{mo:link:1}}"').length - 1, 2, "the <a> inside the MSO block and its twin");
+  assert.match(out.html, /<area shape="rect" coords="0,0,10,10" href="\{\{mo:link:2\}\}"/);
+  assert.match(out.html, /<v:roundrect xmlns:v="urn:schemas-microsoft-com:vml" href="\{\{mo:link:0\}\}" style="height:44px;"/);
+});
+
+test("freezeLinks: single-quoted and unquoted hrefs are not touched (the renderer writes double quotes)", () => {
+  const html = "<a href='https://motionsports.de/single'>s</a> <a href=https://motionsports.de/bare>b</a>";
+  const out = freezeLinks({ html, text: "" }, { campaign: "bw" });
+  assert.deepEqual(out.links, []);
+  assert.equal(out.html, html);
+});
+
+test("freezeLinks: the text part keeps its behaviour — bare URLs, trailing punctuation, one index shared with the HTML", () => {
+  const html = '<a href="https://motionsports.de/a">A</a>';
+  const text =
+    "Zum Angebot: https://motionsports.de/a!\n(https://motionsports.de/c), https://motionsports.de/pages/impressum\nmailto:info@motionsports.de {{mo:unsub}}";
+  const out = freezeLinks({ html, text }, { campaign: "bw", untracked: ["https://motionsports.de/pages/impressum"] });
+  assert.equal(out.text, "Zum Angebot: {{mo:link:0}}!\n({{mo:link:1}}), https://motionsports.de/pages/impressum\nmailto:info@motionsports.de {{mo:unsub}}");
+  assert.equal(out.links.length, 2);
+  assert.equal(out.links[1].url, "https://motionsports.de/c?utm_source=mo&utm_medium=email&utm_campaign=bw");
+});
+
+test("rewriteLinkHrefs: only the href of click targets; names, spacing and other attributes stay", () => {
+  const seen = [];
+  const html =
+    '<A HREF="https://x.de/1">a</A><a title="a > b" data-href="https://x.de/data" href = "https://x.de/2" download>b</a>' +
+    '<abbr href="https://x.de/abbr">c</abbr><address href="https://x.de/addr"></address><link href="https://x.de/css">' +
+    '<a\n  href="https://x.de/3"\n  target="_blank">d</a><a href="https://x.de/keep">e</a><a name="anchor">f</a>';
+  const out = rewriteLinkHrefs(html, (value) => {
+    seen.push(value);
+    return value.endsWith("/keep") ? null : "X";
+  });
+  assert.deepEqual(seen, ["https://x.de/1", "https://x.de/2", "https://x.de/3", "https://x.de/keep"]);
+  assert.equal(
+    out,
+    '<A HREF="X">a</A><a title="a > b" data-href="https://x.de/data" href = "X" download>b</a>' +
+      '<abbr href="https://x.de/abbr">c</abbr><address href="https://x.de/addr"></address><link href="https://x.de/css">' +
+      '<a\n  href="X"\n  target="_blank">d</a><a href="https://x.de/keep">e</a><a name="anchor">f</a>'
+  );
+  assert.equal(rewriteLinkHrefs("", () => "X"), "");
+});
+
+test("rewriteLinkHrefs: an unclosed tag ends at the next „<“ — later links still count, broken markup stays fast", () => {
+  assert.equal(
+    rewriteLinkHrefs('<a title="x" <a href="https://x.de/2">2</a>', () => "X"),
+    '<a title="x" <a href="X">2</a>'
+  );
+  // Every unclosed "<a" used to scan to the end of the mail: quadratic, minutes for this.
+  const broken = `${"<a ".repeat(30_000)}${"x".repeat(100_000)}<a title="never closed ${"y".repeat(100_000)}`;
+  const started = Date.now();
+  assert.equal(rewriteLinkHrefs(broken, () => "X"), broken);
+  assert.ok(Date.now() - started < 1500, `${Date.now() - started} ms`);
+});
+
+test("mailingUsesFirstName: the subject, a greeting or {{vorname}} anywhere — inside sections too", () => {
+  const doc = (blocks) => normalizeMailTemplateDoc({ blocks });
+  const plain = doc([{ type: "heading", text: "Black Week" }, { type: "text", text: "Spare jetzt." }]);
+  assert.equal(mailingUsesFirstName("Black Week", plain), false);
+  assert.equal(mailingUsesFirstName("{{ vorname|Hallo }}, Black Week", plain), true);
+  assert.equal(mailingUsesFirstName("x", doc([{ type: "greeting" }])), true);
+  assert.equal(mailingUsesFirstName("x", doc([{ type: "button", label: "Los, {{vorname}}", href: "https://motionsports.de" }])), true);
+  const nested = (child) => doc([{ type: "section", columns: [{ blocks: [{ type: "text", text: "Links" }] }, { blocks: [child] }] }]);
+  assert.equal(mailingUsesFirstName("x", nested({ type: "greeting", text: "Hey {{vorname}}", fallback: "Hey" })), true);
+  assert.equal(mailingUsesFirstName("x", nested({ type: "text", text: "Für dich, {{Vorname|Sportsfreund}}" })), true);
+  assert.equal(mailingUsesFirstName("x", nested({ type: "text", text: "Für alle" })), false);
+  assert.equal(mailingUsesFirstName(null, null), false);
+});
+
 test("personalizeFrozen: per-recipient values, escaped in HTML, raw in text", () => {
   const values = {
     unsubscribeUrl: "https://mo.example.com/api/unsubscribe?token=a&locale=en",
@@ -152,4 +250,12 @@ test("progress and time left", () => {
   assert.equal(mailingProgress({ total: 0, pending: 0, sending: 0, sent: 0, skipped: 0, suppressed: 0, failed: 0 }).percent, 0);
   assert.equal(minutesLeft(0, 300), 0);
   assert.equal(minutesLeft(301, 300), 2);
+});
+
+test("isWebFontStylesheetUrl recognises the font stylesheet of old frozen link tables", () => {
+  assert.equal(isWebFontStylesheetUrl("https://fonts.googleapis.com/css2?family=Montserrat:wght@400;700&display=swap"), true);
+  assert.equal(isWebFontStylesheetUrl("https://fonts.gstatic.com/s/x.woff2"), true);
+  assert.equal(isWebFontStylesheetUrl("https://www.motionsports.de/?utm_source=x"), false);
+  assert.equal(isWebFontStylesheetUrl("kein link"), false);
+  assert.equal(isWebFontStylesheetUrl(null), false);
 });

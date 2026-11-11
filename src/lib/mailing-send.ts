@@ -45,6 +45,7 @@ import {
   isSendableAddress,
   leftoverPlaceholders,
   mailingIdempotencyKey,
+  mailingUsesFirstName,
   parseTestAddresses,
   personalizeFrozen,
   resendErrorMessage,
@@ -145,9 +146,6 @@ export async function evaluateMailing(campaign: Campaign, mailing: Mailing): Pro
     docProductAvailability(doc),
   ]);
   const sender = resolveCampaignSender(campaign.sender);
-  const usesFirstName =
-    /\{\{\s*vorname/i.test(mailing.subject) ||
-    doc.blocks.some((b) => b.type === "greeting" || /\{\{\s*vorname/i.test(JSON.stringify(b)));
   const result = mailingChecks({
     subject: mailing.subject,
     preheader: mailing.preheader,
@@ -159,7 +157,8 @@ export async function evaluateMailing(campaign: Campaign, mailing: Mailing): Pro
     audience,
     contentVersion: mailing.contentVersion,
     testVersion: mailing.testVersion,
-    usesFirstName,
+    // greetings and {{vorname}} inside the columns of a section count too
+    usesFirstName: mailingUsesFirstName(mailing.subject, doc),
     ratePerMinute: MAILING_RATES[mailing.rate],
     unknownSubjectFields: unknownMergeFields(mailing.subject),
     products,

@@ -20,7 +20,7 @@ import { getSql, type Sql } from "./db";
 import { reportError } from "./observability";
 import { normalizeEmail } from "./email-capture-store";
 import { normalizeMailTemplateDoc } from "./mail-template-doc.mjs";
-import { parseMailingRate, type MailingRateKey } from "./mailing-core.mjs";
+import { isWebFontStylesheetUrl, parseMailingRate, type MailingRateKey } from "./mailing-core.mjs";
 
 export type MailingDoc = ReturnType<typeof normalizeMailTemplateDoc>;
 
@@ -906,7 +906,7 @@ export async function getMailingStats(campaignId: number, sql: Sql | null = getS
   };
   if (!sql) return empty;
   try {
-    const [statusRows, reasonRows, sendRows, linkRows, batchRows] = await Promise.all([
+    const [statusRows, reasonRows, sendRows, linkRows, batchRows, frozenRows] = await Promise.all([
       sql`
         SELECT status, count(*)::int AS n FROM campaign_contacts
          WHERE campaign_id = ${campaignId} AND is_test = false GROUP BY status
@@ -935,7 +935,29 @@ export async function getMailingStats(campaignId: number, sql: Sql | null = getS
          GROUP BY 1 ORDER BY 1
       `,
       sql`SELECT count(*)::int AS n FROM campaign_mailing_batches WHERE campaign_id = ${campaignId} AND status = 'unklar'`,
+      sql`SELECT links FROM campaign_mailings WHERE campaign_id = ${campaignId}`,
     ]);
+    // Rundmails released before 2026-11-11 froze the web-font stylesheet as a
+    // link; the mail clients that loaded it are no clicks. Leave those links
+    // out and count the clickers over the real links only.
+    const frozenLinks = (frozenRows as Array<{ links: unknown }>)[0]?.links;
+    const fontLinks = (Array.isArray(frozenLinks) ? frozenLinks : []).flatMap((l, i) =>
+      isWebFontStylesheetUrl((l as { url?: unknown })?.url) ? [i] : []
+    );
+    let clicked = Number(((sendRows as Array<Record<string, unknown>>)[0] ?? {}).clicked ?? 0);
+    if (fontLinks.length > 0) {
+      const real = (await sql`
+        SELECT count(DISTINCT s.id)::int AS n
+          FROM kpi_events e
+          JOIN campaign_sends s ON s.id = (e.data->>'sendId')::bigint
+         WHERE e.event = 'campaign_email_clicked'
+           AND e.data->>'campaignId' = ${String(campaignId)}
+           AND s.campaign_id = ${campaignId}
+           AND s.is_test = false
+           AND NOT ((e.data->>'link')::int = ANY(${fontLinks}::int[]))
+      `) as Array<{ n: number }>;
+      clicked = Number(real[0]?.n ?? 0);
+    }
     const byStatus = new Map((statusRows as Array<{ status: string; n: number }>).map((r) => [r.status, Number(r.n)]));
     const skippedByReason: Record<string, number> = {};
     for (const r of reasonRows as Array<{ reason: string; n: number }>) skippedByReason[r.reason] = Number(r.n);
@@ -956,10 +978,10 @@ export async function getMailingStats(campaignId: number, sql: Sql | null = getS
       bounced: Number(send.bounced ?? 0),
       bouncedHard: Number(send.bounced_hard ?? 0),
       complained: Number(send.complained ?? 0),
-      clicked: Number(send.clicked ?? 0),
+      clicked,
       unsubscribed: Number(send.unsubscribed ?? 0),
       linkClicks: (linkRows as Array<Record<string, unknown>>)
-        .filter((r) => Number.isInteger(Number(r.idx)))
+        .filter((r) => Number.isInteger(Number(r.idx)) && !fontLinks.includes(Number(r.idx)))
         .map((r) => ({ index: Number(r.idx), clicks: Number(r.clicks), recipients: Number(r.recipients) })),
       unclearBatches: Number((batchRows as Array<{ n: number }>)[0]?.n ?? 0),
       lastSentAt: iso(send.last_sent_at),

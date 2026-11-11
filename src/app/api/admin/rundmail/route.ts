@@ -34,7 +34,8 @@ import {
   unfreezeMailing,
 } from "@/lib/mailing-store";
 import { evaluateMailing, releaseMailing, runMailingStep, sendMailingTest } from "@/lib/mailing-send";
-import { MAIL_TEMPLATE_LIMITS, normalizeMailTemplateDoc } from "@/lib/mail-template-doc.mjs";
+import { normalizeMailTemplateDoc } from "@/lib/mail-template-doc.mjs";
+import { docBlockLimitProblem } from "@/lib/mail-template-slots.mjs";
 import { parseMailingRate } from "@/lib/mailing-core.mjs";
 
 export const maxDuration = 120;
@@ -71,8 +72,10 @@ export async function POST(req: Request) {
         const preheader = typeof body.preheader === "string" ? body.preheader.replace(/\s+/g, " ").trim().slice(0, 200) || null : null;
         const raw = JSON.stringify(body.doc ?? {});
         if (raw.length > 400_000) return adminJsonError("too_large", "Der Inhalt ist zu groß.", 413);
+        // Counted on the body (sections' blocks included): the normaliser would cut silently.
+        const tooMany = docBlockLimitProblem(body.doc);
+        if (tooMany) return adminJsonError("too_large", tooMany, 400);
         const doc = normalizeMailTemplateDoc(body.doc);
-        if (doc.blocks.length > MAIL_TEMPLATE_LIMITS.blocks) return adminJsonError("too_large", "Zu viele Bausteine.", 400);
         const expected = Number.isInteger(body.expectedVersion) ? Number(body.expectedVersion) : null;
         const res = await saveMailingContent(
           campaignId,

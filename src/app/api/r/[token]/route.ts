@@ -22,6 +22,7 @@
 import { recordEmailClick } from "@/lib/marketing-store";
 import { recordCampaignClick } from "@/lib/campaign-store";
 import { mailingLinkTarget } from "@/lib/mailing-store";
+import { isWebFontStylesheetUrl } from "@/lib/mailing-core.mjs";
 import { campaignMoDeeplinkUrl } from "@/lib/campaign-flags.mjs";
 import { resolveBundleRedirect } from "@/lib/bundle-offers-store";
 import { SHOP_DOMAIN } from "@/lib/shopify-cart-url.mjs";
@@ -115,10 +116,11 @@ export async function GET(
     const link = linkParam && /^\d{1,3}$/.test(linkParam) ? Number(linkParam) : null;
     const campaign = await recordCampaignClick(token, { link });
     if (campaign?.kind === "rundmail" && campaign.campaignId != null) {
-      const target =
-        (link != null ? await mailingLinkTarget(campaign.campaignId, link) : null) ??
-        (await mailingLinkTarget(campaign.campaignId, 0)) ??
-        SHOP_DOMAIN;
+      const asked = link != null ? await mailingLinkTarget(campaign.campaignId, link) : null;
+      // The fallback is the first real link — never the web-font stylesheet an
+      // old frozen table holds as link 0.
+      const first = asked ? null : await mailingLinkTarget(campaign.campaignId, 0);
+      const target = asked ?? (first && !isWebFontStylesheetUrl(first) ? first : null) ?? SHOP_DOMAIN;
       return Response.redirect(target, 302);
     }
     if (campaign?.shopUrl) {

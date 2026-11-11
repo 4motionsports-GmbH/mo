@@ -9,9 +9,10 @@
 //             recipient gets, byte for byte, except the placeholders.
 //
 // The same renderer (mail-template-render.mjs) and the same slot rendering
-// (mail-template-design.ts — fixed product rows / grid, live countdown, in
-// the document's colours) serve all three, so the test mail and the preview
-// show exactly what the freeze ships.
+// (mail-template-design.ts — fixed product rows / grid, the data of the
+// „Produkt-Highlight“ cards, live countdown, in the document's colours; for
+// every block of the tree, the ones inside sections too) serve all three, so
+// the test mail and the preview show exactly what the freeze ships.
 
 import { withEmailDesign, type ResolvedEmailDesign } from "./email-design-context";
 import { unsubscribeFooter } from "./consent-copy";
@@ -20,6 +21,7 @@ import {
   preloadDocProducts,
   renderDocSlots,
   templateAssets,
+  templateSectionRow,
   templateTheme,
 } from "./mail-template-design";
 import { applyMergeFields, normalizeMailTemplateDoc } from "./mail-template-doc.mjs";
@@ -36,9 +38,9 @@ export interface MailingRenderInput {
   language: "de" | "en";
 }
 
-/** The theme-only design of a document (colours and font for the classic block renderers). */
+/** The theme-only design of a document (colours, font, card rows for the classic block renderers). */
 function themeDesign(doc: Doc): ResolvedEmailDesign {
-  return { key: "rundmail", theme: templateTheme(doc), renderers: {} };
+  return { key: "rundmail", theme: templateTheme(doc), renderers: { sectionRow: templateSectionRow(doc) } };
 }
 
 async function renderWith(
@@ -104,8 +106,10 @@ export interface FrozenRender {
 
 /**
  * The release: one render with placeholders for everything personal, the
- * links frozen into the tracked table ({{mo:link:N}}), the subject's merge
- * fields as their own placeholders. `campaignSlug` names the UTM campaign.
+ * links frozen into the tracked table ({{mo:link:N}} — the click targets
+ * only; the web-font stylesheet in the head stays direct), the subject's
+ * merge fields as their own placeholders. `campaignSlug` names the UTM
+ * campaign.
  */
 export async function renderMailingFrozen(input: MailingRenderInput, campaignSlug: string): Promise<FrozenRender> {
   const merges: MailingMerges = { body: [], greetings: [], subject: [] };
