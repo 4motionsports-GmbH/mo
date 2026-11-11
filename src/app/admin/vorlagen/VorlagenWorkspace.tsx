@@ -5,7 +5,8 @@
 //   * the list: every template (card with its uses), „Neue Vorlage“ (from a
 //     starter), „Importieren“ (a JSON file exported here or elsewhere);
 //   * the editor (`?vorlage=<id>`): the block editor next to the live preview,
-//     „Mit KI gestalten“, Speichern (version-checked), Duplizieren,
+//     „Mit KI gestalten“ (the KI-Gestalter panel docked above the blocks),
+//     „Rückgängig“ (several steps), Speichern (version-checked), Duplizieren,
 //     Exportieren, Archivieren.
 // A template with „Mos persönlicher Text“ appears as a design in
 // Einstellungen (Kampagne / Marketing) and in the campaign editor; every
@@ -23,7 +24,6 @@ import {
   LayoutTemplate,
   Plus,
   Save,
-  Sparkles,
   Undo2,
 } from "lucide-react";
 import {
@@ -54,13 +54,14 @@ import {
   Select,
   StatusBadge,
   toast,
-  Tooltip,
   useConfirm,
 } from "../ui";
 import { adminFetch, errorMessage } from "../lib/admin-fetch";
-import { AssistDialog } from "./AssistDialog";
 import { BlockEditor, type MailDoc } from "./BlockEditor";
+import { DesignerPanel, DesignerToggle } from "./DesignerPanel";
 import { LivePreview } from "./LivePreview";
+import { useDesignerSession } from "./use-designer-session";
+import { useDocHistory } from "./use-doc-history";
 
 export interface VorlageMeta {
   id: number;
@@ -352,10 +353,10 @@ function TemplateEditorView({
   const [loadError, setLoadError] = React.useState<string | null>(null);
   const [name, setName] = React.useState("");
   const [description, setDescription] = React.useState("");
-  const [doc, setDoc] = React.useState<MailDoc | null>(null);
-  const [undo, setUndo] = React.useState<MailDoc | null>(null);
-  const [aiNotes, setAiNotes] = React.useState<string | null>(null);
-  const [assistOpen, setAssistOpen] = React.useState(false);
+  // The document with its „Rückgängig“ steps (every AI result is one).
+  const { doc, setDoc, replaceDoc, undo, resetDoc, undoSteps } = useDocHistory<MailDoc | null>(null);
+  const [designerOpen, setDesignerOpen] = React.useState(false);
+  const designer = useDesignerSession({ use: "template", doc, onResult: (result) => replaceDoc(result.doc) });
   const [saving, setSaving] = React.useState(false);
   const [previewUse, setPreviewUse] = React.useState<"bulk" | "personal">("bulk");
 
@@ -367,14 +368,14 @@ function TemplateEditorView({
         setLoaded(json.template);
         setName(json.template.name);
         setDescription(json.template.description ?? "");
-        setDoc(json.template.doc);
+        resetDoc(json.template.doc);
         setPreviewUse(docSupportsPersonal(json.template.doc) ? "personal" : "bulk");
       })
       .catch((err) => alive && setLoadError(errorMessage(err)));
     return () => {
       alive = false;
     };
-  }, [id]);
+  }, [id, resetDoc]);
 
   if (loadError) {
     return (
@@ -402,8 +403,7 @@ function TemplateEditorView({
         body: { action: "save", id, name, description, doc, expectedVersion: loaded.version },
       });
       setLoaded(json.template);
-      setDoc(json.template.doc);
-      setUndo(null);
+      resetDoc(json.template.doc);
       toast({ variant: "success", title: "Vorlage gespeichert", description: `Version ${json.template.version}` });
     } catch (err) {
       toast({ variant: "error", title: "Nicht gespeichert", description: errorMessage(err) });
@@ -451,24 +451,17 @@ function TemplateEditorView({
           </StatusBadge>
         ))}
         <div className="ml-auto flex flex-wrap items-center gap-2">
-          {undo && (
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => {
-                setDoc(undo);
-                setUndo(null);
-                setAiNotes(null);
-              }}
-            >
+          {undoSteps > 0 && (
+            <Button variant="ghost" size="sm" onClick={undo}>
               <Undo2 /> Rückgängig
             </Button>
           )}
-          <Tooltip content="„Mit KI gestalten“ braucht ANTHROPIC_API_KEY." disabled={aiConfigured}>
-            <Button variant="outline" size="sm" onClick={() => setAssistOpen(true)} disabled={!aiConfigured}>
-              <Sparkles /> Mit KI gestalten
-            </Button>
-          </Tooltip>
+          <DesignerToggle
+            open={designerOpen}
+            onToggle={() => setDesignerOpen((o) => !o)}
+            aiConfigured={aiConfigured}
+            running={designer.running}
+          />
           <Button size="sm" onClick={() => void save()} loading={saving} disabled={!dirty || name.trim().length < 3}>
             <Save /> Speichern
           </Button>
@@ -500,14 +493,11 @@ function TemplateEditorView({
         </Field>
       </div>
 
-      {aiNotes && (
-        <Callout tone="info" title="Hinweis der KI">
-          {aiNotes}
-        </Callout>
-      )}
-
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)]">
         <div className="flex min-w-0 flex-col gap-3">
+          {designerOpen && aiConfigured && (
+            <DesignerPanel session={designer} use="template" onClose={() => setDesignerOpen(false)} />
+          )}
           <p className="flex items-center gap-1 text-sm font-semibold">
             Bausteine
             <InfoTip panelClassName="max-w-md">
@@ -545,17 +535,6 @@ function TemplateEditorView({
         </div>
       </div>
 
-      <AssistDialog
-        open={assistOpen}
-        onOpenChange={setAssistOpen}
-        doc={doc}
-        use="template"
-        onResult={(next, notes) => {
-          setUndo(doc);
-          setDoc(next);
-          setAiNotes(notes || null);
-        }}
-      />
       {confirmDialog}
     </div>
   );

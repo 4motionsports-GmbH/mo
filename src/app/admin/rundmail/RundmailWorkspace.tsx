@@ -5,7 +5,9 @@
 // person once and sent identically to everyone.
 //
 //   Inhalt          — subject, preview line, language and the block editor with
-//                     the live preview („Mit KI gestalten“, „Vorlage laden“).
+//                     the live preview („Mit KI gestalten“ — the KI-Gestalter
+//                     panel, with subject / preview-line suggestions —,
+//                     „Vorlage laden“, „Rückgängig“ in several steps).
 //   Prüfen & senden — every check (content, deliverability, sender, legal
 //                     gate, audience), the test mail (required for the current
 //                     version), pace, and „Jetzt senden“ / „Planen“.
@@ -28,7 +30,6 @@ import {
   Play,
   Save,
   Send,
-  Sparkles,
   TriangleAlert,
   Undo2,
   XCircle,
@@ -58,16 +59,17 @@ import {
   TabsContent,
   TabsList,
   TabsTrigger,
-  Tooltip,
   buttonVariants,
   toast,
   useConfirm,
 } from "../ui";
 import { adminFetch, errorMessage } from "../lib/admin-fetch";
 import { EmailPreviewButton } from "../EmailPreviewButton";
-import { AssistDialog } from "../vorlagen/AssistDialog";
 import { BlockEditor, type MailDoc } from "../vorlagen/BlockEditor";
+import { DesignerPanel, DesignerToggle } from "../vorlagen/DesignerPanel";
 import { LivePreview } from "../vorlagen/LivePreview";
+import { useDesignerSession } from "../vorlagen/use-designer-session";
+import { useDocHistory } from "../vorlagen/use-doc-history";
 
 type RateKey = keyof typeof MAILING_RATES;
 
@@ -238,10 +240,9 @@ export function RundmailWorkspace({
   const [subject, setSubject] = React.useState(initialMailing.subject);
   const [preheader, setPreheader] = React.useState(initialMailing.preheader ?? "");
   const [language, setLanguage] = React.useState<"de" | "en">(initialMailing.language);
-  const [doc, setDoc] = React.useState<MailDoc>(initialMailing.doc);
-  const [undo, setUndo] = React.useState<MailDoc | null>(null);
-  const [aiNotes, setAiNotes] = React.useState<string | null>(null);
-  const [assistOpen, setAssistOpen] = React.useState(false);
+  // The content with its „Rückgängig“ steps (every AI result and „Vorlage laden“ is one).
+  const { doc, setDoc, replaceDoc, undo, resetDoc, undoSteps } = useDocHistory<MailDoc>(initialMailing.doc);
+  const [designerOpen, setDesignerOpen] = React.useState(false);
   const [saving, setSaving] = React.useState(false);
   const [evaluation, setEvaluation] = React.useState<Evaluation | null>(null);
   const [checking, setChecking] = React.useState(false);
@@ -254,6 +255,19 @@ export function RundmailWorkspace({
   const [busy, setBusy] = React.useState<string | null>(null);
 
   const frozen = Boolean(mailing.frozenAt);
+  const designer = useDesignerSession({
+    use: "bulk",
+    doc,
+    context: { subject, preheader },
+    // A result that arrives after the release is dropped: the content is fixed.
+    onResult: (result) => {
+      if (!frozen) replaceDoc(stripMoBlocks(result.doc));
+    },
+  });
+  const { abort: abortDesigner } = designer;
+  React.useEffect(() => {
+    if (frozen) abortDesigner();
+  }, [frozen, abortDesigner]);
   const dirty =
     !frozen &&
     (subject !== mailing.subject ||
@@ -338,8 +352,7 @@ export function RundmailWorkspace({
         },
       });
       setMailing(json.mailing);
-      setDoc(json.mailing.doc);
-      setUndo(null);
+      resetDoc(json.mailing.doc);
       setEvaluation(null);
       toast({ variant: "success", title: "Gespeichert", description: "Für den Versand bitte erneut eine Testmail schicken." });
       return json.mailing;
@@ -465,8 +478,7 @@ export function RundmailWorkspace({
   const loadTemplate = async (id: number) => {
     try {
       const json = await adminFetch<{ template: { doc: MailDoc; name: string } }>("/api/admin/vorlagen", { body: { action: "get", id } });
-      setUndo(doc);
-      setDoc(stripMoBlocks(json.template.doc));
+      replaceDoc(stripMoBlocks(json.template.doc));
       toast({ variant: "success", title: `Vorlage „${json.template.name}“ übernommen`, description: "Noch nicht gespeichert — „Rückgängig“ holt den alten Stand zurück." });
     } catch (err) {
       toast({ variant: "error", title: "Vorlage nicht geladen", description: errorMessage(err) });
@@ -574,16 +586,8 @@ export function RundmailWorkspace({
                   <span className="text-xs text-muted-foreground">Gespeichert · Version {mailing.contentVersion}</span>
                 )}
                 <div className="ml-auto flex flex-wrap items-center gap-2">
-                  {undo && (
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      onClick={() => {
-                        setDoc(undo);
-                        setUndo(null);
-                        setAiNotes(null);
-                      }}
-                    >
+                  {undoSteps > 0 && (
+                    <Button size="sm" variant="ghost" onClick={undo}>
                       <Undo2 /> Rückgängig
                     </Button>
                   )}
@@ -598,26 +602,36 @@ export function RundmailWorkspace({
                       items={templates.map((t) => ({ key: String(t.id), label: t.name, onSelect: () => void loadTemplate(t.id) }))}
                     />
                   )}
-                  <Tooltip content="„Mit KI gestalten“ braucht ANTHROPIC_API_KEY." disabled={aiConfigured}>
-                    <Button size="sm" variant="outline" onClick={() => setAssistOpen(true)} disabled={!aiConfigured}>
-                      <Sparkles /> Mit KI gestalten
-                    </Button>
-                  </Tooltip>
+                  <DesignerToggle
+                    open={designerOpen}
+                    onToggle={() => setDesignerOpen((o) => !o)}
+                    aiConfigured={aiConfigured}
+                    running={designer.running}
+                  />
                   <Button size="sm" onClick={() => void save()} loading={saving} disabled={!dirty}>
                     <Save /> Speichern
                   </Button>
                 </div>
               </div>
-              {aiNotes && (
-                <Callout tone="info" title="Hinweis der KI" className="mb-3">
-                  {aiNotes}
-                </Callout>
-              )}
             </>
           )}
 
           <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)]">
             <div className="flex min-w-0 flex-col gap-3">
+              {designerOpen && aiConfigured && !frozen && (
+                <DesignerPanel
+                  session={designer}
+                  use="bulk"
+                  onClose={() => setDesignerOpen(false)}
+                  fields={{
+                    subject,
+                    preheader,
+                    onSubject: (value) => setSubject(value.slice(0, 150)),
+                    onPreheader: (value) => setPreheader(value.slice(0, 150)),
+                    disabled: frozen,
+                  }}
+                />
+              )}
               <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto]">
                 <Field
                   label="Betreff"
@@ -885,17 +899,6 @@ export function RundmailWorkspace({
         </TabsContent>
       </Tabs>
 
-      <AssistDialog
-        open={assistOpen}
-        onOpenChange={setAssistOpen}
-        doc={doc}
-        use="bulk"
-        onResult={(next, notes) => {
-          setUndo(doc);
-          setDoc(next);
-          setAiNotes(notes || null);
-        }}
-      />
       {confirmDialog}
     </div>
   );
