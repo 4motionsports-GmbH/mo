@@ -20,13 +20,21 @@
 // Outlook twins) — so whatever the operator builds stays robust; there is no
 // free-form HTML except the deliberately fenced `html` block.
 //
+// Version 2 (11.11.2026, owner: „any template he wants, no fixed layout“):
+// free layouts — a `section` holds 1–4 columns of blocks (stacking on
+// phones, background colour or picture), every block takes optional spacing
+// and type settings, the card has its own colour, there are more fonts and
+// the blocks `menu` (link bar) and `product` (one live catalog product in the
+// template's own look). New optional fields are OMITTED while unset, so a
+// version-1 document normalises to exactly the JSON it had.
+//
 // This module is the single description of the format: the block catalog
 // (labels, fields, limits, which use allows which block), normalisation of
 // untrusted input (API bodies, imports, AI output), validation with German
 // messages, the merge fields ({{vorname}}) and the starter documents.
 // The AI assistant gets MAIL_BLOCK_CATALOG verbatim as its "interface".
 
-import { EMAIL_FONT_KEYS, EMAIL_BUTTON_SHAPES, parseHexColor } from "./email-theme.mjs";
+import { EMAIL_FONT_CHOICES, EMAIL_FONT_KEYS, EMAIL_BUTTON_SHAPES, msoFontStackFor, parseHexColor } from "./email-theme.mjs";
 import { formatProductRef, parseProductRef } from "./product-ref.mjs";
 
 /** A template selected as a design is stored as this key (email_design_selections / campaigns.design_key). */
@@ -45,12 +53,18 @@ export function parseTemplateDesignKey(key) {
 
 /** The `format` of an exported template file. */
 export const MAIL_TEMPLATE_FILE_FORMAT = "mo-mail-template";
-/** The document version this code writes. */
-export const MAIL_TEMPLATE_DOC_VERSION = 1;
+/** The document version this code writes (2: sections, columns, per-block styling). */
+export const MAIL_TEMPLATE_DOC_VERSION = 2;
 
 /** Upper bounds — a mail must stay well under Gmail's 102 KB clip. */
 export const MAIL_TEMPLATE_LIMITS = Object.freeze({
+  /** top-level blocks (sections count as one) */
   blocks: 40,
+  /** every block of the document, the ones inside sections included */
+  totalBlocks: 80,
+  columns: 4,
+  blocksPerColumn: 12,
+  menuItems: 8,
   textChars: 5000,
   headingChars: 200,
   labelChars: 60,
@@ -62,27 +76,182 @@ export const MAIL_TEMPLATE_LIMITS = Object.freeze({
   descriptionChars: 300,
 });
 
+// ── fonts ────────────────────────────────────────────────────────────────────
+
+/**
+ * Template-only web fonts (Google Fonts) on top of the theme fonts of
+ * email-theme.mjs. Apple Mail, iOS and Outlook for Mac show them; Gmail,
+ * Outlook for Windows and others fall back to the stack (Word gets one
+ * Windows-safe font for the whole mail — msoHeadHtml). `classic` is the
+ * theme font the classic block renderers (product rows, countdown) use.
+ */
+export const MAIL_TEMPLATE_FONTS = Object.freeze({
+  oswald: {
+    label: "Oswald (schmal, sportlich)",
+    stack: "'Oswald', 'Arial Narrow', Arial, sans-serif",
+    google: "Oswald:wght@400;600;700",
+    mso: "Arial, Helvetica, sans-serif",
+    classic: "arial",
+  },
+  bebas: {
+    label: "Bebas Neue (Plakatschrift, nur Großbuchstaben)",
+    stack: "'Bebas Neue', Impact, 'Arial Narrow', Arial, sans-serif",
+    google: "Bebas+Neue",
+    mso: "Arial, Helvetica, sans-serif",
+    classic: "arial",
+  },
+  poppins: {
+    label: "Poppins (modern, rund)",
+    stack: "'Poppins', Verdana, Geneva, sans-serif",
+    google: "Poppins:wght@400;600;700",
+    mso: "Verdana, Geneva, sans-serif",
+    classic: "verdana",
+  },
+  playfair: {
+    label: "Playfair Display (elegant, Serifen)",
+    stack: "'Playfair Display', Georgia, 'Times New Roman', serif",
+    google: "Playfair+Display:wght@400;700",
+    mso: "Georgia, 'Times New Roman', serif",
+    classic: "georgia",
+  },
+  roboto: {
+    label: "Roboto",
+    stack: "'Roboto', Arial, Helvetica, sans-serif",
+    google: "Roboto:wght@400;700",
+    mso: "Arial, Helvetica, sans-serif",
+    classic: "arial",
+  },
+  opensans: {
+    label: "Open Sans",
+    stack: "'Open Sans', Arial, Helvetica, sans-serif",
+    google: "Open+Sans:wght@400;700",
+    mso: "Arial, Helvetica, sans-serif",
+    classic: "arial",
+  },
+  lato: {
+    label: "Lato",
+    stack: "'Lato', Arial, Helvetica, sans-serif",
+    google: "Lato:wght@400;700",
+    mso: "Arial, Helvetica, sans-serif",
+    classic: "arial",
+  },
+  inter: {
+    label: "Inter",
+    stack: "'Inter', Arial, Helvetica, sans-serif",
+    google: "Inter:wght@400;700",
+    mso: "Arial, Helvetica, sans-serif",
+    classic: "arial",
+  },
+});
+
+/** Every font a template may use: the theme fonts, then the template web fonts. */
+export const MAIL_FONT_KEYS = Object.freeze([...EMAIL_FONT_KEYS, ...Object.keys(MAIL_TEMPLATE_FONTS)]);
+
+/** @param {unknown} key */
+function isMailFontKey(key) {
+  return typeof key === "string" && MAIL_FONT_KEYS.includes(key);
+}
+
+/** The inline CSS font stack of a font key (unknown → the brand font). */
+export function mailFontStack(key) {
+  const extra = MAIL_TEMPLATE_FONTS[/** @type {keyof typeof MAIL_TEMPLATE_FONTS} */ (key)];
+  if (extra) return extra.stack;
+  const theme = EMAIL_FONT_CHOICES[/** @type {keyof typeof EMAIL_FONT_CHOICES} */ (key)];
+  return (theme ?? EMAIL_FONT_CHOICES.montserrat).stack;
+}
+
+/** The Windows-safe stack Outlook (Word) uses for the whole mail. */
+export function mailFontMsoStack(key) {
+  const extra = MAIL_TEMPLATE_FONTS[/** @type {keyof typeof MAIL_TEMPLATE_FONTS} */ (key)];
+  return extra ? extra.mso : msoFontStackFor(String(key));
+}
+
+/** The Google-Fonts family spec of a web font ("Oswald:wght@400;600;700"), or null. */
+export function mailFontGoogleFamily(key) {
+  if (key === "montserrat") return "Montserrat:wght@400;700";
+  const extra = MAIL_TEMPLATE_FONTS[/** @type {keyof typeof MAIL_TEMPLATE_FONTS} */ (key)];
+  return extra ? extra.google : null;
+}
+
+/** The German label of a font key. */
+export function mailFontLabel(key) {
+  const extra = MAIL_TEMPLATE_FONTS[/** @type {keyof typeof MAIL_TEMPLATE_FONTS} */ (key)];
+  if (extra) return extra.label;
+  return EMAIL_FONT_CHOICES[/** @type {keyof typeof EMAIL_FONT_CHOICES} */ (key)]?.label ?? String(key);
+}
+
+/** The theme font (email-theme.mjs) closest to a template font — for the classic renderers. */
+export function classicFontFor(key) {
+  const extra = MAIL_TEMPLATE_FONTS[/** @type {keyof typeof MAIL_TEMPLATE_FONTS} */ (key)];
+  if (extra) return extra.classic;
+  return EMAIL_FONT_KEYS.includes(/** @type {any} */ (key)) ? key : "montserrat";
+}
+
 /** Who may use a block: `personal` = templates for Mo's personal mails, `bulk` = Rundmail content. */
 /**
  * @typedef {"logo" | "heading" | "text" | "image" | "button" | "products" | "coupon" | "countdown" |
  *   "divider" | "spacer" | "social" | "html" | "greeting" | "hero" | "mo_content" | "mo_offer" |
- *   "mo_promo" | "footer"} MailBlockType
+ *   "mo_promo" | "footer" | "section" | "menu" | "product"} MailBlockType
  */
+
+/** Optional spacing / background fields every content block takes (omitted while unset). */
+const BOX_FIELD_DOCS = Object.freeze({
+  padTop: "Abstand oben in px, 0–120 (leer = Standard des Bausteins)",
+  padBottom: "Abstand unten in px, 0–120 (leer = Standard)",
+  background: "Hintergrundfarbe #rrggbb des Bausteins oder leer (= Hintergrund drumherum)",
+});
+
+/** Optional type settings of text blocks (omitted while unset). */
+const TEXT_STYLE_DOCS = Object.freeze({
+  fontSize: "Schriftgröße in px, 10–72 (leer = Größe s/m/l/xl)",
+  weight: "normal | bold (leer = Standard: Überschriften fett)",
+  italic: "true = kursiv",
+  uppercase: "true = GROSSBUCHSTABEN (per CSS, der Text bleibt normal geschrieben)",
+  letterSpacing: "Buchstabenabstand in px, -2–20",
+  lineHeight: "Zeilenhöhe in Prozent, 100–250 (Standard 150 Text, 125 Überschrift)",
+  font: "Schrift nur für diesen Baustein (Schlüssel wie fontFamily) oder leer",
+});
 
 /**
  * The block catalog: label, group, one-line description (UI + AI prompt), the
- * fields with their meaning, and where the block may be used.
- * @type {Readonly<Record<MailBlockType, { label: string, group: "inhalt" | "angebot" | "mo" | "rahmen",
- *   description: string, fields: Readonly<Record<string, string>>, personal: boolean, bulk: boolean }>>}
+ * fields with their meaning, where the block may be used, and whether it may
+ * stand inside a column of a `section`.
+ * @type {Readonly<Record<MailBlockType, { label: string, group: "inhalt" | "angebot" | "mo" | "rahmen" | "aufbau",
+ *   description: string, fields: Readonly<Record<string, string>>, personal: boolean, bulk: boolean, inColumns: boolean }>>}
  */
 export const MAIL_BLOCK_CATALOG = Object.freeze({
+  section: {
+    label: "Abschnitt mit Spalten",
+    group: "aufbau",
+    description:
+      "Ein Abschnitt mit 1–4 Spalten nebeneinander (auf dem Handy untereinander), optional mit Hintergrundfarbe oder Hintergrundbild — für Kopfzeilen, Bild + Text nebeneinander, Produkt-Kacheln, Vorteile-Leisten, farbige Bänder.",
+    fields: {
+      columns:
+        "1–4 Spalten: { width: Breite in % (5–95, Summe 100), valign: top | middle | bottom, background: #rrggbb oder leer, padding: Innenabstand 0–48 px, blocks: [Bausteine, max. 12] }",
+      background: "Hintergrundfarbe #rrggbb des Abschnitts oder leer (= Kartenfarbe)",
+      bgImage: "Hintergrundbild https://… (Text darüber; Farbe als Ersatz setzen) oder leer",
+      minHeight: "Mindesthöhe in px mit Hintergrundbild, 0–800",
+      padTop: "Abstand oben in px, 0–120 (Standard 24)",
+      padBottom: "Abstand unten in px, 0–120 (Standard 24)",
+      padX: "Seitenabstand in px, 0–60 (leer = Seitenabstand der Mail; 0 = randlos)",
+      gap: "Abstand zwischen den Spalten in px, 0–48 (Standard 20)",
+      stack: "true = Spalten auf dem Handy untereinander (Standard) · false = immer nebeneinander (kleine Symbole, Logo + Menü)",
+      reverse: "true = auf dem Handy kommt die letzte Spalte zuerst (Bild rechts am PC, oben am Handy)",
+      radius: "abgerundete Ecken in px, 0–32",
+      borderColor: "Rahmenfarbe #rrggbb oder leer",
+    },
+    personal: true,
+    bulk: true,
+    inColumns: false,
+  },
   logo: {
     label: "Logo",
     group: "rahmen",
     description: "Das Logo von motion sports, verlinkt auf den Shop.",
-    fields: { align: "left | center", width: "Breite in px, 60–300 (Standard 144)" },
+    fields: { align: "left | center | right", width: "Breite in px, 60–300 (Standard 144)", ...BOX_FIELD_DOCS },
     personal: true,
     bulk: true,
+    inColumns: true,
   },
   heading: {
     label: "Überschrift",
@@ -90,13 +259,17 @@ export const MAIL_BLOCK_CATALOG = Object.freeze({
     description: "Eine Überschrift. Mit Hintergrundfarbe wird daraus ein vollbreites Band (z. B. schwarz mit gelber Schrift).",
     fields: {
       text: "Text, max. 200 Zeichen; Platzhalter {{vorname}} oder {{vorname|Ersatz}} erlaubt",
-      size: "s | m | l | xl",
+      size: "s | m | l | xl (16 / 20 / 26 / 34 px)",
       align: "left | center | right",
       color: "Schriftfarbe #rrggbb oder leer (= Stil)",
-      background: "Hintergrund #rrggbb oder leer (= weiß)",
+      background: "Hintergrund #rrggbb oder leer",
+      padTop: BOX_FIELD_DOCS.padTop,
+      padBottom: BOX_FIELD_DOCS.padBottom,
+      ...TEXT_STYLE_DOCS,
     },
     personal: true,
     bulk: true,
+    inColumns: true,
   },
   text: {
     label: "Text",
@@ -105,13 +278,19 @@ export const MAIL_BLOCK_CATALOG = Object.freeze({
       "Fließtext. Leerzeile = neuer Absatz, Zeilen mit „- “ = Aufzählung, **fett**, Links als [Text](https://…).",
     fields: {
       text: "Text, max. 5.000 Zeichen; Platzhalter {{vorname}} erlaubt",
-      size: "s | m | l",
+      size: "s | m | l (12 / 14 / 16 px)",
       align: "left | center | right",
       color: "Schriftfarbe #rrggbb oder leer",
       background: "Hintergrund #rrggbb oder leer",
+      bullet: "Zeichen der Aufzählung: ✓ | → | – | ★ | 1. (nummeriert) oder leer (= •)",
+      accentBar: "Farbe #rrggbb eines Balkens links neben dem Text (Zitat, Hinweis) oder leer",
+      padTop: BOX_FIELD_DOCS.padTop,
+      padBottom: BOX_FIELD_DOCS.padBottom,
+      ...TEXT_STYLE_DOCS,
     },
     personal: true,
     bulk: true,
+    inColumns: true,
   },
   image: {
     label: "Bild",
@@ -121,10 +300,14 @@ export const MAIL_BLOCK_CATALOG = Object.freeze({
       src: "Bildadresse https://… (JPG, PNG oder GIF)",
       alt: "Alternativtext — Pflicht, wird gezeigt, wenn Bilder blockiert sind",
       href: "Link beim Klick (https://…) oder leer",
-      width: "full (ganze Breite, 600 px) | content (mit Rand, 480 px)",
+      width: "full (ganze Breite: 600 px bzw. Spaltenbreite) | content (mit Seitenrand) | Zahl in px (40–600)",
+      align: "left | center | right (bei schmaleren Bildern)",
+      radius: "abgerundete Ecken in px, 0–40",
+      ...BOX_FIELD_DOCS,
     },
     personal: true,
     bulk: true,
+    inColumns: true,
   },
   button: {
     label: "Button",
@@ -137,9 +320,15 @@ export const MAIL_BLOCK_CATALOG = Object.freeze({
       color: "Buttonfarbe #rrggbb oder leer (= Akzentfarbe)",
       textColor: "Schriftfarbe #rrggbb oder leer",
       fullWidth: "true = ganze Breite",
+      size: "s | m | l (leer = m)",
+      shape: "pill | rounded | square (leer = Button-Form der Mail)",
+      outline: "true = nur Rahmen und Schrift in der Buttonfarbe, kein gefüllter Button",
+      borderColor: "Rahmenfarbe #rrggbb oder leer",
+      ...BOX_FIELD_DOCS,
     },
     personal: true,
     bulk: true,
+    inColumns: true,
   },
   products: {
     label: "Produkte",
@@ -153,6 +342,28 @@ export const MAIL_BLOCK_CATALOG = Object.freeze({
     },
     personal: true,
     bulk: true,
+    inColumns: false,
+  },
+  product: {
+    label: "Produkt-Highlight",
+    group: "angebot",
+    description:
+      "EIN Produkt aus dem Katalog im Look der Mail — Bild, Name, aktueller Preis (auch Sale- und „ab“-Preis) und Link kommen beim Versand live aus dem Katalog. In Spalten nebeneinander ergibt das Produkt-Kacheln im eigenen Design.",
+    fields: {
+      ref: "Katalog-Referenz (Handle oder Handle~VariantenId)",
+      layout: "stacked (Bild über dem Text) | side (Bild links, Text rechts)",
+      showImage: "true | false",
+      showPrice: "true | false",
+      showDescription: "true = Kurzbeschreibung aus dem Katalog zeigen",
+      buttonLabel: "Beschriftung des Buttons (Standard „Zum Produkt“, leer = kein Button)",
+      align: "left | center | right",
+      color: "Schriftfarbe #rrggbb oder leer",
+      nameSize: "Schriftgröße des Namens in px, 12–40",
+      ...BOX_FIELD_DOCS,
+    },
+    personal: true,
+    bulk: true,
+    inColumns: true,
   },
   coupon: {
     label: "Gutschein-Code",
@@ -163,9 +374,12 @@ export const MAIL_BLOCK_CATALOG = Object.freeze({
       code: "Der Code, genau wie in Shopify (z. B. BLACKWEEK25)",
       headline: "Was er bringt, z. B. „25 % auf alles“",
       terms: "Bedingungen, z. B. „Gültig bis 30.11. · nicht kombinierbar“",
+      accent: "Farbe #rrggbb des Rahmens oder leer (= Akzentfarbe)",
+      ...BOX_FIELD_DOCS,
     },
     personal: true,
     bulk: true,
+    inColumns: true,
   },
   countdown: {
     label: "Countdown",
@@ -174,39 +388,71 @@ export const MAIL_BLOCK_CATALOG = Object.freeze({
     fields: { until: "Ende als Datum/Uhrzeit (ISO)", heading: "Text darüber oder leer" },
     personal: true,
     bulk: true,
+    inColumns: false,
+  },
+  menu: {
+    label: "Navigation",
+    group: "rahmen",
+    description: "Eine Leiste mit Text-Links (z. B. „Kraft | Cardio | Zubehör | Sale“) — oben unter dem Logo oder neben dem Logo.",
+    fields: {
+      items: "1–8 Links: { label: Text (max. 40 Zeichen), href: https://… }",
+      align: "left | center | right",
+      separator: "| | · | / | none",
+      uppercase: "true | false",
+      bold: "true | false",
+      color: "Schriftfarbe #rrggbb oder leer (= Textfarbe)",
+      fontSize: "Schriftgröße in px, 10–28 (Standard 13)",
+      letterSpacing: TEXT_STYLE_DOCS.letterSpacing,
+      font: TEXT_STYLE_DOCS.font,
+      ...BOX_FIELD_DOCS,
+    },
+    personal: true,
+    bulk: true,
+    inColumns: true,
   },
   divider: {
     label: "Trennlinie",
     group: "rahmen",
     description: "Eine dünne Linie zwischen Abschnitten.",
-    fields: { color: "Linienfarbe #rrggbb oder leer" },
+    fields: {
+      color: "Linienfarbe #rrggbb oder leer",
+      thickness: "Stärke in px, 1–8",
+      widthPct: "Länge in % der Breite, 10–100",
+      lineStyle: "solid | dashed | dotted",
+      align: "left | center | right",
+      ...BOX_FIELD_DOCS,
+    },
     personal: true,
     bulk: true,
+    inColumns: true,
   },
   spacer: {
     label: "Abstand",
     group: "rahmen",
     description: "Leerer Abstand.",
-    fields: { height: "Höhe in px, 8–80" },
+    fields: { height: "Höhe in px, 4–200", background: BOX_FIELD_DOCS.background },
     personal: true,
     bulk: true,
+    inColumns: true,
   },
   social: {
     label: "Social-Media",
     group: "rahmen",
     description: "Die Social-Media-Symbole von motion sports.",
-    fields: {},
+    fields: { align: "left | center | right", ...BOX_FIELD_DOCS },
     personal: true,
     bulk: true,
+    inColumns: true,
   },
   html: {
     label: "Eigenes HTML",
     group: "inhalt",
     description:
       "Für Profis: ein eigener HTML-Abschnitt (z. B. aus einem Design-Tool). Skripte, Formulare und Event-Attribute werden entfernt; in Outlook unbedingt testen.",
-    fields: { html: "HTML-Code, max. 20.000 Zeichen — Tabellen und Inline-Styles verwenden" },
+    fields: { html: "HTML-Code, max. 20.000 Zeichen — Tabellen und Inline-Styles verwenden", ...BOX_FIELD_DOCS },
     personal: true,
     bulk: true,
+    inColumns: true,
   },
   greeting: {
     label: "Anrede",
@@ -216,9 +462,15 @@ export const MAIL_BLOCK_CATALOG = Object.freeze({
       text: "Mit Vornamen, z. B. „Hallo {{vorname}},“",
       fallback: "Ohne Vornamen, z. B. „Hallo,“",
       align: "left | center",
+      color: "Schriftfarbe #rrggbb oder leer",
+      padTop: BOX_FIELD_DOCS.padTop,
+      padBottom: BOX_FIELD_DOCS.padBottom,
+      background: BOX_FIELD_DOCS.background,
+      ...TEXT_STYLE_DOCS,
     },
     personal: true,
     bulk: true,
+    inColumns: true,
   },
   hero: {
     label: "Titelbild (KI-Hero)",
@@ -233,6 +485,7 @@ export const MAIL_BLOCK_CATALOG = Object.freeze({
     },
     personal: true,
     bulk: false,
+    inColumns: false,
   },
   mo_content: {
     label: "Mos persönlicher Text",
@@ -242,6 +495,7 @@ export const MAIL_BLOCK_CATALOG = Object.freeze({
     fields: { showHeading: "true = die Überschrift der Mail (z. B. „Deine persönliche Empfehlung“) zeigen" },
     personal: true,
     bulk: false,
+    inColumns: false,
   },
   mo_offer: {
     label: "Mos Angebot",
@@ -251,6 +505,7 @@ export const MAIL_BLOCK_CATALOG = Object.freeze({
     fields: {},
     personal: true,
     bulk: false,
+    inColumns: false,
   },
   mo_promo: {
     label: "Mo-Hinweis & Button",
@@ -260,20 +515,32 @@ export const MAIL_BLOCK_CATALOG = Object.freeze({
     fields: {},
     personal: true,
     bulk: false,
+    inColumns: false,
   },
   footer: {
     label: "Fußzeile",
     group: "rahmen",
     description:
       "Impressum, Firmenangaben und der Abmelde-Link — Pflicht, immer am Ende, kann nicht entfernt werden.",
-    fields: { showSocial: "true = Social-Media-Symbole in der Fußzeile" },
+    fields: {
+      showSocial: "true = Social-Media-Symbole in der Fußzeile",
+      background: "Hintergrund #rrggbb oder leer (= hellgrau)",
+      textColor: "Schriftfarbe #rrggbb oder leer (= schwarz) — gut lesbar halten",
+    },
     personal: true,
     bulk: true,
+    inColumns: false,
   },
 });
 
 /** @type {ReadonlyArray<MailBlockType>} */
 export const MAIL_BLOCK_TYPES = Object.freeze(/** @type {MailBlockType[]} */ (Object.keys(MAIL_BLOCK_CATALOG)));
+
+/** The block types a column of a section may hold. */
+export const MAIL_CHILD_BLOCK_TYPES = Object.freeze(MAIL_BLOCK_TYPES.filter((t) => MAIL_BLOCK_CATALOG[t].inColumns));
+
+/** The block types that only stand at the top level of a document. */
+export const MAIL_TOP_ONLY_TYPES = Object.freeze(MAIL_BLOCK_TYPES.filter((t) => !MAIL_BLOCK_CATALOG[t].inColumns));
 
 /**
  * One block of a document: its id and type plus the fields of its type
@@ -294,7 +561,17 @@ export const DEFAULT_MAIL_STYLE = Object.freeze({
   fontFamily: "montserrat",
   buttonShape: "pill",
   logoUrl: null,
+  cardBackground: "#ffffff",
+  headingFont: null,
+  linkColor: null,
+  contentPadding: 60,
+  cardRadius: 0,
 });
+
+/** The separators of a menu block. */
+export const MENU_SEPARATORS = Object.freeze(["|", "·", "/", "none"]);
+/** The bullets of a text block's list ("1." = numbered). */
+export const TEXT_BULLETS = Object.freeze(["✓", "→", "–", "★", "1."]);
 
 /** Merge fields: {{vorname}} and {{vorname|Ersatz}} (case-insensitive name). */
 export const MERGE_FIELD_RE = /\{\{\s*([a-zA-ZäöüÄÖÜß_]+)\s*(?:\|([^{}]{0,40}))?\}\}/g;
@@ -332,6 +609,44 @@ function int(v, lo, hi, fallback) {
 /** @param {unknown} v */
 function bool(v, fallback) {
   return typeof v === "boolean" ? v : fallback;
+}
+/**
+ * An OPTIONAL number: rounded and clamped, or null when empty / not a number
+ * (the block's default applies). Negative values are allowed when `lo` is.
+ * @param {unknown} v @param {number} lo @param {number} hi
+ */
+function nint(v, lo, hi) {
+  const n = typeof v === "number" ? v : typeof v === "string" && /^\s*-?\d+(\.\d+)?\s*$/.test(v) ? Number(v) : NaN;
+  if (!Number.isFinite(n)) return null;
+  return Math.min(hi, Math.max(lo, Math.round(n)));
+}
+
+/** Copy the optional spacing / background fields (omitted while unset). */
+function boxInto(out, r, { background = true } = {}) {
+  const padTop = nint(r.padTop, 0, 120);
+  const padBottom = nint(r.padBottom, 0, 120);
+  if (padTop != null) out.padTop = padTop;
+  if (padBottom != null) out.padBottom = padBottom;
+  if (background) {
+    const bg = color(r.background);
+    if (bg) out.background = bg;
+  }
+  return out;
+}
+
+/** Copy the optional type settings of a text block (omitted while unset). */
+function textStyleInto(out, r, { maxSize = 72 } = {}) {
+  const fontSize = nint(r.fontSize, 10, maxSize);
+  if (fontSize != null) out.fontSize = fontSize;
+  if (r.weight === "normal" || r.weight === "bold") out.weight = r.weight;
+  if (r.italic === true) out.italic = true;
+  if (r.uppercase === true) out.uppercase = true;
+  const ls = nint(r.letterSpacing, -2, 20);
+  if (ls != null && ls !== 0) out.letterSpacing = ls;
+  const lh = nint(r.lineHeight, 100, 250);
+  if (lh != null) out.lineHeight = lh;
+  if (isMailFontKey(r.font)) out.font = r.font;
+  return out;
 }
 
 /**
@@ -392,6 +707,11 @@ function refs(v) {
   return out;
 }
 
+/** One catalog ref (the product block), or "". */
+function singleRef(v) {
+  return refs(typeof v === "string" ? [v] : [])[0] ?? "";
+}
+
 let idCounter = 0;
 /** A short block id (unique inside a document). */
 export function newBlockId(taken = new Set()) {
@@ -402,58 +722,127 @@ export function newBlockId(taken = new Set()) {
   }
 }
 
-// ── normalisation ────────────────────────────────────────────────────────────
+/** The wanted id when it is well-formed and free, else a new one — taken either way. */
+function takeId(wanted, taken) {
+  const ok = typeof wanted === "string" && /^[A-Za-z0-9_-]{1,24}$/.test(wanted) && !taken.has(wanted);
+  const id = ok ? /** @type {string} */ (wanted) : newBlockId(taken);
+  taken.add(id);
+  return id;
+}
 
 /**
- * One block from untrusted input → a clean block, or null for an unknown type.
- * Every field is clamped to its vocabulary/limits; unknown fields are dropped.
+ * Column widths in percent that add up to 100: unset ones (0) share what the
+ * set ones leave (equally when none is set), then everything is scaled and
+ * rounded, each column at least 5 %.
+ * @param {number[]} raw
+ */
+export function normalizeColumnWidths(raw) {
+  const n = raw.length;
+  if (n === 0) return [];
+  const set = raw.filter((w) => w > 0);
+  const setSum = set.reduce((a, b) => a + b, 0);
+  const unset = n - set.length;
+  const share = unset > 0 ? Math.max(5, (setSum < 100 ? 100 - setSum : 100 / n) / unset) : 0;
+  const filled = raw.map((w) => (w > 0 ? w : share));
+  const sum = filled.reduce((a, b) => a + b, 0);
+  const scaled = filled.map((w) => Math.max(5, Math.round((w / sum) * 100)));
+  // rounding remainder goes to the widest column
+  const diff = 100 - scaled.reduce((a, b) => a + b, 0);
+  if (diff !== 0) {
+    let widest = 0;
+    scaled.forEach((w, i) => {
+      if (w > scaled[widest]) widest = i;
+    });
+    scaled[widest] = Math.max(5, scaled[widest] + diff);
+  }
+  return scaled;
+}
+
+// ── normalisation ────────────────────────────────────────────────────────────
+
+/** @param {unknown} v */
+function imageWidth(v) {
+  if (v === "full" || v === "content") return v;
+  return nint(v, 40, 600) ?? "full";
+}
+
+/**
+ * One block from untrusted input → a clean block, or null for an unknown type
+ * (or a type that may not stand where it is: inside a column only
+ * MAIL_CHILD_BLOCK_TYPES). Every field is clamped to its vocabulary/limits;
+ * unknown fields are dropped; optional fields are omitted while unset.
  * @param {unknown} raw
- * @param {Set<string>} takenIds
+ * @param {Set<string>} takenIds  ids of the WHOLE document (one set for the tree)
+ * @param {{ inColumn?: boolean, budget?: { left: number } }} [opts]  budget: blocks still allowed (incl. nested)
  * @returns {MailBlock | null}
  */
-export function normalizeMailBlock(raw, takenIds = new Set()) {
+export function normalizeMailBlock(raw, takenIds = new Set(), opts = {}) {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
   const r = /** @type {Record<string, unknown>} */ (raw);
   const type = /** @type {MailBlockType} */ (r.type);
   if (!MAIL_BLOCK_TYPES.includes(type)) return null;
-  const wanted = typeof r.id === "string" && /^[A-Za-z0-9_-]{1,24}$/.test(r.id) ? r.id : "";
-  const id = wanted && !takenIds.has(wanted) ? wanted : newBlockId(takenIds);
-  takenIds.add(id);
+  if (opts.inColumn && !MAIL_BLOCK_CATALOG[type].inColumns) return null;
+  if (opts.budget) {
+    if (opts.budget.left <= 0) return null;
+    opts.budget.left--;
+  }
+  const id = takeId(r.id, takenIds);
   const L = MAIL_TEMPLATE_LIMITS;
   switch (type) {
     case "logo":
-      return { id, type, align: oneOf(r.align, ["left", "center"], "center"), width: int(r.width, 60, 300, 144) };
+      return boxInto({ id, type, align: oneOf(r.align, ALIGNS, "center"), width: int(r.width, 60, 300, 144) }, r);
     case "heading":
-      return {
-        id,
-        type,
-        text: line(r.text, L.headingChars),
-        size: oneOf(r.size, HEADING_SIZES, "l"),
-        align: oneOf(r.align, ALIGNS, "center"),
-        color: color(r.color),
-        background: color(r.background),
-      };
-    case "text":
-      return {
-        id,
-        type,
-        text: str(r.text, L.textChars).trim(),
-        size: oneOf(r.size, TEXT_SIZES, "m"),
-        align: oneOf(r.align, ALIGNS, "left"),
-        color: color(r.color),
-        background: color(r.background),
-      };
-    case "image":
-      return {
+      return textStyleInto(
+        boxInto(
+          {
+            id,
+            type,
+            text: line(r.text, L.headingChars),
+            size: oneOf(r.size, HEADING_SIZES, "l"),
+            align: oneOf(r.align, ALIGNS, "center"),
+            color: color(r.color),
+            background: color(r.background),
+          },
+          r,
+          { background: false }
+        ),
+        r
+      );
+    case "text": {
+      const out = boxInto(
+        {
+          id,
+          type,
+          text: str(r.text, L.textChars).trim(),
+          size: oneOf(r.size, TEXT_SIZES, "m"),
+          align: oneOf(r.align, ALIGNS, "left"),
+          color: color(r.color),
+          background: color(r.background),
+        },
+        r,
+        { background: false }
+      );
+      if (typeof r.bullet === "string" && TEXT_BULLETS.includes(r.bullet)) out.bullet = r.bullet;
+      const bar = color(r.accentBar);
+      if (bar) out.accentBar = bar;
+      return textStyleInto(out, r);
+    }
+    case "image": {
+      const out = {
         id,
         type,
         src: cleanUrl(r.src),
         alt: line(r.alt, L.altChars),
         href: cleanHref(r.href),
-        width: oneOf(r.width, ["full", "content"], "full"),
+        width: imageWidth(r.width),
       };
-    case "button":
-      return {
+      if (r.align === "left" || r.align === "right") out.align = r.align;
+      const radius = nint(r.radius, 0, 40);
+      if (radius) out.radius = radius;
+      return boxInto(out, r);
+    }
+    case "button": {
+      const out = {
         id,
         type,
         label: line(r.label, L.labelChars),
@@ -463,6 +852,13 @@ export function normalizeMailBlock(raw, takenIds = new Set()) {
         textColor: color(r.textColor),
         fullWidth: bool(r.fullWidth, false),
       };
+      if (r.size === "s" || r.size === "l") out.size = r.size;
+      if (typeof r.shape === "string" && EMAIL_BUTTON_SHAPES.includes(/** @type {any} */ (r.shape))) out.shape = r.shape;
+      if (r.outline === true) out.outline = true;
+      const border = color(r.borderColor);
+      if (border) out.borderColor = border;
+      return boxInto(out, r);
+    }
     case "products":
       return {
         id,
@@ -471,32 +867,103 @@ export function normalizeMailBlock(raw, takenIds = new Set()) {
         refs: refs(r.refs),
         layout: oneOf(r.layout, ["rows", "grid"], "rows"),
       };
-    case "coupon":
-      return {
+    case "product": {
+      const out = {
+        id,
+        type,
+        ref: singleRef(r.ref),
+        layout: oneOf(r.layout, ["stacked", "side"], "stacked"),
+        showImage: bool(r.showImage, true),
+        showPrice: bool(r.showPrice, true),
+        showDescription: bool(r.showDescription, false),
+        buttonLabel: typeof r.buttonLabel === "string" ? line(r.buttonLabel, L.labelChars) : "Zum Produkt",
+        align: oneOf(r.align, ALIGNS, "center"),
+      };
+      const c = color(r.color);
+      if (c) out.color = c;
+      const nameSize = nint(r.nameSize, 12, 40);
+      if (nameSize != null) out.nameSize = nameSize;
+      return boxInto(out, r);
+    }
+    case "coupon": {
+      const out = {
         id,
         type,
         code: line(r.code, 40).replace(/\s+/g, "").toUpperCase(),
         headline: line(r.headline, L.headingChars),
         terms: line(r.terms, 300),
       };
+      const accent = color(r.accent);
+      if (accent) out.accent = accent;
+      return boxInto(out, r);
+    }
     case "countdown":
       return { id, type, until: isoDate(r.until), heading: line(r.heading, L.headingChars) };
-    case "divider":
-      return { id, type, color: color(r.color) };
-    case "spacer":
-      return { id, type, height: int(r.height, 8, 80, 24) };
-    case "social":
-      return { id, type };
+    case "menu": {
+      /** @type {Array<{ label: string, href: string }>} */
+      const items = [];
+      for (const it of Array.isArray(r.items) ? r.items : []) {
+        if (!it || typeof it !== "object" || Array.isArray(it)) continue;
+        const ir = /** @type {Record<string, unknown>} */ (it);
+        const label = line(ir.label, 40);
+        const href = cleanHref(ir.href);
+        if (!label && !href) continue;
+        items.push({ label, href });
+        if (items.length >= L.menuItems) break;
+      }
+      const out = {
+        id,
+        type,
+        items,
+        align: oneOf(r.align, ALIGNS, "center"),
+        separator: oneOf(r.separator, MENU_SEPARATORS, "|"),
+        uppercase: bool(r.uppercase, true),
+        bold: bool(r.bold, true),
+      };
+      const c = color(r.color);
+      if (c) out.color = c;
+      const fontSize = nint(r.fontSize, 10, 28);
+      if (fontSize != null) out.fontSize = fontSize;
+      const ls = nint(r.letterSpacing, -2, 20);
+      if (ls != null && ls !== 0) out.letterSpacing = ls;
+      if (isMailFontKey(r.font)) out.font = r.font;
+      return boxInto(out, r);
+    }
+    case "divider": {
+      const out = { id, type, color: color(r.color) };
+      const thickness = nint(r.thickness, 1, 8);
+      if (thickness != null && thickness !== 1) out.thickness = thickness;
+      const widthPct = nint(r.widthPct, 10, 100);
+      if (widthPct != null && widthPct !== 100) out.widthPct = widthPct;
+      if (r.lineStyle === "dashed" || r.lineStyle === "dotted") out.lineStyle = r.lineStyle;
+      if (r.align === "left" || r.align === "right") out.align = r.align;
+      return boxInto(out, r);
+    }
+    case "spacer": {
+      const out = { id, type, height: int(r.height, 4, 200, 24) };
+      const bg = color(r.background);
+      if (bg) out.background = bg;
+      return out;
+    }
+    case "social": {
+      const out = { id, type };
+      if (r.align === "left" || r.align === "right") out.align = r.align;
+      return boxInto(out, r);
+    }
     case "html":
-      return { id, type, html: str(r.html, L.htmlChars) };
-    case "greeting":
-      return {
+      return boxInto({ id, type, html: str(r.html, L.htmlChars) }, r);
+    case "greeting": {
+      const out = {
         id,
         type,
         text: line(r.text, L.headingChars) || "Hallo {{vorname}},",
         fallback: line(r.fallback, L.headingChars) || "Hallo,",
         align: oneOf(r.align, ["left", "center"], "left"),
       };
+      const c = color(r.color);
+      if (c) out.color = c;
+      return textStyleInto(boxInto(out, r), r);
+    }
     case "hero":
       return {
         id,
@@ -511,11 +978,71 @@ export function normalizeMailBlock(raw, takenIds = new Set()) {
     case "mo_offer":
     case "mo_promo":
       return { id, type };
-    case "footer":
-      return { id, type, showSocial: bool(r.showSocial, true) };
+    case "footer": {
+      const out = { id, type, showSocial: bool(r.showSocial, true) };
+      const bg = color(r.background);
+      if (bg) out.background = bg;
+      const tc = color(r.textColor);
+      if (tc) out.textColor = tc;
+      return out;
+    }
+    case "section":
+      return normalizeSection(id, r, takenIds, opts.budget);
     default:
       return null;
   }
+}
+
+/**
+ * A section: its columns (1–4, widths adding up to 100 %) with their child
+ * blocks (MAIL_CHILD_BLOCK_TYPES only, at most 12 per column).
+ * @param {string} id
+ * @param {Record<string, unknown>} r
+ * @param {Set<string>} takenIds
+ * @param {{ left: number } | undefined} budget
+ */
+function normalizeSection(id, r, takenIds, budget) {
+  const L = MAIL_TEMPLATE_LIMITS;
+  const rawCols = Array.isArray(r.columns) && r.columns.length > 0 ? r.columns.slice(0, L.columns) : [{}];
+  const columns = rawCols.map((c) => {
+    const cr = c && typeof c === "object" && !Array.isArray(c) ? /** @type {Record<string, unknown>} */ (c) : {};
+    const colId = takeId(cr.id, takenIds);
+    /** @type {MailBlock[]} */
+    const blocks = [];
+    for (const child of Array.isArray(cr.blocks) ? cr.blocks : []) {
+      if (blocks.length >= L.blocksPerColumn) break;
+      const k = normalizeMailBlock(child, takenIds, { inColumn: true, budget });
+      if (k) blocks.push(k);
+    }
+    return {
+      id: colId,
+      width: nint(cr.width, 5, 95) ?? 0,
+      valign: oneOf(cr.valign, ["top", "middle", "bottom"], "top"),
+      background: color(cr.background),
+      padding: int(cr.padding, 0, 48, 0),
+      blocks,
+    };
+  });
+  const widths = normalizeColumnWidths(columns.map((c) => c.width));
+  columns.forEach((c, i) => {
+    c.width = widths[i];
+  });
+  return {
+    id,
+    type: /** @type {MailBlockType} */ ("section"),
+    columns,
+    background: color(r.background),
+    bgImage: cleanUrl(r.bgImage),
+    minHeight: int(r.minHeight, 0, 800, 0),
+    padTop: int(r.padTop, 0, 120, 24),
+    padBottom: int(r.padBottom, 0, 120, 24),
+    padX: nint(r.padX, 0, 60),
+    gap: int(r.gap, 0, 48, 20),
+    stack: bool(r.stack, true),
+    reverse: bool(r.reverse, false),
+    radius: int(r.radius, 0, 32, 0),
+    borderColor: color(r.borderColor),
+  };
 }
 
 /**
@@ -532,17 +1059,23 @@ export function normalizeMailStyle(raw) {
     textColor: color(r.textColor) ?? DEFAULT_MAIL_STYLE.textColor,
     headingColor: color(r.headingColor) ?? DEFAULT_MAIL_STYLE.headingColor,
     outerBackground: color(r.outerBackground) ?? DEFAULT_MAIL_STYLE.outerBackground,
-    fontFamily: oneOf(r.fontFamily, EMAIL_FONT_KEYS, DEFAULT_MAIL_STYLE.fontFamily),
+    fontFamily: oneOf(r.fontFamily, MAIL_FONT_KEYS, DEFAULT_MAIL_STYLE.fontFamily),
     buttonShape: oneOf(r.buttonShape, EMAIL_BUTTON_SHAPES, DEFAULT_MAIL_STYLE.buttonShape),
     logoUrl: logo || null,
+    cardBackground: color(r.cardBackground) ?? DEFAULT_MAIL_STYLE.cardBackground,
+    headingFont: isMailFontKey(r.headingFont) ? /** @type {string} */ (r.headingFont) : null,
+    linkColor: color(r.linkColor),
+    contentPadding: int(r.contentPadding, 16, 60, DEFAULT_MAIL_STYLE.contentPadding),
+    cardRadius: int(r.cardRadius, 0, 24, DEFAULT_MAIL_STYLE.cardRadius),
   };
 }
 
 /**
  * A whole document from untrusted input (API body, import file, AI output) →
- * a clean document. Unknown blocks are dropped, at most `blocks` blocks are
- * kept, exactly ONE footer stands at the end (added when missing, extra ones
- * dropped), at most one of each Mo block (the first wins).
+ * a clean document. Unknown blocks are dropped, at most `blocks` top-level
+ * blocks and `totalBlocks` blocks overall are kept, exactly ONE footer stands
+ * at the end (added when missing, extra ones dropped), at most one of each Mo
+ * block (the first wins). Ids are unique across the whole tree.
  * @param {unknown} raw
  */
 export function normalizeMailTemplateDoc(raw) {
@@ -557,21 +1090,24 @@ export function normalizeMailTemplateDoc(raw) {
   const r = v && typeof v === "object" && !Array.isArray(v) ? /** @type {Record<string, unknown>} */ (v) : {};
   const taken = new Set();
   const seenSingletons = new Set();
+  // One block stays reserved for the footer.
+  const budget = { left: MAIL_TEMPLATE_LIMITS.totalBlocks - 1 };
   /** @type {MailBlock[]} */
   const blocks = [];
   let footer = null;
   for (const entry of Array.isArray(r.blocks) ? r.blocks : []) {
-    const b = normalizeMailBlock(entry, taken);
-    if (!b) continue;
-    if (b.type === "footer") {
-      footer = footer ?? b;
+    const type = entry && typeof entry === "object" ? /** @type {Record<string, unknown>} */ (entry).type : null;
+    if (type === "footer") {
+      if (!footer) footer = normalizeMailBlock(entry, taken);
       continue;
     }
-    if (MO_BLOCK_TYPES.includes(b.type)) {
-      if (seenSingletons.has(b.type)) continue;
-      seenSingletons.add(b.type);
+    if (typeof type === "string" && MO_BLOCK_TYPES.includes(/** @type {MailBlockType} */ (type))) {
+      if (seenSingletons.has(type)) continue;
+      seenSingletons.add(type);
     }
-    if (blocks.length < MAIL_TEMPLATE_LIMITS.blocks - 1) blocks.push(b);
+    if (blocks.length >= MAIL_TEMPLATE_LIMITS.blocks - 1) continue;
+    const b = normalizeMailBlock(entry, taken, { budget });
+    if (b) blocks.push(b);
   }
   blocks.push(/** @type {MailBlock} */ (footer ?? normalizeMailBlock({ type: "footer" }, taken)));
   return { v: MAIL_TEMPLATE_DOC_VERSION, style: normalizeMailStyle(r.style), blocks };
@@ -595,14 +1131,75 @@ export function docHasHero(doc) {
   return Array.isArray(doc?.blocks) && doc.blocks.some((b) => b?.type === "hero");
 }
 
-/** Every catalog ref of the document's product blocks, in order, unique. */
-export function docProductRefs(doc) {
+/**
+ * Every block of a document, depth first in reading order: each top-level
+ * block, a section followed by the blocks of its columns.
+ * @param {{ blocks?: unknown } | null | undefined} doc
+ * @returns {Array<{ block: MailBlock, sectionId: string | null, columnIndex: number | null }>}
+ */
+export function walkMailBlocks(doc) {
+  /** @type {Array<{ block: MailBlock, sectionId: string | null, columnIndex: number | null }>} */
   const out = [];
-  for (const b of doc?.blocks ?? []) {
-    if (b?.type !== "products") continue;
-    for (const r of b.refs ?? []) if (!out.includes(r)) out.push(r);
+  for (const b of Array.isArray(doc?.blocks) ? /** @type {any[]} */ (doc.blocks) : []) {
+    if (!b || typeof b !== "object") continue;
+    out.push({ block: b, sectionId: null, columnIndex: null });
+    if (b.type !== "section" || !Array.isArray(b.columns)) continue;
+    b.columns.forEach((/** @type {any} */ c, /** @type {number} */ ci) => {
+      for (const k of Array.isArray(c?.blocks) ? c.blocks : []) {
+        if (k && typeof k === "object") out.push({ block: k, sectionId: b.id, columnIndex: ci });
+      }
+    });
   }
   return out;
+}
+
+/** Every catalog ref of the document's product blocks (products + product, nested ones too), in order, unique. */
+export function docProductRefs(doc) {
+  const out = [];
+  for (const { block: b } of walkMailBlocks(doc)) {
+    const list = b.type === "products" ? b.refs ?? [] : b.type === "product" && b.ref ? [b.ref] : [];
+    for (const r of list) if (!out.includes(r)) out.push(r);
+  }
+  return out;
+}
+
+/** How many blocks the document has, the ones inside sections included. */
+export function docBlockCount(doc) {
+  return walkMailBlocks(doc).length;
+}
+
+/** Every font key a document uses (style + per-block fonts), unique. */
+export function docFontKeys(doc) {
+  const out = [];
+  const add = (k) => {
+    if (isMailFontKey(k) && !out.includes(k)) out.push(k);
+  };
+  add(doc?.style?.fontFamily);
+  add(doc?.style?.headingFont);
+  for (const { block } of walkMailBlocks(doc)) add(block.font);
+  return out;
+}
+
+// ── colour contrast ──────────────────────────────────────────────────────────
+
+/** Relative luminance (WCAG) of #rrggbb. */
+function luminance(hex) {
+  const m = /^#([0-9a-f]{6})$/i.exec(String(hex ?? ""));
+  if (!m) return null;
+  const ch = [0, 2, 4].map((i) => {
+    const c = parseInt(m[1].slice(i, i + 2), 16) / 255;
+    return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+  });
+  return 0.2126 * ch[0] + 0.7152 * ch[1] + 0.0722 * ch[2];
+}
+
+/** The WCAG contrast ratio of two #rrggbb colours (1–21), or null. */
+export function contrastRatio(a, b) {
+  const la = luminance(a);
+  const lb = luminance(b);
+  if (la == null || lb == null) return null;
+  const [hi, lo] = la > lb ? [la, lb] : [lb, la];
+  return (hi + 0.05) / (lo + 0.05);
 }
 
 // ── merge fields ─────────────────────────────────────────────────────────────
@@ -672,7 +1269,8 @@ export function unknownMergeFields(text) {
 
 /**
  * Check a NORMALISED document for a use. Errors block saving as a design /
- * sending; warnings are shown. German messages name the block.
+ * sending; warnings are shown. German messages name the block. Blocks inside
+ * sections are checked like top-level ones (their own id in `blockId`).
  * @param {ReturnType<typeof normalizeMailTemplateDoc>} doc
  * @param {"personal" | "bulk" | "template"} use  template = a saved Vorlage (either use later)
  * @param {{ now?: Date }} [opts]
@@ -685,11 +1283,16 @@ export function validateMailTemplateDoc(doc, use, opts = {}) {
   const warnings = [];
   const now = (opts.now ?? new Date()).getTime();
   const blocks = Array.isArray(doc?.blocks) ? doc.blocks : [];
+  const style = doc?.style ?? DEFAULT_MAIL_STYLE;
   const err = (b, m) => errors.push({ blockId: b?.id ?? null, message: m });
   const warn = (b, m) => warnings.push({ blockId: b?.id ?? null, message: m });
   const nameOf = (b) => MAIL_BLOCK_CATALOG[b.type]?.label ?? b.type;
+  const all = walkMailBlocks(doc);
+  const sections = new Map(blocks.filter((b) => b?.type === "section").map((b) => [b.id, b]));
 
-  if (blocks.filter((b) => b.type !== "footer").length === 0) err(null, "Die Vorlage hat noch keinen Inhalt.");
+  if (all.filter(({ block: b }) => b.type !== "footer" && b.type !== "section").length === 0) {
+    err(null, "Die Vorlage hat noch keinen Inhalt.");
+  }
   if (!blocks.some((b) => b.type === "footer")) err(null, "Die Fußzeile mit dem Abmelde-Link fehlt.");
   if (use === "personal" && !docSupportsPersonal(doc)) {
     err(null, "Für persönliche Mails braucht die Vorlage den Baustein „Mos persönlicher Text“.");
@@ -697,17 +1300,42 @@ export function validateMailTemplateDoc(doc, use, opts = {}) {
   if (use === "bulk") {
     for (const b of blocks) if (!MAIL_BLOCK_CATALOG[b.type]?.bulk) err(b, `„${nameOf(b)}“ gibt es nur in persönlichen Mails — Baustein entfernen.`);
   }
-  for (const b of blocks) {
+
+  /** The background a block's text stands on (null: a picture — not judged). */
+  const backgroundOf = (b, sectionId, columnIndex) => {
+    if (b.background) return b.background;
+    if (sectionId) {
+      const sec = sections.get(sectionId);
+      const col = sec?.columns?.[columnIndex ?? 0];
+      if (col?.background) return col.background;
+      if (sec?.background && !sec?.bgImage) return sec.background;
+      if (sec?.bgImage) return null;
+    }
+    return style.cardBackground ?? "#ffffff";
+  };
+  const contrast = (b, fg, bg, min) => {
+    if (!fg || !bg) return;
+    const ratio = contrastRatio(fg, bg);
+    if (ratio != null && ratio < min) {
+      warn(b, `${nameOf(b)}: Schrift auf dem Hintergrund schlecht lesbar (Kontrast ${ratio.toFixed(1).replace(".", ",")} : 1) — kräftigere bzw. hellere Farbe wählen.`);
+    }
+  };
+
+  for (const { block: b, sectionId, columnIndex } of all) {
     const label = nameOf(b);
+    const bg = backgroundOf(b, sectionId, columnIndex);
     switch (b.type) {
       case "heading":
         if (!b.text) err(b, `${label}: Text fehlt.`);
+        contrast(b, b.color ?? style.headingColor, bg, 3);
         break;
       case "text":
         if (!b.text) err(b, `${label}: Text fehlt.`);
+        contrast(b, b.color ?? style.textColor, bg, (b.fontSize ?? 0) >= 20 ? 3 : 4.5);
         break;
       case "greeting":
         if (!b.text || !b.fallback) err(b, `${label}: Text mit und ohne Vornamen angeben.`);
+        contrast(b, b.color ?? style.textColor, bg, 4.5);
         break;
       case "image":
         if (!b.src) err(b, `${label}: Bild fehlt (hochladen oder https-Adresse angeben).`);
@@ -717,9 +1345,15 @@ export function validateMailTemplateDoc(doc, use, opts = {}) {
       case "button":
         if (!b.label) err(b, `${label}: Beschriftung fehlt.`);
         if (!b.href) err(b, `${label}: Link fehlt (https://…).`);
+        if (b.outline) contrast(b, b.color ?? style.accentColor, bg, 3);
+        else contrast(b, b.textColor ?? style.buttonTextColor, b.color ?? style.accentColor, 3);
         break;
       case "products":
         if (b.refs.length === 0) err(b, `${label}: noch kein Produkt gewählt.`);
+        break;
+      case "product":
+        if (!b.ref) err(b, `${label}: noch kein Produkt gewählt.`);
+        contrast(b, b.color ?? style.textColor, bg, 4.5);
         break;
       case "coupon":
         if (!b.code) err(b, `${label}: Code fehlt.`);
@@ -731,22 +1365,41 @@ export function validateMailTemplateDoc(doc, use, opts = {}) {
         if (!b.until) err(b, `${label}: Ende fehlt.`);
         else if (Date.parse(b.until) <= now) err(b, `${label}: Das Ende liegt in der Vergangenheit.`);
         break;
+      case "menu":
+        if (!b.items?.length) err(b, `${label}: noch kein Link eingetragen.`);
+        else if (b.items.some((it) => !it.label || !it.href)) err(b, `${label}: Jeder Link braucht Text und Adresse (https://…).`);
+        contrast(b, b.color ?? style.textColor, bg, 3);
+        break;
       case "html":
         if (!b.html.trim()) err(b, `${label}: HTML fehlt.`);
         else warn(b, `${label}: Eigenes HTML — in Outlook und auf dem Handy mit einer Testmail prüfen.`);
+        if (/\{\{/.test(b.html)) err(b, `${label}: Platzhalter wie {{vorname}} werden im HTML nicht ersetzt — dafür einen Text-Baustein verwenden.`);
         break;
       case "hero":
         if (b.src && !b.alt) warn(b, `${label}: Alternativtext fehlt.`);
         break;
+      case "section": {
+        const filled = (b.columns ?? []).filter((c) => c.blocks?.length > 0).length;
+        if (filled === 0) err(b, `${label}: Die Spalten haben noch keinen Inhalt.`);
+        else if (filled < (b.columns ?? []).length) warn(b, `${label}: ${b.columns.length - filled === 1 ? "Eine Spalte ist" : "Spalten sind"} noch leer.`);
+        if (b.bgImage && /\.webp(\?|$)/i.test(b.bgImage)) warn(b, `${label}: WebP zeigt Outlook nicht an — besser JPG oder PNG.`);
+        if (b.bgImage && !b.background) warn(b, `${label}: Zum Hintergrundbild eine passende Hintergrundfarbe setzen — sie erscheint, wenn Bilder blockiert sind.`);
+        break;
+      }
+      case "footer":
+        if (b.textColor || b.background) contrast(b, b.textColor ?? "#000000", b.background ?? "#f9f9f9", 4.5);
+        break;
       default:
         break;
     }
-    for (const t of [b.text, b.fallback, b.label]) {
+    const texts = [b.text, b.fallback, b.label, b.headline, b.terms, b.title, b.heading, b.buttonLabel, ...(b.items ?? []).map((it) => it.label)];
+    for (const t of texts) {
       for (const bad of unknownMergeFields(t ?? "")) err(b, `${label}: Unbekannter Platzhalter ${bad} — erlaubt ist {{vorname}} bzw. {{vorname|Ersatz}}.`);
     }
+    if (/\{\{/.test(`${b.alt ?? ""}`)) err(b, `${label}: Im Alternativtext werden Platzhalter nicht ersetzt.`);
   }
   const first = blocks[0];
-  if (first && first.type !== "logo" && first.type !== "image" && first.type !== "hero" && first.type !== "heading") {
+  if (first && !["logo", "image", "hero", "heading", "section", "menu"].includes(first.type)) {
     warn(first, "Tipp: Mails beginnen am besten mit Logo, Bild oder Überschrift.");
   }
   return { errors, warnings };
@@ -885,9 +1538,10 @@ export function blockCatalogForPrompt() {
   return MAIL_BLOCK_TYPES.map((type) => {
     const c = MAIL_BLOCK_CATALOG[type];
     const uses = [c.personal ? "persönliche Mails" : null, c.bulk ? "Rundmail" : null].filter(Boolean).join(" + ");
+    const where = type === "section" ? "nur oben, nicht verschachtelt" : c.inColumns ? "auch in Spalten" : "nur oben, nicht in Spalten";
     const fields = Object.entries(c.fields)
       .map(([k, v]) => `    - ${k}: ${v}`)
       .join("\n");
-    return `- ${type} („${c.label}“, ${uses}): ${c.description}${fields ? `\n${fields}` : ""}`;
+    return `- ${type} („${c.label}“, ${uses}, ${where}): ${c.description}${fields ? `\n${fields}` : ""}`;
   }).join("\n");
 }

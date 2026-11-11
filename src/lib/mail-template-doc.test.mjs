@@ -30,7 +30,7 @@ test("the catalog describes every block type with label, group, description and 
   for (const type of MAIL_BLOCK_TYPES) {
     const c = MAIL_BLOCK_CATALOG[type];
     assert.ok(c.label && c.description, type);
-    assert.ok(["inhalt", "angebot", "mo", "rahmen"].includes(c.group), type);
+    assert.ok(["inhalt", "angebot", "mo", "rahmen", "aufbau"].includes(c.group), type);
     assert.ok(c.personal || c.bulk, type);
   }
   // Mo blocks only make sense in personal mails.
@@ -56,7 +56,7 @@ test("normalizeMailBlock: clamps every field, drops unknown fields and types", (
   assert.equal(normalizeMailBlock({ type: "script" }, taken), null);
   assert.equal(normalizeMailBlock(null, taken), null);
   const s = normalizeMailBlock({ type: "spacer", height: 500 }, taken);
-  assert.equal(s?.height, 80);
+  assert.equal(s?.height, 200);
   const p = normalizeMailBlock({ type: "products", refs: ["a", "a", "b~123", "../etc", 7, ...Array.from({ length: 20 }, (_, i) => `p${i}`)] }, taken);
   assert.deepEqual(p?.refs.slice(0, 3), ["a", "b~123", "p0"]);
   assert.equal(p?.refs.length, MAIL_TEMPLATE_LIMITS.productsPerBlock);
