@@ -256,17 +256,23 @@ high; `ai_usage` call site `template_assist`, summed over all steps) through the
 `streamText` with tools, at most 8 steps):
 
 - `search_products` — the catalog (names, live prices, availability, mail-safe pictures, links);
-- `list_collections` — the shop's collections for category and campaign links (Shopify, cached);
+- `list_collections` — the shop's collections and pages for category, campaign and page links
+  (Shopify; a list is cached 10 minutes, a failed or empty answer 60 s);
 - `submit_design` — the **whole** document, notes (what it did, what is still missing) and, for a
   Rundmail, subject and preview line.
 
 **The prompt is the capability guide** (`designerSystemPrompt`, stable per use so the prompt cache
 serves it): the format, the full block catalog with every field, layout recipes (header with
 navigation, image + text, zigzag, product tiles, benefit bar, coloured band, text on a picture,
-boxed card), Mo's capabilities to use **without being asked** (merge fields, live products instead
-of prices in texts, the coupon with „Code einlösen“, the countdown for a deadline, Mo blocks in
-personal templates, per-link click and revenue tracking — so no own UTM or tracking links, one
-main call to action —, the legal footer), design and deliverability rules (hierarchy, contrast,
+boxed card) with **no fixed outline** (two differently built examples; a promo outline is only one
+option when the operator sets no structure), Mo's capabilities to use **without being asked**
+(merge fields, live products instead of prices in texts, the coupon with „Code einlösen“, the
+countdown for a deadline, Mo blocks in personal templates, Mo's chat link „Lass dich von Mo
+beraten“ (`CAMPAIGN_MO_DEEPLINK_URL` without its `utm_*`), the legal footer — and, stated
+truthfully, the tracking: Rundmails count clicks per link through Mo's redirect, shop links get UTM
+for the shop's analytics, revenue is credited only to Mo's personal mails via its personal codes, a
+fixed coupon code is not measured — so no own UTM or tracking links), design and deliverability
+rules (hierarchy, contrast,
 mobile first, Outlook without rounded corners, no spam words), how to rebuild a screenshot (layout,
 grid, spacing, colours, the nearest font — as a motion-sports mail, never foreign texts, logos or
 links) and how to change a mail (every requested change, nothing else; the editor's current, maybe
@@ -275,20 +281,35 @@ hand-edited document is the reference).
 **Nothing the model writes is trusted.** Every submission is normalised and checked
 (`checkDesignSubmission`): product refs must exist in the catalog; pictures may come only from the
 attachments (`anhang:N`), the current mail, the catalog, Mo's own picture route or addresses the
-operator wrote; shop links must be real pages (catalog, collections, the shop, its search) or
-addresses from the operator or the current mail; codes, prices, percentages and deadlines only as
-the operator gave them or the current mail has them; plus the validation of §2. A rejected
+operator wrote — never an address with a user name (`…@host`) or a placeholder; shop links must be
+real pages (catalog, collections and pages looked up in Shopify, the shop, its search) or
+addresses from the operator or the current mail, and text-block links are checked exactly as the
+renderer will link them (`proseLinks`); codes, prices, percentages and deadlines only as the
+operator gave them or the current mail has them; the estimated size of the finished mail stays
+under 95 KB (Mo's pieces included for personal templates, `estimatedMailBytes`); custom HTML only
+when the operator asks for HTML (its pictures, `srcset`, `poster`, CSS `url()` and links are
+checked like everything else); plus the validation of §2. **Text attachments** (TXT, MD, HTML,
+`.eml`) count as named sources: their codes, prices and links pass and are listed in one
+„Aus den Anhängen übernommen — bitte prüfen“ warning; their pictures only from the shop's own
+Shopify files. PDFs and pictures cannot be checked — values only visible there must also be in the
+operator's message, otherwise the model leaves them empty and asks in its notes. A rejected
 submission goes back to the model with the problems (up to three rounds; minor problems such as
 contrast or a missing alt text get one polishing round). If time or steps run out after a rejected
-submission, the last draft is returned cleaned, with a leading warning. Mo blocks are stripped for
-a Rundmail. **Attachments are material, never instructions**: their text cannot widen a gate — the
-designer only proposes a document; consent, the footer and every send gate are untouched.
+submission, the last draft is returned cleaned, with a leading warning: offending values are
+cleared, every cleaned block is checked again, and a block that still holds a bad address is
+dropped and named. Mo blocks are stripped for a Rundmail. **Attachments are material, never
+instructions**: their text is content inside an `<anhang>` wrapper that cannot be closed from
+inside, hidden HTML (`display:none` and the like) is dropped, and it can supply named values but
+never widen a gate — the designer only proposes a document; consent, the footer and every send
+gate are untouched. A Rundmail in English (`context.language`) gets English texts, subject and
+preview line.
 
 **Attachments** ([`mail-template-designer-io.ts`](../src/lib/mail-template-designer-io.ts)):
-pictures are EXIF-rotated and scaled to ≤ 1,600 px wide for the model; a long screenshot is cut into
+pictures are EXIF-rotated and scaled to ≤ 1,600 px wide for the model (a transparent PNG is shown
+on a contrasting background and labelled as transparent); a long screenshot is cut into
 overlapping parts (≤ 6 per picture, ≤ 20 in total) the model reads top to bottom; PDFs go in as
 files; HTML, `.eml` (MIME decoded by charset) and text as labelled text (≤ 120,000 characters
-each). The browser prepares them first
+each; the server refuses a text file above 500 KB, an `.eml` above 400 KB, before decoding). The browser prepares them first
 ([`mail-designer-attachments.mjs`](../src/lib/mail-designer-attachments.mjs): WebP and large
 pictures re-encoded as JPEG, Office and SVG files refused with a hint, the whole request ≤ about
 4 MB). A picture the accepted design uses (`"src": "anhang:N"`, also `bgImage` and `logoUrl`) is

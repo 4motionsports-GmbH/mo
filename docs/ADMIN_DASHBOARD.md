@@ -2689,7 +2689,10 @@ still count in „Umsatz durch Mo“ (channel „Persönliche Marketing-E-Mail�
   (reinstall the app after adding scopes). The showroom list of the
   Konfigurator (§3.11, since 27.10.2026) needs `read_themes` (live state:
   [`ROLLOUT_TODO.md`](./ROLLOUT_TODO.md) item 16.3); without it the card
-  „Showroom“ shows the error and only the manual list applies.
+  „Showroom“ shows the error and only the manual list applies. The KI-Gestalter
+  (§3.12, since 11.11.2026) optionally needs `read_online_store_pages` to check
+  links to shop pages (`/pages/…`); without it such a link passes only when the
+  operator names it.
 - **API version:** requests target the configured `SHOPIFY_API_VERSION` (current
   stable, e.g. `2026-04`), not `latest`.
 - The discount + orders calls follow the Shopify docs for
