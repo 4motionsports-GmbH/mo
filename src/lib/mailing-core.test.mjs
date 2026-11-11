@@ -13,6 +13,7 @@ import {
   MAILING_MAX_TEST_ADDRESSES,
   mailingIdempotencyKey,
   mailingProgress,
+  mayRequeueBatch,
   mailingUsesFirstName,
   minutesLeft,
   parseMailingRate,
@@ -48,6 +49,16 @@ test("idempotency key: stable per batch, distinct across batches and mailings", 
   assert.equal(mailingIdempotencyKey(7, 12), "mo-rundmail-7-12");
   assert.notEqual(mailingIdempotencyKey(7, 12), mailingIdempotencyKey(7, 13));
   assert.notEqual(mailingIdempotencyKey(7, 12), mailingIdempotencyKey(8, 12));
+});
+
+test("mayRequeueBatch: only a fresh, never attempted batch goes back to the queue", () => {
+  // Fresh claim, first try refused (429, quota, config): nothing reached Resend.
+  assert.equal(mayRequeueBatch({ retry: false, attempts: 0 }), true);
+  // An earlier attempt of unknown outcome (timeout, 5xx, booking failed).
+  assert.equal(mayRequeueBatch({ retry: false, attempts: 1 }), false);
+  // Left open by a run that died during the Resend call — attempts still 0.
+  assert.equal(mayRequeueBatch({ retry: true, attempts: 0 }), false);
+  assert.equal(mayRequeueBatch({ retry: true, attempts: 3 }), false);
 });
 
 test("classifyResendError: what the runner does per Resend error", () => {

@@ -46,6 +46,7 @@ import {
   leftoverPlaceholders,
   mailingIdempotencyKey,
   mailingUsesFirstName,
+  mayRequeueBatch,
   parseTestAddresses,
   personalizeFrozen,
   resendErrorMessage,
@@ -331,27 +332,37 @@ async function pauseWithError(campaignId: number, message: string): Promise<void
  * Send ONE batch: read every recipient fresh, run the gates per recipient,
  * personalise the frozen content, one Resend batch request with the batch's
  * idempotency key, settle. Never throws.
+ *
+ * `retry`: the batch was left open by an earlier run or attempt, so it may
+ * already be delivered. Whenever such a batch is not sent this time it stays
+ * open and is tried again later under its OWN key (Resend answers a repeated
+ * key with the first result) — only a fresh, never attempted batch goes back
+ * to the queue, where its recipients get a new batch and a new key
+ * (mayRequeueBatch). Re-queueing a delivered batch would mail it twice.
  */
 async function sendBatch(
   campaign: Campaign,
   mailing: Mailing,
   bodies: MailingFrozenBodies,
-  batch: MailingBatch
+  batch: MailingBatch,
+  retry: boolean
 ): Promise<BatchOutcome> {
   const campaignId = campaign.id;
   const language = mailing.language;
+  const putBack = (reason: string): Promise<void> =>
+    mayRequeueBatch({ retry, attempts: batch.attempts }) ? releaseBatch(batch, reason) : noteBatchAttempt(batch.id, reason);
   const recipients = await loadBatchRecipients(campaignId, batch.contactIds);
   if (recipients === null) {
     await noteBatchAttempt(batch.id, "Datenbank nicht lesbar");
     return { sent: 0, notSent: 0, stop: true };
   }
   if (!isCampaignSendsApproved()) {
-    await releaseBatch(batch, "CAMPAIGN_SENDS_APPROVED aus");
+    await putBack("CAMPAIGN_SENDS_APPROVED aus");
     await pauseWithError(campaignId, "Versand gestoppt: CAMPAIGN_SENDS_APPROVED ist aus.");
     return { sent: 0, notSent: 0, stop: true };
   }
   if (!mailing.frozenFrom || !mailing.frozenSubject) {
-    await releaseBatch(batch, "Freigabe unvollständig");
+    await putBack("Freigabe unvollständig");
     await pauseWithError(campaignId, "Die Freigabe ist unvollständig — bitte zurücknehmen und neu freigeben.");
     return { sent: 0, notSent: 0, stop: true };
   }
@@ -396,7 +407,7 @@ async function sendBatch(
     }
     const unsubscribeUrl = unsubscribeUrlFor(r.email, language);
     if (!unsubscribeUrl) {
-      await releaseBatch(batch, "UNSUBSCRIBE_SECRET fehlt");
+      await putBack("UNSUBSCRIBE_SECRET fehlt");
       await pauseWithError(campaignId, "Kein Abmelde-Link möglich (UNSUBSCRIBE_SECRET fehlt) — Versand pausiert.");
       return { sent: 0, notSent: 0, stop: true };
     }
@@ -477,8 +488,9 @@ async function sendBatch(
   const message = resendErrorMessage(res.errorClass, res.message);
   switch (res.errorClass) {
     case "rate_limited":
-      // Not processed by Resend — back to the queue, a new batch later.
-      await releaseBatch(batch, message);
+      // This request was not processed. A fresh batch goes back to the queue
+      // (a new batch later); one that may already be delivered stays open.
+      await putBack(message);
       return { sent: 0, notSent: 0, stop: true, retryAfterMs: res.retryAfterMs ?? 5_000 };
     case "transient":
       if (batch.attempts + 1 >= MAX_UNCLEAR_ATTEMPTS) {
@@ -493,8 +505,9 @@ async function sendBatch(
       await markBatchUnclear(batch, message);
       return { sent: 0, notSent: 0, stop: false };
     default:
-      // quota / config / invalid / not configured: nothing was sent — pause.
-      await releaseBatch(batch, message);
+      // quota / config / invalid / not configured: nothing was sent this
+      // time — pause (a batch that may be delivered from before stays open).
+      await putBack(message);
       await pauseWithError(campaignId, message);
       return { sent: 0, notSent: 0, stop: true };
   }
@@ -571,7 +584,7 @@ async function runOneMailing(campaignId: number, deadlineMs: number, out: Mailin
     // A batch that just failed waits before the next attempt (the admin page
     // may run steps faster than the cron).
     if (open.attemptedAt && Date.now() - Date.parse(open.attemptedAt) < unclearRetryDelay(open.attempts)) return;
-    const result = await sendBatch(campaign, mailing, bodies, open);
+    const result = await sendBatch(campaign, mailing, bodies, open, true);
     out.batches++;
     out.sent += result.sent;
     out.notSent += result.notSent;
@@ -601,7 +614,7 @@ async function runOneMailing(campaignId: number, deadlineMs: number, out: Mailin
       if (await finishMailingIfDone(campaignId)) out.messages.push(`Rundmail ${campaignId}: fertig`);
       return;
     }
-    const result = await sendBatch(live, mailing, bodies, batch);
+    const result = await sendBatch(live, mailing, bodies, batch, false);
     out.batches++;
     out.sent += result.sent;
     out.notSent += result.notSent;

@@ -195,6 +195,14 @@ export type SendEmailBatchResult =
     };
 
 /**
+ * Longest wait for one Resend batch request (a normal call — about 4 MB,
+ * 50 mails — takes 1–3 s). A mailing run starts its last batch 8 s before its
+ * deadline and its lease ends 30 s after the deadline (runMailingStep), so an
+ * aborted call always ends while the run still holds the lease.
+ */
+const RESEND_BATCH_TIMEOUT_MS = 30_000;
+
+/**
  * Send up to 100 separate messages in ONE Resend request (the batch
  * endpoint). `idempotencyKey` makes the request safe to repeat: Resend
  * answers a repeated key (within 24 h) with the first response instead of
@@ -226,7 +234,12 @@ export async function sendEmailBatch(
         ...(e.headers && Object.keys(e.headers).length > 0 ? { headers: e.headers } : {}),
         ...(e.tags && e.tags.length > 0 ? { tags: e.tags } : {}),
       })),
-      { idempotencyKey: opts.idempotencyKey, batchValidation: "permissive" }
+      // The SDK sets no timeout of its own. A hung call would hold the runner
+      // until the function is killed, its lease would run out meanwhile and
+      // the next run would hit the same key while it is still in flight. The
+      // abort lands in the "transient" path (statusCode null): the SAME batch
+      // is retried later under the SAME key, so it is never sent twice.
+      { idempotencyKey: opts.idempotencyKey, batchValidation: "permissive", signal: AbortSignal.timeout(RESEND_BATCH_TIMEOUT_MS) }
     );
     if (result.error) {
       const errorClass = classifyResendError(result.error);

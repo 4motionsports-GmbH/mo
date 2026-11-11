@@ -86,6 +86,21 @@ export function mailingIdempotencyKey(campaignId, batchId) {
   return `mo-rundmail-${campaignId}-${batchId}`;
 }
 
+/**
+ * May a batch that was NOT sent this time go back to the queue (its
+ * recipients claimed again later, into a NEW batch with a NEW key)?
+ * Only a batch that has certainly never reached Resend: freshly claimed in
+ * this run and never attempted. A batch a dead run left open (`retry`), or
+ * one with an earlier attempt of unknown outcome (`attempts > 0`), may
+ * already be delivered — re-queueing it would send it a second time under
+ * another key. Such a batch stays open and is retried later under its OWN
+ * key, where Resend answers with the first result instead of sending again.
+ * @param {{ retry: boolean, attempts: number }} batch
+ */
+export function mayRequeueBatch({ retry, attempts }) {
+  return retry !== true && Number(attempts) === 0;
+}
+
 /** @typedef {"rate_limited" | "quota" | "config" | "invalid" | "conflict" | "transient"} ResendErrorClass */
 
 /**
