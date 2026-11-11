@@ -4,13 +4,17 @@ import {
   DESIGNER_FAILED_MESSAGE,
   DESIGNER_HISTORY_CHARS,
   DESIGNER_INCOMPLETE_MESSAGE,
+  DESIGNER_UNDONE_MARK,
   DESIGNER_UNDO_LIMIT,
   designerCanSend,
   designerHistory,
+  designerNotesText,
   docHistoryReducer,
   elapsedLabel,
   interpretDesignerEvent,
+  lastUndoTag,
   sameDoc,
+  undoDesignerTurn,
 } from "./mail-designer-client.mjs";
 import { normalizeMailTemplateDoc } from "./mail-template-doc.mjs";
 
@@ -62,6 +66,80 @@ test("history: an attachments-only turn and long texts are bounded", () => {
   assert.equal(h[1].text.length, DESIGNER_HISTORY_CHARS);
   assert.ok(h[1].text.endsWith("…"));
   assert.equal(designerHistory([user(1, "  "), ai(2, "ok")])[0].text, "(ohne Text)");
+});
+
+test("undo in the conversation: the answer is marked, a notice names the instruction, the history says so", () => {
+  const turns = [
+    user(1, "Black-Week-Mail bitte", ["screenshot.png"]),
+    ai(2, "Banner oben, Countdown bis Sonntag."),
+    user(3, "Mach den Button gelb und direkt unter das Bild"),
+    ai(4, "Button gelb, direkt unter dem Banner.", { subject: "Black Week" }),
+  ];
+  const once = undoDesignerTurn(turns, 4, 5);
+  assert.equal(once.length, 5);
+  assert.equal(once[3].role === "assistant" && once[3].undone, true);
+  assert.equal(once[1].role === "assistant" && once[1].undone, undefined); // only that answer
+  assert.deepEqual(once[4], {
+    id: 5,
+    role: "notice",
+    undo: true,
+    text: "Rückgängig gemacht: „Mach den Button gelb und direkt unter das Bild“ — die Mail ist wieder wie davor.",
+  });
+  assert.equal(turns[3].undone, undefined); // the input stays as it was
+  // the history: the undone answer goes with the mark first (so it survives cutting), the notice stays out
+  const h = designerHistory(once);
+  assert.equal(h.length, 4);
+  assert.deepEqual(h[3], {
+    role: "assistant",
+    text: `${DESIGNER_UNDONE_MARK}\nButton gelb, direkt unter dem Banner.\nBetreff-Vorschlag: „Black Week“`,
+  });
+  assert.equal(h[1].text, "Banner oben, Countdown bis Sonntag.");
+  const long = designerHistory(undoDesignerTurn([user(1, "x"), ai(2, "y".repeat(DESIGNER_HISTORY_CHARS * 2))], 2, 3));
+  assert.ok(long[1].text.startsWith(DESIGNER_UNDONE_MARK));
+  // a second „Rückgängig“ takes back the answer before: attachments-only instruction
+  const both = undoDesignerTurn(undoDesignerTurn([user(1, "", ["mail.png"]), ai(2, "Nachgebaut.")], 2, 3), 2, 4);
+  assert.equal(both.length, 3); // already undone: unchanged
+  assert.equal(both[2].text, "Rückgängig gemacht: die Gestaltung nach den Anhängen — die Mail ist wieder wie davor.");
+  // nothing to mark: the answer is gone („Neues Gespräch“) or is no answer
+  assert.equal(undoDesignerTurn(turns, 99, 5), turns);
+  assert.equal(undoDesignerTurn(turns, 3, 5), turns);
+  assert.equal(undoDesignerTurn(turns, null, 5), turns);
+  // a long instruction is cut in the notice
+  const longAsk = undoDesignerTurn([user(1, `Bitte ${"sehr ".repeat(40)}groß`), ai(2, "ok")], 2, 3);
+  assert.match(longAsk[2].text, /^Rückgängig gemacht: „Bitte sehr .*…“ — die Mail ist wieder wie davor\.$/);
+});
+
+test("undo while a request runs: the notice does not split that request from its answer", () => {
+  // „Rückgängig“ of answer 2 while instruction 3 runs → notice 4, then answer 5 arrives
+  let turns = [user(1, "Mach es blau"), ai(2, "Blau."), user(3, "Und die Schrift größer")];
+  turns = [...undoDesignerTurn(turns, 2, 4), ai(5, "Schrift größer.")];
+  assert.deepEqual(
+    turns.map((t) => t.role),
+    ["user", "assistant", "user", "notice", "assistant"]
+  );
+  const h = designerHistory(turns);
+  assert.deepEqual(
+    h.map((t) => t.text),
+    ["Mach es blau", `${DESIGNER_UNDONE_MARK}\nBlau.`, "Und die Schrift größer", "Schrift größer."]
+  );
+  // an undo of answer 5 now finds its instruction across the notice
+  const again = undoDesignerTurn(turns, 5, 6);
+  assert.equal(again[5].text, "Rückgängig gemacht: „Und die Schrift größer“ — die Mail ist wieder wie davor.");
+  // other notices still mean „no answer“ (a cancelled or failed request)
+  assert.deepEqual(designerHistory([user(1, "x"), { id: 2, role: "notice", text: "Abgebrochen." }, ai(3, "y")]), []);
+});
+
+test("notes are plain text: Markdown links show their address, bold markers go, nothing else changes", () => {
+  assert.equal(designerNotesText("Banner oben, Button gelb."), "Banner oben, Button gelb.");
+  assert.equal(
+    designerNotesText("Bild bitte hier neu hochladen: [Upload](https://evil.example/mo-login)"),
+    "Bild bitte hier neu hochladen: Upload (https://evil.example/mo-login)"
+  );
+  assert.equal(designerNotesText("[https://motionsports.de/](https://motionsports.de/)"), "https://motionsports.de/");
+  assert.equal(designerNotesText("**Wichtig:** Code fehlt. __Bitte__ ergänzen."), "Wichtig: Code fehlt. Bitte ergänzen.");
+  // line breaks and lone stars stay (the panel keeps the lines)
+  assert.equal(designerNotesText("Preis*\n- erster Punkt\n- zweiter ** Punkt"), "Preis*\n- erster Punkt\n- zweiter ** Punkt");
+  assert.equal(designerNotesText(null), "");
 });
 
 test("can send: 3 characters or an attachment", () => {
@@ -134,7 +212,7 @@ test("undo: AI results and „Vorlage laden“ push a step, hand edits do not, u
   let s = { doc: d0, undo: [] };
   s = docHistoryReducer(s, { type: "replace", doc: d1 });
   assert.equal(s.doc, d1);
-  assert.deepEqual(s.undo, [d0]);
+  assert.deepEqual(s.undo, [{ doc: d0, tag: null }]);
   // a hand edit: no step
   const d1b = { ...d1, style: { ...d1.style, accentColor: "#ff0000" } };
   s = docHistoryReducer(s, { type: "set", doc: d1b });
@@ -145,7 +223,10 @@ test("undo: AI results and „Vorlage laden“ push a step, hand edits do not, u
   assert.equal(s.doc.style.textColor, "#222222");
   const edited = s.doc;
   s = docHistoryReducer(s, { type: "replace", doc: d2 });
-  assert.deepEqual(s.undo, [d0, edited]);
+  assert.deepEqual(
+    s.undo.map((step) => step.doc),
+    [d0, edited]
+  );
   s = docHistoryReducer(s, { type: "undo" });
   assert.equal(s.doc, edited);
   s = docHistoryReducer(s, { type: "undo" });
@@ -153,6 +234,32 @@ test("undo: AI results and „Vorlage laden“ push a step, hand edits do not, u
   assert.deepEqual(s.undo, []);
   const same = docHistoryReducer(s, { type: "undo" });
   assert.equal(same, s);
+});
+
+test("undo: a step carries the AI answer whose result it replaced; „Vorlage laden“ and garbage tags carry none", () => {
+  const d = (text) => normalizeMailTemplateDoc({ blocks: [{ type: "heading", text, id: "h" }] });
+  let s = { doc: d("A"), undo: [] };
+  assert.equal(lastUndoTag(s), null);
+  s = docHistoryReducer(s, { type: "replace", doc: d("B"), tag: 7 }); // AI answer 7
+  s = docHistoryReducer(s, { type: "replace", doc: d("C") }); // „Vorlage laden“
+  s = docHistoryReducer(s, { type: "replace", doc: d("D"), tag: 12 }); // AI answer 12
+  // an AI result that changes nothing adds no step — „Rückgängig“ can never point at it
+  s = docHistoryReducer(s, { type: "replace", doc: JSON.parse(JSON.stringify(s.doc)), tag: 15 });
+  assert.deepEqual(
+    s.undo.map((step) => step.tag),
+    [7, null, 12]
+  );
+  assert.equal(lastUndoTag(s), 12);
+  s = docHistoryReducer(s, { type: "undo" });
+  assert.equal(s.doc.blocks[0].text, "C");
+  assert.equal(lastUndoTag(s), null);
+  s = docHistoryReducer(s, { type: "undo" });
+  assert.equal(lastUndoTag(s), 7);
+  // @ts-expect-error a tag is a number or nothing
+  s = docHistoryReducer(s, { type: "replace", doc: d("E"), tag: "7" });
+  assert.equal(lastUndoTag(s), null);
+  assert.equal(lastUndoTag(null), null);
+  assert.equal(lastUndoTag({ undo: [{ tag: "x" }] }), null);
 });
 
 test("undo: an unchanged result adds no step, at most 20 steps, reset clears, null start", () => {
@@ -164,7 +271,7 @@ test("undo: an unchanged result adds no step, at most 20 steps, reset clears, nu
     s = docHistoryReducer(s, { type: "replace", doc: normalizeMailTemplateDoc({ blocks: [{ type: "text", text: `v${i}`, id: "t" }] }) });
   }
   assert.equal(s.undo.length, DESIGNER_UNDO_LIMIT);
-  assert.equal(s.undo[0].blocks[0].text, "v4"); // the oldest ones were dropped
+  assert.equal(s.undo[0].doc.blocks[0].text, "v4"); // the oldest ones were dropped
   s = docHistoryReducer(s, { type: "reset", doc: d0 });
   assert.deepEqual(s, { doc: d0, undo: [] });
   // the template editor starts without a document: the first one is no step

@@ -6,8 +6,11 @@
 //
 //   Inhalt          — subject, preview line, language and the block editor with
 //                     the live preview („Mit KI gestalten“ — the KI-Gestalter
-//                     panel, with subject / preview-line suggestions —,
-//                     „Vorlage laden“, „Rückgängig“ in several steps).
+//                     panel, with subject / preview-line suggestions, writing
+//                     in the Rundmail's language —, „Vorlage laden“,
+//                     „Rückgängig“ in several steps). Leaving through „←
+//                     Kampagnen“ or „Zielgruppe & Absender“ while the AI works
+//                     asks first (it would be cancelled).
 //   Prüfen & senden — every check (content, deliverability, sender, legal
 //                     gate, audience), the test mail (required for the current
 //                     version), pace, and „Jetzt senden“ / „Planen“.
@@ -258,10 +261,11 @@ export function RundmailWorkspace({
   const designer = useDesignerSession({
     use: "bulk",
     doc,
-    context: { subject, preheader },
+    // the language too: an English Rundmail gets English texts, subject and preview line
+    context: { subject, preheader, language },
     // A result that arrives after the release is dropped: the content is fixed.
     onResult: (result) => {
-      if (!frozen) replaceDoc(stripMoBlocks(result.doc));
+      if (!frozen) replaceDoc(stripMoBlocks(result.doc), result.turnId);
     },
   });
   const { abort: abortDesigner } = designer;
@@ -485,14 +489,40 @@ export function RundmailWorkspace({
     }
   };
 
+  // „Rückgängig“ — when the step was an AI result, the KI-Gestalter's conversation says so.
+  const undoStep = () => designer.noteUndo(undo());
+
+  // The links that leave the Rundmail („← Kampagnen“, „Zielgruppe & Absender“)
+  // unmount the workspace: a running KI-Gestalter request would be cancelled
+  // without a word — ask first. A click that opens a new tab leaves nothing.
+  const guardLeave = (href: string) => (e: React.MouseEvent<HTMLAnchorElement>) => {
+    if (!designer.running || e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    e.preventDefault();
+    void confirm({
+      title: "Die KI gestaltet gerade — abbrechen und verlassen?",
+      description: `Ihr Ergebnis kommt dann nicht mehr an; das Gespräch und die Anhänge gehen verloren.${
+        dirty ? " Ungespeicherte Änderungen gehen ebenfalls verloren." : ""
+      }`,
+      confirmLabel: "Abbrechen und verlassen",
+      cancelLabel: "Weiter gestalten",
+      tone: "destructive",
+    }).then((ok) => {
+      if (!ok) return;
+      designer.abort();
+      router.push(href);
+    });
+  };
+
   const phaseLabel = CAMPAIGN_PHASE_LABELS[campaign.phase as keyof typeof CAMPAIGN_PHASE_LABELS] ?? campaign.phase;
   const reasons = Object.entries(stats.skippedByReason).filter(([, n]) => n > 0);
+  const backHref = adminTabHref("kampagne");
+  const audienceHref = adminTabHref("kampagne", { edit: String(campaign.id) });
 
   return (
     <div className="flex flex-col gap-4">
       {/* header */}
       <div className="flex flex-wrap items-start gap-3">
-        <Link href={adminTabHref("kampagne")} className={buttonVariants({ variant: "ghost", size: "sm" })}>
+        <Link href={backHref} onClick={guardLeave(backHref)} className={buttonVariants({ variant: "ghost", size: "sm" })}>
           <ArrowLeft /> Kampagnen
         </Link>
         <div className="min-w-0 flex-1">
@@ -513,7 +543,7 @@ export function RundmailWorkspace({
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {status === "entwurf" && (
-            <Link href={adminTabHref("kampagne", { edit: String(campaign.id) })} className={buttonVariants({ variant: "outline", size: "sm" })}>
+            <Link href={audienceHref} onClick={guardLeave(audienceHref)} className={buttonVariants({ variant: "outline", size: "sm" })}>
               Zielgruppe & Absender
             </Link>
           )}
@@ -587,7 +617,7 @@ export function RundmailWorkspace({
                 )}
                 <div className="ml-auto flex flex-wrap items-center gap-2">
                   {undoSteps > 0 && (
-                    <Button size="sm" variant="ghost" onClick={undo}>
+                    <Button size="sm" variant="ghost" onClick={undoStep}>
                       <Undo2 /> Rückgängig
                     </Button>
                   )}

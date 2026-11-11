@@ -11,10 +11,15 @@
 // adminStream) carries the instruction, the CURRENT document (hand edits
 // included), the last 8 turns of the conversation, every attachment (they
 // stay for the whole conversation until removed — re-sent each turn) and,
-// in the Rundmail, subject + preview line. The result goes to `onResult`
-// (the workspace pushes the replaced document onto its undo stack); the
-// AI's notes become a reply in the conversation. Pure rules:
-// lib/mail-designer-client.mjs, lib/mail-designer-attachments.mjs.
+// in the Rundmail, subject, preview line and language. The result goes to
+// `onResult` with the id of its answer (the workspace pushes the replaced
+// document onto its undo stack, tagged with that id); the AI's notes become
+// a reply in the conversation. When „Rückgängig“ takes such a step back, the
+// workspace calls `noteUndo(id)`: the reply is marked, a notice says so, and
+// the next request tells the AI. Files picked, dropped or pasted together
+// are sorted before any is read — one toast for the refused ones, and they
+// never take one of the 6 places. Pure rules: lib/mail-designer-client.mjs,
+// lib/mail-designer-attachments.mjs.
 
 import * as React from "react";
 import {
@@ -22,10 +27,17 @@ import {
   designerCanSend,
   designerHistory,
   interpretDesignerEvent,
+  undoDesignerTurn,
   type DesignerResultEvent,
   type DesignerTurn,
 } from "@/lib/mail-designer-client.mjs";
-import { DESIGNER_ATTACHMENT_LIMITS, pastedImageName, requestBudgetMessage } from "@/lib/mail-designer-attachments.mjs";
+import {
+  DESIGNER_ATTACHMENT_LIMITS,
+  pastedImageName,
+  requestBudgetMessage,
+  sortAttachmentFiles,
+} from "@/lib/mail-designer-attachments.mjs";
+import { plural } from "@/lib/admin-format.mjs";
 import type { normalizeMailTemplateDoc } from "@/lib/mail-template-doc.mjs";
 import { toast } from "../ui";
 import { errorMessage } from "../lib/admin-fetch";
@@ -37,7 +49,16 @@ type MailDoc = ReturnType<typeof normalizeMailTemplateDoc>;
 /** Where the designer works: a Rundmail, a design for Mo's personal mails, a template (either later). */
 export type DesignerUse = "bulk" | "personal" | "template";
 
-export type DesignerResult = Omit<DesignerResultEvent, "kind">;
+/** A result for the workspace; `turnId` — the id of its answer in the conversation (the tag of its undo step). */
+export type DesignerResult = Omit<DesignerResultEvent, "kind"> & { turnId: number };
+
+/** What the Rundmail tells the AI about the mail around the document. */
+export interface DesignerContext {
+  subject: string;
+  preheader: string;
+  /** the Rundmail's „Sprache“ — „en“: the AI writes the texts, subject and preview line in English */
+  language?: "de" | "en";
+}
 
 /** One attachment: still being prepared in the browser, or ready to send. */
 export interface DesignerAttachmentEntry {
@@ -68,6 +89,13 @@ export interface DesignerSession {
   abort: () => void;
   /** „Neues Gespräch“ — conversation, attachments and draft go. */
   reset: () => void;
+  /**
+   * „Rückgängig“ took back the result of answer `turnId` (useDocHistory's
+   * undo() returns it; null — „Vorlage laden“ — is ignored): the answer is
+   * marked as undone, a notice ends the conversation, the next request tells
+   * the AI.
+   */
+  noteUndo: (turnId: number | null) => void;
 }
 
 const ENDPOINT = "/api/admin/vorlagen/assist";
@@ -87,8 +115,8 @@ export function useDesignerSession({
   use: DesignerUse;
   /** the document as it is now (null while it loads) */
   doc: MailDoc | null;
-  /** Rundmail: subject and preview line, so the AI can fit the mail to them and suggest better ones */
-  context?: { subject: string; preheader: string } | null;
+  /** Rundmail: subject, preview line and language, so the AI can fit the mail to them and suggest better ones */
+  context?: DesignerContext | null;
   onResult: (result: DesignerResult) => void;
 }): DesignerSession {
   const [turns, setTurns] = React.useState<DesignerTurn[]>([]);
@@ -136,23 +164,50 @@ export function useDesignerSession({
 
   const addFiles = React.useCallback(
     (files: Iterable<File>, origin: "pick" | "drop" | "paste" = "pick") => {
-      const skipped: string[] = [];
-      for (const file of Array.from(files)) {
-        const name = origin === "paste" && (!file.name || /^image\.\w+$/i.test(file.name))
-          ? pastedImageName(++pasted.current, file.type)
-          : file.name || "Anhang";
-        const key = `${file.name}|${file.size}|${file.lastModified}`;
-        if (origin !== "paste" && listRef.current.some((e) => e.key === key)) {
-          toast({ variant: "info", title: `„${name}“ ist schon angehängt.` });
-          continue;
-        }
-        if (listRef.current.length >= DESIGNER_ATTACHMENT_LIMITS.maxCount) {
-          skipped.push(name);
-          continue;
-        }
+      const list = Array.from(files).map((file) => ({
+        file,
+        name:
+          origin === "paste" && (!file.name || /^image\.\w+$/i.test(file.name))
+            ? pastedImageName(++pasted.current, file.type)
+            : file.name || "Anhang",
+        key: `${file.name}|${file.size}|${file.lastModified}`,
+      }));
+      // Decided at once, before any file is read: copies of attached files,
+      // then type and size (synchronous) — a file that cannot be attached
+      // never takes one of the places — then the limit. A pasted picture is
+      // never a copy (two screenshots from the clipboard are two attachments).
+      const plan = sortAttachmentFiles(
+        list.map((f) => ({ name: f.name, type: f.file.type, size: f.file.size, key: origin === "paste" ? null : f.key })),
+        { count: listRef.current.length, keys: listRef.current.map((e) => e.key) }
+      );
+      const quoted = (indexes: number[]) => indexes.map((i) => `„${list[i].name}“`).join(", ");
+      if (plan.copies.length > 0) {
+        toast({
+          variant: "info",
+          title: plan.copies.length === 1 ? `${quoted(plan.copies)} ist schon angehängt.` : `Schon angehängt: ${quoted(plan.copies)}`,
+        });
+      }
+      if (plan.refused.length > 0) {
+        // One toast for every file that was turned away, each with its reason.
+        toast({
+          variant: "error",
+          title: plan.refused.length === 1 ? "Nicht angehängt" : `${plural(plan.refused.length, "Datei", "Dateien")} nicht angehängt`,
+          description:
+            plan.refused.length === 1
+              ? plan.refused[0].message
+              : React.createElement(
+                  "ul",
+                  { className: "flex flex-col gap-1" },
+                  plan.refused.map((r) => React.createElement("li", { key: r.index }, r.message))
+                ),
+          duration: 9000,
+        });
+      }
+      if (plan.attach.length > 0) setNotice(null);
+      for (const i of plan.attach) {
+        const { file, name, key } = list[i];
         const id = `a${nextId()}`;
         commit((prev) => [...prev, { id, name, key, prepared: null }]);
-        setNotice(null);
         prepareDesignerAttachment(file, name)
           .then((prepared) => {
             if (!alive.current || !listRef.current.some((e) => e.id === id)) {
@@ -173,11 +228,11 @@ export function useDesignerSession({
             });
           });
       }
-      if (skipped.length > 0) {
+      if (plan.overLimit.length > 0) {
         toast({
           variant: "warning",
           title: `Höchstens ${DESIGNER_ATTACHMENT_LIMITS.maxCount} Anhänge`,
-          description: `Nicht angehängt: ${skipped.map((n) => `„${n}“`).join(", ")} — bitte erst einen Anhang entfernen.`,
+          description: `Nicht angehängt: ${quoted(plan.overLimit)} — bitte erst einen Anhang entfernen.`,
           duration: 7000,
         });
       }
@@ -208,6 +263,15 @@ export function useDesignerSession({
     abortRef.current?.abort();
   }, []);
 
+  const noteUndo = React.useCallback(
+    (turnId: number | null) => {
+      if (turnId == null || !alive.current) return;
+      const noticeId = nextId();
+      setTurns((prev) => undoDesignerTurn(prev, turnId, noticeId));
+    },
+    [nextId]
+  );
+
   const send = () => {
     if (runningRef.current || !doc) return;
     const entries = listRef.current;
@@ -226,7 +290,9 @@ export function useDesignerSession({
       use,
       history: designerHistory(turns),
       attachments: ready.map((a) => ({ name: a.name, mediaType: a.mediaType, data: a.data })),
-      ...(context ? { context: { subject: context.subject, preheader: context.preheader } } : {}),
+      ...(context
+        ? { context: { subject: context.subject, preheader: context.preheader, ...(context.language ? { language: context.language } : {}) } }
+        : {}),
     });
     const tooBig = requestBudgetMessage({
       requestBytes: new Blob([json]).size,
@@ -271,7 +337,10 @@ export function useDesignerSession({
               fail(event.message);
               return;
             }
+            // The answer's id goes with the result: the workspace tags its undo step with it (noteUndo).
+            const turnId = nextId();
             const result: DesignerResult = {
+              turnId,
               doc: event.doc,
               notes: event.notes,
               subject: event.subject,
@@ -283,7 +352,7 @@ export function useDesignerSession({
             const editedMeanwhile = JSON.stringify(latest.current.doc) !== sentDoc;
             latest.current.onResult(result);
             addTurn({
-              id: nextId(),
+              id: turnId,
               role: "assistant",
               text: result.notes,
               subject: result.subject,
@@ -322,5 +391,6 @@ export function useDesignerSession({
     send,
     abort,
     reset,
+    noteUndo,
   };
 }

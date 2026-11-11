@@ -9,8 +9,9 @@ import {
   normalizeMailTemplateDoc,
   walkMailBlocks,
 } from "./mail-template-doc.mjs";
-import { findMailBlock, setSectionColumns } from "./mail-template-tree.mjs";
+import { findMailBlock, setSectionColumns, updateMailBlock } from "./mail-template-tree.mjs";
 import { ADMIN_DATE_TIME_SHORT, formatAdmin } from "./admin-datetime.mjs";
+import { docHistoryReducer } from "./mail-designer-client.mjs";
 import {
   BLOCK_GROUPS,
   BLOCK_STYLE_FIELDS,
@@ -31,6 +32,10 @@ import {
   newEditorBlock,
   normalizedMenuItems,
   normalizedMenuRow,
+  patchBlockUpdate,
+  patchColumnUpdate,
+  patchStyleUpdate,
+  removeBlockUpdate,
   sectionLayoutFits,
   sectionLayoutPreset,
   sectionStyledCount,
@@ -414,4 +419,75 @@ test("sectionStyledCount / columnStyledCount count what differs from the default
   assert.equal(sectionStyledCount({ ...sec, padTop: 0, stack: false, padX: 0, borderColor: "#000000" }), 4);
   assert.equal(columnStyledCount(sec.columns[0]), 0);
   assert.equal(columnStyledCount({ ...sec.columns[0], valign: "middle", background: "#eeeeee", padding: 12 }), 3);
+});
+
+// ── changes that land late (a picture upload) ────────────────────────────────
+
+test("a picture upload that finishes after edits and a KI-Gestalter result patches the LATEST document", () => {
+  // the editor's history (useDocHistory) with the real reducer
+  let state = { doc: sample(), undo: [] };
+  const dispatch = (action) => (state = docHistoryReducer(state, action));
+  const start = state.doc;
+
+  // „Hochladen“ on the image: the change is built when the file is picked …
+  const uploaded = patchBlockUpdate("im", { src: "https://example.blob.vercel-storage.com/banner.jpg" });
+  // … during the 1–5 s upload: a hand edit (alt text) and the AI result (accent yellow, AI answer 4)
+  dispatch({ type: "set", doc: patchBlockUpdate("im", { alt: "Hantelbank im Studio" }) });
+  const aiDoc = normalizeMailTemplateDoc({ ...state.doc, style: { ...state.doc.style, accentColor: "#ffd400" } });
+  dispatch({ type: "replace", doc: aiDoc, tag: 4 });
+  // the upload lands
+  dispatch({ type: "set", doc: uploaded });
+
+  const img = findMailBlock(state.doc, "im").block;
+  assert.equal(img.src, "https://example.blob.vercel-storage.com/banner.jpg");
+  assert.equal(img.alt, "Hantelbank im Studio", "the edit made during the upload survives");
+  assert.equal(state.doc.style.accentColor, "#ffd400", "the AI result survives");
+  assert.equal(state.undo.length, 1, "the upload is a hand edit — no step of its own");
+  // „Rückgängig“ still goes back to the mail before the AI result (with the hand edit, without the upload)
+  dispatch({ type: "undo" });
+  assert.notEqual(state.doc.style.accentColor, "#ffd400");
+  assert.equal(findMailBlock(state.doc, "im").block.alt, "Hantelbank im Studio");
+  assert.equal(findMailBlock(state.doc, "im").block.src, findMailBlock(start, "im").block.src);
+
+  // the old way — a value built from the render's copy — would have lost both (the reviewer's reproduction)
+  let old = { doc: start, undo: [] };
+  const stale = normalizeMailTemplateDoc(updateMailBlock(start, "im", { src: "https://x.de/new.jpg" }));
+  old = docHistoryReducer(old, { type: "replace", doc: aiDoc, tag: 4 });
+  old = docHistoryReducer(old, { type: "set", doc: stale });
+  assert.notEqual(old.doc.style.accentColor, "#ffd400");
+});
+
+test("late changes: a block or column that is gone leaves the document as it is; style, column and remove updaters", () => {
+  const doc = sample();
+  // the AI rebuilt the mail (the image is gone) — the upload changes nothing, not even the object
+  const gone = patchBlockUpdate("nope", { src: "https://x.de/b.jpg" });
+  assert.equal(gone(doc), doc);
+  assert.equal(patchColumnUpdate("sec", 5, { background: "#eeeeee" })(doc), doc);
+  assert.equal(patchColumnUpdate("lg", 0, { background: "#eeeeee" })(doc), doc, "not a section");
+  assert.equal(removeBlockUpdate("nope")(doc), doc);
+  assert.equal(removeBlockUpdate("ft")(doc), doc, "never the footer");
+  // with the history: an unchanged document is no change at all
+  const state = { doc, undo: [] };
+  assert.equal(docHistoryReducer(state, { type: "set", doc: gone }), state);
+
+  // the updaters normalise like the editor does
+  const patched = patchBlockUpdate("bt", { label: "  Jetzt kaufen  ", href: "javascript:alert(1)" })(doc);
+  const bt = findMailBlock(patched, "bt").block;
+  assert.equal(bt.label, "Jetzt kaufen");
+  assert.notEqual(bt.href, "javascript:alert(1)");
+  const col = patchColumnUpdate("sec", 1, { background: "#EEEEEE", padding: 16, blocks: [] })(doc);
+  const sec = findMailBlock(col, "sec").block;
+  assert.equal(sec.columns[1].background, "#eeeeee");
+  assert.equal(sec.columns[1].padding, 16);
+  assert.equal(sec.columns[1].blocks.length, 2, "a patch never replaces a column's blocks");
+  const styled = patchStyleUpdate({ accentColor: "#FFD400", logoUrl: "https://example.blob.vercel-storage.com/logo.png" })(doc);
+  assert.equal(styled.style.accentColor, "#ffd400");
+  assert.equal(styled.style.logoUrl, "https://example.blob.vercel-storage.com/logo.png");
+  assert.equal(styled.style.textColor, doc.style.textColor, "the rest of the style stays");
+  const removed = removeBlockUpdate("t")(doc);
+  assert.equal(findMailBlock(removed, "t"), null);
+  assert.ok(findMailBlock(removed, "h"));
+  // the logo upload after an AI result keeps the AI's colours
+  const ai = normalizeMailTemplateDoc({ ...doc, style: { ...doc.style, accentColor: "#123456" } });
+  assert.equal(patchStyleUpdate({ logoUrl: "https://example.blob.vercel-storage.com/l.png" })(ai).style.accentColor, "#123456");
 });

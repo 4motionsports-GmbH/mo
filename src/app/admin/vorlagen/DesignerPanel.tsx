@@ -6,9 +6,13 @@
 //
 //   · the conversation of this editing session — the operator's
 //     instructions (with the names of their attachments), the AI's notes as
-//     replies (with warnings and, in the Rundmail, subject / preview-line
-//     suggestions to „Übernehmen“), failures as destructive callouts;
-//     example chips while it is empty;
+//     replies (plain text — model output never becomes a link here; with
+//     warnings and, in the Rundmail, subject / preview-line suggestions to
+//     „Übernehmen“; marked „rückgängig gemacht“ once „Rückgängig“ took the
+//     result back, with a notice), failures as destructive callouts; example
+//     chips while it is empty. A new reply that is taller than the box is
+//     shown from its start (what the AI did comes first); the operator's own
+//     turn scrolls to the bottom;
 //   · the instruction (Ctrl/⌘ + Enter sends) and the attachments: „Datei
 //     anhängen“, drag & drop onto the card, pictures pasted into the text
 //     field — they stay for the whole conversation until removed;
@@ -34,10 +38,11 @@ import {
   DESIGNER_ATTACHMENT_ACCEPT,
   DESIGNER_ATTACHMENT_BUDGET_BYTES,
   DESIGNER_ATTACHMENT_LIMITS,
+  OUTLOOK_MAIL_ADVICE,
   attachmentKindLabel,
   formatFileSize,
 } from "@/lib/mail-designer-attachments.mjs";
-import { DESIGNER_INSTRUCTION_CHARS, elapsedLabel, type DesignerTurn } from "@/lib/mail-designer-client.mjs";
+import { DESIGNER_INSTRUCTION_CHARS, designerNotesText, elapsedLabel, type DesignerTurn } from "@/lib/mail-designer-client.mjs";
 import {
   Button,
   Callout,
@@ -46,7 +51,6 @@ import {
   IconButton,
   InfoTip,
   Kbd,
-  Markdown,
   ProgressBar,
   Spinner,
   Textarea,
@@ -68,6 +72,13 @@ const REBUILD: Example = {
   wantsFile: true,
 };
 
+/** The same for a design of Mo's personal mails: the look of the attachment, Mo's blocks stay. */
+const REBUILD_PERSONAL: Example = {
+  label: "Bau diese Mail nach",
+  text: "Bau das Design der Mail aus dem Anhang für motion sports nach — gleicher Aufbau und Stil, aber mit unseren Farben und Links; Mos persönlicher Text, Mos Angebot und der Mo-Hinweis bleiben drin.",
+  wantsFile: true,
+};
+
 const EXAMPLES: Record<DesignerUse, Example[]> = {
   bulk: [
     {
@@ -85,6 +96,7 @@ const EXAMPLES: Record<DesignerUse, Example[]> = {
       label: "Ruhiger Premium-Rahmen",
       text: "Ruhiger, hochwertiger Rahmen um Mos Text: Logo oben, Titelbild, dann Mos persönlicher Text, Mos Angebot und der Mo-Hinweis mit Button — viel Weißraum, Akzentfarbe Dunkelblau, eine elegante Schrift für die Überschriften.",
     },
+    REBUILD_PERSONAL,
   ],
   template: [
     {
@@ -136,6 +148,7 @@ export function DesignerPanel({ session, use, onClose, fields = null, className 
   const textareaRef = React.useRef<HTMLTextAreaElement>(null);
   const fileRef = React.useRef<HTMLInputElement>(null);
   const scrollRef = React.useRef<HTMLDivElement>(null);
+  const lastTurnRef = React.useRef<HTMLLIElement>(null);
   const depth = React.useRef(0);
   const [dragging, setDragging] = React.useState(false);
   const [now, setNow] = React.useState(0);
@@ -151,11 +164,26 @@ export function DesignerPanel({ session, use, onClose, fields = null, className 
     textareaRef.current?.focus();
   }, []);
 
-  // The newest turn (and the progress line) in view.
+  // The newest turn in view. The operator's own turn (and with it the
+  // running request): the bottom. A reply, an error or a notice: its START
+  // when it is taller than the box — the first sentences say what the AI did
+  // and what is missing; the suggestions follow below.
+  const lastRole = turns.length > 0 ? turns[turns.length - 1].role : null;
   React.useEffect(() => {
     const el = scrollRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
-  }, [turns.length, running]);
+    if (!el) return;
+    const li = lastTurnRef.current;
+    if (!li || lastRole === "user") {
+      el.scrollTop = el.scrollHeight;
+      return;
+    }
+    const gap = 12; // the box's top padding
+    if (li.offsetHeight > el.clientHeight - gap) {
+      el.scrollTop = Math.max(0, li.getBoundingClientRect().top - el.getBoundingClientRect().top + el.scrollTop - gap);
+    } else {
+      el.scrollTop = el.scrollHeight;
+    }
+  }, [turns.length, lastRole]);
 
   // The elapsed time while a request runs.
   React.useEffect(() => {
@@ -281,7 +309,10 @@ export function DesignerPanel({ session, use, onClose, fields = null, className 
             Klick-Tracking und Abmelde-Link kommen automatisch dazu. Sie ändert, was du sagst — auch Schritt für Schritt im
             Gespräch — und lässt Bilder, Produkte und Codes stehen, die schon in der Mail sind, solange du nichts anderes sagst.
           </p>
-          <p>Jedes Ergebnis ist ungespeichert: „Rückgängig“ holt den Stand davor zurück.</p>
+          <p>
+            Jedes Ergebnis ist ungespeichert: „Rückgängig“ holt den Stand davor zurück — das Gespräch vermerkt es, und die KI
+            erfährt es mit der nächsten Anweisung.
+          </p>
         </InfoTip>
         <div className="ml-auto flex items-center gap-1">
           {(turns.length > 0 || attachments.length > 0) && (
@@ -320,8 +351,8 @@ export function DesignerPanel({ session, use, onClose, fields = null, className 
           />
         ) : (
           <ol className="flex flex-col gap-3" aria-label="Gespräch mit der KI" aria-live="polite" aria-relevant="additions">
-            {turns.map((turn) => (
-              <TurnView key={turn.id} turn={turn} fields={fields} />
+            {turns.map((turn, i) => (
+              <TurnView key={turn.id} turn={turn} fields={fields} ref={i === turns.length - 1 ? lastTurnRef : undefined} />
             ))}
           </ol>
         )}
@@ -404,6 +435,7 @@ export function DesignerPanel({ session, use, onClose, fields = null, className 
               Screenshots, PDFs und HTML-Dateien (auch gespeicherte Mails als .eml) sind ein Vorbild: Die KI baut Aufbau und Stil
               nach — mit unseren Produkten, Links und der Pflicht-Fußzeile.
             </p>
+            <p>{OUTLOOK_MAIL_ADVICE}</p>
             <p>Fotos sind Material: Sag z. B. „nimm das Foto als Banner“, dann steht es in der Mail.</p>
             <p>
               Bis zu {L.maxCount} Dateien — Bilder, PDF bis {formatFileSize(L.maxPdfBytes)}, HTML und Text bis{" "}
@@ -424,10 +456,19 @@ export function DesignerPanel({ session, use, onClose, fields = null, className 
   );
 }
 
-function TurnView({ turn, fields }: { turn: DesignerTurn; fields: DesignerPanelProps["fields"] }) {
+function TurnView({
+  turn,
+  fields,
+  ref,
+}: {
+  turn: DesignerTurn;
+  fields: DesignerPanelProps["fields"];
+  /** the newest turn's item — DesignerPanel scrolls to it */
+  ref?: React.Ref<HTMLLIElement>;
+}) {
   if (turn.role === "user") {
     return (
-      <li className="ml-auto flex max-w-[88%] flex-col items-end gap-1">
+      <li ref={ref} className="ml-auto flex max-w-[88%] flex-col items-end gap-1">
         <span className="text-2xs font-semibold text-muted-foreground">Du</span>
         <div className="min-w-0 rounded-lg bg-accent-soft px-3 py-2 text-sm text-foreground">
           {turn.text ? (
@@ -446,13 +487,20 @@ function TurnView({ turn, fields }: { turn: DesignerTurn; fields: DesignerPanelP
     );
   }
   if (turn.role === "assistant") {
+    // The notes are model output: plain text with its line breaks — never Markdown, so never a link.
+    const notes = designerNotesText(turn.text).trim();
     return (
-      <li className="mr-auto flex max-w-[94%] flex-col gap-1">
+      <li ref={ref} className="mr-auto flex max-w-[94%] flex-col gap-1">
         <span className="flex items-center gap-1 text-2xs font-semibold text-accent">
           <Sparkles className="size-3" aria-hidden /> KI-Gestalter
+          {turn.undone && <span className="font-normal text-muted-foreground">· rückgängig gemacht</span>}
         </span>
         <div className="flex min-w-0 flex-col gap-2 rounded-lg border border-border bg-surface-2 px-3 py-2">
-          {turn.text ? <Markdown content={turn.text} /> : <p className="text-sm">Fertig — die Mail ist aktualisiert.</p>}
+          {notes ? (
+            <p className="whitespace-pre-wrap break-words text-sm leading-relaxed text-foreground">{notes}</p>
+          ) : (
+            <p className="text-sm">Fertig — die Mail ist aktualisiert.</p>
+          )}
           {turn.warnings.length > 0 && (
             <ul className="flex flex-col gap-1">
               {turn.warnings.map((w, i) => (
@@ -481,14 +529,18 @@ function TurnView({ turn, fields }: { turn: DesignerTurn; fields: DesignerPanelP
   }
   if (turn.role === "error") {
     return (
-      <li>
+      <li ref={ref}>
         <Callout tone="destructive" compact>
           {turn.text}
         </Callout>
       </li>
     );
   }
-  return <li className="text-center text-2xs text-muted-foreground">{turn.text}</li>;
+  return (
+    <li ref={ref} className="text-center text-2xs text-muted-foreground">
+      {turn.text}
+    </li>
+  );
 }
 
 function Suggestion({

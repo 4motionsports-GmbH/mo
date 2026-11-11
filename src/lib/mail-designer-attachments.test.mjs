@@ -4,6 +4,7 @@ import {
   DESIGNER_ATTACHMENT_ACCEPT,
   DESIGNER_ATTACHMENT_BUDGET_BYTES,
   DESIGNER_ATTACHMENT_LIMITS as L,
+  OUTLOOK_MAIL_ADVICE,
   attachmentKindLabel,
   attachmentSizeProblem,
   base64Size,
@@ -17,6 +18,7 @@ import {
   readTextAttachment,
   requestBudgetMessage,
   sniffImageType,
+  sortAttachmentFiles,
   unreadableImageMessage,
 } from "./mail-designer-attachments.mjs";
 
@@ -116,6 +118,92 @@ test("type: refused formats get a German reason naming the file", () => {
   assert.match(msg("", ""), /^Die Datei: Dieses Format/);
   // a very long name is shortened
   assert.match(msg("", `${"x".repeat(80)}.zip`), /…“/);
+});
+
+test("type: an Outlook mail (.msg, .oft) gets its own advice — a screenshot or „Speichern unter → HTML“, not .eml", () => {
+  const msg = (type, name) => {
+    const r = designerAttachmentType(type, name);
+    assert.equal(r.ok, false, `${type} ${name}`);
+    return r.ok ? "" : r.message;
+  };
+  const dragged = msg("application/vnd.ms-outlook", "Newsletter.msg");
+  assert.equal(dragged, `„Newsletter.msg“: ${OUTLOOK_MAIL_ADVICE}`);
+  assert.match(dragged, /Outlook-Mails \(\.msg\) kann die KI nicht lesen/);
+  assert.match(dragged, /Screenshot der Mail/);
+  assert.match(dragged, /„Speichern unter → HTML“/);
+  assert.doesNotMatch(dragged, /\.eml/); // Outlook for Windows cannot save one
+  // by extension alone (no or a generic type), any case, and the template format
+  assert.match(msg("", "Angebot.MSG"), /^„Angebot\.MSG“: Outlook-Mails/);
+  assert.match(msg("application/octet-stream", "Vorlage.oft"), /^„Vorlage\.oft“: Outlook-Mails/);
+  // by type alone
+  assert.match(msg("application/vnd.ms-outlook", "Mail"), /Outlook-Mails/);
+  // the .eml Outlook for Mac (or Thunderbird, Apple Mail) saves stays welcome
+  assert.equal(designerAttachmentType("", "Newsletter.eml").ok, true);
+});
+
+test("sorting several files at once: refused types and sizes never take a place, copies are left out", () => {
+  const png = (name, size = 50_000) => ({ name, type: "image/png", size, key: `${name}|${size}|1` });
+  // the reviewer's case: two .docx and six pictures dropped at once, nothing attached yet
+  const drop = [
+    { name: "Brief.docx", type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", size: 30_000, key: "Brief.docx|30000|1" },
+    { name: "Plan.docx", type: "", size: 20_000, key: "Plan.docx|20000|1" },
+    ...[1, 2, 3, 4, 5, 6].map((i) => png(`foto${i}.png`)),
+  ];
+  const r = sortAttachmentFiles(drop, { count: 0, keys: [] });
+  assert.deepEqual(r.attach, [2, 3, 4, 5, 6, 7]); // all six pictures
+  assert.deepEqual(r.overLimit, []);
+  assert.deepEqual(r.copies, []);
+  assert.deepEqual(
+    r.refused.map((x) => x.index),
+    [0, 1]
+  );
+  assert.match(r.refused[0].message, /„Brief\.docx“: Office- und Pages-Dateien bitte vorher als PDF speichern/);
+
+  // size problems are refused up front too: an empty file, a PDF over 3 MB, an .eml over 400 KB, an Outlook mail
+  const mixed = [
+    { name: "leer.png", type: "image/png", size: 0, key: "leer.png|0|1" },
+    { name: "katalog.pdf", type: "application/pdf", size: L.maxPdfBytes + 1, key: "k|1" },
+    { name: "mail.eml", type: "", size: L.maxTextBytes + 1, key: "m|1" },
+    { name: "Newsletter.msg", type: "application/vnd.ms-outlook", size: 80_000, key: "n|1" },
+    png("ok.png"),
+  ];
+  const m = sortAttachmentFiles(mixed, { count: 5, keys: ["x|1|1"] });
+  assert.deepEqual(m.attach, [4]); // the one free place goes to the file that can be attached
+  assert.deepEqual(
+    m.refused.map((x) => x.index),
+    [0, 1, 2, 3]
+  );
+  assert.match(m.refused[0].message, /„leer\.png“ ist leer/);
+  assert.match(m.refused[1].message, /größer als 3 MB/);
+  assert.match(m.refused[2].message, /Screenshot der Mail/);
+  assert.match(m.refused[3].message, /Outlook-Mails/);
+});
+
+test("sorting: the limit counts what is attached (and being read), copies of attached files and in the same drop", () => {
+  const f = (name, key = `${name}|1|1`) => ({ name, type: "image/jpeg", size: 1000, key });
+  const r = sortAttachmentFiles([f("a.jpg"), f("b.jpg"), f("c.jpg"), f("d.jpg")], { count: 4, keys: ["a.jpg|1|1"] });
+  assert.deepEqual(r.copies, [0]); // already attached — no place, no warning about the limit
+  assert.deepEqual(r.attach, [1, 2]); // places 5 and 6
+  assert.deepEqual(r.overLimit, [3]);
+  // the same file twice in one drop: the second is a copy
+  const twice = sortAttachmentFiles([f("a.jpg"), f("a.jpg")], { count: 0 });
+  assert.deepEqual([twice.attach, twice.copies], [[0], [1]]);
+  // pasted pictures have no key: never a copy (two screenshots of the clipboard are two attachments)
+  const pasted = sortAttachmentFiles(
+    [
+      { name: "Eingefügtes Bild 1.png", type: "image/png", size: 10, key: null },
+      { name: "Eingefügtes Bild 2.png", type: "image/png", size: 10, key: null },
+    ],
+    { count: 0, keys: [] }
+  );
+  assert.deepEqual(pasted.attach, [0, 1]);
+  // defaults: the limit of DESIGNER_ATTACHMENT_LIMITS, garbage in → nothing out
+  const seven = sortAttachmentFiles(Array.from({ length: 7 }, (_, i) => f(`p${i}.jpg`)));
+  assert.equal(seven.attach.length, L.maxCount);
+  assert.deepEqual(seven.overLimit, [6]);
+  // @ts-expect-error garbage
+  assert.deepEqual(sortAttachmentFiles(null), { attach: [], copies: [], refused: [], overLimit: [] });
+  assert.deepEqual(sortAttachmentFiles([f("a.jpg")], { count: 2, max: 2 }).overLimit, [0]);
 });
 
 test("size: empty, PDF over 3 MB, text over 400 KB (with the right advice), huge pictures", () => {

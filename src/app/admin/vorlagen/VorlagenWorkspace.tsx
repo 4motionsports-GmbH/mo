@@ -5,9 +5,13 @@
 //   * the list: every template (card with its uses), „Neue Vorlage“ (from a
 //     starter), „Importieren“ (a JSON file exported here or elsewhere);
 //   * the editor (`?vorlage=<id>`): the block editor next to the live preview,
-//     „Mit KI gestalten“ (the KI-Gestalter panel docked above the blocks),
-//     „Rückgängig“ (several steps), Speichern (version-checked), Duplizieren,
-//     Exportieren, Archivieren.
+//     „Mit KI gestalten“ (the KI-Gestalter panel docked above the blocks — for
+//     a template with „Mos persönlicher Text“ it works as a design for Mo's
+//     personal mails, so its results keep Mo's blocks), „Rückgängig“ (several
+//     steps; taking back an AI result shows in the conversation), Speichern
+//     (version-checked), Duplizieren, Exportieren, Archivieren. Leaving (←
+//     Alle Vorlagen, Duplizieren) asks first while the AI works or with
+//     unsaved changes.
 // A template with „Mos persönlicher Text“ appears as a design in
 // Einstellungen (Kampagne / Marketing) and in the campaign editor; every
 // template can start a Rundmail. All writes go through /api/admin/vorlagen.
@@ -57,7 +61,7 @@ import {
   useConfirm,
 } from "../ui";
 import { adminFetch, errorMessage } from "../lib/admin-fetch";
-import { BlockEditor, type MailDoc } from "./BlockEditor";
+import { BlockEditor, type MailDoc, type MailDocChange } from "./BlockEditor";
 import { DesignerPanel, DesignerToggle } from "./DesignerPanel";
 import { LivePreview } from "./LivePreview";
 import { useDesignerSession } from "./use-designer-session";
@@ -353,10 +357,18 @@ function TemplateEditorView({
   const [loadError, setLoadError] = React.useState<string | null>(null);
   const [name, setName] = React.useState("");
   const [description, setDescription] = React.useState("");
-  // The document with its „Rückgängig“ steps (every AI result is one).
+  // The document with its „Rückgängig“ steps (every AI result is one, tagged with its answer).
   const { doc, setDoc, replaceDoc, undo, resetDoc, undoSteps } = useDocHistory<MailDoc | null>(null);
+  // The block editor's changes — values or updaters of the document as it is when they land (a picture upload).
+  const changeDoc = React.useCallback(
+    (change: MailDocChange) => setDoc((prev) => (typeof change === "function" ? (prev ? change(prev) : prev) : change)),
+    [setDoc]
+  );
   const [designerOpen, setDesignerOpen] = React.useState(false);
-  const designer = useDesignerSession({ use: "template", doc, onResult: (result) => replaceDoc(result.doc) });
+  // A template with „Mos persönlicher Text“ is a design for Mo's personal mails: the AI must keep
+  // Mo's blocks (and the server checks it) — read at send time, so it follows the current document.
+  const designerUse = doc && docSupportsPersonal(doc) ? "personal" : "template";
+  const designer = useDesignerSession({ use: designerUse, doc, onResult: (result) => replaceDoc(result.doc, result.turnId) });
   const [saving, setSaving] = React.useState(false);
   const [previewUse, setPreviewUse] = React.useState<"bulk" | "personal">("bulk");
 
@@ -412,14 +424,48 @@ function TemplateEditorView({
     }
   };
 
+  // „Rückgängig“ — when the step was an AI result, the KI-Gestalter's conversation says so.
+  const undoStep = () => designer.noteUndo(undo());
+
+  // Leaving the editor (← Alle Vorlagen) or opening the copy (Duplizieren)
+  // unmounts it: a running KI-Gestalter request is cancelled, its
+  // conversation and attachments are gone — and unsaved changes, since the
+  // copy is made from the saved version. Asks first.
+  const confirmLeave = async (to: "list" | "copy") => {
+    const unsaved = !dirty
+      ? ""
+      : to === "copy"
+        ? " Die Kopie entsteht aus dem gespeicherten Stand — ungespeicherte Änderungen gehen verloren."
+        : " Ungespeicherte Änderungen gehen ebenfalls verloren.";
+    if (designer.running) {
+      return confirm({
+        title: to === "copy" ? "Die KI gestaltet gerade — abbrechen und die Kopie öffnen?" : "Die KI gestaltet gerade — abbrechen und verlassen?",
+        description: `Ihr Ergebnis kommt dann nicht mehr an; das Gespräch und die Anhänge gehen verloren.${unsaved}`,
+        confirmLabel: to === "copy" ? "Abbrechen und Kopie öffnen" : "Abbrechen und verlassen",
+        cancelLabel: "Weiter gestalten",
+        tone: "destructive",
+      });
+    }
+    if (!dirty) return true;
+    return confirm({
+      title: "Ungespeicherte Änderungen verwerfen?",
+      description: to === "copy" ? "Die Kopie entsteht aus dem gespeicherten Stand." : undefined,
+      confirmLabel: "Verwerfen",
+      tone: "destructive",
+    });
+  };
+
   const leave = async () => {
-    if (dirty && !(await confirm({ title: "Ungespeicherte Änderungen verwerfen?", confirmLabel: "Verwerfen", tone: "destructive" }))) return;
+    if (!(await confirmLeave("list"))) return;
+    designer.abort();
     onClose();
   };
 
   const duplicate = async () => {
+    if (!(await confirmLeave("copy"))) return;
     try {
       const json = await adminFetch<{ template: { id: number } }>("/api/admin/vorlagen", { body: { action: "duplicate", id } });
+      designer.abort();
       toast({ variant: "success", title: "Kopie angelegt" });
       onOpen(json.template.id);
     } catch (err) {
@@ -452,7 +498,7 @@ function TemplateEditorView({
         ))}
         <div className="ml-auto flex flex-wrap items-center gap-2">
           {undoSteps > 0 && (
-            <Button variant="ghost" size="sm" onClick={undo}>
+            <Button variant="ghost" size="sm" onClick={undoStep}>
               <Undo2 /> Rückgängig
             </Button>
           )}
@@ -496,7 +542,7 @@ function TemplateEditorView({
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)]">
         <div className="flex min-w-0 flex-col gap-3">
           {designerOpen && aiConfigured && (
-            <DesignerPanel session={designer} use="template" onClose={() => setDesignerOpen(false)} />
+            <DesignerPanel session={designer} use={designerUse} onClose={() => setDesignerOpen(false)} />
           )}
           <p className="flex items-center gap-1 text-sm font-semibold">
             Bausteine
@@ -511,7 +557,7 @@ function TemplateEditorView({
           </p>
           <BlockEditor
             doc={doc}
-            onChange={setDoc}
+            onChange={changeDoc}
             use="template"
             issues={issues}
             uploadConfigured={uploadConfigured}

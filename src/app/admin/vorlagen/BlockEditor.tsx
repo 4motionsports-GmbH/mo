@@ -11,6 +11,12 @@
 // server would refuse to render. Pure UI — saving, the AI and the preview
 // belong to the parent screen; the editor's decisions (limits, summaries,
 // issues per row, column widths) are the tested src/lib/block-editor-core.mjs.
+//
+// `onChange` gets a value or an UPDATER (like useState). The field changes —
+// a block's, a column's, „Farben & Schrift“ — and „Entfernen“ (after its
+// confirmation) are updaters: a picture upload that finishes seconds later
+// applies to the document as it is then, so edits made meanwhile and a
+// KI-Gestalter result that arrived meanwhile stay (patchBlockUpdate …).
 
 import * as React from "react";
 import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, Copy, Move, Plus, Trash2 } from "lucide-react";
@@ -28,10 +34,7 @@ import {
   findMailBlock,
   insertMailBlock,
   moveMailBlock,
-  removeMailBlock,
   setSectionColumns,
-  updateMailBlock,
-  updateSectionColumn,
 } from "@/lib/mail-template-tree.mjs";
 import { pct, plural } from "@/lib/admin-format.mjs";
 import { Button, Callout, Disclosure, IconButton, InfoTip, Menu, Tooltip, toast, useConfirm, type MenuItem } from "../ui";
@@ -54,10 +57,16 @@ import {
   moveBlockTo,
   moveTargets,
   newEditorBlock,
+  patchBlockUpdate,
+  patchColumnUpdate,
+  patchStyleUpdate,
+  removeBlockUpdate,
   sectionLayoutFits,
 } from "@/lib/block-editor-core.mjs";
 
 export type MailDoc = ReturnType<typeof normalizeMailTemplateDoc>;
+/** What BlockEditor's onChange gets: the new document, or an updater of the document as it is when the change lands. */
+export type MailDocChange = MailDoc | ((prev: MailDoc) => MailDoc);
 type Block = MailDoc["blocks"][number];
 export type BlockUse = "bulk" | "personal" | "template";
 export interface DocIssue {
@@ -320,7 +329,7 @@ export function BlockEditor({
   disabled = false,
 }: {
   doc: MailDoc;
-  onChange: (doc: MailDoc) => void;
+  onChange: (change: MailDocChange) => void;
   use: BlockUse;
   issues?: { errors: DocIssue[]; warnings: DocIssue[] };
   uploadConfigured: boolean;
@@ -334,13 +343,9 @@ export function BlockEditor({
   // mounts again later — its section expanded anew — stays where it is).
   const scrollTo = React.useRef<string | null>(null);
   const { confirm, confirmDialog } = useConfirm();
-  // The document right now — for a change that waits for a confirmation.
-  const latest = React.useRef(doc);
-  React.useEffect(() => {
-    latest.current = doc;
-  }, [doc]);
   const catalog = useCatalogInfoStore(docProductRefs(doc));
 
+  /** A structural change computed from this render's document (a click — it is the latest). */
   const commit = (next: unknown) => onChange(normalizeMailTemplateDoc(next));
   /** Open a block that was just added (its section expanded) and bring it into view. */
   const reveal = (id: string, sectionId: string | null) => {
@@ -376,7 +381,8 @@ export function BlockEditor({
         setOpenId(id);
       }
     },
-    patch: (id, p) => commit(updateMailBlock(doc, id, p)),
+    // Field changes may land late (a picture upload): applied to the latest document.
+    patch: (id, p) => onChange(patchBlockUpdate(id, p)),
     move: (id, dir) => commit(moveMailBlock(doc, id, dir)),
     duplicate: (id) => {
       const { doc: next, newId } = duplicateMailBlock(doc, id);
@@ -395,7 +401,8 @@ export function BlockEditor({
         if (!ok) return;
       }
       const gone = new Set([block.id, ...inside]);
-      commit(removeMailBlock(latest.current, block.id));
+      // the document may have changed while the dialog was open
+      onChange(removeBlockUpdate(block.id));
       setOpenId((cur) => (cur && gone.has(cur) ? null : cur));
     },
     moveTo: (id, where) => {
@@ -437,7 +444,7 @@ export function BlockEditor({
       if (next.every((w, i) => w === widths[i])) return;
       commit(setSectionColumns(doc, sectionId, next));
     },
-    patchColumn: (sectionId, columnIndex, p) => commit(updateSectionColumn(doc, sectionId, columnIndex, p)),
+    patchColumn: (sectionId, columnIndex, p) => onChange(patchColumnUpdate(sectionId, columnIndex, p)),
   };
 
   const { docLevel } = grouped;
@@ -461,7 +468,7 @@ export function BlockEditor({
 
         <DocStyleFields
           style={doc.style}
-          onPatch={(p) => commit({ ...doc, style: { ...doc.style, ...p } })}
+          onPatch={(p) => onChange(patchStyleUpdate(p))}
           uploadConfigured={uploadConfigured}
           disabled={disabled}
         />

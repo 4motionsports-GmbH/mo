@@ -3,8 +3,9 @@
 // limit stops it, the one-line summaries of the rows, which issues a row
 // shows (a collapsed section counts its children's), column widths and the
 // layout presets of a section, moving a block into / out of a column, the
-// rows of the menu block's link editor and which design settings of a block
-// are set. Tested (block-editor-core.test.mjs).
+// rows of the menu block's link editor, which design settings of a block
+// are set and the changes that may land late (a picture upload) as updaters
+// of the latest document. Tested (block-editor-core.test.mjs).
 //
 // Every structural change is composed of the tree operations of
 // mail-template-tree.mjs; the editor normalises the result
@@ -18,9 +19,18 @@ import {
   MO_BLOCK_TYPES,
   docBlockCount,
   normalizeMailBlock,
+  normalizeMailTemplateDoc,
   walkMailBlocks,
 } from "./mail-template-doc.mjs";
-import { SECTION_LAYOUTS, canStandInColumn, findMailBlock, insertMailBlock, removeMailBlock } from "./mail-template-tree.mjs";
+import {
+  SECTION_LAYOUTS,
+  canStandInColumn,
+  findMailBlock,
+  insertMailBlock,
+  removeMailBlock,
+  updateMailBlock,
+  updateSectionColumn,
+} from "./mail-template-tree.mjs";
 import { EMAIL_FONT_KEYS } from "./email-theme.mjs";
 import { ADMIN_DATE_TIME_SHORT, formatAdmin } from "./admin-datetime.mjs";
 import { num, plural } from "./admin-format.mjs";
@@ -475,4 +485,71 @@ export function sectionStyledCount(section) {
 /** How many of a column's settings differ from the default (top, no colour, no padding). */
 export function columnStyledCount(col) {
   return [col?.valign && col.valign !== "top", Boolean(col?.background), (col?.padding ?? 0) > 0].filter(Boolean).length;
+}
+
+// ── changes that may land late ───────────────────────────────────────────────
+//
+// A field's change as an UPDATER of the document (BlockEditor's onChange
+// takes a value or an updater, like useState): it is applied to the document
+// as it is when the change lands — not to the copy of the render it started
+// in. That matters for everything that waits: a picture upload („Hochladen“
+// in Bild, Logo, Titelbild, a section's background picture, the own logo)
+// takes seconds, and meanwhile the operator keeps editing or a KI-Gestalter
+// result replaces the mail. A patch of the old copy would write the old mail
+// back — the edits and the AI result gone, the AI result not even on the
+// undo stack. A block or column that is gone by then leaves the document as
+// it is (the same object: no change, no render).
+
+/**
+ * @typedef {ReturnType<typeof normalizeMailTemplateDoc>} EditorDoc
+ * @typedef {(doc: EditorDoc) => EditorDoc} EditorDocUpdate
+ */
+
+/**
+ * Merge `patch` into block `id` (raw field values — normalised).
+ * @param {string} id
+ * @param {Record<string, unknown>} patch
+ * @returns {EditorDocUpdate}
+ */
+export function patchBlockUpdate(id, patch) {
+  return (doc) => {
+    const next = updateMailBlock(doc, id, patch);
+    return next === doc ? doc : normalizeMailTemplateDoc(next);
+  };
+}
+
+/**
+ * Merge `patch` into column `columnIndex` of section `sectionId`.
+ * @param {string} sectionId
+ * @param {number} columnIndex
+ * @param {Record<string, unknown>} patch
+ * @returns {EditorDocUpdate}
+ */
+export function patchColumnUpdate(sectionId, columnIndex, patch) {
+  return (doc) => {
+    const next = updateSectionColumn(doc, sectionId, columnIndex, patch);
+    return next === doc ? doc : normalizeMailTemplateDoc(next);
+  };
+}
+
+/**
+ * Merge `patch` into the style of the whole mail („Farben & Schrift“).
+ * @param {Record<string, unknown>} patch
+ * @returns {EditorDocUpdate}
+ */
+export function patchStyleUpdate(patch) {
+  return (doc) => normalizeMailTemplateDoc({ ...doc, style: { ...doc.style, ...patch } });
+}
+
+/**
+ * Remove block `id` (after a confirmation — the document may have changed
+ * while the dialog was open).
+ * @param {string} id
+ * @returns {EditorDocUpdate}
+ */
+export function removeBlockUpdate(id) {
+  return (doc) => {
+    const next = removeMailBlock(doc, id);
+    return next === doc ? doc : normalizeMailTemplateDoc(next);
+  };
 }

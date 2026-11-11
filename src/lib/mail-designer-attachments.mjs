@@ -17,7 +17,11 @@
 // What may be attached: pictures (PNG, JPG, WebP, GIF; HEIC/AVIF/BMP when the
 // browser can decode them — re-encoded), PDF up to 3 MB, HTML (.html, .htm),
 // e-mails (.eml, the raw message) and text (.txt, .md) up to 400 KB each; at
-// most 6 attachments, the whole request at most 4.2 MB.
+// most 6 attachments, the whole request at most 4.2 MB. Refused with a hint:
+// SVG (export as PNG), Office / Pages files (save as PDF), Outlook mails
+// (.msg, .oft: a screenshot, or „Speichern unter → HTML“). Several files at
+// once are sorted before any is read (sortAttachmentFiles): a refused file
+// never takes one of the 6 places.
 
 import { num } from "./admin-format.mjs";
 
@@ -127,6 +131,18 @@ const IMAGE_EXTENSIONS = Object.freeze({
 
 const OFFICE_EXTENSIONS = ["doc", "docx", "odt", "pages", "rtf", "ppt", "pptx", "key", "odp", "xls", "xlsx", "numbers", "ods"];
 
+/**
+ * Outlook's own mail files: a mail dragged out of Outlook for Windows arrives
+ * as .msg (a template as .oft) — a binary format the KI cannot read, and
+ * Outlook for Windows cannot save the .eml the general message asks for.
+ */
+const OUTLOOK_EXTENSIONS = ["msg", "oft"];
+const OUTLOOK_TYPES = ["application/vnd.ms-outlook", "application/vnd.ms-outlook-template"];
+
+/** The refusal of an Outlook mail file — also the advice of the panel's InfoTip „Was Anhänge bewirken“. */
+export const OUTLOOK_MAIL_ADVICE =
+  "Outlook-Mails (.msg) kann die KI nicht lesen — bitte einen Screenshot der Mail anhängen oder sie in Outlook über „Speichern unter → HTML“ speichern und die HTML-Datei anhängen.";
+
 const ALLOWED_TEXT = "Bilder (PNG, JPG, WebP, GIF), PDF, HTML, E-Mails (.eml) oder Text (.txt, .md)";
 
 /** @param {unknown} name */
@@ -163,10 +179,67 @@ export function designerAttachmentType(type, name) {
   if (t === "image/svg+xml" || ext === "svg") {
     return { ok: false, message: `${display(name)}: SVG-Grafiken bitte vorher als PNG exportieren.` };
   }
+  if (OUTLOOK_EXTENSIONS.includes(ext) || OUTLOOK_TYPES.includes(t)) {
+    return { ok: false, message: `${display(name)}: ${OUTLOOK_MAIL_ADVICE}` };
+  }
   if (OFFICE_EXTENSIONS.includes(ext)) {
     return { ok: false, message: `${display(name)}: Office- und Pages-Dateien bitte vorher als PDF speichern.` };
   }
   return { ok: false, message: `${display(name)}: Dieses Format kann die KI nicht lesen — bitte ${ALLOWED_TEXT} anhängen.` };
+}
+
+/**
+ * Which of the files picked, dropped or pasted AT ONCE become attachments —
+ * decided before any of them is read, so a file that cannot be attached never
+ * takes one of the `max` places: a copy of a file that is already attached is
+ * left out (copies), then type and size are checked (refused, with the German
+ * reason), and only what passes counts against the limit (overLimit — „erst
+ * einen Anhang entfernen“). Reading and decoding (a broken picture …) can
+ * still fail later, one file at a time.
+ * @param {ReadonlyArray<{ name?: unknown, type?: unknown, size?: unknown, key?: string | null }>} files
+ *   in the order they came; key: name|size|lastModified of the file — null for a pasted picture (never a copy)
+ * @param {{ count?: number, keys?: Iterable<string>, max?: number }} [current]
+ *   count: attachments there already (also those still being read); keys: their keys
+ * @returns {{ attach: number[], copies: number[], refused: Array<{ index: number, message: string }>, overLimit: number[] }}
+ *   indexes into `files`
+ */
+export function sortAttachmentFiles(files, current = {}) {
+  const max = Number.isFinite(current.max) ? Number(current.max) : DESIGNER_ATTACHMENT_LIMITS.maxCount;
+  const keys = new Set(current.keys ?? []);
+  let count = Math.max(0, Number(current.count) || 0);
+  /** @type {number[]} */
+  const attach = [];
+  /** @type {number[]} */
+  const copies = [];
+  /** @type {Array<{ index: number, message: string }>} */
+  const refused = [];
+  /** @type {number[]} */
+  const overLimit = [];
+  (Array.isArray(files) ? files : []).forEach((f, index) => {
+    const key = typeof f?.key === "string" && f.key ? f.key : null;
+    if (key && keys.has(key)) {
+      copies.push(index);
+      return;
+    }
+    const type = designerAttachmentType(f?.type, f?.name);
+    if (!type.ok) {
+      refused.push({ index, message: type.message });
+      return;
+    }
+    const tooBig = attachmentSizeProblem(type.kind, type.mediaType, Number(f?.size) || 0, f?.name);
+    if (tooBig) {
+      refused.push({ index, message: tooBig });
+      return;
+    }
+    if (count >= max) {
+      overLimit.push(index);
+      return;
+    }
+    count += 1;
+    if (key) keys.add(key);
+    attach.push(index);
+  });
+  return { attach, copies, refused, overLimit };
 }
 
 /**
