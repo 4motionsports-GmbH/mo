@@ -18,13 +18,17 @@
 // column that becomes a full-width block on phones (.col-stack / .col-gap,
 // email-shell-css.mjs), `reverse` through dir="rtl", a background picture
 // with its Outlook VML twin; with rounded corners or a border it is a box
-// whose colour sits inside the frame. Inside a column the default spacing
-// above the first and below the last block collapses to 0 — the section's
-// padding frames the content; padTop / padBottom always win. Texts whose
-// colour the operator cannot set (the coupon's, the legal footer's) switch
-// to a readable ink on a colour they would vanish on. Optional fields only
-// ADD markup when set, so a version-1 document renders as before (snapshots
-// in __fixtures__/mail-template-v1/).
+// whose colour — or picture — sits inside the frame. Inside a column the
+// default spacing above the first and below the last block collapses to 0 —
+// the section's padding frames the content; padTop / padBottom always win.
+// Texts whose colour the operator cannot set (the coupon's, the legal
+// footer's, Mo's heading) switch to a readable ink on a colour they would
+// vanish on; Mo's text, written in black for the classic white card, sits on
+// a white panel on a dark card. Social icons shrink (and wrap) to fit narrow
+// columns. Optional fields only ADD markup when set, so a version-1 document
+// renders as before (snapshots in __fixtures__/mail-template-v1/). Custom
+// HTML goes through the fence of mail-template-html.mjs, and merge fields are
+// never replaced inside a link target.
 //
 // What needs I/O or the active design context comes in pre-rendered through
 // the context — the TypeScript layer (mail-template-design.ts,
@@ -52,6 +56,7 @@ import { emailProseToText, renderEmailProseHtml } from "./email-prose.mjs";
 import { couponCodeType, discountRedeemUrl } from "./discount-coupon.mjs";
 import {
   MO_BLOCK_TYPES,
+  PROSE_URL_RE,
   contrastRatio,
   docFontKeys,
   mailFontGoogleFamily,
@@ -60,6 +65,13 @@ import {
   normalizeMailTemplateDoc,
   walkMailBlocks,
 } from "./mail-template-doc.mjs";
+import { sanitizeCustomHtml } from "./mail-template-html.mjs";
+
+/**
+ * The fence around a custom HTML block (mail-template-html.mjs): what the
+ * renderer inserts for an `html` block.
+ */
+export { sanitizeCustomHtml };
 
 /**
  * Marks where the fixed legal footer starts in the rendered HTML — the checks
@@ -102,6 +114,8 @@ const NARROW_COLUMN = 300;
 const PRODUCT_SIDE_GAP = 16;
 /** The struck-through compare-at price — the shop's sale red (EMAIL_SALE_STRIKE_COLOR). */
 const SALE_STRIKE_COLOR = "#c61724";
+/** The classic link colour of the composer's prose (email-prose.mjs DEFAULT_LINK_STYLE). */
+const CLASSIC_LINK_COLOR = "#008ccb";
 
 /**
  * The display data of a `product` block, resolved at send time from the
@@ -160,29 +174,25 @@ export const MAIL_COMPANY_LINES = Object.freeze([
 ]);
 
 /**
- * Strip what has no place in a mail from a custom HTML block: scripts,
- * styles, frames, forms, embeds, document wrappers, comments (an unbalanced
- * conditional comment would swallow the rest of the mail), event handlers
- * and script/data URLs. Link targets are written double-quoted
- * (href='…' and href=… become href="…"), the only form the Rundmail link
- * tracking (mailing-core.mjs freezeLinks) rewrites. A fence, not a full
- * sanitizer: the block is written by the operator in the admin (trusted),
- * and every admin preview is a sandboxed iframe. <img> without a numeric
- * width attribute is left alone (no width is invented).
- * @param {string} html
- * @returns {string}
+ * A white rounded panel. The composer writes its pieces (Mo's text, the
+ * classic product rows, the countdown, Mo's buttons and footnote) in dark ink
+ * for the classic white card: on a dark card they sit on one
+ * (mail-template-design.ts templateSectionRow, Mo's text here).
+ * @param {string} innerHtml
  */
-export function sanitizeCustomHtml(html) {
-  let s = String(html ?? "");
-  s = s.replace(/<!--[\s\S]*?-->/g, "");
-  s = s.replace(/<(script|style|iframe|object|embed|form|textarea|select|noscript|template|svg|math)\b[\s\S]*?<\/\1\s*>/gi, "");
-  s = s.replace(/<\/?(script|style|iframe|object|embed|form|input|button|textarea|select|option|link|meta|base|html|head|body|title|frame|frameset|applet|noscript|template|svg|math)\b[^>]*>/gi, "");
-  s = s.replace(/\s(on[a-z]+|srcdoc|formaction|xmlns:[a-z]+)\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, "");
-  s = s.replace(/\s(href|src|background|action|poster)\s*=\s*("|')\s*(?:javascript|vbscript|data|file):[^"']*\2/gi, ' $1="#"');
-  s = s.replace(/\s(href|src|background|action|poster)\s*=\s*(?:javascript|vbscript|data|file):[^\s>]*/gi, ' $1="#"');
-  s = s.replace(/\shref\s*=\s*(?:'([^']*)'|([^\s"'>]+))/gi, (_all, single, bare) => ` href="${String(single ?? bare).replace(/"/g, "&quot;")}"`);
-  s = s.replace(/expression\s*\(/gi, "(");
-  return s.trim();
+export function mailWhitePanel(innerHtml) {
+  return `
+                    <table role="presentation" width="100%" border="0" cellpadding="0" cellspacing="0" style="border-collapse: separate; mso-table-lspace: 0pt; mso-table-rspace: 0pt;">
+                      <tr>
+                        <td bgcolor="#ffffff" align="center" style="background-color: #ffffff; border-radius: 8px; padding: 16px;">${innerHtml}
+                        </td>
+                      </tr>
+                    </table>`;
+}
+
+/** A card colour on which the composer's black ink is unreadable (below 4.5 : 1) — its pieces need the white panel. */
+export function isDarkCard(cardBackground) {
+  return (contrastRatio("#000000", cardBackground) ?? 21) < 4.5;
 }
 
 /** Visible text of an HTML fragment (for the text part of an html block). */
@@ -434,7 +444,8 @@ function renderBlock(R, b, box) {
     case "social": {
       const [t, bt] = vpad(b, box, 14, 14);
       const align = b.align ?? "center";
-      return row(socialRow(R.ctx.assets.socialLinks, align), { padding: padCss(t, sidePad(b, box), bt), align, bgcolor: rowBg(b, box), pad: box.top });
+      const x = sidePad(b, box);
+      return row(socialRow(R.ctx.assets.socialLinks, align, box.width - 2 * x), { padding: padCss(t, x, bt), align, bgcolor: rowBg(b, box), pad: box.top });
     }
     case "html": {
       const [t, bt] = vpad(b, box, 0, 0);
@@ -522,11 +533,27 @@ function textRows(R, b, box) {
 }
 
 /**
+ * Merge the visible text of prose, never its link targets (PROSE_URL_RE): a
+ * merge field inside a URL stays as written — validation refuses it there —
+ * so a link is never personalised, the same in preview, test mail and the
+ * frozen Rundmail. Link texts ([Hallo {{vorname}}](…)) are merged.
+ * @param {(t: string) => string} merge
+ * @param {string} text
+ */
+function mergeProse(merge, text) {
+  /** @type {string[]} */
+  const urls = [];
+  const masked = String(text ?? "").replace(PROSE_URL_RE, (u) => `\u0001${urls.push(u) - 1}\u0002`);
+  if (urls.length === 0) return merge(masked);
+  return merge(masked).replace(/\u0001(\d+)\u0002/g, (_m, i) => urls[Number(i)] ?? "");
+}
+
+/**
  * The prose of a text block: blank line = new paragraph, a chunk whose every
  * line starts with "- " / "• " = a list (the block's bullet, "1." numbered).
  */
 function paragraphs(R, b, type) {
-  const chunks = R.merge(b.text)
+  const chunks = mergeProse(R.merge, b.text)
     .split(/\n\s*\n/)
     .map((c) => c.trim())
     .filter(Boolean);
@@ -856,7 +883,8 @@ function productRows(R, b, box) {
  * lays the cells out right to left, so desktops show the original order and
  * phones stack the last column first. A background picture comes with its
  * Outlook VML twin; with rounded corners or a border the section is a box
- * whose colour sits inside the frame (the padding stays around it).
+ * whose colour — or picture — sits inside the frame (the padding stays
+ * around it, on the card colour).
  */
 function sectionRows(R, s) {
   const cardBg = R.style.cardBackground;
@@ -864,8 +892,8 @@ function sectionRows(R, s) {
   const boxed = s.radius > 0 || Boolean(s.borderColor);
   const image = s.bgImage || "";
   const fallback = s.background ?? cardBg;
-  const outerBg = boxed && !image ? cardBg : fallback;
-  const innerBg = boxed ? s.background : null;
+  // A box (rounded corners or a border) stands on the card colour, its own colour (or picture) inside the frame.
+  const outerBg = boxed ? cardBg : fallback;
   const stack = s.stack !== false;
   // Columns that never stack keep their share on phones: whole percentages
   // (gaps included) that add up to 100.
@@ -919,11 +947,13 @@ function sectionRows(R, s) {
       })()
     : "";
   const ordered = s.reverse ? [...cells].reverse() : cells;
+  // The frame of a box: border and rounded corners (the separate border model lets browsers round it).
   const frame = boxed
-    ? ` border-collapse: separate !important; border-spacing: 0;${s.borderColor ? ` border: 1px solid ${s.borderColor};` : ""}${s.radius ? ` border-radius: ${s.radius}px; overflow: hidden;` : ""}${innerBg ? ` background-color: ${innerBg};` : ""}`
+    ? ` border-collapse: separate !important; border-spacing: 0;${s.borderColor ? ` border: 1px solid ${s.borderColor};` : ""}${s.radius ? ` border-radius: ${s.radius}px; overflow: hidden;` : ""}`
     : "";
-  const columns = `
-                    <table cellspacing="0" cellpadding="0" border="0" width="100%" role="presentation"${s.reverse ? ' dir="rtl"' : ""}${innerBg ? ` bgcolor="${innerBg}"` : ""} style="direction: ${s.reverse ? "rtl" : "ltr"};${frame}">
+  /** The table of the columns — with the frame and the box colour of a box without a picture. */
+  const columnsTable = (/** @type {string} */ framing, /** @type {string | null} */ bg) => `
+                    <table cellspacing="0" cellpadding="0" border="0" width="100%" role="presentation"${s.reverse ? ' dir="rtl"' : ""}${bg ? ` bgcolor="${bg}"` : ""} style="direction: ${s.reverse ? "rtl" : "ltr"};${framing}${bg ? ` background-color: ${bg};` : ""}">
                       <tr>${ordered.join(gapCell)}
                       </tr>
                     </table>`;
@@ -933,7 +963,7 @@ function sectionRows(R, s) {
   if (!image) {
     return `
                 <tr>
-                  <td${pad} align="left" valign="top" bgcolor="${outerBg}" style="mso-line-height-rule: exactly; padding: ${padding}; background-color: ${outerBg};">${columns}
+                  <td${pad} align="left" valign="top" bgcolor="${outerBg}" style="mso-line-height-rule: exactly; padding: ${padding}; background-color: ${outerBg};">${columnsTable(frame, boxed ? s.background : null)}
                   </td>
                 </tr>`;
   }
@@ -941,12 +971,37 @@ function sectionRows(R, s) {
   // (frame fill = cover, centred; the text box grows with its content).
   const valigns = new Set(s.columns.map((c) => c.valign));
   const valign = s.minHeight > 0 && valigns.size === 1 ? [...valigns][0] : "top";
-  const innerHeight = s.minHeight > 0 ? Math.max(0, s.minHeight - s.padTop - s.padBottom) : 0;
   const src = escapeAttr(image);
+  const pictureCss = `background-color: ${fallback}; background-image: url('${escapeAttr(cssUrl(image))}'); background-size: cover; background-position: center; background-repeat: no-repeat;`;
+  if (boxed) {
+    // A box with a picture: the picture carries the frame. The framed table
+    // holds ONE cell with the picture (CSS, background attribute and the
+    // Outlook rectangle, the fallback colour while pictures are blocked) and
+    // the columns over it — nothing opaque between picture and content; the
+    // card colour and the section's padding around the box. `minHeight` is
+    // the picture's height.
+    const h = s.minHeight;
+    const cellRadius = s.radius ? Math.max(0, s.radius - (s.borderColor ? 1 : 0)) : 0;
+    return `
+                <tr>
+                  <td${pad} align="left" valign="top" bgcolor="${cardBg}" style="mso-line-height-rule: exactly; padding: ${padding}; background-color: ${cardBg};">
+                    <table cellspacing="0" cellpadding="0" border="0" width="100%" role="presentation" style="direction: ltr;${frame}">
+                      <tr>
+                        <td align="left" valign="${valign}" bgcolor="${fallback}" background="${src}"${h ? ` height="${h}"` : ""} style="mso-line-height-rule: exactly; padding: 0;${h ? ` height: ${h}px;` : ""} ${pictureCss}${cellRadius ? ` border-radius: ${cellRadius}px;` : ""}">
+                          <!--[if gte mso 9]><v:rect xmlns:v="urn:schemas-microsoft-com:vml" fill="true" stroke="false" style="width:${inner}px;${h ? `height:${h}px;` : ""}"><v:fill type="frame" src="${src}" color="${fallback}" size="1,1" aspect="atleast" origin="0.5,0.5" position="0.5,0.5" /><v:textbox style="mso-fit-shape-to-text:true" inset="0,0,0,0"><table role="presentation" width="${inner}" cellpadding="0" cellspacing="0" border="0"><tr><td${h ? ` height="${h}"` : ""} valign="${valign}"${h ? ` style="height:${h}px;"` : ""}><![endif]-->${columnsTable("", null)}
+                          <!--[if gte mso 9]></td></tr></table></v:textbox></v:rect><![endif]-->
+                        </td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>`;
+  }
+  const columns = columnsTable("", null);
+  const innerHeight = s.minHeight > 0 ? Math.max(0, s.minHeight - s.padTop - s.padBottom) : 0;
   return `
                 <tr>
-                  <td align="left" valign="top" bgcolor="${outerBg}" background="${src}" style="mso-line-height-rule: exactly; padding: 0; background-color: ${outerBg}; background-image: url('${escapeAttr(cssUrl(image))}'); background-size: cover; background-position: center; background-repeat: no-repeat;">
-                    <!--[if gte mso 9]><v:rect xmlns:v="urn:schemas-microsoft-com:vml" fill="true" stroke="false" style="width:${MAIL_CARD_WIDTH}px;${s.minHeight > 0 ? `height:${s.minHeight}px;` : ""}"><v:fill type="frame" src="${src}" color="${outerBg}" size="1,1" aspect="atleast" origin="0.5,0.5" position="0.5,0.5" /><v:textbox style="mso-fit-shape-to-text:true" inset="0,0,0,0"><table role="presentation" width="${MAIL_CARD_WIDTH}" cellpadding="0" cellspacing="0" border="0"><tr><td${s.minHeight > 0 ? ` height="${s.minHeight}"` : ""} valign="${valign}"${s.minHeight > 0 ? ` style="height:${s.minHeight}px;"` : ""}><![endif]-->
+                  <td align="left" valign="top" bgcolor="${fallback}" background="${src}" style="mso-line-height-rule: exactly; padding: 0; ${pictureCss}">
+                    <!--[if gte mso 9]><v:rect xmlns:v="urn:schemas-microsoft-com:vml" fill="true" stroke="false" style="width:${MAIL_CARD_WIDTH}px;${s.minHeight > 0 ? `height:${s.minHeight}px;` : ""}"><v:fill type="frame" src="${src}" color="${fallback}" size="1,1" aspect="atleast" origin="0.5,0.5" position="0.5,0.5" /><v:textbox style="mso-fit-shape-to-text:true" inset="0,0,0,0"><table role="presentation" width="${MAIL_CARD_WIDTH}" cellpadding="0" cellspacing="0" border="0"><tr><td${s.minHeight > 0 ? ` height="${s.minHeight}"` : ""} valign="${valign}"${s.minHeight > 0 ? ` style="height:${s.minHeight}px;"` : ""}><![endif]-->
                     <table cellspacing="0" cellpadding="0" border="0" width="100%" role="presentation" style="direction: ltr;">
                       <tr>
                         <td${pad} valign="${valign}"${innerHeight ? ` height="${innerHeight}"` : ""} style="mso-line-height-rule: exactly; padding: ${padding};${innerHeight ? ` height: ${innerHeight}px;` : ""}">${columns}
@@ -975,7 +1030,39 @@ export function renderMailTemplateHtml(rawDoc, ctx) {
   const moHasBlocks = Boolean(mo && (mo.offerRowsHtml != null || mo.promoRowsHtml != null));
   const offerRows = mo?.offerRowsHtml ?? "";
   const promoRows = mo ? `${mo.promoRowsHtml ?? ""}${mo.ctaRowsHtml}${mo.footnoteRowHtml}${mo.postCtaRowsHtml}` : "";
-  const moBody = () => row(mo?.bodyHtml ?? "", { padding: padCss(25, top.padX, 10), bgcolor: top.bg });
+  // Mo's pieces stay readable on any card. The composer writes Mo's text in
+  // black for the classic white card, and the avatar is a picture on white:
+  // on a dark card both sit on the white panel of the classic pieces (whose
+  // rows mail-template-design.ts puts on it). Mo's heading and the hero
+  // headline take the heading colour — a readable ink where it would vanish.
+  const darkCard = isDarkCard(top.bg);
+  const moHeading = (/** @type {string} */ size, /** @type {string} */ align) => ({ ...plainHeading(size, align), color: ink(style.headingColor, top.bg, 3) });
+  const avatarRow = (/** @type {string} */ url) =>
+    row(
+      `
+                    <img src="${escapeAttr(url)}" alt="Mo" width="64" height="64" border="0" style="width: 64px; height: 64px; display: block; Margin: 0 auto;">`,
+      { padding: padCss(25, top.padX, 0), align: "center", bgcolor: top.bg }
+    );
+  /** Mo's text — on a dark card on the white panel, with the avatar above it when given. */
+  const moBody = (/** @type {string | null} */ avatarUrl = null) => {
+    const bodyHtml = mo?.bodyHtml ?? "";
+    const opts = { padding: padCss(25, top.padX, 10), bgcolor: top.bg };
+    if (!darkCard) return `${avatarUrl ? avatarRow(avatarUrl) : ""}${row(bodyHtml, opts)}`;
+    const avatar = avatarUrl
+      ? `
+                    <table cellspacing="0" cellpadding="0" border="0" width="100%" role="presentation" style="direction: ltr;">
+                      <tr>
+                        <td align="center" style="mso-line-height-rule: exactly; padding: 0 0 16px;"><img src="${escapeAttr(avatarUrl)}" alt="Mo" width="64" height="64" border="0" style="width: 64px; height: 64px; display: block; Margin: 0 auto;"></td>
+                      </tr>
+                    </table>`
+      : "";
+    // Mo's links come in the accent colour (email-template.ts emailLinkStyle) —
+    // chosen for the dark card; on the white panel one that does not read
+    // gives way to the classic link blue.
+    const linkInk = ink(style.accentColor, "#ffffff", 3, CLASSIC_LINK_COLOR);
+    const text = linkInk === style.accentColor ? bodyHtml : bodyHtml.replace(new RegExp(`color:\\s*${style.accentColor}\\b`, "gi"), `color: ${linkInk}`);
+    return row(mailWhitePanel(`${avatar}${text}`), opts);
+  };
 
   /** Everything of the composer that the template does not place itself. */
   const moTail = () => {
@@ -1020,22 +1107,13 @@ export function renderMailTemplateHtml(rawDoc, ctx) {
             )
           );
         }
-        if (b.showHeadline && h?.headline) parts.push(headingRows(R, plainHeading("l", "left"), top, h.headline));
+        if (b.showHeadline && h?.headline) parts.push(headingRows(R, moHeading("l", "left"), top, h.headline));
         break;
       }
       case "mo_content":
         if (!mo) break;
-        if (b.showHeading && mo.heading) parts.push(headingRows(R, plainHeading("m", "center"), top, mo.heading));
-        if (mo.moAvatarUrl) {
-          parts.push(
-            row(
-              `
-                    <img src="${escapeAttr(mo.moAvatarUrl)}" alt="Mo" width="64" height="64" border="0" style="width: 64px; height: 64px; display: block; Margin: 0 auto;">`,
-              { padding: padCss(25, top.padX, 0), align: "center", bgcolor: top.bg }
-            )
-          );
-        }
-        parts.push(moBody());
+        if (b.showHeading && mo.heading) parts.push(headingRows(R, moHeading("m", "center"), top, mo.heading));
+        parts.push(moBody(mo.moAvatarUrl));
         parts.push(moTail());
         break;
       case "mo_offer":
@@ -1121,19 +1199,68 @@ function greetingText(b, ctx, merge) {
   return probe ? merge(b.text) : b.fallback;
 }
 
-function socialRow(links, align = "center") {
-  const cells = (links ?? [])
-    .map(
-      (s) => `
-                        <td align="center" valign="middle" style="mso-line-height-rule: exactly; padding: 0 6px;">
-                          <a href="${escapeAttr(s.url)}" target="_blank" style="text-decoration: none;"><img src="${escapeAttr(s.icon)}" alt="${escapeAttr(s.alt)}" width="20" height="20" border="0" style="width: 20px; height: 20px; display: block; border: none; outline: none;"></a>
-                        </td>`
-    )
-    .join("");
-  return `
+/** The social icons: 20 px with 6 px on each side; in narrow columns the padding shrinks to 2 px, the icon to 16 px. */
+const SOCIAL_ICON = 20;
+const SOCIAL_PAD = 6;
+const SOCIAL_MIN_ICON = 16;
+const SOCIAL_MIN_PAD = 2;
+/** The space between two rows of icons. */
+const SOCIAL_ROW_GAP = 8;
+
+/**
+ * How `count` social icons fit `room` px: the fewest rows (filled as evenly
+ * as possible) in which every icon keeps at least 16 px and 2 px on each
+ * side — within them the padding shrinks first, then the icon. A row is
+ * never wider than the room (unless not even one 16 px icon fits).
+ * @param {number} count
+ * @param {number} room
+ * @returns {{ perRow: number, size: number, pad: number }}
+ */
+export function socialIconLayout(count, room) {
+  const n = Math.max(1, count);
+  for (let rows = 1; rows <= n; rows++) {
+    const perRow = Math.ceil(n / rows);
+    const slot = Math.floor(room / perRow);
+    if (slot >= SOCIAL_ICON + 2 * SOCIAL_PAD) return { perRow, size: SOCIAL_ICON, pad: SOCIAL_PAD };
+    if (slot >= SOCIAL_ICON + 2 * SOCIAL_MIN_PAD) return { perRow, size: SOCIAL_ICON, pad: Math.floor((slot - SOCIAL_ICON) / 2) };
+    if (slot >= SOCIAL_MIN_ICON + 2 * SOCIAL_MIN_PAD) return { perRow, size: slot - 2 * SOCIAL_MIN_PAD, pad: SOCIAL_MIN_PAD };
+  }
+  return { perRow: 1, size: SOCIAL_MIN_ICON, pad: SOCIAL_MIN_PAD };
+}
+
+/**
+ * The social icons in `room` px (socialIconLayout): one row as in version 1
+ * where they fit, else smaller and, if need be, in several rows — each row
+ * its own table in a cell of its own, aligned like the block.
+ */
+function socialRow(links, align = "center", room = MAIL_CARD_WIDTH) {
+  const list = links ?? [];
+  const { perRow, size, pad } = socialIconLayout(list.length, room);
+  const iconRow = (/** @type {typeof list} */ items) => `
                     <table cellspacing="0" cellpadding="0" border="0" align="${align}" role="presentation" style="direction: ltr; ${blockMargin(align)}">
-                      <tr>${cells}
+                      <tr>${items
+                        .map(
+                          (s) => `
+                        <td align="center" valign="middle" style="mso-line-height-rule: exactly; padding: 0 ${pad}px;">
+                          <a href="${escapeAttr(s.url)}" target="_blank" style="text-decoration: none;"><img src="${escapeAttr(s.icon)}" alt="${escapeAttr(s.alt)}" width="${size}" height="${size}" border="0" style="width: ${size}px; height: ${size}px; display: block; border: none; outline: none;"></a>
+                        </td>`
+                        )
+                        .join("")}
                       </tr>
+                    </table>`;
+  if (list.length <= perRow) return iconRow(list);
+  const rows = [];
+  for (let i = 0; i < list.length; i += perRow) rows.push(list.slice(i, i + perRow));
+  return `
+                    <table cellspacing="0" cellpadding="0" border="0" width="100%" role="presentation" style="direction: ltr;">${rows
+                      .map(
+                        (items, i) => `
+                      <tr>
+                        <td align="${align}" style="mso-line-height-rule: exactly; padding: ${i === 0 ? "0" : `${SOCIAL_ROW_GAP}px 0 0`};">${iconRow(items)}
+                        </td>
+                      </tr>`
+                      )
+                      .join("")}
                     </table>`;
 }
 
@@ -1163,7 +1290,7 @@ function footerRows(R, b) {
                         b.showSocial
                           ? `
                           <tr>
-                            <td align="center" style="mso-line-height-rule: exactly; padding-bottom: 12px;" valign="top">${socialRow(ctx.assets.socialLinks)}
+                            <td align="center" style="mso-line-height-rule: exactly; padding-bottom: 12px;" valign="top">${socialRow(ctx.assets.socialLinks, "center", MAIL_CARD_WIDTH - 2 * R.style.contentPadding)}
                             </td>
                           </tr>`
                           : ""
@@ -1211,7 +1338,7 @@ export function renderMailTemplateText(rawDoc, ctx) {
         if (b.text) out.push(merge(b.text));
         break;
       case "text":
-        if (b.text) out.push(emailProseToText(merge(b.text)).replace(/^\s*•\s+/gm, "- "));
+        if (b.text) out.push(emailProseToText(mergeProse(merge, b.text)).replace(/^\s*•\s+/gm, "- "));
         break;
       case "greeting":
         out.push(greetingText(b, ctx, merge));

@@ -13,9 +13,27 @@ import {
   TEXT_BULLETS,
   applyMergeFields,
   normalizeMailTemplateDoc,
+  validateMailTemplateDoc,
 } from "./mail-template-doc.mjs";
 import { MAIL_CARD_WIDTH, MAIL_FOOTER_MARKER, renderMailTemplateHtml, renderMailTemplateText } from "./mail-template-render.mjs";
-import { fixtureContext } from "./__fixtures__/mail-template-v1-cases.mjs";
+import { FIXTURE_ASSETS, fixtureContext } from "./__fixtures__/mail-template-v1-cases.mjs";
+
+/** The six social icons of production (email-template.ts EMAIL_SOCIAL_LINKS) — the widest icon row there is. */
+const SOCIAL_LINKS = ["facebook", "instagram", "pinterest", "youtube", "tiktok", "linkedin"].map((alt) => ({ alt, icon: `https://cdn.example.com/${alt}.png`, url: `https://${alt}.com/motionsports` }));
+/**
+ * Custom HTML: balanced markup, and markup the fence must clean (handlers
+ * after "/" or a quoted value, raw-text tags, an unterminated comment,
+ * script URLs) — every one of them lint-clean and harmless once sanitized.
+ */
+const HTML_SNIPPETS = [
+  (w) => `<table role="presentation" width="100%"><tr><td style="padding: 8px;"><a href="https://www.motionsports.de/">${w}</a></td></tr></table>`,
+  (w) => `<p style='color:#ffffff'>${w} <a href='https://motionsports.de/pages/faq'>FAQ</a></p>`,
+  (w) => `<details/open/ontoggle="alert(1)"><summary>${w}</summary>Info</details>`,
+  (w) => `<p>${w}</p><img/src="https://x.de/a.png"/onload="alert(1)" width="120" alt="a"><a href="java&#x09;script:alert(1)"onclick="x()">x</a>`,
+  (w) => `<p>${w}</p><noembed>`,
+  (w) => `<p>${w}</p><!--[if mso]><table><tr><td>`,
+  (w) => `<div style="background-image:image-set('https://evil.example/x.gif' 1x)"><p>${w}</p></div><a href=https://x.de/b?c=1 ping=https://evil.example/p>b</a>`,
+];
 
 const SEED = Number(process.env.FUZZ_SEED ?? 20261111);
 const RUNS = Number(process.env.FUZZ_RUNS ?? 160);
@@ -79,7 +97,7 @@ function generator(rand) {
       case "social":
         return { type, align: pick(["left", "center", "right"]), ...box() };
       case "html":
-        return { type, html: `<table role="presentation" width="100%"><tr><td style="padding: 8px;"><a href="https://www.motionsports.de/">${words(3)}</a></td></tr></table>`, ...box() };
+        return { type, html: pick(HTML_SNIPPETS)(words(3)), ...box() };
       default:
         return { type };
     }
@@ -155,13 +173,17 @@ test(`random documents render lint-clean with one footer (${RUNS} runs, seed ${S
     const raw = next();
     const doc = normalizeMailTemplateDoc(raw);
     const where = `run ${i} (FUZZ_SEED=${SEED}): ${JSON.stringify(raw).slice(0, 400)}`;
+    // the generated custom HTML is balanced: no structure error (no false alarm)
+    for (const e of validateMailTemplateDoc(doc, "template").errors) assert.doesNotMatch(e.message, /unvollständige Tabellen|Bitte nur den Inhalt/, where);
     for (const previewPlaceholders of [false, true]) {
-      const ctx = fixtureContext({ merge, slots: slotsFor(doc), previewPlaceholders });
+      const ctx = fixtureContext({ merge, slots: slotsFor(doc), previewPlaceholders, assets: { ...FIXTURE_ASSETS, socialLinks: SOCIAL_LINKS } });
       const html = renderMailTemplateHtml(doc, ctx);
       const findings = lintOutlookHtml(html, { maxImageWidth: MAIL_CARD_WIDTH, sizeBudgetBytes: 200 * 1024 });
       assert.deepEqual(findings, [], `${where}\n${JSON.stringify(findings.slice(0, 3))}`);
       assert.equal(html.split(MAIL_FOOTER_MARKER).length - 1, 1, `footer marker once — ${where}`);
       assert.doesNotMatch(html, /\bundefined\b|\bNaN\b|="null"|: null;|\[object Object\]/, where);
+      // nothing of the custom HTML can run or fetch: no handler, script URL, image set or ping survives
+      assert.doesNotMatch(html, /[\s/"']on[a-z]+\s*=|javascript:|image-set|\sping=|<(noembed|xmp|plaintext|script)\b/i, where);
       // every table cell width attribute is a whole, positive number
       for (const m of html.matchAll(/<(?:td|table|img)\b[^>]*\swidth="([^"]*)"/g)) {
         assert.match(m[1], /^(?:\d+%?)$/, `width="${m[1]}" — ${where}`);

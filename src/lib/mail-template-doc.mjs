@@ -35,6 +35,7 @@
 // The AI assistant gets MAIL_BLOCK_CATALOG verbatim as its "interface".
 
 import { EMAIL_FONT_CHOICES, EMAIL_FONT_KEYS, EMAIL_BUTTON_SHAPES, msoFontStackFor, parseHexColor } from "./email-theme.mjs";
+import { customHtmlReport } from "./mail-template-html.mjs";
 import { formatProductRef, parseProductRef } from "./product-ref.mjs";
 
 /** A template selected as a design is stored as this key (email_design_selections / campaigns.design_key). */
@@ -577,6 +578,21 @@ export const TEXT_BULLETS = Object.freeze(["✓", "→", "–", "★", "1."]);
 export const MERGE_FIELD_RE = /\{\{\s*([a-zA-ZäöüÄÖÜß_]+)\s*(?:\|([^{}]{0,40}))?\}\}/g;
 /** The only merge field there is (privacy: no e-mail, no order data in a mail body). */
 export const MERGE_FIELDS = Object.freeze(["vorname"]);
+
+/**
+ * The link targets in the prose of a text block, with the patterns
+ * email-prose.mjs links them by: the quoted href of an <a>, the target of
+ * [label](url) (with its brackets) and a bare http(s) address. Merge fields
+ * are never replaced inside them — validation refuses them there, the
+ * renderer merges only the text around them (link labels included). Global:
+ * use with replace / matchAll only.
+ */
+export const PROSE_URL_RE = /href\s*=\s*(?:"[^"]*"|'[^']*')|\]\(https?:\/\/[^\s()]+\)|https?:\/\/[^\s<>()[\]"']+/gi;
+
+/** A placeholder in an address — as written or percent-encoded by the URL parser (%7B%7B). */
+const PLACEHOLDER_IN_URL_RE = /\{\{|%7B%7B/i;
+/** @param {unknown} url */
+const urlHasPlaceholder = (url) => PLACEHOLDER_IN_URL_RE.test(String(url ?? ""));
 
 const ALIGNS = ["left", "center", "right"];
 const HEADING_SIZES = ["s", "m", "l", "xl"];
@@ -1264,6 +1280,16 @@ export function unknownMergeFields(text) {
 // ── validation ───────────────────────────────────────────────────────────────
 
 /**
+ * Where an html block's structure goes wrong, for the message.
+ * @param {{ fault: "close" | "place" | "open", tag: string }} f
+ */
+function htmlStructureHint(f) {
+  if (f.fault === "close") return `</${f.tag}> ohne öffnendes <${f.tag}>`;
+  if (f.fault === "open") return `<${f.tag}> wird nicht geschlossen`;
+  return f.tag === "td" || f.tag === "th" ? `<${f.tag}> außerhalb einer eigenen Tabellenzeile` : `<${f.tag}> außerhalb einer eigenen Tabelle`;
+}
+
+/**
  * @typedef {{ blockId: string | null, message: string }} DocIssue
  */
 
@@ -1288,6 +1314,13 @@ export function validateMailTemplateDoc(doc, use, opts = {}) {
   const warn = (b, m) => warnings.push({ blockId: b?.id ?? null, message: m });
   const nameOf = (b) => MAIL_BLOCK_CATALOG[b.type]?.label ?? b.type;
   const all = walkMailBlocks(doc);
+  // Placeholders are never replaced in an address — a link is never personalised.
+  const noLinkPlaceholder = (b, ...urls) => {
+    if (urls.some(urlHasPlaceholder)) err(b, `${nameOf(b)}: Platzhalter wie {{vorname}} werden in Links nicht ersetzt — Link ohne Platzhalter eintragen.`);
+  };
+  const noImagePlaceholder = (b, url) => {
+    if (urlHasPlaceholder(url)) err(b, `${nameOf(b)}: Platzhalter wie {{vorname}} werden in Bildadressen nicht ersetzt.`);
+  };
   const sections = new Map(blocks.filter((b) => b?.type === "section").map((b) => [b.id, b]));
 
   if (all.filter(({ block: b }) => b.type !== "footer" && b.type !== "section").length === 0) {
@@ -1300,6 +1333,7 @@ export function validateMailTemplateDoc(doc, use, opts = {}) {
   if (use === "bulk") {
     for (const b of blocks) if (!MAIL_BLOCK_CATALOG[b.type]?.bulk) err(b, `„${nameOf(b)}“ gibt es nur in persönlichen Mails — Baustein entfernen.`);
   }
+  if (urlHasPlaceholder(style.logoUrl)) err(null, "Stil: Platzhalter wie {{vorname}} werden in der Logo-Adresse nicht ersetzt.");
 
   /** The background a block's text stands on (null: a picture — not judged). */
   const backgroundOf = (b, sectionId, columnIndex) => {
@@ -1334,6 +1368,10 @@ export function validateMailTemplateDoc(doc, use, opts = {}) {
       case "text":
         if (!b.text) err(b, `${label}: Text fehlt.`);
         contrast(b, b.color ?? style.textColor, bg, (b.fontSize ?? 0) >= 20 ? 3 : 4.5);
+        // the targets of [Text](https://…), <a href="…"> and bare addresses — the link text may hold {{vorname}}
+        if ([...String(b.text ?? "").matchAll(PROSE_URL_RE)].some((m) => urlHasPlaceholder(m[0]))) {
+          err(b, `${label}: Platzhalter wie {{vorname}} werden in Links nicht ersetzt — nur im Linktext verwenden, nicht in der Adresse.`);
+        }
         break;
       case "greeting":
         if (!b.text || !b.fallback) err(b, `${label}: Text mit und ohne Vornamen angeben.`);
@@ -1343,10 +1381,13 @@ export function validateMailTemplateDoc(doc, use, opts = {}) {
         if (!b.src) err(b, `${label}: Bild fehlt (hochladen oder https-Adresse angeben).`);
         if (!b.alt) warn(b, `${label}: Alternativtext fehlt — er erscheint, wenn Bilder blockiert sind, und hilft gegen Spamfilter.`);
         if (b.src && /\.webp(\?|$)/i.test(b.src)) warn(b, `${label}: WebP zeigt Outlook nicht an — besser JPG, PNG oder GIF.`);
+        noImagePlaceholder(b, b.src);
+        noLinkPlaceholder(b, b.href);
         break;
       case "button":
         if (!b.label) err(b, `${label}: Beschriftung fehlt.`);
         if (!b.href) err(b, `${label}: Link fehlt (https://…).`);
+        noLinkPlaceholder(b, b.href);
         if (b.outline) contrast(b, b.color ?? style.accentColor, bg, 3);
         else contrast(b, b.textColor ?? style.buttonTextColor, b.color ?? style.accentColor, 3);
         break;
@@ -1373,14 +1414,27 @@ export function validateMailTemplateDoc(doc, use, opts = {}) {
         if (!b.items?.length) err(b, `${label}: noch kein Link eingetragen.`);
         else if (b.items.some((it) => !it.label || !it.href)) err(b, `${label}: Jeder Link braucht Text und Adresse (https://…).`);
         contrast(b, b.color ?? style.textColor, bg, 3);
+        noLinkPlaceholder(b, ...(b.items ?? []).map((it) => it.href));
         break;
-      case "html":
+      case "html": {
         if (!b.html.trim()) err(b, `${label}: HTML fehlt.`);
         else warn(b, `${label}: Eigenes HTML — in Outlook und auf dem Handy mit einer Testmail prüfen.`);
-        if (/\{\{/.test(b.html)) err(b, `${label}: Platzhalter wie {{vorname}} werden im HTML nicht ersetzt — dafür einen Text-Baustein verwenden.`);
+        const placeholder = /\{\{/.test(b.html);
+        if (placeholder) err(b, `${label}: Platzhalter wie {{vorname}} werden im HTML nicht ersetzt — dafür einen Text-Baustein verwenden.`);
+        if (!b.html.trim()) break;
+        // Judged as the renderer inserts it (mail-template-html.mjs): a block
+        // that closes the mail's table or cell, or leaves one of its own open,
+        // would break the mail below it — the legal footer included.
+        const report = customHtmlReport(b.html);
+        if (report.documentTags) err(b, `${label}: Bitte nur den Inhalt einfügen — ohne <html>, <head> und <body>; den Rahmen der Mail baut die Vorlage.`);
+        if (report.structure) err(b, `${label}: unvollständige Tabellen- oder Bereichs-Tags (${htmlStructureHint(report.structure)}) — der Baustein würde die Mail darunter zerstören.`);
+        if (!placeholder && report.urls.some(urlHasPlaceholder)) err(b, `${label}: Platzhalter werden in Links und Bildadressen nicht ersetzt — Adresse ohne Platzhalter eintragen.`);
         break;
+      }
       case "hero":
         if (b.src && !b.alt) warn(b, `${label}: Alternativtext fehlt.`);
+        noImagePlaceholder(b, b.src);
+        noLinkPlaceholder(b, b.href);
         break;
       case "section": {
         const filled = (b.columns ?? []).filter((c) => c.blocks?.length > 0).length;
@@ -1388,6 +1442,7 @@ export function validateMailTemplateDoc(doc, use, opts = {}) {
         else if (filled < (b.columns ?? []).length) warn(b, `${label}: ${b.columns.length - filled === 1 ? "Eine Spalte ist" : "Spalten sind"} noch leer.`);
         if (b.bgImage && /\.webp(\?|$)/i.test(b.bgImage)) warn(b, `${label}: WebP zeigt Outlook nicht an — besser JPG oder PNG.`);
         if (b.bgImage && !b.background) warn(b, `${label}: Zum Hintergrundbild eine passende Hintergrundfarbe setzen — sie erscheint, wenn Bilder blockiert sind.`);
+        if (urlHasPlaceholder(b.bgImage)) err(b, `${label}: Platzhalter wie {{vorname}} werden in der Adresse des Hintergrundbilds nicht ersetzt.`);
         break;
       }
       case "footer":

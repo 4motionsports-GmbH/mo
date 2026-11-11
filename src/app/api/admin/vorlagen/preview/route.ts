@@ -1,4 +1,4 @@
-// POST /api/admin/vorlagen/preview → text/html (inert links)
+// POST /api/admin/vorlagen/preview → text/html (inert links), header X-Mail-Bytes (the mail's size)
 //   { doc, use: "bulk" | "personal", subject?, preheader?, language?, firstName?, sample? }
 //
 // The live preview of the template editor and the Rundmail editor — the
@@ -19,6 +19,12 @@ import { renderEmailDesignPreview, parseEmailDesignPreviewSample } from "@/lib/e
 import { renderMailingPreview } from "@/lib/mailing-render";
 
 export const maxDuration = 30;
+
+/** The size of the mail as it is sent (before the preview's inert links) — the preview warns near Gmail's 102 KB clip. */
+function withMailSize(res: Response, html: string): Response {
+  res.headers.set("X-Mail-Bytes", String(Buffer.byteLength(html, "utf8")));
+  return res;
+}
 
 export async function POST(req: Request) {
   const blocked = await guardAdminPost(req);
@@ -41,7 +47,7 @@ export async function POST(req: Request) {
       const design = templateDesignFromDoc("vorlage-vorschau", doc, products);
       const kind = body.kind === "marketing" ? "marketing" : "campaign";
       const html = await renderEmailDesignPreview(kind, design, parseEmailDesignPreviewSample(body.sample));
-      return adminEmailHtml(html);
+      return withMailSize(adminEmailHtml(html), html);
     }
     const firstName = typeof body.firstName === "string" ? normalizeFirstName(body.firstName) : null;
     const rendered = await renderMailingPreview(
@@ -53,7 +59,7 @@ export async function POST(req: Request) {
       },
       firstName
     );
-    return adminEmailHtml(rendered.html);
+    return withMailSize(adminEmailHtml(rendered.html), rendered.html);
   } catch (err) {
     reportError(err, { route: "api/admin/vorlagen/preview" });
     return adminJsonError("internal_error", "Vorschau fehlgeschlagen.", 500);

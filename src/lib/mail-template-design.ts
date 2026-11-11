@@ -49,7 +49,6 @@ import { getCachedMailTemplate, type MailTemplateDoc } from "./mail-template-sto
 import {
   applyMergeFields,
   classicFontFor,
-  contrastRatio,
   docHasHero,
   docProductRefs,
   docSupportsPersonal,
@@ -58,8 +57,9 @@ import {
   templateDesignKey,
   walkMailBlocks,
 } from "./mail-template-doc.mjs";
-import { renderMailTemplateHtml, type MailRenderContext } from "./mail-template-render.mjs";
+import { isDarkCard, mailWhitePanel, renderMailTemplateHtml, type MailRenderContext } from "./mail-template-render.mjs";
 import { emptyProductBlocks, productHighlightSlot, productListText } from "./mail-template-slots.mjs";
+import { MAILING_HTML_HARD_LIMIT } from "./mailing-checks.mjs";
 import { countdownText } from "./offer-countdown.mjs";
 import type { Product } from "./types";
 
@@ -116,35 +116,35 @@ function withSidePadding(padding: string, side: number): string {
   return padding;
 }
 
-/** A white rounded panel — the classic pieces write dark text, so on a dark card they sit on one. */
-function whitePanel(innerHtml: string): string {
-  return `
-                    <table role="presentation" width="100%" border="0" cellpadding="0" cellspacing="0" style="border-collapse: separate; mso-table-lspace: 0pt; mso-table-rspace: 0pt;">
-                      <tr>
-                        <td bgcolor="#ffffff" align="center" style="background-color: #ffffff; border-radius: 8px; padding: 16px;">${innerHtml}
-                        </td>
-                      </tr>
-                    </table>`;
-}
-
 /**
  * The classic content rows inside a template (the `products` rows / grid, the
  * countdown, Mo's buttons and footnote, the composer's offer rows): the
  * template's card colour and side padding instead of white and 60px. The
  * classic renderers write dark text, so on a dark card (black below 4.5:1)
- * the piece sits on a white panel instead of turning unreadable. With the
- * default style the row is byte-identical to the classic one.
+ * the piece sits on a white panel instead of turning unreadable — the same
+ * panel the renderer gives Mo's text (mail-template-render.mjs
+ * mailWhitePanel). With the default style the row is byte-identical to the
+ * classic one.
  */
 export function templateSectionRow(doc: MailTemplateDoc) {
   const s = doc.style;
-  const darkCard = (contrastRatio("#000000", s.cardBackground) ?? 21) < 4.5;
-  return (innerHtml: string, opts: EmailSectionRowOptions = {}): string =>
-    classicSectionRowHtml(darkCard && !opts.bgcolor ? whitePanel(innerHtml) : innerHtml, {
+  const darkCard = isDarkCard(s.cardBackground);
+  return (innerHtml: string, opts: EmailSectionRowOptions = {}): string => {
+    const panel = darkCard && !opts.bgcolor;
+    // The panel's own 16 px come out of the row's side padding, so the classic
+    // pieces keep the width they are built for (the countdown picture and the
+    // product grid are 480 px wide; Outlook sizes them by that attribute).
+    const side = panel ? Math.max(0, s.contentPadding - MAIL_PANEL_PADDING) : s.contentPadding;
+    return classicSectionRowHtml(panel ? mailWhitePanel(innerHtml) : innerHtml, {
       ...opts,
-      padding: withSidePadding(opts.padding ?? "20px 60px", s.contentPadding),
+      padding: withSidePadding(opts.padding ?? "20px 60px", side),
       bgcolor: opts.bgcolor ?? s.cardBackground,
     });
+  };
 }
+
+/** The inner padding of mailWhitePanel (mail-template-render.mjs). */
+const MAIL_PANEL_PADDING = 16;
 
 /** The static assets every template render needs. */
 export function templateAssets(): MailRenderContext["assets"] {
@@ -300,7 +300,7 @@ export function templateDesignFromDoc(
         const rd = activeEmailRenderData();
         const language = opts.locale === "en" ? "en" : "de";
         const firstName = rd.recipientFirstName ?? null;
-        return renderMailTemplateHtml(doc, {
+        const html = renderMailTemplateHtml(doc, {
           subject: opts.subject,
           preheader: opts.preheader ?? null,
           locale: language,
@@ -318,6 +318,17 @@ export function templateDesignFromDoc(
             : null,
           footer: { unsubscribeHtml: opts.footer?.unsubscribeHtml ?? null },
         });
+        // Gmail clips a mail above 102 KB and hides the footer behind „Nachricht
+        // gekürzt“: report it (the mail still goes out — fail-soft), so the
+        // operator learns that the template is too heavy for personal mails.
+        const bytes = Buffer.byteLength(html, "utf8");
+        if (bytes > MAILING_HTML_HARD_LIMIT) {
+          reportError(new Error(`template design ${key}: ${Math.round(bytes / 1024)} KB`), {
+            route: "lib/mail-template-design",
+            phase: "shell-size",
+          });
+        }
+        return html;
       },
     },
   };

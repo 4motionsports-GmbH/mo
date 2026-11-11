@@ -3,6 +3,7 @@
 // blocks — and that version-1 documents keep their exact JSON.
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { V1_RENDER_CASES } from "./__fixtures__/mail-template-v1-cases.mjs";
 import {
   DEFAULT_MAIL_STYLE,
   MAIL_CHILD_BLOCK_TYPES,
@@ -325,4 +326,106 @@ test("text on a background picture is judged against the fallback colour", () =>
     });
   assert.ok(validateMailTemplateDoc(sec("#000000"), "bulk").warnings.some((w) => w.blockId === "h" && /Kontrast/.test(w.message)));
   assert.ok(!validateMailTemplateDoc(sec(null), "bulk").warnings.some((w) => w.blockId === "h" && /Kontrast/.test(w.message)));
+});
+
+// ── addresses and custom HTML ────────────────────────────────────────────────
+
+/** The validation errors of a document (bulk unless said otherwise). */
+const errorsOf = (raw, use = "bulk") => validateMailTemplateDoc(normalizeMailTemplateDoc(raw), use).errors;
+const LINK = /Platzhalter wie \{\{vorname\}\} werden in Links nicht ersetzt — Link ohne Platzhalter eintragen\./;
+const TEXT_LINK = /Platzhalter wie \{\{vorname\}\} werden in Links nicht ersetzt — nur im Linktext verwenden, nicht in der Adresse\./;
+const IMAGE = /Platzhalter wie \{\{vorname\}\} werden in Bildadressen nicht ersetzt\./;
+const HTML_LINK = /Eigenes HTML: Platzhalter werden in Links und Bildadressen nicht ersetzt/;
+
+test("a placeholder in any address is an error — links are never personalised (the link text may hold {{vorname}})", () => {
+  const cases = [
+    [{ type: "button", label: "Los", href: "https://motionsports.de/?n={{vorname}}" }, LINK],
+    [{ type: "button", label: "Los", href: "https://motionsports.de/{{vorname}}" }, LINK], // the path: percent-encoded by the URL parser
+    [{ type: "button", label: "Los", href: "mailto:info@motionsports.de?subject={{vorname}}" }, LINK],
+    [{ type: "image", src: "https://x.de/a.jpg", alt: "a", href: "https://x.de/#{{vorname}}" }, LINK],
+    [{ type: "image", src: "https://x.de/{{vorname}}.jpg", alt: "a" }, IMAGE],
+    [{ type: "menu", items: [{ label: "A", href: "https://x.de/a" }, { label: "B", href: "https://x.de/?b={{vorname|x}}" }] }, LINK],
+    [{ type: "section", background: "#000000", bgImage: "https://x.de/{{vorname}}.jpg", columns: [{ blocks: [{ type: "text", text: "x" }] }] }, /Hintergrundbilds nicht ersetzt/],
+    [{ type: "text", text: "Dein [Link](https://motionsports.de/pages/aktion?name={{vorname}})" }, TEXT_LINK],
+    [{ type: "text", text: "Siehe https://motionsports.de/{{vorname}}." }, TEXT_LINK],
+    [{ type: "text", text: "Siehe [x](https://motionsports.de/%7B%7Bvorname%7D%7D)" }, TEXT_LINK],
+    [{ type: "text", text: 'Siehe <a href="https://x.de/?a={{ vorname }}">x</a>' }, TEXT_LINK],
+    [{ type: "html", html: '<a href="https://x.de/%7b%7bvorname%7d%7d">x</a>' }, HTML_LINK],
+    [{ type: "html", html: '<table><tr><td background="https://x.de/?n=&#123;&#123;vorname&#125;&#125;">x</td></tr></table>' }, HTML_LINK],
+  ];
+  for (const [block, re] of cases) {
+    const where = JSON.stringify(block);
+    const top = errorsOf({ blocks: [{ type: "heading", text: "Start" }, { id: "x", ...block }] });
+    assert.ok(top.some((e) => e.blockId === "x" && re.test(e.message)), `${where}: ${JSON.stringify(top)}`);
+    if (block.type === "section") continue;
+    // inside a column: the child's id
+    const nested = errorsOf({ blocks: [{ type: "section", columns: [{ blocks: [{ id: "k", ...block }] }] }] });
+    assert.ok(nested.some((e) => e.blockId === "k" && re.test(e.message)), `nested ${where}`);
+  }
+  // the hero of a personal template and the logo address of the style
+  const hero = errorsOf({ blocks: [{ id: "h", type: "hero", src: "https://x.de/{{vorname}}.jpg", alt: "a", href: "https://x.de/?n={{vorname}}" }, { type: "mo_content" }] }, "personal");
+  assert.ok(hero.some((e) => e.blockId === "h" && IMAGE.test(e.message)));
+  assert.ok(hero.some((e) => e.blockId === "h" && LINK.test(e.message)));
+  const logo = errorsOf({ style: { logoUrl: "https://cdn.x.de/{{vorname}}.png" }, blocks: [{ type: "logo" }] });
+  assert.ok(logo.some((e) => e.blockId === null && /Logo-Adresse nicht ersetzt/.test(e.message)));
+  // placeholders in link texts and in the text itself stay allowed
+  const fine = errorsOf({
+    style: { logoUrl: "https://cdn.x.de/logo.png" },
+    blocks: [
+      { type: "text", text: "Hallo {{vorname|du}}, hier ist [dein Link, {{vorname}}](https://motionsports.de/pages/aktion) und https://motionsports.de/ {{vorname}}" },
+      { type: "button", label: "Los, {{vorname}}", href: "https://motionsports.de/" },
+      { type: "menu", items: [{ label: "Hi {{vorname}}", href: "https://motionsports.de/a" }] },
+      { type: "html", html: '<a href="https://motionsports.de/">Shop</a>' },
+    ],
+  });
+  assert.deepEqual(fine, []);
+});
+
+const STRUCTURE = /^Eigenes HTML: unvollständige Tabellen- oder Bereichs-Tags \((.+)\) — der Baustein würde die Mail darunter zerstören\.$/;
+/** The structure / document errors of an html block (top level and in a column). */
+const htmlErrors = (html) => {
+  const top = errorsOf({ blocks: [{ type: "heading", text: "x" }, { id: "hx", type: "html", html }] }).filter((e) => e.blockId === "hx").map((e) => e.message);
+  const nested = errorsOf({ blocks: [{ type: "section", columns: [{ blocks: [{ id: "hk", type: "html", html }] }] }] }).filter((e) => e.blockId === "hk").map((e) => e.message);
+  assert.deepEqual(nested, top, html);
+  return top;
+};
+
+test("custom HTML that would break out of its cell is an error — judged as the renderer inserts it", () => {
+  const hint = (html) => htmlErrors(html).map((m) => STRUCTURE.exec(m)?.[1]).filter(Boolean);
+  // the reviewer's breakout: it closes the mail's cell and tables and hides the footer in a div
+  assert.deepEqual(hint('<p>Danke fürs Lesen.</p></td></tr></tbody></table></center></td></tr></tbody></table><div style="display:none">'), ["</td> ohne öffnendes <td>"]);
+  assert.deepEqual(hint('<p>Danke.</p><div style="display:none">'), ["<div> wird nicht geschlossen"]);
+  assert.deepEqual(hint("<table><tr><td>offen</td></tr>"), ["<table> wird nicht geschlossen"]);
+  assert.deepEqual(hint("<td>neben der Mail</td>"), ["<td> außerhalb einer eigenen Tabellenzeile"]);
+  assert.deepEqual(hint("<tr><td>x</td></tr>"), ["<tr> außerhalb einer eigenen Tabelle"]);
+  assert.deepEqual(hint("</center><p>x</p>"), ["</center> ohne öffnendes <center>"]);
+  // the 20,000-character cut inside a table leaves it open
+  assert.deepEqual(hint(`<table><tr><td>${"x".repeat(MAIL_TEMPLATE_LIMITS.htmlChars)}</td></tr></table>`), ["<td> wird nicht geschlossen"]);
+  // comments are removed before the check — an Outlook-only opener neither counts nor balances
+  assert.deepEqual(hint("<!--[if mso]><table><tr><td><![endif]--><p>x</p><!--[if mso]></td></tr></table><![endif]-->"), []);
+  assert.deepEqual(hint("<!--[if mso]><table><tr><td><![endif]--><p>x</p></td></tr></table>"), ["</td> ohne öffnendes <td>"]);
+  // a whole page: only its content belongs in the block
+  const page = htmlErrors("<!DOCTYPE html><html><head><title>T</title></head><body><table><tr><td>Inhalt</td></tr></table></body></html>");
+  assert.equal(page.length, 1, JSON.stringify(page));
+  assert.match(page[0], /^Eigenes HTML: Bitte nur den Inhalt einfügen — ohne <html>, <head> und <body>; den Rahmen der Mail baut die Vorlage\.$/);
+  // balanced HTML is fine (and so is a plain text with angle brackets)
+  for (const ok of [
+    "<p>Nur Text</p>",
+    '<table role="presentation" width="100%"><tr><td style="padding: 8px;"><a href="https://www.motionsports.de/">Shop</a></td></tr></table>',
+    "<center><div><table><tbody><tr><th>a</th><td><table><tr><td>b</td></tr></table></td></tr></tbody></table></div></center>",
+    "<p>Preis < 30 € und > 10 €</p>",
+  ]) {
+    assert.deepEqual(htmlErrors(ok), [], ok);
+  }
+});
+
+test("no starter, fixture or showcase document trips the address and custom-HTML rules", () => {
+  const NEW_RULES = /in Links nicht ersetzt|in Bildadressen nicht ersetzt|Hintergrundbilds nicht ersetzt|Logo-Adresse nicht ersetzt|unvollständige Tabellen|Bitte nur den Inhalt einfügen|Links und Bildadressen/;
+  const docs = [...MAIL_TEMPLATE_STARTERS.map((st) => [st.key, st.build()]), ...V1_RENDER_CASES.map((c) => [c.name, c.doc()])];
+  for (const [name, doc] of docs) {
+    for (const use of ["template", "bulk", "personal"]) {
+      const bad = validateMailTemplateDoc(normalizeMailTemplateDoc(doc), use).errors.filter((e) => NEW_RULES.test(e.message));
+      assert.deepEqual(bad, [], `${name} (${use})`);
+    }
+  }
 });

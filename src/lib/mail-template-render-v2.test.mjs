@@ -10,14 +10,17 @@ import assert from "node:assert/strict";
 import { readFileSync, writeFileSync } from "node:fs";
 import { EMAIL_SHELL_CSS } from "./email-shell-css.mjs";
 import { lintOutlookHtml, MAIL_SIZE_BUDGET_BYTES } from "./email-outlook.mjs";
-import { MAIL_TEMPLATE_STARTERS, applyMergeFields, normalizeMailTemplateDoc } from "./mail-template-doc.mjs";
+import { MAIL_TEMPLATE_STARTERS, applyMergeFields, contrastRatio, normalizeMailTemplateDoc } from "./mail-template-doc.mjs";
 import {
   MAIL_CARD_WIDTH,
   MAIL_FOOTER_MARKER,
+  isDarkCard,
+  mailWhitePanel,
   renderMailTemplateHtml,
   renderMailTemplateText,
   sanitizeCustomHtml,
   sectionColumnWidths,
+  socialIconLayout,
 } from "./mail-template-render.mjs";
 import { FIXTURE_ASSETS, FIXTURE_FOOTER, V1_RENDER_CASES, fixtureContext } from "./__fixtures__/mail-template-v1-cases.mjs";
 
@@ -448,6 +451,42 @@ test("section: a background picture — fallback colour, Outlook rectangle, mini
   assert.match(free, /<tr><td valign="top"><!\[endif\]-->/);
 });
 
+test("section: a background picture in a box — the picture carries the frame, nothing opaque lies over it", () => {
+  const content = [
+    { type: "heading", text: "Über dem Bild", color: "#ffffff" },
+    { type: "text", text: "Zwei Sätze Text über dem Bild.", color: "#ffffff" },
+    { type: "button", label: "Jetzt ansehen", href: "https://motionsports.de/" },
+  ];
+  for (const frame of [{ radius: 16 }, { borderColor: "#444444" }, { radius: 12, borderColor: "#444444", minHeight: 300, reverse: true }]) {
+    const where = JSON.stringify(frame);
+    const doc = docOf([{ type: "section", background: "#222222", bgImage: "https://cdn.example.com/hero.jpg", ...frame, columns: [{ valign: "middle", blocks: content }] }]);
+    const html = renderMailTemplateHtml(doc, ctx());
+    assert.deepEqual(lint(html), [], where);
+    // the picture cell: fallback colour, background attribute, CSS cover; minHeight is the picture's height
+    const cell = /<td align="left" valign="(\w+)" bgcolor="#222222" background="https:\/\/cdn\.example\.com\/hero\.jpg"( height="300")? style="mso-line-height-rule: exactly; padding: 0;( height: 300px;)? background-color: #222222; background-image: url\('https:\/\/cdn\.example\.com\/hero\.jpg'\); background-size: cover; background-position: center; background-repeat: no-repeat;( border-radius: (\d+)px;)?">/.exec(html);
+    assert.ok(cell, where);
+    assert.equal(Boolean(cell[2]), Boolean(frame.minHeight), where);
+    assert.equal(cell[1], frame.minHeight ? "middle" : "top", where);
+    if (frame.radius) assert.equal(Number(cell[5]), frame.radius - (frame.borderColor ? 1 : 0), where);
+    // nothing between the picture and the content paints a colour
+    const over = html.slice(cell.index + cell[0].length, html.indexOf("Über dem Bild"));
+    assert.doesNotMatch(over, /bgcolor=|background-color:/, where);
+    // the frame: border and rounded corners on the table around the picture cell
+    const before = html.slice(0, cell.index);
+    const frameTable = before.slice(before.lastIndexOf("<table"));
+    assert.match(frameTable, /^<table cellspacing="0" cellpadding="0" border="0" width="100%" role="presentation" style="direction: ltr; border-collapse: separate !important; border-spacing: 0;/, where);
+    if (frame.radius) assert.match(frameTable, new RegExp(`border-radius: ${frame.radius}px; overflow: hidden;">`), where);
+    if (frame.borderColor) assert.match(frameTable, /border: 1px solid #444444;/, where);
+    assert.doesNotMatch(frameTable, /bgcolor=|background-color:/, where);
+    // around the box: the card colour and the section's padding
+    assert.match(html, /<td class="content-pad" align="left" valign="top" bgcolor="#ffffff" style="mso-line-height-rule: exactly; padding: 24px 60px; background-color: #ffffff;">\s*<table [^>]*border-collapse: separate/, where);
+    // Outlook: the rectangle inside the picture cell, as wide as the inside of the box
+    const inner = frame.borderColor ? 478 : 480;
+    assert.match(over, new RegExp(`^\\s*<!--\\[if gte mso 9\\]><v:rect xmlns:v="urn:schemas-microsoft-com:vml" fill="true" stroke="false" style="width:${inner}px;${frame.minHeight ? "height:300px;" : ""}"><v:fill type="frame" src="https://cdn\\.example\\.com/hero\\.jpg" color="#222222"`), where);
+    assert.match(over, frame.reverse ? /role="presentation" dir="rtl" style="direction: rtl;">/ : /role="presentation" style="direction: ltr;">\s*<tr>/, where);
+  }
+});
+
 test("section: columns — own colour, padding on a cell inside (the column keeps its exact width), empty columns keep their cell", () => {
   const doc = docOf([
     { type: "section", columns: [{ background: "#eeeeee", padding: 20, valign: "middle", blocks: [{ type: "image", src: "https://x.de/a.jpg", alt: "a", width: "full" }] }, { blocks: [] }] },
@@ -681,6 +720,68 @@ test("social icons can stand left or right", () => {
   assert.match(html, /<td class="content-pad" align="right" bgcolor="#ffffff" style="mso-line-height-rule: exactly; padding: 14px 60px;" valign="top">\s*<table cellspacing="0" cellpadding="0" border="0" align="right" role="presentation" style="direction: ltr; Margin: 0 0 0 auto;">/);
 });
 
+/** The six icons of production (email-template.ts EMAIL_SOCIAL_LINKS). */
+const SIX_SOCIAL = ["facebook", "instagram", "pinterest", "youtube", "tiktok", "linkedin"].map((alt) => ({ alt, icon: `https://cdn.example.com/${alt}.png`, url: `https://${alt}.com/motionsports` }));
+const sixIcons = (extra = {}) => ctx({ assets: { ...FIXTURE_ASSETS, socialLinks: SIX_SOCIAL }, ...extra });
+/** The width of every row of social icons in `html`: per cell the icon plus its padding on both sides. */
+const iconRowWidths = (html) =>
+  [...html.matchAll(/<tr>((?:\s*<td align="center" valign="middle" style="mso-line-height-rule: exactly; padding: 0 \d+px;">\s*<a [^>]*><img [^>]*><\/a>\s*<\/td>)+)\s*<\/tr>/g)].map((m) =>
+    [...m[1].matchAll(/padding: 0 (\d+)px;">\s*<a [^>]*><img [^>]*\swidth="(\d+)"/g)].reduce((sum, c) => sum + Number(c[2]) + 2 * Number(c[1]), 0)
+  );
+
+test("social: the six production icons fit narrow columns — less padding, smaller icons, then two rows", () => {
+  // at the top level and in the footer: one row as in version 1 (20 px icons, 6 px on each side)
+  const top = renderMailTemplateHtml(docOf([{ type: "social" }, { type: "footer", showSocial: true }]), sixIcons());
+  assert.deepEqual(iconRowWidths(top), [192, 192]);
+  assert.equal((top.match(/padding: 0 6px;">\s*<a [^>]*><img [^>]*width="20" height="20"/g) ?? []).length, 12);
+  // the reviewer's layouts: 60 / 40 text | social, logo | text | social, a 4-column section
+  const layouts = [
+    { columns: [{ width: 60, blocks: [{ type: "text", text: "Text" }] }, { width: 40, blocks: [{ type: "social" }] }], at: 1 },
+    { columns: [{ blocks: [{ type: "logo" }] }, { blocks: [{ type: "text", text: "Text" }] }, { blocks: [{ type: "social" }] }], at: 2 },
+    { columns: [{ blocks: [{ type: "social" }] }, { blocks: [{ type: "text", text: "a" }] }, { blocks: [{ type: "text", text: "b" }] }, { blocks: [{ type: "text", text: "c" }] }], at: 0 },
+  ];
+  for (const { columns, at } of layouts) {
+    const section = { type: "section", columns };
+    const html = renderMailTemplateHtml(docOf([section]), sixIcons());
+    const { widths } = sectionColumnWidths(normalizeMailTemplateDoc(docOf([section])).blocks[0], 60);
+    const rows = iconRowWidths(body(html));
+    assert.ok(rows.length >= 1 && rows.every((w) => w <= widths[at]), `${columns.length} columns: rows ${rows} in ${widths[at]} px`);
+    assert.equal((body(html).match(/<img [^>]*alt="(facebook|instagram|pinterest|youtube|tiktok|linkedin)"/g) ?? []).length, 6, "every icon is kept");
+    assert.deepEqual(lint(html), []);
+  }
+  // 40 % column (184 px): one row, the padding shrinks; 4 columns (105 px): two rows of three
+  assert.deepEqual(socialIconLayout(6, 184), { perRow: 6, size: 20, pad: 5 });
+  assert.deepEqual(socialIconLayout(6, 105), { perRow: 3, size: 20, pad: 6 });
+  assert.deepEqual(socialIconLayout(6, 120), { perRow: 6, size: 16, pad: 2 });
+  assert.deepEqual(socialIconLayout(6, 480), { perRow: 6, size: 20, pad: 6 });
+  assert.deepEqual(socialIconLayout(2, 480), { perRow: 2, size: 20, pad: 6 });
+  // two rows: each row its own table, aligned like the block
+  const four = renderMailTemplateHtml(docOf([layouts[2]].map(({ columns }) => ({ type: "section", columns }))), sixIcons());
+  assert.equal(iconRowWidths(body(four)).length, 2);
+  assert.match(body(four), /<td align="center" style="mso-line-height-rule: exactly; padding: 8px 0 0;">\s*<table cellspacing="0" cellpadding="0" border="0" align="center" role="presentation"/);
+});
+
+test("social: no row of icons is ever wider than the room of its column (every column count, padding, gap and band)", () => {
+  for (const n of [1, 2, 3, 4]) {
+    for (const padX of [0, 24, 60]) {
+      for (const gap of [0, 20, 48]) {
+        for (const padding of [0, 16]) {
+          for (const background of [null, "#eeeeee"]) {
+            const columns = Array.from({ length: n }, (_, i) => ({ padding, blocks: i === n - 1 ? [{ type: "social", background }] : [{ type: "text", text: "x" }] }));
+            const section = normalizeMailTemplateDoc(docOf([{ type: "section", padX, gap, columns }])).blocks[0];
+            const html = renderMailTemplateHtml(docOf([section]), sixIcons());
+            const inner = Math.max(20, sectionColumnWidths(section, 60).widths[n - 1] - 2 * padding);
+            const side = background ? Math.min(16, Math.max(8, Math.round(inner / 12))) : 0;
+            const where = `${n} columns, padX ${padX}, gap ${gap}, padding ${padding}, band ${Boolean(background)}`;
+            for (const w of iconRowWidths(body(html))) assert.ok(w <= inner - 2 * side, `${where}: row ${w} px in ${inner - 2 * side} px`);
+            assert.deepEqual(lint(html), [], where);
+          }
+        }
+      }
+    }
+  }
+});
+
 test("logo: right alignment, never wider than its column", () => {
   const right = renderMailTemplateHtml(docOf([{ type: "logo", align: "right", width: 200 }]), ctx());
   assert.match(right, /<td class="content-pad" align="right" bgcolor="#ffffff" style="mso-line-height-rule: exactly; padding: 30px 60px 20px;">/);
@@ -688,6 +789,106 @@ test("logo: right alignment, never wider than its column", () => {
   const narrow = renderMailTemplateHtml(docOf([{ type: "section", columns: [{ width: 20, blocks: [{ type: "logo", width: 300 }] }, { width: 80, blocks: [] }] }]), ctx());
   const { widths } = sectionColumnWidths({ columns: [{ width: 20 }, { width: 80 }], padX: null, gap: 20 }, 60);
   assert.match(narrow, new RegExp(`alt="motion sports" width="${widths[0]}" border="0" style="width: ${widths[0]}px;`));
+});
+
+// ── Mo's pieces on any card ──────────────────────────────────────────────────
+
+/** A card row of the composer the way templateSectionRow hands it over on a dark card: on the white panel. */
+const panelRow = (card, inner) => `
+                <tr>
+                  <td class="content-pad" align="center" bgcolor="${card}" style="mso-line-height-rule: exactly; padding: 20px 60px;" valign="top">${mailWhitePanel(inner)}
+                  </td>
+                </tr>`;
+/** The composer's pieces of a personal mail: Mo's text in emailTextStyle() black, as campaign-email.ts writes it. */
+const composerPieces = (card) => {
+  const black = "mso-line-height-rule: exactly; direction: ltr; font-family: Arial, Helvetica, sans-serif; font-size: 13px; line-height: 1.5; font-weight: 400; text-transform: none; color: #000000; Margin: 0;";
+  const row = (inner) => (isDarkCard(card) ? panelRow(card, inner) : panelRow(card, inner).replace(mailWhitePanel(inner), inner));
+  return {
+    heading: "Deine persönliche Empfehlung",
+    bodyHtml: `
+                    <p style="${black} white-space: pre-wrap;" align="left">Hallo Anna, MOS TEXT mit <a href="https://motionsports.de/products/rack" target="_blank" style="color: #ffd400; text-decoration: underline; word-wrap: break-word;">Rack</a>.</p>`,
+    moAvatarUrl: "https://mo.example.com/moorb.gif",
+    offerRowsHtml: row(`<p style="${black}">OFFER</p>`),
+    promoRowsHtml: row(`<p style="${black}">PROMO</p>`),
+    ctaRowsHtml: row('<a href="https://motionsports.de/cart">CTA</a>'),
+    footnoteRowHtml: row(`<p style="${black}">FOOTNOTE</p>`),
+    postCtaRowsHtml: "",
+    preCtaRowsHtml: "",
+  };
+};
+/** The colour behind position `at` of `html`: the innermost bgcolor of the cells and tables open there. */
+function backgroundAt(html, at) {
+  const stack = [];
+  for (const m of html.slice(0, at).matchAll(/<(\/?)(td|table|body)\b([^>]*)>/gi)) {
+    if (m[1]) stack.pop();
+    else stack.push(/\sbgcolor="(#[0-9a-f]{6})"/i.exec(m[3])?.[1]?.toLowerCase() ?? null);
+  }
+  for (let k = stack.length - 1; k >= 0; k--) if (stack[k]) return stack[k];
+  return null;
+}
+const personalDoc = (style) =>
+  docOf(
+    [
+      { type: "logo" },
+      { type: "hero", src: "https://cdn.example.com/fallback.jpg", alt: "Szene", showHeadline: true },
+      { type: "mo_content", showHeading: true },
+      { type: "mo_offer" },
+      { type: "mo_promo" },
+      { type: "footer", background: "#000000", textColor: "#cccccc" },
+    ],
+    style
+  );
+
+test("Mo's pieces on a dark card: Mo's text and avatar on the white panel, never black on the dark card", () => {
+  const style = { cardBackground: "#111111", textColor: "#eeeeee", headingColor: "#ffffff", outerBackground: "#000000", accentColor: "#ffd400" };
+  const hero = { imageUrl: "https://cdn.example.com/hero.jpg", headline: "Dein Setup", isAi: false };
+  const html = renderMailTemplateHtml(personalDoc(style), ctx({ mo: composerPieces("#111111"), hero }));
+  assert.deepEqual(lint(html), []);
+  const card = body(html);
+  // every piece of black ink stands on a colour it reads on
+  const blacks = [...card.matchAll(/color: #000000/g)];
+  assert.ok(blacks.length >= 4);
+  for (const m of blacks) {
+    const bg = backgroundAt(card, m.index);
+    assert.ok((contrastRatio("#000000", bg) ?? 0) >= 4.5, `black on ${bg}: ${card.slice(m.index, m.index + 120)}`);
+  }
+  // Mo's text and the avatar (a picture on white) share one panel
+  const text = card.indexOf("MOS TEXT");
+  const avatar = card.indexOf('alt="Mo"');
+  assert.equal(backgroundAt(card, text), "#ffffff");
+  assert.equal(backgroundAt(card, avatar), "#ffffff");
+  assert.ok(card.lastIndexOf('<td bgcolor="#ffffff" align="center" style="background-color: #ffffff; border-radius: 8px; padding: 16px;">', avatar) > card.lastIndexOf("</td>", avatar), "avatar and text in the same panel");
+  assert.match(card, /<td class="content-pad" align="left" bgcolor="#111111" style="mso-line-height-rule: exactly; padding: 25px 60px 10px;" valign="top">\s*<table role="presentation" width="100%"/);
+  // heading and hero headline in the template's heading colour
+  assert.match(card, /color: #ffffff; Margin: 0;" align="center">Deine persönliche Empfehlung<\/p>/);
+  assert.match(card, /color: #ffffff; Margin: 0;" align="left">Dein Setup<\/p>/);
+  // Mo's link came in the accent (yellow, chosen for the dark card): on the white panel the classic link blue
+  assert.match(card, /<a href="https:\/\/motionsports\.de\/products\/rack" target="_blank" style="color: #008ccb; text-decoration: underline;/);
+  // an accent that reads on white stays
+  const blue = renderMailTemplateHtml(personalDoc({ ...style, accentColor: "#c61724" }), ctx({ mo: { ...composerPieces("#111111"), bodyHtml: composerPieces("#111111").bodyHtml.replace("#ffd400", "#c61724") } }));
+  assert.match(blue, /href="https:\/\/motionsports\.de\/products\/rack" target="_blank" style="color: #c61724;/);
+});
+
+test("Mo's heading and the hero headline stay readable when the heading colour would vanish on the card", () => {
+  const html = renderMailTemplateHtml(personalDoc({ cardBackground: "#111111", headingColor: "#222222", textColor: "#eeeeee" }), ctx({ mo: composerPieces("#111111"), hero: { imageUrl: "https://cdn.example.com/hero.jpg", headline: "Dein Setup" } }));
+  assert.match(html, /color: #ffffff; Margin: 0;" align="center">Deine persönliche Empfehlung<\/p>/);
+  assert.match(html, /color: #ffffff; Margin: 0;" align="left">Dein Setup<\/p>/);
+  // a template without „Mos persönlicher Text“: Mo's text before the footer, on the panel too
+  const unplaced = renderMailTemplateHtml(docOf([{ type: "logo" }, { type: "footer" }], { cardBackground: "#1a1a1a" }), ctx({ mo: composerPieces("#1a1a1a") }));
+  assert.equal(backgroundAt(body(unplaced), body(unplaced).indexOf("MOS TEXT")), "#ffffff");
+});
+
+test("Mo's pieces on a light card stay exactly as in version 1 — no panel, the avatar in its own row", () => {
+  for (const cardBackground of ["#ffffff", "#f4f1ea", "#ffd400"]) {
+    const html = renderMailTemplateHtml(personalDoc({ cardBackground }), ctx({ mo: composerPieces(cardBackground) }));
+    assert.doesNotMatch(body(html), /border-radius: 8px; padding: 16px;/, cardBackground);
+    assert.match(
+      html,
+      new RegExp(`<td class="content-pad" align="center" bgcolor="${cardBackground}" style="mso-line-height-rule: exactly; padding: 25px 60px 0;" valign="top">\\s*<img src="https://mo\\.example\\.com/moorb\\.gif" alt="Mo" width="64" height="64"`),
+      cardBackground
+    );
+    assert.match(html, new RegExp(`<td class="content-pad" align="left" bgcolor="${cardBackground}" style="mso-line-height-rule: exactly; padding: 25px 60px 10px;" valign="top">\\s*<p style="[^"]*color: #000000;`), cardBackground);
+  }
 });
 
 // ── footer, card, fonts ──────────────────────────────────────────────────────
@@ -865,6 +1066,38 @@ test("merge fields are never applied to custom HTML, alt texts or links", () => 
   assert.match(html, /alt="\{\{vorname\}\}"/);
   assert.ok(seen.includes("Hi {{vorname}}"));
   assert.ok(!seen.some((t) => /<p>|^https?:/.test(t)), seen.join(" | "));
+});
+
+test("links in text blocks are never personalised: merge fields stay in the address, the link text is merged", () => {
+  const doc = docOf([
+    { type: "text", text: "Dein [Link für {{vorname|dich}}](https://motionsports.de/pages/aktion?name={{vorname}}) und https://motionsports.de/{{vorname}} — Grüße, {{vorname}}" },
+  ]);
+  const html = renderMailTemplateHtml(doc, ctx());
+  assert.match(html, /href="https:\/\/motionsports\.de\/pages\/aktion\?name=\{\{vorname\}\}"[^>]*>Link für Anna<\/a>/);
+  assert.match(html, /href="https:\/\/motionsports\.de\/\{\{vorname\}\}"/);
+  assert.match(html, /Grüße, Anna/);
+  assert.doesNotMatch(html, /name=Anna|motionsports\.de\/Anna/);
+  const text = renderMailTemplateText(doc, ctx());
+  assert.match(text, /aktion\?name=\{\{vorname\}\}/);
+  assert.match(text, /Grüße, Anna/);
+  // the Rundmail freeze writes no per-recipient token into an address
+  const tokens = [];
+  const freeze = (t) => applyMergeFields(t, {}, (_i, fb) => `{{mo:fn:${tokens.push(fb) - 1}}}`);
+  const frozen = renderMailTemplateHtml(doc, ctx({ merge: freeze }));
+  assert.doesNotMatch(frozen, /href="[^"]*mo:fn/);
+  assert.match(frozen, />Link für \{\{mo:fn:\d+\}\}<\/a>/);
+  // a text without links merges as before
+  assert.match(renderMailTemplateHtml(docOf([{ type: "text", text: "Hallo {{vorname}}, https ist kein Link." }]), ctx()), /Hallo Anna, https ist kein Link\./);
+});
+
+test("an html block cannot swallow the mail below it: raw-text elements, unterminated comments and tags end at the block", () => {
+  for (const html of ["<p>Vorher</p><noembed>", "<p>Vorher</p><xmp>", "<p>Vorher</p><plaintext>", "<p>Vorher</p><noframes>", "<p>Vorher</p><!-- offen", "<p>Vorher</p><p title='offen>", '<p>Vorher</p><td style="x']) {
+    const out = renderMailTemplateHtml(docOf([{ type: "html", html }, { type: "text", text: "Danach" }]), ctx());
+    assert.doesNotMatch(out, /<(noembed|xmp|plaintext|noframes)\b|<!-- offen|title='offen|style="x/i, html);
+    assert.match(out, /<p>Vorher<\/p>\s*<\/td>/, html);
+    assert.ok(out.indexOf("Danach") > out.indexOf("Vorher") && out.indexOf("Impressum") > out.indexOf(MAIL_FOOTER_MARKER), html);
+    assert.deepEqual(lint(out), [], html);
+  }
 });
 
 test("sanitizeCustomHtml: single-quoted and unquoted links become double-quoted (link tracking), the rest as before", () => {
