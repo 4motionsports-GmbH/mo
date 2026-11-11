@@ -47,7 +47,7 @@ the pooled one. To add a migration, drop a new file with the next number
 DDL (`--` comments and `;` statement separators; no dollar-quoted function
 bodies, which the lightweight splitter doesn't parse). Production migrations are
 run manually by the maintainer. The latest migration is
-`0081_templates_rundmail_senders.sql`; the [table index](#table-index--every-table-and-where-it-is-documented)
+`0082_rundmail_font_clicks.sql` (data only); the [table index](#table-index--every-table-and-where-it-is-documented)
 below names the migration that created each table.
 
 ## Schema overview

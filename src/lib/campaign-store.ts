@@ -1596,6 +1596,8 @@ export async function recordCampaignClick(
   shopUrl: string | null;
   campaignId: number | null;
   kind: string | null;
+  /** A Rundmail's frozen target of link `opts.link` (read once here, the redirect reuses it), else null. */
+  linkUrl: string | null;
 } | null> {
   if (!sql) return null;
   const t = token.trim();
@@ -1622,13 +1624,17 @@ export async function recordCampaignClick(
     const kind = (row.kind as string | null) ?? null;
     const link = kind === "rundmail" && Number.isInteger(opts.link) ? Number(opts.link) : null;
 
-    // A Rundmail released before 2026-11-11 froze its web-font stylesheet as a
-    // link: a mail client loading it is no click — redirect, record nothing.
-    if (kind === "rundmail" && campaignId != null && link != null && link >= 0) {
+    // A Rundmail's frozen target, read once (the redirect reuses it). One
+    // released before 2026-11-11 froze its web-font stylesheet as a link: a
+    // mail client loading it is no click — redirect, record nothing.
+    let linkUrl: string | null = null;
+    if (kind === "rundmail" && campaignId != null && link != null && link >= 0 && link <= 999) {
       const target = (await sql`
         SELECT links -> ${link}::int ->> 'url' AS url FROM campaign_mailings WHERE campaign_id = ${campaignId}
       `) as Array<{ url: string | null }>;
-      if (isWebFontStylesheetUrl(target[0]?.url)) return { sendId, firstClick: false, shopUrl, campaignId, kind };
+      const url = target[0]?.url ?? null;
+      linkUrl = url && /^https?:\/\//.test(url) ? url : null;
+      if (isWebFontStylesheetUrl(url)) return { sendId, firstClick: false, shopUrl, campaignId, kind, linkUrl };
     }
 
     await sql`
@@ -1643,7 +1649,7 @@ export async function recordCampaignClick(
                 kind === "rundmail" ? { sendId, firstClick, campaignId, link: link ?? 0 } : { sendId, firstClick }
               )}::jsonb)
     `;
-    return { sendId, firstClick, shopUrl, campaignId, kind };
+    return { sendId, firstClick, shopUrl, campaignId, kind, linkUrl };
   } catch (err) {
     reportError(err, { route: "lib/campaign-store", phase: "recordCampaignClick" });
     return null;

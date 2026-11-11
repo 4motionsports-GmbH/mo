@@ -1222,7 +1222,9 @@ unsubscribe links stay untracked. Only **click targets** are tracked — the dou
 Rundmails released before 2026-11-11 froze the Google-Fonts stylesheet as a link, so mail clients
 that loaded it looked like clicks: `recordCampaignClick` now records nothing for such a link (the
 redirect still delivers the stylesheet), `getMailingStats` leaves it out of „Geklickt“ and „Klicks
-je Link“, and an unknown link index never falls back to it (`isWebFontStylesheetUrl`). Subject, HTML, text, a hash of the content, From and Reply-To are
+je Link“, an unknown link index never falls back to it (`isWebFontStylesheetUrl`), and the data
+migration `0082` removes the stored font „clicks“ (and `clicked_at` of sends without a real click),
+so every other click figure is right too. Subject, HTML, text, a hash of the content, From and Reply-To are
 stored in `frozen_*`, and `freezeAndStartMailing` sets the campaign `aktiv` with its `starts_at` in
 the same statement. From then on the content is read-only (save → 409). Every mail is
 `personalizeFrozen` ([`mailing-core.mjs`](../src/lib/mailing-core.mjs), tested) — string

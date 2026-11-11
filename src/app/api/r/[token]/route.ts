@@ -116,7 +116,8 @@ export async function GET(
     const link = linkParam && /^\d{1,3}$/.test(linkParam) ? Number(linkParam) : null;
     const campaign = await recordCampaignClick(token, { link });
     if (campaign?.kind === "rundmail" && campaign.campaignId != null) {
-      const asked = link != null ? await mailingLinkTarget(campaign.campaignId, link) : null;
+      // The frozen target was read while recording the click (one query per click).
+      const asked = campaign.linkUrl;
       // The fallback is the first real link — never the web-font stylesheet an
       // old frozen table holds as link 0.
       const first = asked ? null : await mailingLinkTarget(campaign.campaignId, 0);
