@@ -1,9 +1,11 @@
 // The <style> block of the branded mail shells — classic (email-template.ts)
 // and block templates (mail-template-render.mjs) — so the media rules every
 // shared building block relies on (product rows and grid, the set frame,
-// the content padding on phones) exist exactly once. Progressive
-// enhancement only: every critical style is inline. Pure .mjs so the pure
-// template renderer and the TypeScript shell share it byte for byte.
+// the content padding on phones, the stacking columns of template sections)
+// exist exactly once. Rules are only ever added: the classic shell renders
+// the same block. Progressive enhancement only: every critical style is
+// inline. Pure .mjs so the pure template renderer and the TypeScript shell
+// share it byte for byte.
 
 /** The CSS inside <style type="text/css"> (indented for the shell's <head>). */
 export const EMAIL_SHELL_CSS = `      /* Progressive enhancement ONLY — every critical style is inline. */
@@ -34,4 +36,11 @@ export const EMAIL_SHELL_CSS = `      /* Progressive enhancement ONLY — every 
         .set-item-text { padding: 14px 0 4px 0 !important; }
         .set-item-price { padding: 0 0 14px 0 !important; }
         .set-item-price p { text-align: left !important; }
+        /* Template sections (mail-template-render.mjs): the columns stack
+           as full-width blocks (border-box: their padding stays inside),
+           the gap between them becomes a 16 px row, and a picture as wide
+           as its column fills the stacked column. */
+        .col-stack { display: block !important; width: 100% !important; max-width: 100% !important; box-sizing: border-box !important; }
+        .col-gap { display: block !important; width: 100% !important; height: 16px !important; line-height: 16px !important; font-size: 0 !important; }
+        .col-img { width: 100% !important; max-width: 100% !important; height: auto !important; }
       }`;
