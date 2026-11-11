@@ -7,13 +7,20 @@
 -- so every other figure built on clicks (customer facts „zuletzt geklickt“,
 -- audience filters, engaged-first order, campaign click rates, KPI funnel)
 -- is right too:
---   1. a send whose ONLY recorded clicks are on a web-font link loses its
---      clicked_at (a send with a real click keeps it);
+--   1. a send with a recorded click on a web-font link gets the time of its
+--      first REAL click as clicked_at — or none, when it has no real click;
 --   2. the click events on web-font links are deleted.
 -- Idempotent: a second run finds nothing. Data only, no schema change.
 
 UPDATE campaign_sends s
-   SET clicked_at = NULL
+   SET clicked_at = (
+         SELECT min(e.created_at)
+           FROM kpi_events e
+           LEFT JOIN campaign_mailings m ON e.data->>'campaignId' = m.campaign_id::text
+          WHERE e.event = 'campaign_email_clicked'
+            AND e.data->>'sendId' = s.id::text
+            AND COALESCE((m.links -> ((e.data->>'link')::int) ->> 'url') ~* '^https?://fonts\.(googleapis|gstatic)\.com/', false) = false
+       )
  WHERE s.clicked_at IS NOT NULL
    AND EXISTS (
          SELECT 1
@@ -22,14 +29,6 @@ UPDATE campaign_sends s
           WHERE e.event = 'campaign_email_clicked'
             AND e.data->>'sendId' = s.id::text
             AND (m.links -> ((e.data->>'link')::int) ->> 'url') ~* '^https?://fonts\.(googleapis|gstatic)\.com/'
-       )
-   AND NOT EXISTS (
-         SELECT 1
-           FROM kpi_events e
-           LEFT JOIN campaign_mailings m ON e.data->>'campaignId' = m.campaign_id::text
-          WHERE e.event = 'campaign_email_clicked'
-            AND e.data->>'sendId' = s.id::text
-            AND COALESCE((m.links -> ((e.data->>'link')::int) ->> 'url') ~* '^https?://fonts\.(googleapis|gstatic)\.com/', false) = false
        );
 
 DELETE FROM kpi_events e
