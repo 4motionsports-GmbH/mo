@@ -71,7 +71,7 @@ export type AiCallSite =
   // Kampagnen wizard (docs/CAMPAIGNS.md §2): "Zielgruppe beschreiben" and the
   // briefing suggestion. Dashboard/admin-side spend (no conversation FK).
   | "campaign_assist"
-  // Vorlagen / Rundmail editor (docs/EMAIL_TEMPLATES.md): „Mit KI gestalten“ —
+  // Vorlagen / Rundmail editor (docs/EMAIL_TEMPLATES.md): der „KI-Gestalter“ —
   // a block document built or changed from the operator's instruction.
   // Admin-side spend (no conversation FK).
   | "template_assist"

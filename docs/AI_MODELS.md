@@ -15,6 +15,7 @@ docs name the tier and link here instead of repeating model ids.
 | `analyst` | `claude-sonnet-5-5` | adaptive, effort `medium` | insights rollup (also the Komplettanalyse's), the Komplettanalyse's aggregate customer knowledge (an input digest for the strategist), hero image check (vision) |
 | `deep` | `claude-opus-5-5` | adaptive (always on), effort `medium` | the **Vollprofil** of the central customer profile — nightly upkeep, the Kunden button, the Analyse report (structured output: summary + persona, level, budget, goals, owned, interests, next steps) |
 | `strategist` | `claude-opus-5-5` | adaptive (always on), effort `high` (retry ladder `medium`, `low` after a timeout) | the operator's business decisions (owner 06.10.2026: the best suitable model for decisions): the Komplettanalyse's two decision passes — „Entscheidungen“ and „Maßnahmen“ ([`strategist-call.ts`](../src/lib/strategist-call.ts), structured output, call site `analytics_report`); the Verbesserung's three passes — Wirkungs-Check, Vorschläge Chat & Prompt, Vorschläge Betrieb (call site `improvement`, [`IMPROVEMENT_LOOP.md`](./IMPROVEMENT_LOOP.md)) |
+| `designer` | `claude-opus-5-5` | adaptive (always on), effort `high`, the most thinking headroom (32,000 + an answer budget of 32,000) | the operator's e-mail designer (owner 11.11.2026: „a good AI for high quality templates“): the **KI-Gestalter** of Vorlagen and Rundmail — an agentic tool loop that reads screenshots / PDFs / mails, searches the catalog and hands in a whole block document ([`mail-template-assist.ts`](../src/lib/mail-template-assist.ts) over [`mail-template-designer.mjs`](../src/lib/mail-template-designer.mjs), call site `template_assist`; until 11.11.2026 a one-shot `writer` call) |
 | `bulk` | `claude-haiku-4-5` | none | per-conversation analysis, Q&A translation |
 
 The profile depth decides the tier: people with a Mo chat or correspondence get
@@ -32,8 +33,11 @@ model inside the same call instead of failing the request.
 USD per million tokens, the defaults in `ai-pricing.mjs` (list prices checked
 2026-09). The prompt-cache columns are the provider-wide multipliers on the
 input price (`CACHE_READ_INPUT_MULTIPLIER` 0.1×, `CACHE_WRITE_INPUT_MULTIPLIER`
-1.25× for the 5-minute TTL); only `/api/chat` sets cache breakpoints
-([`PROMPT_CACHING.md`](./PROMPT_CACHING.md)).
+1.25× for the 5-minute TTL); `/api/chat` ([`PROMPT_CACHING.md`](./PROMPT_CACHING.md))
+and the KI-Gestalter (`template_assist`, below) set cache breakpoints. Anthropic's
+current list price for cache READS on the 5.5 models is 0.05× ($0.10 Sonnet 5.5,
+$0.20 Opus 5.5) — the KPI's 0.1× over-states those reads twofold (a conservative
+estimate until `ai-pricing.mjs` gets per-model cache multipliers).
 
 | Model | Input | Output | Cache read | Cache write (5 min) |
 |---|---|---|---|---|
@@ -99,7 +103,11 @@ at runtime, `USD_EUR_RATE` (default 0.92) converts for the dashboard's
   „Mit KI gestalten“ with 34 and the campaign editor's „Filter setzen“ with 22).
   So schemas use plain required fields with an empty value for „not set“ (`""`,
   `[]`, `0`, `-1`, `""` in an enum); [`ai-assist-schemas.mjs`](../src/lib/ai-assist-schemas.mjs)
-  holds both assistant schemas and the tested counter `structuredOutputCounts`.
+  holds the audience schema and the tested counter `structuredOutputCounts`. The
+  KI-Gestalter needs nested sections and columns, which a grammar cannot express
+  without flattening: it hands its document in as the input of a **non-strict**
+  tool (`submit_design`, a lenient JSON schema) — tool input is not compiled, so
+  none of these limits apply, and the server checks the document itself.
 
 ### Long strategist calls (Komplettanalyse, Verbesserung)
 
@@ -169,6 +177,43 @@ per-conversation analysis `bulk`, persona top-questions `writer`, insights and
 the aggregate customer knowledge `analyst`, optional per-customer profiles
 `deep`. Estimate per run: about 0.70 € for the two strategist passes
 (`estimateStrategistCostUsd`, shown in the generator).
+
+### The KI-Gestalter (designer tier, agentic)
+
+One run of the e-mail designer ([`EMAIL_TEMPLATES.md`](./EMAIL_TEMPLATES.md) §6)
+is a `streamText` tool loop on Opus 5.5 at effort `high`
+([`mail-template-designer.mjs`](../src/lib/mail-template-designer.mjs) `runDesigner`,
+tested with `MockLanguageModelV3`):
+
+- **Tools, never forced** — `search_products` (the configurator's ranked catalog
+  search, cards with ref, price label, stock, product page and JPG/PNG pictures),
+  `list_collections` (Shopify Admin, cached 10 minutes, fail-soft) and
+  `submit_design` (the whole document; the server normalises and checks it and
+  answers `{ ok }` or `{ ok: false, problems }`, at most three rounds — after the
+  third the offending values are cleared and the draft is accepted with a note).
+  Tool choice stays `auto` (the 5.5 models reject a forced one); a model that
+  answers in text only gets one reminder. The tool list is the same on every
+  step, so replayed thinking blocks and the cache stay valid. At most 8 steps.
+- **Caching** — the system prompt (stable per use, no dates) carries a cache
+  breakpoint and the call sets top-level automatic caching
+  (`providerOptions.anthropic.cacheControl`), so every later step of the loop reads
+  the prompt, the attachments and the steps so far from the cache.
+- **Output cap** — `maxOutputTokensFor("designer", 32000)` = 64,000 (thinking
+  counts toward `max_tokens`).
+- **Bounded** — the route (`POST /api/admin/vorlagen/assist`, `maxDuration` 300)
+  streams NDJSON progress with a heartbeat every 15 s and aborts the model at
+  285 s; a watchdog settles the run 5 s later even if the transport ignores the
+  abort. With less than 60 s left a submission is accepted (cleaned) instead of
+  starting another round; a run cut off after a rejected draft returns that draft,
+  cleaned, with a warning instead of nothing.
+- **Errors** — `designerFailureMessage` reads a `RetryError`'s `lastError` (the
+  SDK's two retries of a 429 / 529 / 503 surface as a `RetryError`, so the old
+  `err.statusCode` check never said „ausgelastet“), maps a cut-off answer
+  (`length`), a refusal (`content-filter`, after the server-side fallback), an
+  abort and unreadable attachments to German messages.
+- **Usage** — summed over ALL steps in `onStepFinish` (input, output, cache read,
+  cache write), recorded once per run under `template_assist` — also for a run
+  that fails after some steps.
 
 ## OpenAI
 

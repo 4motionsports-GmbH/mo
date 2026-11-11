@@ -21,6 +21,12 @@
 //             synthesis and the Verbesserung suggestions (rare, operator-run,
 //             a lot of material, decisions with money attached). Opus 5.5 at
 //             effort `high` (owner, 2026-10-06: "the best suitable model").
+//   designer — the operator's e-mail designer („KI-Gestalter“ in Vorlagen and
+//             Rundmail, mail-template-assist.ts): an agentic tool loop that
+//             reads screenshots / PDFs / mails, searches the catalog and writes
+//             a whole block document. Rare and operator-run, so quality beats
+//             speed: Opus 5.5 at effort `high` with the most thinking headroom
+//             (owner, 11.11.2026: „a good AI for high quality templates“).
 //   bulk    — high-volume, per-item analysis and translation: Haiku 4.5
 //             without thinking — the cheapest model that does these well.
 //
@@ -32,7 +38,7 @@ export const SONNET_MODEL = "claude-sonnet-5-5";
 export const OPUS_MODEL = "claude-opus-5-5";
 export const HAIKU_MODEL = "claude-haiku-4-5";
 
-/** @typedef {"chat" | "writer" | "analyst" | "deep" | "strategist" | "bulk"} AiTier */
+/** @typedef {"chat" | "writer" | "analyst" | "deep" | "strategist" | "designer" | "bulk"} AiTier */
 
 /**
  * @type {Record<AiTier, { model: string, thinking?: "adaptive" | "between_tools", effort?: "low" | "medium" | "high", thinkingHeadroom: number }>}
@@ -43,6 +49,7 @@ export const AI_TIERS = {
   analyst: { model: SONNET_MODEL, thinking: "adaptive", effort: "medium", thinkingHeadroom: 8000 },
   deep: { model: OPUS_MODEL, thinking: "adaptive", effort: "medium", thinkingHeadroom: 8000 },
   strategist: { model: OPUS_MODEL, thinking: "adaptive", effort: "high", thinkingHeadroom: 16000 },
+  designer: { model: OPUS_MODEL, thinking: "adaptive", effort: "high", thinkingHeadroom: 32000 },
   bulk: { model: HAIKU_MODEL, thinkingHeadroom: 0 },
 };
 

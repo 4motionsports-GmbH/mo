@@ -13,9 +13,14 @@
 // schemas use no nullable fields: an unset value is "" (strings), [] (lists),
 // 0 or -1 (numbers) or "" in an enum — the normalisers downstream already read
 // those as „not set“.
+//
+// The template assistant's flat schema (TEMPLATE_ASSIST_SCHEMA, 10.11.2026)
+// is gone: the „KI-Gestalter“ (mail-template-designer.mjs, 11.11.2026) hands
+// its document in as the input of a NON-strict tool (submit_design) — tool
+// input is not compiled into a grammar, so these limits do not apply there
+// and nested sections / columns need no flattening.
 
 import { z } from "zod";
-import { MAIL_BLOCK_TYPES } from "./mail-template-doc.mjs";
 
 /** Anthropic's documented per-request limits for structured outputs. */
 export const STRUCTURED_OUTPUT_LIMITS = Object.freeze({ unionParams: 16, optionalParams: 24 });
@@ -56,93 +61,9 @@ export function fitsStructuredOutput(schema) {
   return c.unionParams <= STRUCTURED_OUTPUT_LIMITS.unionParams && c.optionalParams <= STRUCTURED_OUTPUT_LIMITS.optionalParams;
 }
 
-// ── „Mit KI gestalten“ (mail-template-assist.ts) ─────────────────────────────
-
-const str = z.string();
-/** A yes/no setting of a block: "" = not set (the block's default). */
-const flag = z.enum(["", "true", "false"]);
-const FLAG_FIELDS = Object.freeze(["fullWidth", "showHeadline", "showHeading", "showSocial"]);
-const NUMBER_FIELDS = Object.freeze(["width", "height"]);
-
-/**
- * Every field of every block type, all required and plain (no unions):
- * a field a block does not have is "" (or [] / "" flag).
- */
-export const TEMPLATE_ASSIST_SCHEMA = z.object({
-  style: z.object({
-    accentColor: str,
-    buttonTextColor: str,
-    textColor: str,
-    headingColor: str,
-    outerBackground: str,
-    fontFamily: str,
-    buttonShape: str,
-  }),
-  blocks: z.array(
-    z.object({
-      id: str,
-      type: z.enum(/** @type {[string, ...string[]]} */ ([...MAIL_BLOCK_TYPES])),
-      text: str,
-      size: str,
-      align: str,
-      color: str,
-      background: str,
-      src: str,
-      alt: str,
-      href: str,
-      width: str,
-      label: str,
-      textColor: str,
-      fullWidth: flag,
-      title: str,
-      refs: z.array(str),
-      layout: str,
-      code: str,
-      headline: str,
-      terms: str,
-      until: str,
-      heading: str,
-      height: str,
-      html: str,
-      fallback: str,
-      showHeadline: flag,
-      showHeading: flag,
-      showSocial: flag,
-    })
-  ),
-  notes: str,
-});
-
-/**
- * One block (or the style) as the model returned it → the raw shape the
- * document normaliser reads: "" fields dropped (unset), the yes/no fields as
- * booleans, a numeric width / height as a number. Everything else stays as
- * it is — normalizeMailTemplateDoc validates it like any other input.
- * @param {Record<string, unknown>} raw
- * @returns {Record<string, unknown>}
- */
-export function fromAssistFields(raw) {
-  /** @type {Record<string, unknown>} */
-  const out = {};
-  for (const [key, value] of Object.entries(raw ?? {})) {
-    if (value == null || value === "") continue;
-    if (FLAG_FIELDS.includes(key)) {
-      if (value === "true" || value === true) out[key] = true;
-      else if (value === "false" || value === false) out[key] = false;
-      continue;
-    }
-    if (NUMBER_FIELDS.includes(key) && typeof value === "string" && /^\d{1,4}$/.test(value.trim())) {
-      out[key] = Number(value.trim());
-      continue;
-    }
-    if (Array.isArray(value) && value.length === 0) continue;
-    out[key] = value;
-  }
-  return out;
-}
-
 // ── „Filter setzen“ in the campaign editor (campaign-assist.ts) ──────────────
 
+const str = z.string();
 /** A range filter: -1 = open end (audience-spec cleanRange drops negatives). */
 const range = z.object({ min: z.number(), max: z.number() });
 

@@ -17,6 +17,7 @@ test("each tier maps to the intended model", () => {
   assert.equal(modelFor("analyst"), SONNET_MODEL);
   assert.equal(modelFor("deep"), OPUS_MODEL);
   assert.equal(modelFor("strategist"), OPUS_MODEL);
+  assert.equal(modelFor("designer"), OPUS_MODEL);
   assert.equal(modelFor("bulk"), HAIKU_MODEL);
 });
 
@@ -34,7 +35,7 @@ test("chat keeps thinking off (between_tools) at an effort between_tools accepts
 });
 
 test("thinking tiers send adaptive thinking, an effort and the refusal fallback", () => {
-  for (const tier of ["writer", "analyst", "deep", "strategist"]) {
+  for (const tier of ["writer", "analyst", "deep", "strategist", "designer"]) {
     const { anthropic } = anthropicOptionsFor(tier);
     assert.deepEqual(anthropic.thinking, { type: "adaptive" });
     assert.ok(anthropic.effort);
@@ -54,7 +55,19 @@ test("output caps add thinking headroom only where the tier thinks", () => {
   assert.ok(maxOutputTokensFor("deep", 1500) > 1500);
 });
 
-test("the strategist tier thinks hardest: Opus at effort high with the most headroom", () => {
+test("the strategist tier thinks hard: Opus at effort high with more headroom than deep", () => {
   assert.equal(anthropicOptionsFor("strategist").anthropic.effort, "high");
   assert.ok(maxOutputTokensFor("strategist", 4000) > maxOutputTokensFor("deep", 4000));
+});
+
+test("the designer tier (owner 11.11.2026: quality over speed): Opus 5.5, adaptive, effort high, the most headroom", () => {
+  assert.equal(modelFor("designer"), OPUS_MODEL);
+  assert.deepEqual(anthropicOptionsFor("designer"), {
+    anthropic: { thinking: { type: "adaptive" }, effort: "high", fallbacks: "default" },
+  });
+  // a whole block document (answer budget 32,000) plus the thinking headroom — far below Opus' 128k cap
+  assert.equal(maxOutputTokensFor("designer", 32000), 64000);
+  for (const tier of Object.keys(AI_TIERS)) {
+    if (tier !== "designer") assert.ok(AI_TIERS.designer.thinkingHeadroom >= AI_TIERS[tier].thinkingHeadroom, `${tier} has more headroom`);
+  }
 });

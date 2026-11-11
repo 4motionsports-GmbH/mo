@@ -1,50 +1,174 @@
-// POST /api/admin/vorlagen/assist
-//   { instruction, doc?, use: "bulk" | "personal" | "template", screenshot?: { base64, mediaType } }
-//   → { doc, notes }
+// POST /api/admin/vorlagen/assist — the „KI-Gestalter“ of the template and
+// Rundmail editor (lib/mail-template-assist.ts, docs/EMAIL_TEMPLATES.md §6).
 //
-// „Mit KI gestalten“ in the template and Rundmail editor
-// (lib/mail-template-assist.ts). Only PROPOSES: nothing is stored — the
-// editor shows the document as an unsaved change. A screenshot (≤ 3 MB as
-// base64) lets the AI rebuild an existing mail's layout. Metered in ai_usage
-// (template_assist); audit-logged (template.assist).
+// Body (JSON, ≤ 4.4 MB):
+//   { instruction: string (≤ 6000; may be empty when attachments carry the brief),
+//     doc: object | null              — the editor's current, possibly unsaved document,
+//     use: "bulk" | "personal" | "template",
+//     history: [{ role: "user" | "assistant", text }]   — ≤ 8 turns of this session,
+//     attachments: [{ name, mediaType, data /* base64 */ }]  — ≤ 6: image/png|jpeg|webp|gif,
+//                  application/pdf, text/html, text/plain, message/rfc822 (text kinds: base64 of UTF-8),
+//     context?: { subject?, preheader? } }
+//
+// Errors before the stream starts (guard, bad JSON, invalid body, 413 too
+// large, no ANTHROPIC_API_KEY) are the usual JSON envelope with their status.
+// Otherwise 200 with application/x-ndjson — one JSON object per line:
+//   {"type":"progress","stage":"start"|"attachments"|"search"|"collections"|"design"|"check"|"images"|"heartbeat","text":"…"}
+//   … then exactly one of
+//   {"type":"result","doc":{…},"notes":"…","subject":string|null,"preheader":string|null,"warnings":[…]}
+//   {"type":"error","message":"…"}
+// A heartbeat line (repeating the current status) every 15 s keeps proxies
+// from closing the idle connection while the model thinks. The model is
+// aborted at 285 s (a German timeout message, or the last checked draft) so
+// the answer always arrives inside maxDuration. Only PROPOSES: nothing is
+// stored except attachment pictures the accepted design uses. Metered in
+// ai_usage (template_assist), audit-logged (template.assist).
 
-import { guardAdminPost, adminJson, adminJsonError } from "@/lib/admin-api";
+import { guardAdminPost, adminJsonError } from "@/lib/admin-api";
 import { recordAdminAccess } from "@/lib/admin-access-log";
-import { assistMailTemplate } from "@/lib/mail-template-assist";
+import { assistMailTemplate, type TemplateAssistProgress } from "@/lib/mail-template-assist";
+import { DESIGNER_LIMITS, parseAssistRequest } from "@/lib/mail-template-designer.mjs";
 import { reportError } from "@/lib/observability";
 
-export const maxDuration = 120;
+export const maxDuration = 300;
+
+/** The model is stopped this long after the request started (maxDuration minus the time to answer). */
+const MODEL_DEADLINE_MS = 285_000;
+const HEARTBEAT_MS = 15_000;
+
+/** Read the body up to `cap` bytes; null when it is larger. */
+async function readBodyCapped(req: Request, cap: number): Promise<string | null> {
+  const declared = Number(req.headers.get("content-length"));
+  if (Number.isFinite(declared) && declared > cap) return null;
+  if (!req.body) return "";
+  const reader = req.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > cap) {
+      await reader.cancel().catch(() => {});
+      return null;
+    }
+    chunks.push(value);
+  }
+  return Buffer.concat(chunks).toString("utf8");
+}
+
+function abortError(name: "TimeoutError" | "AbortError", message: string): Error {
+  const err = new Error(message);
+  err.name = name;
+  return err;
+}
 
 export async function POST(req: Request) {
+  const startedAt = Date.now();
   const blocked = await guardAdminPost(req);
   if (blocked) return blocked;
-  let body: Record<string, unknown>;
+
+  let text: string | null;
   try {
-    body = (await req.json()) as Record<string, unknown>;
+    text = await readBodyCapped(req, DESIGNER_LIMITS.bodyBytes);
+  } catch {
+    return adminJsonError("bad_request", "Die Anfrage konnte nicht gelesen werden.", 400);
+  }
+  if (text === null) {
+    return adminJsonError("too_large", "Die Anfrage ist zu groß (höchstens etwa 4 MB) — bitte weniger oder kleinere Anhänge mitschicken.", 413);
+  }
+  let body: unknown;
+  try {
+    body = JSON.parse(text);
   } catch {
     return adminJsonError("bad_request", "Ungültige Anfrage (kein JSON).", 400);
   }
-  const use = body.use === "personal" || body.use === "bulk" ? body.use : "template";
-  const raw = body.screenshot as { base64?: unknown; mediaType?: unknown } | null | undefined;
-  const screenshot =
-    raw && typeof raw.base64 === "string" && typeof raw.mediaType === "string"
-      ? { base64: raw.base64.replace(/^data:[^,]*,/, ""), mediaType: raw.mediaType }
-      : null;
-  if (screenshot && screenshot.base64.length > 4_000_000) {
-    return adminJsonError("too_large", "Das Bild ist zu groß (max. etwa 3 MB).", 413);
+  const parsed = parseAssistRequest(body);
+  if (!parsed.ok) return adminJsonError("invalid_body", parsed.message, 400);
+  if (!process.env.ANTHROPIC_API_KEY) {
+    return adminJsonError("not_configured", "Kein KI-Schlüssel konfiguriert (ANTHROPIC_API_KEY).", 503);
   }
-  try {
-    const res = await assistMailTemplate({
-      instruction: typeof body.instruction === "string" ? body.instruction : "",
-      doc: body.doc ?? null,
-      use,
-      screenshot,
-    });
-    if (!res.ok) return adminJsonError("assist_failed", res.message, 422);
-    await recordAdminAccess({ action: "template.assist", detail: { use, screenshot: Boolean(screenshot) } }, req);
-    return adminJson(res);
-  } catch (err) {
-    reportError(err, { route: "api/admin/vorlagen/assist" });
-    return adminJsonError("internal_error", "Die KI-Gestaltung ist fehlgeschlagen.", 500);
-  }
+  const request = parsed.value;
+  await recordAdminAccess(
+    {
+      action: "template.assist",
+      detail: { use: request.use, attachments: request.attachments.length, kinds: request.attachments.map((a) => a.kind) },
+    },
+    req
+  );
+
+  const deadlineAt = startedAt + MODEL_DEADLINE_MS;
+  const controller = new AbortController();
+  const deadline = setTimeout(
+    () => controller.abort(abortError("TimeoutError", "Zeitlimit des KI-Gestalters erreicht.")),
+    Math.max(0, deadlineAt - Date.now())
+  );
+  const onClientGone = () => controller.abort(abortError("AbortError", "Die Verbindung wurde getrennt."));
+  req.signal?.addEventListener("abort", onClientGone, { once: true });
+
+  const encoder = new TextEncoder();
+  const stream = new ReadableStream<Uint8Array>({
+    async start(ctrl) {
+      let open = true;
+      let status = "Der KI-Gestalter startet …";
+      const write = (line: Record<string, unknown>) => {
+        if (!open) return;
+        try {
+          ctrl.enqueue(encoder.encode(`${JSON.stringify(line)}\n`));
+        } catch {
+          open = false;
+        }
+      };
+      const heartbeat = setInterval(() => write({ type: "progress", stage: "heartbeat", text: status }), HEARTBEAT_MS);
+      try {
+        const result = await assistMailTemplate(request, {
+          signal: controller.signal,
+          deadlineAt,
+          onProgress: (p: TemplateAssistProgress) => {
+            status = p.text;
+            write({ type: "progress", stage: p.stage, text: p.text });
+          },
+        });
+        if (result.ok) {
+          write({
+            type: "result",
+            doc: result.doc,
+            notes: result.notes,
+            subject: result.subject,
+            preheader: result.preheader,
+            warnings: result.warnings,
+          });
+        } else {
+          write({ type: "error", message: result.message });
+        }
+      } catch (err) {
+        reportError(err, { route: "api/admin/vorlagen/assist", phase: "stream" });
+        write({ type: "error", message: "Die KI-Gestaltung ist fehlgeschlagen — bitte erneut versuchen." });
+      } finally {
+        clearInterval(heartbeat);
+        clearTimeout(deadline);
+        req.signal?.removeEventListener("abort", onClientGone);
+        if (open) {
+          open = false;
+          try {
+            ctrl.close();
+          } catch {
+            /* already closed by the client */
+          }
+        }
+      }
+    },
+    cancel() {
+      onClientGone();
+    },
+  });
+
+  return new Response(stream, {
+    status: 200,
+    headers: {
+      "Content-Type": "application/x-ndjson; charset=utf-8",
+      "Cache-Control": "no-store, no-transform",
+      "X-Accel-Buffering": "no",
+    },
+  });
 }

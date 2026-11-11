@@ -24,7 +24,7 @@ export const AI_CALL_SITE_LABELS = Object.freeze({
   bundle_suggestions: "Bundle-Vorschläge",
   hero_image: "KI-Titelbilder",
   campaign_assist: "Kampagnen: Zielgruppe & Briefing",
-  template_assist: "Vorlagen: KI-Gestaltung",
+  template_assist: "Vorlagen: KI-Gestalter",
   inbox_suggestion: "Eingang: Vorschläge",
   inbox_mail_reply: "Eingang: E-Mail beantworten",
   customer_ask: "Kunden: Frag Mo",
