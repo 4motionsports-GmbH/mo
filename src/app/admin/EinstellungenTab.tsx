@@ -88,7 +88,8 @@ export async function EinstellungenTab({ dbReady }: { dbReady: boolean }) {
     db: dbReady,
     shopify: isShopifyConfigured(),
     resendSend: isEmailConfigured(),
-    resendWebhook: Boolean(inboundWebhookSecret()),
+    // Either secret works for the delivery events (api/webhooks/resend).
+    resendWebhook: Boolean(inboundWebhookSecret() || process.env.RESEND_EVENTS_WEBHOOK_SECRET?.trim()),
     pingen: isPingenConfigured(),
     anthropic: Boolean(process.env.ANTHROPIC_API_KEY),
     openai: Boolean(process.env.OPENAI_API_KEY),

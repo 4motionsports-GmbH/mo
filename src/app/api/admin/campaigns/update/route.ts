@@ -9,6 +9,8 @@ import { guardAdminPost, adminJson, adminJsonError } from "@/lib/admin-api";
 import { getCampaign, refreshCampaignAudience, updateCampaign, type CampaignInput } from "@/lib/campaigns-store";
 import { validateCampaignInput } from "@/lib/campaign-def.mjs";
 import { senderDomains } from "@/lib/sender-store";
+import { sameSenderIdentity, type SenderIdentity } from "@/lib/sender-identities.mjs";
+import { clearMailingTest } from "@/lib/mailing-store";
 import { DISCOUNT_PERCENT_MAX } from "@/lib/discount-validation.mjs";
 import { reportError } from "@/lib/observability";
 
@@ -44,6 +46,10 @@ export async function POST(req: Request) {
     const value = locked ? { ...(v.value.name ? { name: v.value.name } : {}) } : v.value;
     const ok = await updateCampaign(id, value as unknown as CampaignInput);
     if (!ok) return adminJsonError("not_found", "Kampagne nicht gefunden.", 404);
+    // A Rundmail's test mail showed the old sender — require a new one.
+    if (current.kind === "rundmail" && !locked && "sender" in value && !sameSenderIdentity(current.sender, (value.sender ?? null) as SenderIdentity | null)) {
+      await clearMailingTest(id);
+    }
     let campaign = await getCampaign(id);
     if (campaign && campaign.status === "aktiv" && campaign.kind !== "rundmail" && ("audience" in value || "audienceMode" in value)) {
       await refreshCampaignAudience(id);

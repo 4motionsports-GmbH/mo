@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { MAILING_HTML_HARD_LIMIT, mailingChecks, visibleText } from "./mailing-checks.mjs";
+import { MAIL_FOOTER_MARKER } from "./mail-template-render.mjs";
 
 const html = (body) => `<!DOCTYPE html><html><head><title>t</title></head><body>${body}</body></html>`;
 const base = (over = {}) => ({
@@ -71,6 +72,19 @@ test("hints: long / shouting subjects, spam words, missing preheader, image-heav
   }
   assert.ok(!w.includes("single_opt_in"), "no opt-in hint while single opt-in is allowed");
   assert.equal(r.ok, true, "hints never block");
+});
+
+test("image-heavy counts the content only — the legal footer's text and icons do not hide it", () => {
+  const footer = `${MAIL_FOOTER_MARKER}<p>${"Du erhältst diese Mail, weil du eingewilligt hast. Abmelden · Daten löschen · Impressum. ".repeat(6)}</p><img src="https://x.de/fb.png" alt="Facebook"><img src="https://x.de/ig.png" alt="Instagram">`;
+  const imageOnly = mailingChecks(
+    base({ html: html(`<img src="https://x.de/banner.jpg" alt="Black Week"><img src="https://x.de/p.jpg" alt="Rack"><a href="https://motionsports.de">Zum Shop</a>${footer}`) })
+  );
+  assert.ok(keys(imageOnly.warnings).includes("image_heavy"));
+  // Real text in the content: no warning, however many icons the footer has.
+  const withText = mailingChecks(
+    base({ html: html(`<p>${"Viel Text über unsere Angebote. ".repeat(20)}</p><img src="https://x.de/a.jpg" alt="a"><img src="https://x.de/b.jpg" alt="b">${footer}`) })
+  );
+  assert.ok(!keys(withText.warnings).includes("image_heavy"));
 });
 
 test("visibleText drops markup, comments, styles and the hidden preheader filler", () => {

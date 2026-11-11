@@ -292,6 +292,23 @@ export interface FrozenMailing {
 }
 
 /**
+ * The sender of a Rundmail changed after its test mail: that test no longer
+ * shows what would go out (From, DKIM alignment, Reply-To), so a new one is
+ * required before the release. Only before the release. Never throws.
+ */
+export async function clearMailingTest(campaignId: number, sql: Sql | null = getSql()): Promise<void> {
+  if (!sql) return;
+  try {
+    await sql`
+      UPDATE campaign_mailings SET test_version = NULL, updated_at = now()
+       WHERE campaign_id = ${campaignId} AND frozen_at IS NULL AND test_version IS NOT NULL
+    `;
+  } catch (err) {
+    reportError(err, { route: "lib/mailing-store", phase: "clearTest" });
+  }
+}
+
+/**
  * Freeze the released content and start the campaign (status aktiv, the
  * start = `startsAt`) — ONE statement (a data-modifying CTE), so either both
  * happen or neither. Refused unless the campaign is still a draft and the

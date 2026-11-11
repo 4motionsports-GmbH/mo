@@ -163,5 +163,17 @@ export async function GET(
     reportError(err, { route: "api/r" });
   }
 
-  return Response.redirect(FALLBACK_URL, 302);
+  // A Rundmail link (only those carry `?l=`) that could not be resolved —
+  // the database unreachable, or a copy whose batch ended „unklar“ — goes to
+  // the shop's start page: the empty cart is the right fallback only for the
+  // personal mails, whose links lead to a cart.
+  return Response.redirect(isRundmailLink(req) ? SHOP_DOMAIN : FALLBACK_URL, 302);
+}
+
+function isRundmailLink(req: Request): boolean {
+  try {
+    return new URL(req.url).searchParams.has("l");
+  } catch {
+    return false;
+  }
 }

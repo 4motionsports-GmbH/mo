@@ -9,6 +9,7 @@ import {
   parseSenderIdentities,
   parseStoredSender,
   resolveSender,
+  sameSenderIdentity,
   senderDomain,
   senderFromHeader,
   senderIdFor,
@@ -179,4 +180,17 @@ test("parseStoredSender: what a campaign stored, without the domain rule (the se
   for (const bad of [null, "", "{", [], { address: "nope", name: "x", replies: "mo" }, { address: "a@b.de", name: "", replies: "mo" }]) {
     assert.equal(parseStoredSender(bad), null, JSON.stringify(bad));
   }
+});
+
+test("sameSenderIdentity: address, name and reply routing decide; null is the default sender", () => {
+  const info = normalizeSenderIdentity({ address: "info@motionsports.de", name: "motion sports", replies: "direct" }, { allowedDomains: domains });
+  assert.ok(info);
+  assert.equal(sameSenderIdentity(info, { ...info }), true);
+  assert.equal(sameSenderIdentity(null, null), true);
+  assert.equal(sameSenderIdentity(undefined, null), true);
+  assert.equal(sameSenderIdentity(info, null), false);
+  assert.equal(sameSenderIdentity(null, info), false);
+  assert.equal(sameSenderIdentity(info, { ...info, address: "hallo@motionsports.de" }), false);
+  assert.equal(sameSenderIdentity(info, { ...info, name: "Motion Sports Team" }), false);
+  assert.equal(sameSenderIdentity(info, { ...info, replies: "mo" }), false);
 });

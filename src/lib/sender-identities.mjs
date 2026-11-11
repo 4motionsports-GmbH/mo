@@ -260,6 +260,19 @@ export function resolveSender(input) {
 }
 
 /**
+ * Whether two campaign senders send the same mail: the same address, display
+ * name and reply routing (null = the default sender). A Rundmail whose sender
+ * changed after its test mail needs a new test — the test showed another
+ * From, DKIM alignment and Reply-To.
+ * @param {SenderIdentity | null | undefined} a
+ * @param {SenderIdentity | null | undefined} b
+ */
+export function sameSenderIdentity(a, b) {
+  if (!a || !b) return !a && !b;
+  return a.address === b.address && a.name === b.name && a.replies === b.replies;
+}
+
+/**
  * A campaign's stored sender (campaigns.sender JSONB, or its JSON text) →
  * identity, or null (the default sender). Read WITHOUT the domain rule — what
  * was stored stays visible in the editor; the send-time resolveSender refuses

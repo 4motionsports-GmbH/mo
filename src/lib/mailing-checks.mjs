@@ -153,8 +153,10 @@ export function mailingChecks(input) {
   if (bytes > MAILING_HTML_SOFT_LIMIT && bytes <= MAILING_HTML_HARD_LIMIT) {
     warnings.push({ key: "size_soft", level: "warning", message: `Die Mail ist ${Math.round(bytes / 1024)} KB groß — nah an Gmails Grenze von 102 KB.` });
   }
-  const imgCount = (html.match(/<img\b/gi) ?? []).length;
-  const textChars = visibleText(html).length;
+  // The operator's content only — the legal footer alone has ~480 visible
+  // characters and its own icons, so counting it hid every image-only mail.
+  const imgCount = (contentHtml.match(/<img\b/gi) ?? []).length;
+  const textChars = visibleText(contentHtml).length;
   if (imgCount >= 2 && textChars < 400) {
     warnings.push({ key: "image_heavy", level: "warning", message: "Viele Bilder, wenig Text — Spamfilter mögen reine Bild-Mails nicht, und bei blockierten Bildern sieht man kaum etwas. Etwas Text ergänzen." });
   }
