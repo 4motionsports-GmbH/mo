@@ -97,7 +97,7 @@ total, 12 per column (`MAIL_TEMPLATE_LIMITS`).
 | `coupon` | Gutschein-Code | `code` (exactly as in Shopify), `headline`, `terms`, `accent` — card with „Code einlösen“ (`/discount/<code>`) | ✓ | ✓ | ✓ |
 | `countdown` | Countdown | `until` (ISO), `heading` — the live countdown picture | – | ✓ | ✓ |
 | `divider`, `spacer`, `social` | Trennlinie, Abstand, Social-Media | colour, thickness (1–8 px), length (%), solid/dashed/dotted, alignment / height (4–200 px) / alignment | ✓ | ✓ | ✓ |
-| `html` | Eigenes HTML | `html` (≤ 20,000; sanitised: no script/style/forms/event handlers, https only) | ✓ | ✓ | ✓ |
+| `html` | Eigenes HTML | `html` (≤ 20,000; sanitised by [`mail-template-html.mjs`](../src/lib/mail-template-html.mjs): no script/style/forms/media, no event handlers or script URLs — also entity-hidden —, no srcset/poster/ping or unsafe styles, https only; must be balanced, see validation) | ✓ | ✓ | ✓ |
 | `hero` | Titelbild (KI-Hero) | `src` (fallback picture), `alt`, `href`, `showHeadline` — the campaign's hero (AI, Kampagnenbild) | – | – | ✓ |
 | `mo_content` | Mos persönlicher Text | `showHeading` — Mo's text for this person (the AI prose, greeting included) | – | – | ✓ (required) |
 | `mo_offer` | Mos Angebot | — the products Mo picked (or the set card) with the personal code and countdown | – | – | ✓ |
@@ -119,7 +119,8 @@ signed `/api/email-countdown/<token>` picture.
 
 **Merge fields.** `{{vorname}}` → the first name or nothing; `{{vorname|Ersatz}}` → the first
 name or the fallback. Allowed in headings, texts, the greeting, buttons, menu labels, the product
-button, coupon terms and the Rundmail's subject — never in custom HTML, alt texts or links; any
+button, coupon terms and the Rundmail's subject — never in custom HTML, alt texts or links (inside
+a text block the link targets are left unmerged, only the text around them is merged); any
 other `{{…}}` is a validation error. The first name is cleaned by `normalizeFirstName` (letters
 only, title-cased when typed in one case). In a personal mail the greeting comes from Mo's text;
 the template's `greeting` block is for Rundmails.
@@ -129,7 +130,10 @@ nested blocks included): `bulk` refuses Mo blocks, `personal` requires `mo_conte
 or heading without text, a picture without `src`, a button without label or link, a product block
 without a product, a menu without links, a section without content, a coupon without a valid code
 (letters, digits, `-`, `_`), a countdown without a future end, empty HTML, `{{` in HTML or alt
-texts, an unknown merge field — block a send and the selection as a design. Warnings — a picture
+texts, a placeholder (`{{` or `%7B%7B`) in any address — links and pictures of every block, menu
+links, the section picture, the logo, link targets in texts and in HTML —, custom HTML that closes
+or leaves open table or `div` parts or holds a whole page (it would break the mail below it, footer
+included), an unknown merge field — block a send and the selection as a design. Warnings — a picture
 without `alt`, a WebP picture (Outlook), a background picture without a fallback colour, text
 below 4.5 : 1 contrast on its background (3 : 1 for large headings and button labels), an empty
 column, a fixed code in a personal mail, custom HTML, a first block that is not logo, picture or
@@ -160,8 +164,13 @@ campaign composer, the hero). The composers are untouched — they do not know w
 - **Card rows:** the classic pieces inside a template (the `products` rows / grid, the countdown,
   Mo's buttons and footnote) take the template's card colour and side padding
   (`templateSectionRow`, also in the Rundmail); on a dark card they sit on a white panel because
-  the classic renderers write dark text. With the default style the rows are byte-identical to
-  the classic ones.
+  the classic renderers write dark text — the panel's padding comes out of the row's, so the
+  480-px pieces (countdown picture, product grid) keep their width in Outlook. Mo's text and avatar
+  sit on the same panel on a dark card (Mo's links switch to `#008ccb` when the accent is below
+  3 : 1 on white), Mo's heading and the hero headline get a readable ink. With the default style
+  the rows are byte-identical to the classic ones.
+- **Size:** a template design rendering above Gmail's limit (100 KB) is reported at send time
+  (fail-soft); the preview returns the mail's size (`X-Mail-Bytes`) and warns near the limit.
 - **Resolution is fail-soft:** templates are read with a 60-second cache
   (`getCachedMailTemplate`); an unreadable or archived template resolves to `null` and the caller
   falls back to the classic design.
@@ -188,7 +197,9 @@ normalised document to HTML and plain text: a 600-px card (content width = 600 �
   (`sectionColumnWidths`).
 - **Background pictures** are a CSS background plus the `background` attribute plus a VML
   rectangle for Outlook (`v:fill type="frame"`, `aspect="atleast"`, a text box that grows with its
-  content, `minHeight`); the fallback colour shows while pictures are blocked.
+  content, `minHeight`); the fallback colour shows while pictures are blocked. A rounded or framed
+  section draws its frame around the picture (the picture cell sits inside the frame; `minHeight`
+  is the picture's height).
 - **Web fonts** (Oswald, Bebas Neue, Poppins, Playfair Display, Roboto, Open Sans, Lato, Inter
   besides Montserrat, `MAIL_TEMPLATE_FONTS`): one Google-Fonts `<link>` plus `@import`, hidden from
   Outlook, which gets the classic stack via `msoHeadHtml`. Apple Mail, iOS and Outlook for Mac show
@@ -196,7 +207,8 @@ normalised document to HTML and plain text: a 600-px card (content width = 600 �
   tracked link (`freezeLinks`, [`CAMPAIGNS.md`](./CAMPAIGNS.md) §9.2).
 - **Readability guards:** at a column edge the default top / bottom spacing collapses (explicit
   values stay); a coupon or footer on a coloured background switches to a readable ink; in narrow
-  columns the coupon code and the product card shrink so they fit.
+  columns the coupon code and the product card shrink so they fit, and the social icons shrink
+  their spacing and size and wrap into rows (`socialIconLayout`).
 - **Text part** follows the reading order (sections column by column, the original order even with
   `reverse`); a menu gives „Label: URL“ lines, a product card „Name — Preis“ plus its link.
 
@@ -308,6 +320,7 @@ and never erased with a person ([`email-hero-blob.mjs`](../src/lib/email-hero-bl
 | `src/lib/mail-template-tree.mjs` (+ test) | Tree operations on a document (sections and columns) |
 | `src/lib/mail-template-render.mjs` (+ tests incl. `-v2`, `__fixtures__/`) | Renderer: HTML + text, columns, VML backgrounds, web fonts, Outlook-safe, footer marker |
 | `src/lib/email-shell-css.mjs` | The classic shell's CSS (+ column rules), shared with `email-template.ts` |
+| `src/lib/mail-template-html.mjs` (+ test) | The „Eigenes HTML“ block: quote-aware sanitizer, structure report (balance, whole page), its URLs, entity decoding |
 | `src/lib/mail-template-slots.mjs` (+ test) | Live data of product blocks: product card data, text lines, empty blocks, raw block limits |
 | `src/lib/mail-template-store.ts` | `mail_templates` I/O, versions, usage |
 | `src/lib/mail-template-design.ts` | Template → design (`vorlage-<id>`), slots, card rows |
