@@ -611,8 +611,15 @@ the yardstick. As built:
 | Machine-readable marking | Every stored file of a KI-Hero (desktop, phone, master) carries XMP `Iptc4xmpExt:DigitalSourceType = trainedAlgorithmicMedia`, `dc:description`, `xmp:CreatorTool` (the model) and EXIF `ImageDescription`/`Software` (`email-hero-marking.mjs`, tested) — the image model's provenance data does not survive re-encoding, so the industry-standard IPTC marking is written here. An uploaded Kampagnenbild gets the same marking (tool „generative AI (hochgeladen)“) only when it was declared AI-generated; an uploaded photo carries no metadata at all |
 | Which heroes | Every AI picture of the Performance design: the AI-generated per-send heroes (`gpt-image-2`, fallback `gpt-image-1.5`) always, the default image through the constant `DEFAULT_HERO_IS_AI_GENERATED` in `performance.ts` (`true`, since the default image is AI-generated too; set it to `false` only if it is ever replaced by a real photograph), a Kampagnenbild by the operator's Bildherkunft at upload (declared AI → label, photo → none). The rule (`heroAiLabel`, `campaign-hero.mjs`, tested): with a picture in the render data the label shows unless that picture was explicitly declared not AI — it fails toward the label; without one the default image's constant decides. For a KI-Hero and the default image the operator does nothing; the label cannot be switched off in the workspace. |
 
+**Pictures of the KI-Gestalter** (`generate_image`, [`EMAIL_TEMPLATES.md`](./EMAIL_TEMPLATES.md) §6;
+files `template-ki-…`): every stored picture carries the same machine-readable marking; a
+photo-like one (hero, banner, background, scene) gets the EU label „AI GENERATED“ as a row of its
+own under the picture, inserted by the designer with a note in the answer — decorations and icons
+(no resemblance to existing things) get none. The label row is an ordinary block: an operator who
+removes it takes the responsibility.
+
 Open is only what code cannot do: the review by the shop or its legal counsel of whether other AI
-pictures outside the hero pipeline (e.g. inserted by hand) are labelled as well — and whether the
+pictures outside these pipelines (e.g. inserted by hand) are labelled as well — and whether the
 Bildherkunft an operator states for an uploaded Kampagnenbild is true (the code trusts it).
 
 ### Storage and configuration
