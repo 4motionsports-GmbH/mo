@@ -7,12 +7,18 @@
 // Prüfen & testen (estimate + sample mails, CampaignCheckSection). Everything is validated again on the
 // server (campaign-def.validateCampaignInput); the audience spec is normalised
 // there (audience-spec.mjs). The live count always means „with consent“ — the
-// e-mail channel never reaches anyone without it. docs/CAMPAIGNS.md §2.2.
+// e-mail channel never reaches anyone without it. A Rundmail's Zielgruppe
+// starts with the common choices (Alle mit Einwilligung, Nur Double-Opt-in,
+// Testgruppe = „Nur diese Adressen“, Eigene Filter); the count then says how
+// many of the listed addresses match and why the others do not.
+// docs/CAMPAIGNS.md §2.2 and §9.1.
 
 import * as React from "react";
 import { Sparkles, Users } from "lucide-react";
+import { fromBerlinInputValue, toBerlinInputValue } from "@/lib/admin-datetime.mjs";
 import { eurFromCents, num } from "@/lib/admin-format.mjs";
 import { HERO_MODE_LABELS } from "@/lib/campaign-def.mjs";
+import { AUDIENCE_MAX_EMAILS, audiencePresetOf, audiencePresetSpec, parseAudienceEmails } from "@/lib/audience-spec.mjs";
 import {
   Button,
   Callout,
@@ -66,14 +72,31 @@ interface FormState {
   letterBudgetEur: string;
   /** Absender (0081): an identity id, "" = the default sender. */
   senderId: string;
-  /** A NEW Rundmail starts from: "starter:<key>" or "template:<id>". */
+  /** A NEW Rundmail starts from: "starter:<key>", "template:<id>" or "rundmail:<id>" (a copy). */
   contentFrom: string;
 }
 
+type AudiencePreset = "alle" | "doi" | "test" | "eigene";
+
+/** Why a listed address of „Nur diese Adressen“ is (not) in the audience (audience-store.ts). */
+const EMAIL_STATUS_LABELS: Record<string, string> = {
+  passt: "passt",
+  unbekannt: "keine Kundin / kein Kunde mit dieser Adresse",
+  ohne_einwilligung: "ohne Einwilligung in E-Mail-Werbung",
+  gesperrt: "gesperrt (Abmeldung, Bounce, Beschwerde oder Löschung)",
+  andere_filter: "passt nicht zu den übrigen Filtern",
+};
+
 interface Preview {
   description: string;
+  /** CAMPAIGN_ALLOW_SINGLE_OPT_IN — without it only double opt-in matches are sent. */
+  allowSingleOptIn?: boolean;
   preview: {
     total: number;
+    /** Of the total: with a provable double opt-in. */
+    confirmed?: number;
+    /** „Nur diese Adressen“: every listed address with its status. */
+    emails?: Array<{ email: string; status: string }>;
     withMo: number;
     withoutConsent?: { total: number; letterReach: number };
     letters?: { total: number; withAddress: number };
@@ -111,15 +134,10 @@ const LANGS = [
   { value: "en", label: "Englisch" },
 ] as const;
 
-/** ISO → value of a <input type="datetime-local"> in the browser's zone. */
-function toLocalInput(iso: string | null): string {
-  if (!iso) return "";
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "";
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-}
-const fromLocalInput = (v: string): string | null => (v ? new Date(v).toISOString() : null);
+/** ISO ⇄ value of a <input type="datetime-local">, in Berlin time whatever zone the browser runs in
+ * (admin-datetime.mjs — the same on the server render and in the browser). */
+const toLocalInput = (iso: string | null): string => toBerlinInputValue(iso);
+const fromLocalInput = (v: string): string | null => (v ? fromBerlinInputValue(v) : null);
 const intOrNull = (v: string): number | null => (v.trim() === "" ? null : Math.round(Number(v)));
 
 /** The settings a sample mail depends on, as the sample route validates them.
@@ -258,6 +276,10 @@ export function CampaignEditor({
   const [describe, setDescribe] = React.useState("");
   const [assisting, setAssisting] = React.useState<null | "audience" | "brief">(null);
   const [aiNote, setAiNote] = React.useState<string | null>(null);
+  // A Rundmail's common choices over the spec; „Eigene Filter“ keeps its last spec while a preset is tried.
+  const [preset, setPreset] = React.useState<AudiencePreset>(() => audiencePresetOf(campaign?.audience ?? presetAudience));
+  const [emailsText, setEmailsText] = React.useState(() => (campaign?.audience?.emails ?? []).join("\n"));
+  const customSpec = React.useRef<AudienceSpecProps | null>(null);
   const isEinzel = campaign?.kind === "einzel";
   const isRundmail = form.kind === "rundmail";
   // A released Rundmail keeps audience, sender and schedule (frozen with its
@@ -270,6 +292,9 @@ export function CampaignEditor({
       setError(null);
       setAiNote(null);
       setDescribe("");
+      setPreset(audiencePresetOf(campaign?.audience ?? presetAudience));
+      setEmailsText((campaign?.audience?.emails ?? []).join("\n"));
+      customSpec.current = null;
     }
   }, [open, campaign, presetAudience]);
 
@@ -282,6 +307,27 @@ export function CampaignEditor({
       }
       return { ...f, audience: next };
     });
+
+  // „Nur diese Adressen“: the typed text stays as typed; the spec holds the normalised list.
+  const parsedEmails = React.useMemo(() => parseAudienceEmails(emailsText), [emailsText]);
+  const changeEmails = (text: string) => {
+    setEmailsText(text);
+    patchAudience({ emails: parseAudienceEmails(text).emails });
+  };
+  const choosePreset = (next: AudiencePreset) => {
+    if (next === preset) return;
+    if (preset === "eigene") customSpec.current = form.audience;
+    const spec =
+      next === "eigene"
+        ? (customSpec.current ?? form.audience)
+        : (audiencePresetSpec(next, { emails: parseAudienceEmails(emailsText).emails }) as AudienceSpecProps);
+    setForm((f) => ({ ...f, audience: spec }));
+    setPreset(next);
+  };
+  const isTestGroup = isRundmail && preset === "test";
+  // A test group without a single valid address would be „everyone with consent“ — never save that.
+  const testGroupEmpty = isTestGroup && !(form.audience.emails && form.audience.emails.length > 0);
+  const showBuilder = !isRundmail || preset === "eigene";
 
   // Live count, debounced; only while the sheet is open.
   const audienceKey = JSON.stringify(form.audience);
@@ -357,6 +403,10 @@ export function CampaignEditor({
     !id ? null : (options.senders.identities.find((x) => x.id === id) ?? (campaign?.sender?.id === id ? campaign.sender : null));
 
   const save = async () => {
+    if (testGroupEmpty) {
+      setError("Testgruppe: mindestens eine gültige Adresse eintragen — sonst ginge die Rundmail an alle mit Einwilligung.");
+      return;
+    }
     setSaving(true);
     setError(null);
     if (isRundmail) {
@@ -380,7 +430,11 @@ export function CampaignEditor({
             body: {
               ...payload,
               kind: "rundmail",
-              ...(fromKind === "template" ? { templateId: Number(fromValue) } : { starter: fromValue }),
+              ...(fromKind === "template"
+                ? { templateId: Number(fromValue) }
+                : fromKind === "rundmail"
+                  ? { fromRundmailId: Number(fromValue) }
+                  : { starter: fromValue }),
             },
           });
           onSaved(json.id, "rundmail");
@@ -451,6 +505,8 @@ export function CampaignEditor({
 
   const a = form.audience;
   const otherCampaigns = campaigns.filter((c) => c.id !== campaign?.id && c.kind !== "einzel");
+  // „Hat Rundmail erhalten“: the other Rundmails (released or planned — a reminder can be prepared ahead).
+  const otherRundmails = campaigns.filter((c) => c.id !== campaign?.id && c.kind === "rundmail" && c.status !== "entwurf");
   // The design the mails will use: the campaign's own, else the Einstellungen
   // choice (an unknown key falls back to it too — email-design-store).
   const effectiveDesign =
@@ -490,14 +546,16 @@ export function CampaignEditor({
                 <SegmentedControl
                   label="Art"
                   value={form.kind}
-                  onChange={(kind) =>
+                  onChange={(kind) => {
+                    // A Rundmail shows its „Empfänger“ choice for the filters set so far.
+                    if (kind === "rundmail") setPreset(audiencePresetOf(form.audience));
                     patch({
                       kind,
                       audienceMode: kind === "aktion" ? "fest" : "dynamisch",
                       heroMode: kind === "laufend" ? "ai_ab" : "default",
                       reentryDays: kind === "laufend" ? "180" : "",
-                    })
-                  }
+                    });
+                  }}
                   options={[
                     { value: "aktion", label: "Aktion" },
                     { value: "laufend", label: "Laufend" },
@@ -521,7 +579,10 @@ export function CampaignEditor({
             </div>
           )}
           {isRundmail && !campaign && (
-            <Field label="Inhalt starten mit" info="Der Inhalt wird danach in der Rundmail selbst gestaltet — per Baukasten oder mit KI.">
+            <Field
+              label="Inhalt starten mit"
+              info="Der Inhalt wird danach in der Rundmail selbst gestaltet — per Baukasten oder mit KI. „Rundmail: …“ übernimmt Betreff, Vorschauzeile, Sprache, Inhalt und Tempo einer anderen Rundmail (z. B. erst an eine Testgruppe, dann an alle) — die Testmail ist für die neue Rundmail wieder nötig."
+            >
               <Select value={form.contentFrom} onChange={(e) => patch({ contentFrom: e.target.value })}>
                 <option value="starter:black-week">Beispiel: Black Week</option>
                 <option value="starter:newsletter">Beispiel: Newsletter</option>
@@ -531,6 +592,13 @@ export function CampaignEditor({
                     Vorlage: {t.name}
                   </option>
                 ))}
+                {campaigns
+                  .filter((c) => c.kind === "rundmail" && c.status !== "archiviert")
+                  .map((c) => (
+                    <option key={`r${c.id}`} value={`rundmail:${c.id}`}>
+                      Rundmail: {c.name}
+                    </option>
+                  ))}
               </Select>
             </Field>
           )}
@@ -582,6 +650,25 @@ export function CampaignEditor({
             <SectionTitle info="Wer die Kampagne bekommen soll. Es kommen immer nur Kund:innen mit Einwilligung in E-Mail-Werbung und ohne Sperre (Bounce, Beschwerde, Löschung) in Frage — die Filter grenzen weiter ein.">
               Zielgruppe
             </SectionTitle>
+            {isRundmail && (
+              <Field
+                label="Empfänger"
+                info="Alle mit Einwilligung: jede Kundin, jeder Kunde mit Einwilligung in E-Mail-Werbung und ohne Sperre. Nur Double-Opt-in: nur mit nachweisbarer Bestätigung. Testgruppe: nur die eingetragenen Adressen — für einen echten Probelauf über den normalen Versand an eigene Konten; auch sie brauchen die Einwilligung. Eigene Filter: Lebenszyklus, Wertstufe, frühere Rundmails und mehr."
+              >
+                <SegmentedControl
+                  label="Empfänger"
+                  value={preset}
+                  onChange={choosePreset}
+                  options={[
+                    { value: "alle", label: "Alle mit Einwilligung" },
+                    { value: "doi", label: "Nur Double-Opt-in" },
+                    { value: "test", label: "Testgruppe" },
+                    { value: "eigene", label: "Eigene Filter" },
+                  ]}
+                />
+              </Field>
+            )}
+            {showBuilder && (
             <div className="flex flex-col gap-2 rounded-md border border-border bg-surface-2 p-3 sm:flex-row sm:items-end">
               <Field label="Beschreiben" className="flex-1" info="In eigenen Worten, z. B. „Großgeräte-Käufer der letzten zwei Jahre, die noch nie mit Mo gesprochen haben“. Die KI setzt die Filter — prüfen und anpassen.">
                 <Input value={describe} onChange={(e) => setDescribe(e.target.value)} placeholder="Wer soll die Mail bekommen?" />
@@ -590,10 +677,80 @@ export function CampaignEditor({
                 <Sparkles /> Filter setzen
               </Button>
             </div>
-            {aiNote && <p className="text-xs text-muted-foreground">KI: {aiNote}</p>}
+            )}
+            {aiNote && showBuilder && <p className="text-xs text-muted-foreground">KI: {aiNote}</p>}
 
             <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_18rem]">
               <div className="flex flex-col gap-3">
+                {(isTestGroup || (isRundmail && preset === "eigene")) && (
+                  <div className="flex flex-col gap-1">
+                  <Field
+                    label={isTestGroup ? "Nur diese Adressen" : "Nur diese Adressen (optional)"}
+                    required={isTestGroup}
+                    info={`Bis zu ${AUDIENCE_MAX_EMAILS} Adressen, eine pro Zeile oder mit Komma getrennt. Die Rundmail geht nur an die Kund:innen mit diesen Adressen — und nur, wenn sie in E-Mail-Werbung eingewilligt haben und nicht gesperrt sind. So läuft ein echter Probelauf über den normalen Versand (Pakete, Tracking, Abmelde-Link) an eigene Konten, bevor die große Rundmail geplant wird.`}
+                  >
+                    <Textarea
+                      rows={isTestGroup ? 4 : 2}
+                      value={emailsText}
+                      onChange={(e) => changeEmails(e.target.value)}
+                      placeholder={"du@motionsports.de\nkollegin@motionsports.de"}
+                    />
+                  </Field>
+                    <span className="block text-2xs text-muted-foreground" aria-live="polite">
+                      {parsedEmails.emails.length === 0
+                        ? isTestGroup
+                          ? "Noch keine gültige Adresse."
+                          : "Leer = keine Einschränkung."
+                        : `${num(parsedEmails.emails.length)} ${parsedEmails.emails.length === 1 ? "Adresse" : "Adressen"}`}
+                      {parsedEmails.duplicates > 0 ? ` · ${num(parsedEmails.duplicates)} doppelt` : ""}
+                      {parsedEmails.overLimit > 0 ? ` · ${num(parsedEmails.overLimit)} über der Grenze von ${AUDIENCE_MAX_EMAILS} ignoriert` : ""}
+                    </span>
+                    {parsedEmails.invalid.length > 0 && (
+                      <span className="block text-2xs text-destructive">Nicht erkannt: {parsedEmails.invalid.join(", ")}</span>
+                    )}
+                  </div>
+                )}
+                {showBuilder && (
+                <>
+                {isRundmail && otherRundmails.length > 0 && (
+                  <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
+                    <Field
+                      label="Hat Rundmail erhalten"
+                      info="Nur wer diese Rundmail bekommen hat — z. B. für eine Erinnerung am Cyber Monday an alle, die die Black-Friday-Mail bekommen, aber nicht geklickt haben. Ermittelt wird beim Versandstart dieser Rundmail."
+                    >
+                      <Select
+                        value={a.receivedCampaign ? String(a.receivedCampaign.id) : ""}
+                        onChange={(e) =>
+                          patchAudience({
+                            receivedCampaign: e.target.value
+                              ? { id: Number(e.target.value), ...(a.receivedCampaign?.notClicked ? { notClicked: true } : {}) }
+                              : undefined,
+                          })
+                        }
+                      >
+                        <option value="">Egal</option>
+                        {otherRundmails.map((c) => (
+                          <option key={c.id} value={String(c.id)}>
+                            {c.name}
+                          </option>
+                        ))}
+                      </Select>
+                    </Field>
+                    <Field label="… aber nicht geklickt" inline className="w-fit sm:pb-2">
+                      <Checkbox
+                        checked={a.receivedCampaign?.notClicked === true}
+                        disabled={!a.receivedCampaign}
+                        onChange={(e) =>
+                          patchAudience({
+                            receivedCampaign: a.receivedCampaign
+                              ? { id: a.receivedCampaign.id, ...(e.target.checked ? { notClicked: true } : {}) }
+                              : undefined,
+                          })
+                        }
+                      />
+                    </Field>
+                  </div>
+                )}
                 <Field label="Lebenszyklus" info="Wie lange der letzte Kauf zurückliegt.">
                   <ToggleChips label="Lebenszyklus" options={LIFECYCLE} value={a.lifecycle ?? []} onChange={(v) => patchAudience({ lifecycle: v })} />
                 </Field>
@@ -682,6 +839,8 @@ export function CampaignEditor({
                     />
                   </Field>
                 )}
+                </>
+                )}
                 {isRundmail ? (
                   <p className="text-xs text-muted-foreground">
                     Die Zielgruppe wird beim Versand-Start frisch ermittelt — wer sich bis dahin anmeldet, ist dabei; wer sich abmeldet, nicht.
@@ -719,9 +878,33 @@ export function CampaignEditor({
                   <Users className="size-3.5" aria-hidden /> Passende Kund:innen mit Einwilligung
                   {previewLoading && <Spinner className="ml-auto size-3.5" />}
                 </div>
-                <div className="text-2xl font-semibold tabular-nums">{preview ? num(preview.preview.total) : "—"}</div>
-                {preview && (
+                <div className="text-2xl font-semibold tabular-nums">{preview && !testGroupEmpty ? num(preview.preview.total) : "—"}</div>
+                {testGroupEmpty && <p className="text-xs text-muted-foreground">Erst Adressen eintragen.</p>}
+                {preview && !testGroupEmpty && (
                   <>
+                    {preview.preview.confirmed != null && (
+                      <p className="text-xs">
+                        davon {num(preview.preview.confirmed)} mit Double-Opt-in
+                        {preview.allowSingleOptIn === false && preview.preview.total > preview.preview.confirmed && (
+                          <span className="text-muted-foreground"> — nur sie werden angeschrieben (CAMPAIGN_ALLOW_SINGLE_OPT_IN ist aus)</span>
+                        )}
+                      </p>
+                    )}
+                    {preview.preview.emails && preview.preview.emails.length > 0 && (
+                      <div className="flex flex-col gap-0.5 border-t border-border pt-2 text-xs">
+                        <p className="font-medium">
+                          {num(preview.preview.emails.filter((x) => x.status === "passt").length)} von {num(preview.preview.emails.length)}{" "}
+                          {preview.preview.emails.length === 1 ? "Adresse passt" : "Adressen passen"}
+                        </p>
+                        {preview.preview.emails
+                          .filter((x) => x.status !== "passt")
+                          .map((x) => (
+                            <p key={x.email} className="text-destructive">
+                              <span className="break-all font-medium">{x.email}</span> — {EMAIL_STATUS_LABELS[x.status] ?? x.status}
+                            </p>
+                          ))}
+                      </div>
+                    )}
                     <p className="text-xs text-muted-foreground">
                       {num(preview.preview.withMo)} mit Mo-Gespräch · DE {num(preview.preview.byLanguage.de)} · EN{" "}
                       {num(preview.preview.byLanguage.en)}

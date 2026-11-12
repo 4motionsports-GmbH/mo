@@ -2,7 +2,9 @@
 
 // Marketing — the one consent (OptOutControl), the Einzelansprache (a 1:1
 // campaign mail: note → draft → review on the campaign desk, the same audited
-// send path as every campaign) and the person's campaign history. A personal
+// send path as every campaign) and the person's campaign history (a Rundmail
+// with „Mail ansehen“ — its frozen content personalised again, the send row
+// stores no body — and „Auswertung“, its recipient detail). A personal
 // mail started on the former Marketing path stays editable here until it is
 // sent or deleted. Without consent every advertising action is blocked — the
 // server gates enforce it; this is presentation only.
@@ -20,6 +22,7 @@ import {
 import { DEFAULT_EMAIL_TEXT_MODE, EMAIL_TEXT_MODE_HINTS } from "@/lib/email-text-mode.mjs";
 import { ADMIN_DATE, formatAdmin } from "@/lib/admin-datetime.mjs";
 import { adminTabHref } from "@/lib/admin-tabs.mjs";
+import { notSentReasonLabel } from "@/lib/rundmail-analytics.mjs";
 import {
   CONTACT_FREQUENCY_HINT_DETAIL,
   contactFrequencyEnabled,
@@ -187,18 +190,49 @@ function Participation({ customer }: { customer: CustomerDetail }) {
     <section className="flex flex-col gap-2">
       <div className="text-sm font-semibold">Kampagnen</div>
       <ul className="flex flex-col divide-y divide-border rounded-md border border-border">
-        {customer.campaigns.map((p) => (
-          <li key={p.contactId} className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2 text-sm">
-            <span className="font-medium">{p.campaignName}</span>
-            <StatusBadge tone={p.status === "sent" ? "success" : p.status === "drafted" ? "info" : "neutral"}>
-              {PARTICIPATION_STATUS[p.status] ?? p.status}
-            </StatusBadge>
-            {p.sentAt && <span className="text-xs text-muted-foreground">{formatAdmin(p.sentAt, ADMIN_DATE)}</span>}
-            {p.subject && <span className="min-w-0 truncate text-xs text-muted-foreground">„{p.subject}“</span>}
-            {p.clickedAt && <StatusBadge tone="accent">geklickt</StatusBadge>}
-            {p.unsubscribedAt && <StatusBadge tone="destructive">danach abgemeldet</StatusBadge>}
-          </li>
-        ))}
+        {customer.campaigns.map((p) => {
+          const rundmail = p.campaignKind === "rundmail";
+          return (
+            <li key={p.contactId} className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2 text-sm">
+              <span className="font-medium">{p.campaignName}</span>
+              {rundmail && (
+                <StatusBadge tone="accent" dot={false}>
+                  Rundmail
+                </StatusBadge>
+              )}
+              <StatusBadge tone={p.status === "sent" ? "success" : p.status === "drafted" ? "info" : "neutral"}>
+                {PARTICIPATION_STATUS[p.status] ?? p.status}
+              </StatusBadge>
+              {p.sentAt && <span className="text-xs text-muted-foreground">{formatAdmin(p.sentAt, ADMIN_DATE)}</span>}
+              {p.subject && <span className="min-w-0 truncate text-xs text-muted-foreground">„{p.subject}“</span>}
+              {rundmail && !p.sentAt && p.excludedReason && (p.status === "skipped" || p.status === "suppressed") && (
+                <span className="text-xs text-muted-foreground">{notSentReasonLabel(p.excludedReason)}</span>
+              )}
+              {p.clickedAt && <StatusBadge tone="accent">geklickt</StatusBadge>}
+              {p.unsubscribedAt && <StatusBadge tone="destructive">danach abgemeldet</StatusBadge>}
+              {/* A Rundmail send stores no body: the viewer personalises the frozen content again. */}
+              {rundmail && p.status === "sent" && (
+                <span className="ml-auto flex items-center gap-1">
+                  <EmailPreviewButton
+                    path="/api/admin/rundmail/sent-email"
+                    getPayload={() => ({ contactId: p.contactId })}
+                    title={p.subject ? `„${p.subject}“ an ${customer.email}` : `Rundmail an ${customer.email}`}
+                    description="So hat diese Person die Rundmail bekommen — personalisiert mit dem Vornamen aus dem Kundenprofil. Links und Abmelde-Link sind in der Vorschau inaktiv."
+                    label="Mail ansehen"
+                    variant="ghost"
+                    size="sm"
+                  />
+                  <Link
+                    href={adminTabHref("kampagne", { campaign: String(p.campaignId), view: "versand", recipient: String(p.contactId) })}
+                    className={buttonVariants({ variant: "ghost", size: "sm" })}
+                  >
+                    <ExternalLink /> Auswertung
+                  </Link>
+                </span>
+              )}
+            </li>
+          );
+        })}
       </ul>
     </section>
   );

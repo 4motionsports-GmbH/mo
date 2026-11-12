@@ -9,8 +9,11 @@
 //      content of the TESTED version is frozen (rendered once with
 //      per-recipient placeholders), the campaign starts at the chosen time.
 //   3. Run — the cron (every minute) and the open admin page drive
-//      runMailingStep: the audience is matched fresh at the first batch, then
-//      fixed; batches of recipients are claimed atomically, every legal gate
+//      runMailingStep. A Rundmail planned ahead is first rendered again from
+//      the SAME content version with the CURRENT catalog (prices,
+//      availability — mailing-schedule.mjs decides; a failure keeps the
+//      release version with a note). Then the audience is matched fresh at
+//      the first batch, then fixed; batches of recipients are claimed atomically, every legal gate
 //      runs PER RECIPIENT with the person read fresh (campaign-gates.mjs — the
 //      same function as the per-card send), and each batch goes to Resend as
 //      ONE batch request with an idempotency key. A retry after a timeout
@@ -35,8 +38,9 @@ import { isCampaignSendsApproved, isSingleOptInAllowed, marketingMinSendInterval
 import { evaluateCampaignSendGates, GATE_REASONS, optInLevelFromConsent } from "./campaign-gates.mjs";
 import { resolveCampaignSender } from "./sender-store";
 import { normalizeAudienceSpec } from "./audience-spec.mjs";
-import { unknownMergeFields, validateMailTemplateDoc, normalizeMailTemplateDoc, templateDesignKey } from "./mail-template-doc.mjs";
+import { docProductRefs, unknownMergeFields, validateMailTemplateDoc, normalizeMailTemplateDoc, templateDesignKey } from "./mail-template-doc.mjs";
 import { docProductAvailability } from "./mail-template-design";
+import { resolveProductSelections } from "./product-catalog";
 import {
   MAILING_BATCH_DEFAULT,
   MAILING_RATES,
@@ -51,7 +55,8 @@ import {
   personalizeFrozen,
   resendErrorMessage,
 } from "./mailing-core.mjs";
-import { mailingChecks, type MailingCheck } from "./mailing-checks.mjs";
+import { mailingChecks, renderedMailErrors, type MailingCheck } from "./mailing-checks.mjs";
+import { decideMailingRefresh, mailingRefreshDue, validateMailingStart } from "./mailing-schedule.mjs";
 import { renderMailingFrozen, renderMailingPreview, renderMailingTest } from "./mailing-render";
 import {
   acquireMailingLease,
@@ -66,7 +71,9 @@ import {
   markBatchUnclear,
   markMailingMaterialized,
   noteBatchAttempt,
+  noteMailingRefresh,
   recordMailingTest,
+  refreshFrozenMailing,
   releaseBatch,
   releaseMailingLease,
   releaseOrphanClaims,
@@ -77,6 +84,7 @@ import {
   type Mailing,
   type MailingBatch,
   type MailingFrozenBodies,
+  type MailingRefresh,
 } from "./mailing-store";
 
 /** Stop starting a new batch this close to the run's deadline. */
@@ -135,16 +143,30 @@ export interface MailingEvaluation {
   audience: { total: number; confirmed: number } | null;
 }
 
+/**
+ * „Hat Rundmail <X> erhalten“: the name of that Rundmail while it has not
+ * finished sending (its recipients are not known yet), else null.
+ */
+async function pendingAudienceSource(campaign: Campaign): Promise<string | null> {
+  const id = normalizeAudienceSpec(campaign.audience).receivedCampaign?.id;
+  if (!id) return null;
+  const [source, sourceMailing] = await Promise.all([getCampaign(id), getMailing(id)]);
+  if (!source || source.kind !== "rundmail") return null;
+  if (source.status === "beendet" || source.status === "archiviert" || sourceMailing?.finishedAt) return null;
+  return source.name;
+}
+
 /** Every check on the CURRENT content (the release runs this again). */
 export async function evaluateMailing(campaign: Campaign, mailing: Mailing): Promise<MailingEvaluation> {
   const doc = normalizeMailTemplateDoc(mailing.doc);
-  const [audience, preview, products] = await Promise.all([
+  const [audience, preview, products, audiencePending] = await Promise.all([
     mailingAudienceCounts(campaign),
     renderMailingPreview(
       { doc, subject: mailing.subject, preheader: mailing.preheader, language: mailing.language },
       "Alex"
     ),
     docProductAvailability(doc),
+    pendingAudienceSource(campaign),
   ]);
   const sender = resolveCampaignSender(campaign.sender);
   const result = mailingChecks({
@@ -163,6 +185,7 @@ export async function evaluateMailing(campaign: Campaign, mailing: Mailing): Pro
     ratePerMinute: MAILING_RATES[mailing.rate],
     unknownSubjectFields: unknownMergeFields(mailing.subject),
     products,
+    audiencePending,
   });
   return { ...result, audience };
 }
@@ -247,8 +270,10 @@ export type MailingReleaseResult =
 
 /**
  * Release a Rundmail: all checks again (any error refuses), the TESTED
- * version frozen, the campaign started at `startsAt` (now or a planned time,
- * at most 60 days ahead). The runner sends from then on.
+ * version frozen, the campaign started at `startsAt` (now or a planned time:
+ * not in the past, at most 60 days ahead, before the campaign's end —
+ * validateMailingStart). The runner sends from then on; a planned one is
+ * rendered again with the current catalog when its send starts.
  */
 export async function releaseMailing(
   campaignId: number,
@@ -264,17 +289,9 @@ export async function releaseMailing(
     if (Number(input.expectedVersion) !== mailing.contentVersion) {
       return { ok: false, message: "Der Inhalt wurde inzwischen geändert — bitte neu laden.", status: 409 };
     }
-    const now = Date.now();
-    let startsAt = new Date(now).toISOString();
-    if (input.startsAt != null && input.startsAt !== "") {
-      const t = Date.parse(String(input.startsAt));
-      if (!Number.isFinite(t)) return { ok: false, message: "Ungültiger Zeitpunkt.", status: 400 };
-      if (t > now + 60 * 86_400_000) return { ok: false, message: "Höchstens 60 Tage im Voraus planen.", status: 400 };
-      if (campaign.endsAt && t >= Date.parse(campaign.endsAt)) {
-        return { ok: false, message: "Der Versand-Start liegt nach dem Ende der Kampagne.", status: 400 };
-      }
-      startsAt = new Date(Math.max(t, now)).toISOString();
-    }
+    const start = validateMailingStart(input.startsAt, { now: Date.now(), endsAt: campaign.endsAt });
+    if (!start.ok) return { ok: false, message: start.message, status: 400 };
+    const startsAt = start.startsAt;
     const evaluation = await evaluateMailing(campaign, mailing);
     if (!evaluation.ok) {
       return { ok: false, message: evaluation.errors[0]?.message ?? "Die Prüfung ist nicht bestanden.", status: 409, evaluation };
@@ -308,6 +325,118 @@ export async function releaseMailing(
     reportError(err, { route: "lib/mailing-send", phase: "release" });
     return { ok: false, message: "Die Rundmail konnte nicht freigegeben werden.", status: 500 };
   }
+}
+
+// ── the refresh at the send start ───────────────────────────────────────────
+
+/** The release time (frozen_at) against the campaign's planned start. */
+function refreshDue(campaign: Campaign, mailing: Mailing): boolean {
+  return mailingRefreshDue({
+    frozenAt: mailing.frozenAt,
+    startsAt: campaign.startsAt,
+    materializedAt: mailing.materializedAt,
+    finishedAt: mailing.finishedAt,
+  });
+}
+
+/**
+ * A Rundmail planned ahead is rendered again when its send starts: the SAME
+ * content version (the content is read-only once released), the CURRENT
+ * catalog — prices and availability, sold-out products drop out — the same
+ * renderer as the release, and every hard release check on the new render
+ * (size, insecure pictures, bad links, leftover placeholders). Runs in the
+ * first step, before the audience is matched: nothing has been sent, so the
+ * link table may be rebuilt. Test mail and review stay as they were — only
+ * the time changed. Anything that fails keeps the release version with a
+ * German note (mailing-schedule.mjs decides); it never blocks the send.
+ * Returns the mailing as stored afterwards.
+ */
+async function refreshMailingAtStart(campaign: Campaign, mailing: Mailing): Promise<Mailing> {
+  if (!refreshDue(campaign, mailing) || !mailing.frozenAt || mailing.frozenVersion == null) return mailing;
+  const campaignId = campaign.id;
+  const releasedAt = mailing.frozenAt;
+  const input = { doc: mailing.doc, subject: mailing.subject, preheader: mailing.preheader, language: mailing.language };
+  try {
+    // What the catalog can show right now (the render below reads the same
+    // cached catalog). A throw = the catalog is not readable.
+    const refs = docProductRefs(normalizeMailTemplateDoc(mailing.doc)) as string[];
+    let productsShown: number | null = 0;
+    const soldOut: string[] = [];
+    const unknown: string[] = [];
+    if (refs.length > 0) {
+      try {
+        const selections = await resolveProductSelections(refs, { allVariants: true });
+        const byRef = new Map(selections.map((x) => [x.ref, x]));
+        let shown = 0;
+        for (const ref of refs) {
+          const sel = byRef.get(ref);
+          if (!sel || sel.missingVariant) unknown.push(ref);
+          else if (!sel.available || !sel.display) soldOut.push(sel.display?.name ?? sel.product.name ?? ref);
+          else shown++;
+        }
+        productsShown = shown;
+      } catch (err) {
+        reportError(err, { route: "lib/mailing-send", phase: "refreshCatalog", campaignId });
+        productsShown = null;
+      }
+    }
+
+    let decision: ReturnType<typeof decideMailingRefresh>;
+    let frozen: Awaited<ReturnType<typeof renderMailingFrozen>> | null = null;
+    try {
+      const [preview, fresh, bodies] = await Promise.all([
+        // The size check reads the same render as the release's checks.
+        renderMailingPreview(input, "Alex"),
+        renderMailingFrozen(input, campaign.slug),
+        getMailingFrozenBodies(campaignId),
+      ]);
+      frozen = fresh;
+      const problems = renderedMailErrors({ html: preview.html, frozen: fresh.html + fresh.text + fresh.subject }).map((e) => e.message);
+      const same =
+        bodies != null &&
+        bodies.html === fresh.html &&
+        bodies.text === fresh.text &&
+        mailing.frozenSubject === fresh.subject &&
+        JSON.stringify(mailing.links) === JSON.stringify(fresh.links);
+      decision = decideMailingRefresh({ problems, productRefs: refs.length, productsShown, same, soldOut, unknown });
+    } catch (err) {
+      reportError(err, { route: "lib/mailing-send", phase: "refreshRender", campaignId });
+      decision = decideMailingRefresh({ renderFailed: true });
+    }
+
+    const note: MailingRefresh = { at: new Date().toISOString(), releasedAt, outcome: decision.outcome, note: decision.note };
+    if (decision.action === "replace" && frozen) {
+      const ok = await refreshFrozenMailing(
+        campaignId,
+        { frozenAt: releasedAt, version: mailing.frozenVersion },
+        {
+          subject: frozen.subject,
+          html: frozen.html,
+          text: frozen.text,
+          hash: createHash("sha256").update(frozen.text, "utf8").digest("hex"),
+          links: frozen.links,
+          merges: frozen.merges,
+        },
+        note
+      );
+      if (!ok) {
+        // A guard did not hold (taken back, or another runner) — what is
+        // stored stays; the caller re-checks the campaign before sending.
+        reportError(new Error("rundmail: refresh at start not stored"), { route: "lib/mailing-send", phase: "refreshStore", campaignId });
+      }
+    } else {
+      await noteMailingRefresh(campaignId, releasedAt, note);
+      reportError(new Error(`rundmail: refresh at start kept the release (${decision.note})`), {
+        route: "lib/mailing-send",
+        phase: "refreshKept",
+        campaignId,
+      });
+    }
+  } catch (err) {
+    // Never block the send: the release version goes out.
+    reportError(err, { route: "lib/mailing-send", phase: "refresh", campaignId });
+  }
+  return (await getMailing(campaignId)) ?? mailing;
 }
 
 // ── the runner ───────────────────────────────────────────────────────────────
@@ -545,13 +674,21 @@ export async function runMailingStep(opts: { deadlineMs: number; campaignId?: nu
 }
 
 async function runOneMailing(campaignId: number, deadlineMs: number, out: MailingStepResult): Promise<void> {
-  const campaign = await getCampaign(campaignId);
+  let campaign = await getCampaign(campaignId);
   let mailing = await getMailing(campaignId);
   if (!campaign || !mailing || !mailing.frozenAt || !campaignAcceptsWork(campaign)) return;
   if (!isCampaignSendsApproved()) {
     await pauseWithError(campaignId, "Versand gestoppt: CAMPAIGN_SENDS_APPROVED ist aus.");
     out.messages.push(`Rundmail ${campaignId}: CAMPAIGN_SENDS_APPROVED aus`);
     return;
+  }
+
+  // The first step of a Rundmail planned ahead: its content rendered again
+  // with today's prices and availability (nothing has been sent yet).
+  if (!mailing.materializedAt && refreshDue(campaign, mailing)) {
+    mailing = await refreshMailingAtStart(campaign, mailing);
+    campaign = await getCampaign(campaignId);
+    if (!campaign || !mailing.frozenAt || !campaignAcceptsWork(campaign)) return;
   }
   const bodies = await getMailingFrozenBodies(campaignId);
   if (!bodies) {

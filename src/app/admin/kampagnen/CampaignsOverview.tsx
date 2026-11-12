@@ -11,9 +11,10 @@
 import * as React from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { CalendarRange, Megaphone, Pencil, Plus } from "lucide-react";
-import { ADMIN_DATE, formatAdmin } from "@/lib/admin-datetime.mjs";
-import { num, ratio } from "@/lib/admin-format.mjs";
+import { CalendarClock, CalendarRange, Megaphone, Pencil, Plus } from "lucide-react";
+import { ADMIN_DATE, ADMIN_WEEKDAY_DATE_TIME, formatAdmin } from "@/lib/admin-datetime.mjs";
+import { num, ratio, relativeTime } from "@/lib/admin-format.mjs";
+import { mailingScheduleState } from "@/lib/mailing-schedule.mjs";
 import { adminTabHref } from "@/lib/admin-tabs.mjs";
 import {
   CAMPAIGN_KIND_LABELS,
@@ -36,6 +37,7 @@ import {
   useConfirm,
 } from "../ui";
 import { adminFetch, errorMessage } from "../lib/admin-fetch";
+import { useNow } from "../lib/use-now";
 import { CampaignEditor } from "./CampaignEditor";
 import type { CampaignCardProps, CampaignsOverviewProps } from "./types";
 
@@ -166,6 +168,7 @@ export function CampaignsOverview({ campaigns, options, initialEdit, presetAudie
             <CampaignCard
               key={c.id}
               campaign={c}
+              sendsApproved={sendsApproved}
               busy={busy === c.id}
               onEdit={() => openEditor(c.id)}
               onStatus={(to) => void changeStatus(c, to)}
@@ -204,16 +207,38 @@ export function CampaignsOverview({ campaigns, options, initialEdit, presetAudie
 
 function CampaignCard({
   campaign: c,
+  sendsApproved,
   busy,
   onEdit,
   onStatus,
 }: {
   campaign: CampaignCardProps;
+  sendsApproved: boolean;
   busy: boolean;
   onEdit: () => void;
   onStatus: (to: (typeof NEXT_STATUSES)[number]) => void;
 }) {
-  const phaseLabel = CAMPAIGN_PHASE_LABELS[c.phase as keyof typeof CAMPAIGN_PHASE_LABELS] ?? c.phase;
+  const now = useNow(30_000);
+  // A released Rundmail: planned (with the time until its start), starting,
+  // or a start that did not happen (lib/mailing-schedule.mjs, as in its workspace).
+  const schedule =
+    c.kind === "rundmail"
+      ? mailingScheduleState({
+          status: c.status,
+          frozen: c.status !== "entwurf",
+          startsAt: c.startsAt,
+          // a mail went out, or the runner already skipped someone (only it does)
+          started: c.stats.sent > 0 || c.stats.lastSentAt != null || c.stats.skipped > 0,
+          finished: false,
+          now: now ?? undefined,
+        })
+      : null;
+  const startPending = schedule != null && (schedule.kind === "geplant" || schedule.kind === "startet" || schedule.kind === "ueberfaellig");
+  const phaseLabel =
+    schedule?.kind === "ueberfaellig"
+      ? "Start überfällig"
+      : (CAMPAIGN_PHASE_LABELS[c.phase as keyof typeof CAMPAIGN_PHASE_LABELS] ?? c.phase);
+  const phaseTone = schedule?.kind === "ueberfaellig" ? "destructive" : (PHASE_TONE[c.phase] ?? "neutral");
   const transitions = NEXT_STATUSES.filter((to) => canTransition(c.status, to, c.kind));
   const primary = transitions.find((t) => t === "aktiv");
   const secondary = transitions.filter((t) => t !== primary);
@@ -229,7 +254,7 @@ function CampaignCard({
               <Link href={href} className="truncate text-base font-semibold hover:underline">
                 {c.name}
               </Link>
-              <StatusBadge tone={PHASE_TONE[c.phase] ?? "neutral"}>{phaseLabel}</StatusBadge>
+              <StatusBadge tone={phaseTone}>{phaseLabel}</StatusBadge>
             </div>
             <p className="mt-0.5 text-xs text-muted-foreground">
               {CAMPAIGN_KIND_LABELS[c.kind]}
@@ -262,11 +287,28 @@ function CampaignCard({
           {c.kind === "einzel" ? "Einzelne Mails an ausgewählte Kund:innen — aus Kunden oder dem Eingang." : c.audienceText}
         </p>
 
-        {(c.startsAt || c.endsAt) && (
-          <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
-            <CalendarRange className="size-3.5" aria-hidden />
-            {c.startsAt ? formatAdmin(c.startsAt, ADMIN_DATE) : "sofort"} – {c.endsAt ? formatAdmin(c.endsAt, ADMIN_DATE) : "offen"}
-          </p>
+        {startPending && c.startsAt ? (
+          <div className="flex flex-col gap-0.5">
+            <p className="flex flex-wrap items-center gap-x-1.5 text-xs font-medium">
+              <CalendarClock className="size-3.5 shrink-0" aria-hidden />
+              Geplant für {formatAdmin(c.startsAt, ADMIN_WEEKDAY_DATE_TIME)} Uhr
+              {schedule?.kind === "geplant" && now != null && (
+                <span className="font-normal text-muted-foreground">· {relativeTime(c.startsAt, now)}</span>
+              )}
+            </p>
+            {!sendsApproved && <p className="text-xs text-destructive">Versand gesperrt — startet so nicht (CAMPAIGN_SENDS_APPROVED).</p>}
+            {schedule?.kind === "ueberfaellig" && sendsApproved && (
+              <p className="text-xs text-destructive">Noch keine Mail versendet — Rundmail öffnen und prüfen.</p>
+            )}
+            {c.endsAt && <p className="text-xs text-muted-foreground">Versand spätestens bis {formatAdmin(c.endsAt, ADMIN_DATE)}</p>}
+          </div>
+        ) : (
+          (c.startsAt || c.endsAt) && (
+            <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              <CalendarRange className="size-3.5" aria-hidden />
+              {c.startsAt ? formatAdmin(c.startsAt, ADMIN_DATE) : "sofort"} – {c.endsAt ? formatAdmin(c.endsAt, ADMIN_DATE) : "offen"}
+            </p>
+          )
         )}
 
         <dl className="grid grid-cols-4 gap-2 rounded-md bg-surface-2 px-3 py-2 text-center">

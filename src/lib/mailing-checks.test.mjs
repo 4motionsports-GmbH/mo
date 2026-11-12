@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { MAILING_HTML_HARD_LIMIT, mailingChecks, visibleText } from "./mailing-checks.mjs";
+import { MAILING_HTML_HARD_LIMIT, mailingChecks, renderedMailErrors, visibleText } from "./mailing-checks.mjs";
 import { MAIL_FOOTER_MARKER } from "./mail-template-render.mjs";
 
 const html = (body) => `<!DOCTYPE html><html><head><title>t</title></head><body>${body}</body></html>`;
@@ -28,7 +28,11 @@ test("a clean mailing passes with infos about reach, duration and sender", () =>
   assert.deepEqual(r.errors, []);
   assert.deepEqual(keys(r.warnings), ["single_opt_in"]);
   assert.match(r.warnings[0].message, /200 Empfänger:innen ohne nachweisbares Double-Opt-in/);
-  assert.match(r.infos.find((i) => i.key === "reach").message, /etwa 1000 Empfänger:innen — Dauer etwa 4 Minuten bei 300 pro Minute/);
+  // the duration at the measured real speed (80 % of the label): 1000 ÷ 240 → 5 minutes
+  assert.match(
+    r.infos.find((i) => i.key === "reach").message,
+    /etwa 1000 Empfänger:innen — Dauer etwa 5 Min\. \(Tempo 300 pro Minute, real etwa 240\)/
+  );
   assert.ok(keys(r.infos).includes("unsubscribe"));
 });
 
@@ -113,7 +117,7 @@ test("products prepared ahead: sold out, gone and empty blocks are warnings, nev
   const r = mailingChecks(base({ products: { soldOut: ["ATX® Hantelbank"], unknown: ["alt-handle"], emptyBlocks: 1 } }));
   assert.equal(r.ok, true);
   assert.ok(keys(r.warnings).includes("products_sold_out"));
-  assert.match(r.warnings.find((w) => w.key === "products_sold_out").message, /Gerade ausverkauft: ATX® Hantelbank — fehlt in der Rundmail, wenn es beim Freigeben noch nicht lieferbar ist/);
+  assert.match(r.warnings.find((w) => w.key === "products_sold_out").message, /Gerade ausverkauft: ATX® Hantelbank — fehlt in der Rundmail, wenn es beim Versandstart noch nicht lieferbar ist/);
   assert.match(r.warnings.find((w) => w.key === "products_unknown").message, /alt-handle/);
   assert.match(r.warnings.find((w) => w.key === "products_block_empty").message, /^Ein Produkt-Baustein hat gerade kein lieferbares Produkt/);
   const two = mailingChecks(base({ products: { soldOut: [], unknown: [], emptyBlocks: 2 } }));
@@ -128,4 +132,35 @@ test("the web-font stylesheet is no link — many_links counts click targets onl
   assert.ok(!keys(mailingChecks(base({ html: html(head + links) })).warnings).includes("many_links"));
   const more = mailingChecks(base({ html: html(head + links + '<a href="https://motionsports.de/x">x</a>') }));
   assert.match(more.warnings.find((w) => w.key === "many_links").message, /^31 verschiedene Links/);
+});
+
+test("the render checks run on their own too (the content rendered again at the send start)", () => {
+  const clean = html(`<p>Text</p><img src="https://x.de/a.jpg" alt=""><a href="https://motionsports.de">Shop</a>`);
+  assert.deepEqual(renderedMailErrors({ html: clean }), []);
+  assert.deepEqual(keys(renderedMailErrors({ html: clean, bytes: MAILING_HTML_HARD_LIMIT + 1 })), ["size"]);
+  assert.deepEqual(keys(renderedMailErrors({ html: html('<img src="http://x.de/a.jpg">') })), ["insecure_image"]);
+  assert.deepEqual(keys(renderedMailErrors({ html: html('<a href="javascript:alert(1)">x</a>') })), ["bad_link"]);
+  // the frozen render: Mo's own placeholders are fine, anything else is not
+  assert.deepEqual(renderedMailErrors({ html: clean, frozen: "{{mo:link:0}} {{mo:unsub}} {{mo:fn:0}} {{mo:greet:0}}" }), []);
+  const left = renderedMailErrors({ html: clean, frozen: "Hallo {{vorname}} {{mo:link:1}}" });
+  assert.deepEqual(keys(left), ["placeholders"]);
+  assert.match(left[0].message, /Unbekannte Platzhalter: \{\{vorname\}\}/);
+  // the same rules and messages as the full checks
+  const full = mailingChecks(base({ html: html('<img src="http://x.de/a.jpg"><a href="data:text/html,x">x</a>') }));
+  assert.deepEqual(
+    full.errors.filter((e) => e.key === "insecure_image" || e.key === "bad_link"),
+    renderedMailErrors({ html: html('<img src="http://x.de/a.jpg"><a href="data:text/html,x">x</a>') })
+  );
+});
+
+test("an audience that hangs on a Rundmail not sent yet may be empty (a reminder prepared ahead)", () => {
+  const empty = mailingChecks(base({ audience: { total: 0, confirmed: 0 } }));
+  assert.ok(keys(empty.errors).includes("audience_empty"));
+  const pending = mailingChecks(base({ audience: { total: 0, confirmed: 0 }, audiencePending: "Black Friday" }));
+  assert.equal(keys(pending.errors).includes("audience_empty"), false);
+  assert.equal(pending.ok, true);
+  assert.match(pending.warnings.find((w) => w.key === "audience_pending").message, /Rundmail „Black Friday“, die noch nicht fertig versendet ist/);
+  assert.match(pending.infos.find((i) => i.key === "reach").message, /an niemanden — die Zielgruppe wird beim Versandstart frisch ermittelt/);
+  // with recipients the dependency says nothing
+  assert.equal(keys(mailingChecks(base({ audiencePending: "Black Friday" })).warnings).includes("audience_pending"), false);
 });

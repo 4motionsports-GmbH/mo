@@ -173,7 +173,7 @@ function ProductsFields({ block, onPatch, disabled }: { block: Block; onPatch: P
       </div>
       <Field
         label={`Produkte (${refs.length}/${MAIL_TEMPLATE_LIMITS.productsPerBlock})`}
-        info="Bild, Name, aktueller Preis und Link kommen beim Freigeben aus dem Katalog. Ausverkaufte Produkte lassen sich vorbereiten: In der Mail erscheinen sie erst, wenn sie wieder lieferbar sind — bis dahin fehlen sie (ein Baustein ganz ohne lieferbares Produkt entfällt)."
+        info="Bild, Name, aktueller Preis und Link kommen beim Versand aus dem Katalog — bei einer geplanten Rundmail mit dem Stand beim Versandstart, sonst beim Freigeben. Ausverkaufte Produkte lassen sich vorbereiten: In der Mail erscheinen sie erst, wenn sie wieder lieferbar sind — bis dahin fehlen sie (ein Baustein ganz ohne lieferbares Produkt entfällt)."
       >
         <div className="flex flex-col gap-2">
           {refs.length > 0 && (
@@ -224,7 +224,7 @@ function ProductField({ block, onPatch, disabled }: { block: Block; onPatch: Pat
   return (
     <Field
       label="Produkt"
-      info="Bild, Name, aktueller Preis (auch Sale- und „ab“-Preis) und Link kommen beim Freigeben live aus dem Katalog. Ein ausverkauftes Produkt lässt sich vorbereiten: Der Baustein erscheint erst, wenn es wieder lieferbar ist — bis dahin fehlt er in der Mail."
+      info="Bild, Name, aktueller Preis (auch Sale- und „ab“-Preis) und Link kommen live aus dem Katalog — bei einer geplanten Rundmail mit dem Stand beim Versandstart, sonst beim Freigeben. Ein ausverkauftes Produkt lässt sich vorbereiten: Der Baustein erscheint erst, wenn es wieder lieferbar ist — bis dahin fehlt er in der Mail."
     >
       <div className="flex flex-col gap-2">
         {ref && (

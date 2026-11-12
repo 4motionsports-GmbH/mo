@@ -30,9 +30,11 @@ import {
 import { ADMIN_DAY_MONTH, formatAdmin } from "@/lib/admin-datetime.mjs";
 import { eur, num } from "@/lib/admin-format.mjs";
 import { niceTicks } from "@/lib/chart-ticks.mjs";
+import { bucketLabel, bucketTick } from "@/lib/rundmail-analytics.mjs";
 import {
   CHATS_PER_DAY_HEIGHT,
   REVENUE_CHART_HEIGHT,
+  TIME_BARS_HEIGHT,
   personaChartHeight,
 } from "./chart-geometry";
 import type { RevenueSeriesBucket, RevenueSeriesKey } from "./revenue-series";
@@ -332,6 +334,100 @@ export function RevenueOverTimeChart({
             shape={stackSegment(s.key)}
           />
         ))}
+      </BarChart>
+    </ChartFrame>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Time bars — ONE series as thin columns over time buckets (minutes, hours or
+// Berlin days): a Rundmail's mails per bucket during the send, its clicks,
+// orders or revenue afterwards. One series, one axis, no legend (the card's
+// title names it); ≤ 24 px columns with the rounded data end; the tooltip
+// names the bucket („27.11., 09:00–09:10“) and the value.
+// ---------------------------------------------------------------------------
+
+export interface TimeBarsChartProps {
+  /** Bucket start (ISO instant, or YYYY-MM-DD for a day) and its value. */
+  points: Array<{ t: string; value: number }>;
+  /** Bucket size in minutes (1, 10, 60 or 1440 = a day). */
+  stepMinutes: number;
+  /** What the value is — counts or euros (the tooltip and the y-axis). */
+  valueKind: "count" | "eur";
+  /** Series name in the tooltip, e.g. „Klicks“. */
+  seriesLabel: string;
+}
+
+function TimeBarsTooltip({
+  active,
+  payload,
+  stepMinutes,
+  valueKind,
+  seriesLabel,
+}: {
+  active?: boolean;
+  payload?: Array<{ payload?: { t: string; value: number } }>;
+  stepMinutes: number;
+  valueKind: "count" | "eur";
+  seriesLabel: string;
+}) {
+  const row = payload?.[0]?.payload;
+  if (!active || !row) return null;
+  return (
+    <div className="rounded-md border border-border bg-popover px-3 py-2 text-xs text-popover-foreground shadow-md">
+      <div className="mb-1 font-semibold">{bucketLabel(row.t, stepMinutes)}</div>
+      <div className="flex items-center gap-2">
+        <span className="inline-block h-2 w-2 rounded-full" style={{ background: "var(--chart-1)" }} aria-hidden />
+        <span>
+          {seriesLabel}: <strong className="tabular-nums">{valueKind === "eur" ? eur(row.value) : num(row.value)}</strong>
+        </span>
+      </div>
+    </div>
+  );
+}
+
+export function TimeBarsChart({ points, stepMinutes, valueKind, seriesLabel }: TimeBarsChartProps) {
+  const first = points[0]?.t ?? "";
+  const last = points[points.length - 1]?.t ?? "";
+  const multiDay = stepMinutes < 1440 && first.slice(0, 10) !== last.slice(0, 10);
+  const tickInterval = Math.max(0, Math.ceil(points.length / 8) - 1);
+  const yTicks = niceTicks(Math.max(0, ...points.map((p) => p.value)), 4);
+  return (
+    <ChartFrame height={TIME_BARS_HEIGHT}>
+      {/* A tick under the last column is centred on it: room for „06.11. 09:00“. */}
+      <BarChart data={points} margin={{ top: 8, right: multiDay ? 32 : 16, left: 4, bottom: 0 }} barCategoryGap="20%">
+        <CartesianGrid stroke={BORDER} vertical={false} />
+        <XAxis
+          dataKey="t"
+          tickFormatter={(t: string) => bucketTick(t, stepMinutes, multiDay)}
+          interval={tickInterval}
+          tick={{ fill: MUTED, fontSize: 11 }}
+          tickLine={false}
+          axisLine={{ stroke: BORDER }}
+          minTickGap={8}
+        />
+        <YAxis
+          width={valueKind === "eur" ? 64 : 40}
+          domain={[0, yTicks[yTicks.length - 1]]}
+          ticks={yTicks}
+          tickFormatter={(v: number) => (valueKind === "eur" ? eur(v, 0) : num(v))}
+          tick={{ fill: MUTED, fontSize: 11 }}
+          tickLine={false}
+          axisLine={false}
+          allowDecimals={false}
+        />
+        <Tooltip
+          content={<TimeBarsTooltip stepMinutes={stepMinutes} valueKind={valueKind} seriesLabel={seriesLabel} />}
+          cursor={{ fill: "var(--secondary)", fillOpacity: 0.6 }}
+        />
+        <Bar
+          dataKey="value"
+          name={seriesLabel}
+          fill="var(--chart-1)"
+          maxBarSize={24}
+          radius={[4, 4, 0, 0]}
+          isAnimationActive={false}
+        />
       </BarChart>
     </ChartFrame>
   );

@@ -13,7 +13,8 @@
 // (mailing-send.ts → campaign-gates.mjs) — these checks never replace them.
 
 import { MAIL_FOOTER_MARKER } from "./mail-template-render.mjs";
-import { rewriteLinkHrefs } from "./mailing-core.mjs";
+import { leftoverPlaceholders, rewriteLinkHrefs } from "./mailing-core.mjs";
+import { formatMailingDuration, mailingDurationMinutes, realMailingRate } from "./mailing-schedule.mjs";
 
 /** Gmail clips a mail above 102 KB — the unsubscribe footer would vanish. */
 export const MAILING_HTML_HARD_LIMIT = 100 * 1024;
@@ -60,6 +61,41 @@ export function visibleText(html) {
 }
 
 /**
+ * The blocking checks that depend on the RENDERED mail: its size (Gmail clips
+ * above 102 KB and hides the unsubscribe link), pictures over http://,
+ * javascript:/data: links and — for the frozen render (`frozen`: its HTML,
+ * text and subject) — placeholders other than Mo's own per-recipient ones.
+ * Part of mailingChecks; run again on its own on the content rendered anew
+ * at the send start (mailing-send.ts), with the same rules and messages.
+ * @param {{ html: string, bytes?: number, frozen?: string }} input
+ * @returns {MailingCheck[]}
+ */
+export function renderedMailErrors(input) {
+  /** @type {MailingCheck[]} */
+  const errors = [];
+  const html = String(input.html ?? "");
+  const bytes = input.bytes ?? new TextEncoder().encode(html).length;
+  if (bytes > MAILING_HTML_HARD_LIMIT) {
+    errors.push({
+      key: "size",
+      level: "error",
+      message: `Die Mail ist ${Math.round(bytes / 1024)} KB groß — Gmail kürzt ab 102 KB und versteckt dann den Abmelde-Link. Bausteine oder eigenes HTML kürzen.`,
+    });
+  }
+  if (/<img\b[^>]*\ssrc\s*=\s*"http:\/\//i.test(html)) {
+    errors.push({ key: "insecure_image", level: "error", message: "Ein Bild wird über http:// geladen — nur https-Bilder werden sicher angezeigt." });
+  }
+  if (/\shref\s*=\s*"(?:javascript|data|vbscript):/i.test(html)) {
+    errors.push({ key: "bad_link", level: "error", message: "Ein Link hat ein unzulässiges Ziel (javascript:/data:)." });
+  }
+  if (input.frozen !== undefined) {
+    const bad = leftoverPlaceholders(input.frozen).filter((p) => !/^\{\{mo:/.test(p));
+    if (bad.length > 0) errors.push({ key: "placeholders", level: "error", message: `Unbekannte Platzhalter: ${bad.join(", ")}` });
+  }
+  return errors;
+}
+
+/**
  * Run every check.
  * @param {{
  *   subject: string,
@@ -77,7 +113,10 @@ export function visibleText(html) {
  *   unknownSubjectFields: string[],
  *   bytes?: number,
  *   products?: { soldOut: string[], unknown: string[], emptyBlocks: number },
- * }} input
+ *   audiencePending?: string | null,
+ * }} input  `audiencePending`: the name of a Rundmail the audience depends on
+ *   („Hat Rundmail <X> erhalten“) that has not finished sending — an empty
+ *   audience is then expected (it is matched at this Rundmail's start).
  * @returns {{ errors: MailingCheck[], warnings: MailingCheck[], infos: MailingCheck[], ok: boolean }}
  */
 export function mailingChecks(input) {
@@ -103,7 +142,15 @@ export function mailingChecks(input) {
   for (const issue of input.docIssues?.errors ?? []) errors.push({ key: "content", level: "error", message: issue.message, blockId: issue.blockId });
   if (!input.sender.ok) errors.push({ key: "sender", level: "error", message: input.sender.message });
   if (input.audience && input.audience.total === 0) {
-    errors.push({ key: "audience_empty", level: "error", message: "Die Zielgruppe ist leer — niemand mit Einwilligung passt." });
+    if (input.audiencePending) {
+      warnings.push({
+        key: "audience_pending",
+        level: "warning",
+        message: `Die Zielgruppe ist gerade leer: Sie hängt an der Rundmail „${input.audiencePending}“, die noch nicht fertig versendet ist, und wird beim Versandstart ermittelt — den Start erst nach deren Versand planen.`,
+      });
+    } else {
+      errors.push({ key: "audience_empty", level: "error", message: "Die Zielgruppe ist leer — niemand mit Einwilligung passt." });
+    }
   }
   if (input.testVersion !== input.contentVersion) {
     errors.push({
@@ -112,19 +159,7 @@ export function mailingChecks(input) {
       message: "Testmail fehlt: Schicke den aktuellen Stand an dich selbst und prüfe ihn auf dem Handy und am Rechner (nach jeder Änderung neu).",
     });
   }
-  if (bytes > MAILING_HTML_HARD_LIMIT) {
-    errors.push({
-      key: "size",
-      level: "error",
-      message: `Die Mail ist ${Math.round(bytes / 1024)} KB groß — Gmail kürzt ab 102 KB und versteckt dann den Abmelde-Link. Bausteine oder eigenes HTML kürzen.`,
-    });
-  }
-  if (/<img\b[^>]*\ssrc\s*=\s*"http:\/\//i.test(html)) {
-    errors.push({ key: "insecure_image", level: "error", message: "Ein Bild wird über http:// geladen — nur https-Bilder werden sicher angezeigt." });
-  }
-  if (/\shref\s*=\s*"(?:javascript|data|vbscript):/i.test(html)) {
-    errors.push({ key: "bad_link", level: "error", message: "Ein Link hat ein unzulässiges Ziel (javascript:/data:)." });
-  }
+  errors.push(...renderedMailErrors({ html, bytes }));
 
   // ── deliverability hints ──
   if (subject) {
@@ -186,15 +221,16 @@ export function mailingChecks(input) {
     warnings.push({ key: "http_link", level: "warning", message: "Ein Link beginnt mit http:// — besser https://." });
   }
   for (const issue of input.docIssues?.warnings ?? []) warnings.push({ key: "content", level: "warning", message: issue.message, blockId: issue.blockId });
-  // Products prepared ahead (sold out may be added on purpose): the content is
-  // frozen at the release, so what is still sold out then is missing from the
-  // whole Rundmail.
+  // Products prepared ahead (sold out may be added on purpose): prices and
+  // availability are taken at the send start (a planned Rundmail is rendered
+  // again then, mailing-schedule.mjs), so what is still sold out then is
+  // missing from the whole Rundmail.
   const products = input.products;
   if (products?.soldOut?.length) {
     warnings.push({
       key: "products_sold_out",
       level: "warning",
-      message: `Gerade ausverkauft: ${products.soldOut.join(", ")} — fehlt in der Rundmail, wenn es beim Freigeben noch nicht lieferbar ist.`,
+      message: `Gerade ausverkauft: ${products.soldOut.join(", ")} — fehlt in der Rundmail, wenn es beim Versandstart noch nicht lieferbar ist.`,
     });
   }
   if (products?.unknown?.length) {
@@ -228,8 +264,16 @@ export function mailingChecks(input) {
   // ── what will happen ──
   if (input.audience) {
     const reach = input.allowSingleOptIn ? input.audience.total : input.audience.confirmed;
-    const minutes = Math.max(1, Math.ceil(reach / Math.max(1, input.ratePerMinute)));
-    infos.push({ key: "reach", level: "info", message: `Geht an etwa ${reach} Empfänger:innen — Dauer etwa ${minutes} Minute${minutes === 1 ? "" : "n"} bei ${input.ratePerMinute} pro Minute.` });
+    // At the measured real speed (about 80 % of the tempo label).
+    const duration = formatMailingDuration(mailingDurationMinutes(reach, input.ratePerMinute));
+    infos.push({
+      key: "reach",
+      level: "info",
+      message:
+        reach > 0
+          ? `Geht an etwa ${reach} Empfänger:innen — Dauer ${duration} (Tempo ${input.ratePerMinute} pro Minute, real etwa ${realMailingRate(input.ratePerMinute)}).`
+          : "Geht nach heutigem Stand an niemanden — die Zielgruppe wird beim Versandstart frisch ermittelt.",
+    });
   }
   if (input.usesFirstName) {
     infos.push({ key: "first_name", level: "info", message: "Persönliche Anrede: Wo kein Vorname bekannt ist, steht der Ersatztext." });

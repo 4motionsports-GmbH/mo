@@ -4,13 +4,17 @@
 // The campaign list (Kampagnen overview) and "Neue Kampagne" (wizard). The
 // input is validated by campaign-def.validateCampaignInput; a new campaign
 // starts as Entwurf — nothing is materialised or drafted until it is started.
+// A new Rundmail starts from `templateId`, `fromRundmailId` (a copy of another
+// Rundmail's content: subject, preview line, language, document, pace — never
+// its test mail) or a `starter`.
 // docs/CAMPAIGNS.md §2. Auth via guardAdminGet / guardAdminPost.
 
 import { guardAdminGet, guardAdminPost, adminJson, adminJsonError } from "@/lib/admin-api";
 import { createCampaign, listCampaigns, type CampaignInput } from "@/lib/campaigns-store";
 import { validateCampaignInput } from "@/lib/campaign-def.mjs";
 import { senderDomains } from "@/lib/sender-store";
-import { createMailing } from "@/lib/mailing-store";
+import { createMailing, getMailing } from "@/lib/mailing-store";
+import { getCampaign } from "@/lib/campaigns-store";
 import { getMailTemplate } from "@/lib/mail-template-store";
 import { MAIL_TEMPLATE_STARTERS, stripMoBlocks } from "@/lib/mail-template-doc.mjs";
 import { DISCOUNT_PERCENT_MAX } from "@/lib/discount-validation.mjs";
@@ -56,14 +60,30 @@ export async function POST(req: Request) {
       // Rundmail has no per-recipient AI content) or a starter.
       const templateId = Number(raw.templateId);
       const template = Number.isInteger(templateId) && templateId > 0 ? await getMailTemplate(templateId) : null;
+      const fromId = Number(raw.fromRundmailId);
+      const fromCampaign = !template && Number.isInteger(fromId) && fromId > 0 ? await getCampaign(fromId) : null;
+      const from = fromCampaign?.kind === "rundmail" ? await getMailing(fromId) : null;
       const starter =
         MAIL_TEMPLATE_STARTERS.find((s) => s.key === raw.starter && s.use !== "personal") ??
         MAIL_TEMPLATE_STARTERS.find((s) => s.key === "newsletter")!;
-      const ok = await createMailing(id, {
-        doc: template ? stripMoBlocks(template.doc) : starter.build(),
-        subject: "",
-        sourceTemplateId: template?.id ?? null,
-      });
+      const ok = await createMailing(
+        id,
+        from
+          ? {
+              doc: stripMoBlocks(from.doc),
+              subject: from.subject,
+              preheader: from.preheader,
+              sourceTemplateId: from.sourceTemplateId,
+              language: from.language,
+              rate: from.rate,
+              engagedFirst: from.engagedFirst,
+            }
+          : {
+              doc: template ? stripMoBlocks(template.doc) : starter.build(),
+              subject: "",
+              sourceTemplateId: template?.id ?? null,
+            }
+      );
       if (!ok) return adminJsonError("internal_error", "Der Inhalt der Rundmail konnte nicht angelegt werden (Migration 0081?).", 500);
     }
     return adminJson({ id });

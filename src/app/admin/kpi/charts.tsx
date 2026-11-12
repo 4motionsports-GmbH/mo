@@ -12,8 +12,9 @@
 import * as React from "react";
 import dynamic from "next/dynamic";
 import { Skeleton } from "../ui";
-import { CHATS_PER_DAY_HEIGHT, REVENUE_CHART_HEIGHT, personaChartHeight } from "./chart-geometry";
+import { CHATS_PER_DAY_HEIGHT, REVENUE_CHART_HEIGHT, TIME_BARS_HEIGHT, personaChartHeight } from "./chart-geometry";
 import type { RevenueSeriesBucket, RevenueSeriesKey } from "./revenue-series";
+import type { TimeBarsChartProps } from "./charts-recharts";
 
 const HeightContext = React.createContext<number>(200);
 
@@ -32,6 +33,10 @@ const PersonaDistributionImpl = dynamic(
 );
 const RevenueOverTimeImpl = dynamic(
   () => import("./charts-recharts").then((m) => m.RevenueOverTimeChart),
+  { ssr: false, loading: ChartSkeleton }
+);
+const TimeBarsImpl = dynamic(
+  () => import("./charts-recharts").then((m) => m.TimeBarsChart),
   { ssr: false, loading: ChartSkeleton }
 );
 
@@ -60,6 +65,15 @@ export function RevenueOverTimeChart(props: {
   return (
     <HeightContext.Provider value={REVENUE_CHART_HEIGHT}>
       <RevenueOverTimeImpl {...props} />
+    </HeightContext.Provider>
+  );
+}
+
+/** One series as thin columns over time buckets (Rundmail → Versand → „Verlauf“). */
+export function TimeBarsChart(props: TimeBarsChartProps) {
+  return (
+    <HeightContext.Provider value={TIME_BARS_HEIGHT}>
+      <TimeBarsImpl {...props} />
     </HeightContext.Provider>
   );
 }

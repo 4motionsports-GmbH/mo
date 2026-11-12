@@ -23,6 +23,11 @@
 //   clickedWithinDays  clicked a marketing mail within N days
 //   excludeMailedWithinDays  no marketing mail within N days
 //   excludeCampaignIds  not (yet) a recipient of these campaigns
+//   emails           „Nur diese Adressen“ — at most 50 addresses (a test
+//                    group): only these customers, consent still required
+//   receivedCampaign { id, notClicked? } — got a mail of campaign `id` (e.g.
+//                    the Black Friday Rundmail), optionally without a click
+//                    (a Cyber Monday reminder)
 
 export const AUDIENCE_SPEC_VERSION = 1;
 
@@ -43,6 +48,82 @@ const SEGMENT_LABELS = {
 };
 const VALUE_LABELS = { klein: "Kleinteile", komponente: "Komponenten", grossgeraet: "Großgeräte" };
 const LEVEL_LABELS = { confirmed_opt_in: "DOI", single_opt_in: "Single-Opt-in", unknown: "unbekanntes Opt-in" };
+
+/** „Nur diese Adressen“: at most this many (a test group, not a list import). */
+export const AUDIENCE_MAX_EMAILS = 50;
+
+/** A plausible single address (the same shape the Rundmail sender accepts). */
+const EMAIL_RE = /^[^\s@<>(),;:"[\]\\]+@[^\s@<>(),;:"[\]\\]+\.[^\s@<>(),;:"[\]\\]{2,}$/;
+
+/** @param {unknown} v */
+function normalizeAudienceEmail(v) {
+  if (typeof v !== "string") return null;
+  const s = v.trim().replace(/^mailto:/i, "").replace(/^<|>$/g, "").trim().toLowerCase();
+  return s.length <= 254 && EMAIL_RE.test(s) ? s : null;
+}
+
+function cleanEmails(value) {
+  if (!Array.isArray(value)) return undefined;
+  const out = [];
+  for (const v of value) {
+    const e = normalizeAudienceEmail(v);
+    if (!e || out.includes(e)) continue;
+    out.push(e);
+    if (out.length >= AUDIENCE_MAX_EMAILS) break;
+  }
+  return out.length > 0 ? out : undefined;
+}
+
+/**
+ * @param {unknown} value
+ * @returns {{ id: number, notClicked?: true } | undefined}
+ */
+function cleanReceived(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const raw = /** @type {{ id?: unknown, notClicked?: unknown }} */ (value);
+  const id = typeof raw.id === "number" && Number.isInteger(raw.id) && raw.id > 0 ? raw.id : null;
+  if (id === null) return undefined;
+  return raw.notClicked === true ? { id, notClicked: true } : { id };
+}
+
+/**
+ * The pasted list of „Nur diese Adressen“: one per line or separated by
+ * commas, semicolons or spaces („Name <a@b.de>“ works too). Normalised
+ * (trimmed, lower case), duplicates folded, at most AUDIENCE_MAX_EMAILS.
+ * @param {unknown} raw  the text of the field (or a list)
+ * @returns {{ emails: string[], invalid: string[], duplicates: number, overLimit: number }}
+ */
+export function parseAudienceEmails(raw) {
+  const parts = (Array.isArray(raw) ? raw.map(String) : String(raw ?? "").split(/[\n\r,;\t ]+/))
+    .map((s) => s.trim())
+    .filter(Boolean)
+    // „Anna Muster <anna@x.de>“ → the address in the brackets
+    .map((s) => (/<([^<>]+)>/.exec(s)?.[1] ?? s));
+  const emails = [];
+  const invalid = [];
+  let duplicates = 0;
+  let overLimit = 0;
+  for (const part of parts) {
+    const e = normalizeAudienceEmail(part);
+    if (!e) {
+      // A bare name before „<…>“ (split off by the spaces) is no address and
+      // no error either; something that looks like an address attempt is.
+      if (!/@/.test(part) && !/\.[a-z]{2,}$/i.test(part)) continue;
+      if (!invalid.includes(part)) invalid.push(part);
+      continue;
+    }
+    if (emails.includes(e)) {
+      duplicates++;
+      continue;
+    }
+    if (emails.length >= AUDIENCE_MAX_EMAILS) {
+      overLimit++;
+      continue;
+    }
+    emails.push(e);
+  }
+  return { emails, invalid, duplicates, overLimit };
+}
 
 function cleanList(value, allowed, max = 50) {
   if (!Array.isArray(value)) return undefined;
@@ -119,6 +200,8 @@ export function normalizeAudienceSpec(raw) {
     excludeCampaignIds: Array.isArray(s.excludeCampaignIds)
       ? [...new Set(s.excludeCampaignIds.filter((n) => Number.isInteger(n) && n > 0))].slice(0, 20)
       : undefined,
+    emails: cleanEmails(s.emails),
+    receivedCampaign: cleanReceived(s.receivedCampaign),
   };
   for (const k of Object.keys(spec)) if (spec[k] === undefined || (Array.isArray(spec[k]) && spec[k].length === 0)) delete spec[k];
   return spec;
@@ -159,6 +242,9 @@ export function audienceQueryParams(spec, now = new Date()) {
     clickedAfter: daysAgo(spec.clickedWithinDays ?? null),
     notMailedAfter: daysAgo(spec.excludeMailedWithinDays ?? null),
     excludeCampaignIds: spec.excludeCampaignIds ?? null,
+    emails: spec.emails ?? null,
+    receivedCampaignId: spec.receivedCampaign?.id ?? null,
+    receivedNotClicked: spec.receivedCampaign ? spec.receivedCampaign.notClicked === true : null,
   };
 }
 
@@ -206,6 +292,13 @@ export function describeAudienceSpec(spec, labels = {}) {
     const name = labels.campaignName ?? ((id) => `#${id}`);
     parts.push(`nicht in: ${spec.excludeCampaignIds.map(name).join(", ")}`);
   }
+  if (spec.receivedCampaign) {
+    const name = labels.campaignName ?? ((id) => `#${id}`);
+    parts.push(`hat „${name(spec.receivedCampaign.id)}“ erhalten${spec.receivedCampaign.notClicked ? ", aber nicht geklickt" : ""}`);
+  }
+  if (spec.emails) {
+    parts.push(`nur ${spec.emails.length === 1 ? "diese 1 Adresse" : `diese ${spec.emails.length} Adressen`} (Testgruppe)`);
+  }
   const head = "Alle Kunden mit Einwilligung für E-Mail-Werbung";
   return parts.length === 0 ? head : `${head} · ${parts.join(" · ")}`;
 }
@@ -213,6 +306,44 @@ export function describeAudienceSpec(spec, labels = {}) {
 /** How many restrictions a spec carries (0 = everyone with consent). */
 export function audienceRestrictionCount(spec) {
   return Object.keys(spec).filter((k) => k !== "v").length;
+}
+
+/**
+ * The common choices of a Rundmail's Zielgruppe, as shortcuts over the spec:
+ *   alle   — everyone with the consent (the default: subscribed, not blocked)
+ *   doi    — only a provable double opt-in
+ *   test   — „Nur diese Adressen“ (a test group through the real batch path)
+ *   eigene — any other combination of filters (the full builder)
+ * The consent and block gates apply to every one of them.
+ */
+export const AUDIENCE_PRESETS = Object.freeze(["alle", "doi", "test", "eigene"]);
+
+/**
+ * Which preset a spec is (anything that is not exactly a preset is „eigene“).
+ * @param {unknown} raw
+ * @returns {"alle" | "doi" | "test" | "eigene"}
+ */
+export function audiencePresetOf(raw) {
+  const spec = normalizeAudienceSpec(raw);
+  const keys = Object.keys(spec).filter((k) => k !== "v");
+  if (keys.length === 0) return "alle";
+  if (keys.length === 1 && keys[0] === "optInLevels" && spec.optInLevels?.length === 1 && spec.optInLevels[0] === "confirmed_opt_in") {
+    return "doi";
+  }
+  if (keys.length === 1 && keys[0] === "emails") return "test";
+  return "eigene";
+}
+
+/**
+ * The spec of a preset (for „eigene“: the given spec unchanged).
+ * @param {"alle" | "doi" | "test" | "eigene"} preset
+ * @param {{ emails?: string[], spec?: unknown }} [opts]
+ */
+export function audiencePresetSpec(preset, opts = {}) {
+  if (preset === "doi") return normalizeAudienceSpec({ optInLevels: ["confirmed_opt_in"] });
+  if (preset === "test") return normalizeAudienceSpec({ emails: opts.emails ?? [] });
+  if (preset === "eigene") return normalizeAudienceSpec(opts.spec);
+  return normalizeAudienceSpec({});
 }
 
 /** The JSON schema the AI audience builder must answer with (writer tier). */

@@ -22,6 +22,10 @@ export type AudienceSpecProps = {
   clickedWithinDays?: number;
   excludeMailedWithinDays?: number;
   excludeCampaignIds?: number[];
+  /** „Nur diese Adressen“ (≤ 50, normalised) — a test group; consent still required. */
+  emails?: string[];
+  /** „Hat Rundmail <id> erhalten“, optionally „… aber nicht geklickt“. */
+  receivedCampaign?: { id: number; notClicked?: boolean };
 };
 
 /**

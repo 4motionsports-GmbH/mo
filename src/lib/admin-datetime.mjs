@@ -76,6 +76,17 @@ export const ADMIN_TIME = { hour: "2-digit", minute: "2-digit" };
 /** 31.8.2026, 22:40:00 — the de-DE default (matches a bare toLocaleString). */
 /** @type {Intl.DateTimeFormatOptions} */
 export const ADMIN_DATE_TIME_FULL = {};
+/** Montag, 31.08.2026, 22:40 — a planned moment with its weekday (a send must
+ * never be read on the wrong day). */
+/** @type {Intl.DateTimeFormatOptions} */
+export const ADMIN_WEEKDAY_DATE_TIME = {
+  weekday: "long",
+  day: "2-digit",
+  month: "2-digit",
+  year: "numeric",
+  hour: "2-digit",
+  minute: "2-digit",
+};
 
 /**
  * Coerce an admin timestamp to a valid Date, or null.
@@ -105,4 +116,74 @@ export function formatAdmin(value, options = ADMIN_DATE, fallback = ADMIN_EMPTY)
   const d = toAdminDate(value);
   if (!d) return fallback;
   return d.toLocaleString("de-DE", { ...options, timeZone: ADMIN_TIME_ZONE });
+}
+
+// ── <input type="datetime-local"> in the store's timezone ────────────────────
+// A datetime-local value has no zone. The operator plans in Berlin time
+// whatever zone the browser runs in (a laptop on travel, a VM in UTC), so the
+// admin never lets the browser read it: these two convert explicitly.
+
+const BERLIN_PARTS = new Intl.DateTimeFormat("en-GB", {
+  timeZone: ADMIN_TIME_ZONE,
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+  hour: "2-digit",
+  minute: "2-digit",
+  hourCycle: "h23",
+});
+
+/** Berlin wall-clock parts of an instant (strings, zero-padded). @param {number} ms */
+function berlinParts(ms) {
+  /** @type {Record<string, string>} */
+  const out = {};
+  for (const p of BERLIN_PARTS.formatToParts(new Date(ms))) out[p.type] = p.value;
+  return out;
+}
+
+/** Berlin's UTC offset at an instant, in ms. @param {number} ms */
+function berlinOffsetMs(ms) {
+  const p = berlinParts(ms);
+  const wall = Date.UTC(Number(p.year), Number(p.month) - 1, Number(p.day), Number(p.hour), Number(p.minute));
+  return wall - Math.floor(ms / 60_000) * 60_000;
+}
+
+/**
+ * The value of an `<input type="datetime-local">` for an instant, as Berlin
+ * wall time („2026-11-28T08:00“). "" for absent or unparseable input.
+ *
+ * @param {string | number | Date | null | undefined} value
+ * @returns {string}
+ */
+export function toBerlinInputValue(value) {
+  const d = toAdminDate(value);
+  if (!d) return "";
+  const p = berlinParts(d.getTime());
+  return `${p.year}-${p.month}-${p.day}T${p.hour}:${p.minute}`;
+}
+
+/**
+ * A datetime-local value read as Berlin wall time → the ISO instant
+ * („2026-11-28T08:00“ → "2026-11-28T07:00:00.000Z"), or null for anything
+ * that is not a real date and time. Summer and winter time are handled; a
+ * time the spring switch skips (02:30 on the last Sunday of March) becomes
+ * the same wall time one hour later (03:30), the doubled hour of the autumn
+ * switch its second occurrence (winter time).
+ *
+ * @param {unknown} input
+ * @returns {string | null}
+ */
+export function fromBerlinInputValue(input) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::\d{2}(?:\.\d{1,3})?)?$/.exec(String(input ?? "").trim());
+  if (!m) return null;
+  const [y, mo, d, h, mi] = m.slice(1, 6).map(Number);
+  if (mo < 1 || mo > 12 || h > 23 || mi > 59) return null;
+  const naive = Date.UTC(y, mo - 1, d, h, mi);
+  const check = new Date(naive);
+  if (check.getUTCFullYear() !== y || check.getUTCMonth() !== mo - 1 || check.getUTCDate() !== d) return null;
+  // Start from the naive instant and correct by Berlin's offset there; the
+  // second pass settles the instants next to a switch.
+  let guess = naive;
+  for (let i = 0; i < 2; i++) guess = naive - berlinOffsetMs(guess);
+  return new Date(guess).toISOString();
 }

@@ -42,6 +42,8 @@ export interface AudienceMatch {
   /** Of the total: how many talked to Mo, how many get English mail. */
   totalWithMo: number;
   totalEnglish: number;
+  /** Of the total: how many have a provable double opt-in (confirmed_opt_in). */
+  totalConfirmed: number;
   /** Only meaningful with `withoutConsent`: matches without the e-mail consent, and of those reachable by letter. */
   totalNoConsent: number;
   totalLetter: number;
@@ -78,7 +80,7 @@ export async function matchAudience(
   } = {},
   sql: Sql | null = getSql()
 ): Promise<AudienceMatch> {
-  if (!sql) return { ok: false, total: 0, totalWithMo: 0, totalEnglish: 0, totalNoConsent: 0, totalLetter: 0, totalWithAddress: 0, members: [] };
+  if (!sql) return { ok: false, total: 0, totalWithMo: 0, totalEnglish: 0, totalConfirmed: 0, totalNoConsent: 0, totalLetter: 0, totalWithAddress: 0, members: [] };
   const spec = normalizeAudienceSpec(rawSpec);
   const p = audienceQueryParams(spec, opts.now ?? new Date());
   const limit = Math.max(1, Math.min(opts.limit ?? 20, AUDIENCE_MAX_MEMBERS));
@@ -126,6 +128,7 @@ export async function matchAudience(
              count(*) OVER () AS total,
              count(*) FILTER (WHERE b.conversations_count > 0) OVER () AS total_mo,
              count(*) FILTER (WHERE b.lang = 'en') OVER () AS total_en,
+             count(*) FILTER (WHERE b.email_consent_level = 'confirmed_opt_in') OVER () AS total_doi,
              -- Letter reach (D-7): no e-mail consent (or blocked), a postal address, no objection.
              count(*) FILTER (WHERE NOT (b.email_consent_state = 'subscribed' AND NOT b.blocked)) OVER () AS total_no_consent,
              count(*) FILTER (WHERE NOT (b.email_consent_state = 'subscribed' AND NOT b.blocked)
@@ -172,6 +175,21 @@ export async function matchAudience(
                 WHERE y.customer_id = b.customer_id
                   AND y.campaign_id = ANY(${p.excludeCampaignIds}::bigint[])
                   AND y.status <> 'excluded'))
+         -- „Nur diese Adressen“ (a test group) — narrows, the consent above still applies.
+         AND (${p.emails}::text[] IS NULL OR lower(btrim(b.email)) = ANY(${p.emails}::text[]))
+         -- „Hat Rundmail <X> erhalten“ (real sends only), optionally „… aber nicht geklickt“.
+         AND (${p.receivedCampaignId}::bigint IS NULL OR EXISTS (
+               SELECT 1 FROM campaign_sends rs
+                WHERE rs.customer_id = b.customer_id
+                  AND rs.campaign_id = ${p.receivedCampaignId}::bigint
+                  AND rs.is_test = false
+                  AND (${p.receivedNotClicked}::boolean IS NOT TRUE
+                       OR NOT EXISTS (
+                         SELECT 1 FROM campaign_sends rc
+                          WHERE rc.customer_id = b.customer_id
+                            AND rc.campaign_id = ${p.receivedCampaignId}::bigint
+                            AND rc.is_test = false
+                            AND (rc.clicked_at IS NOT NULL OR rc.bundle_clicked_at IS NOT NULL)))))
        ORDER BY b.last_activity_at DESC NULLS LAST, b.customer_id DESC
        LIMIT ${limit}
     `) as Array<Record<string, unknown>>;
@@ -180,6 +198,7 @@ export async function matchAudience(
       total: rows.length > 0 ? Number(rows[0].total) : 0,
       totalWithMo: rows.length > 0 ? Number(rows[0].total_mo) : 0,
       totalEnglish: rows.length > 0 ? Number(rows[0].total_en) : 0,
+      totalConfirmed: rows.length > 0 ? Number(rows[0].total_doi) : 0,
       totalNoConsent: rows.length > 0 ? Number(rows[0].total_no_consent) : 0,
       totalLetter: rows.length > 0 ? Number(rows[0].total_letter) : 0,
       totalWithAddress: rows.length > 0 ? Number(rows[0].total_address) : 0,
@@ -203,12 +222,17 @@ export async function matchAudience(
     };
   } catch (err) {
     reportError(err, { route: "lib/audience-store", phase: "matchAudience" });
-    return { ok: false, total: 0, totalWithMo: 0, totalEnglish: 0, totalNoConsent: 0, totalLetter: 0, totalWithAddress: 0, members: [] };
+    return { ok: false, total: 0, totalWithMo: 0, totalEnglish: 0, totalConfirmed: 0, totalNoConsent: 0, totalLetter: 0, totalWithAddress: 0, members: [] };
   }
 }
 
+/** Why a listed address („Nur diese Adressen“) is or is not in the audience. */
+export type AudienceEmailStatus = "passt" | "unbekannt" | "ohne_einwilligung" | "gesperrt" | "andere_filter";
+
 export interface AudiencePreview {
   total: number;
+  /** How many of the matches have a provable double opt-in. */
+  confirmed: number;
   /** How many of the matches have talked to Mo. */
   withMo: number;
   byLanguage: { de: number; en: number };
@@ -217,6 +241,43 @@ export interface AudiencePreview {
   /** With a letter mode (0074): the campaign's letter recipients and how many have an address stored. */
   letters?: { total: number; withAddress: number };
   sample: Array<{ customerId: number; email: string; name: string | null }>;
+  /** „Nur diese Adressen“: every listed address with why it is (not) in the audience. */
+  emails?: Array<{ email: string; status: AudienceEmailStatus }>;
+}
+
+/**
+ * Why each listed address of „Nur diese Adressen“ is or is not in the
+ * audience: `matched` = the addresses the full match found (with the consent
+ * and every other filter). The rest are looked up in customer_overview — no
+ * customer with that address, no e-mail consent, blocked (unsubscribed,
+ * bounce, complaint, erasure), or a customer with consent whom the other
+ * filters leave out. Read-only; never throws (an error answers null).
+ */
+export async function checkAudienceEmails(
+  emails: string[],
+  matched: Set<string>,
+  sql: Sql | null = getSql()
+): Promise<Array<{ email: string; status: AudienceEmailStatus }> | null> {
+  if (!sql || emails.length === 0) return emails.length === 0 ? [] : null;
+  try {
+    const rows = (await sql`
+      SELECT lower(btrim(o.email)) AS email, o.email_consent_state, o.blocked
+        FROM customer_overview o
+       WHERE lower(btrim(o.email)) = ANY(${emails}::text[])
+    `) as Array<{ email: string; email_consent_state: string | null; blocked: boolean | null }>;
+    const known = new Map(rows.map((r) => [String(r.email), r]));
+    return emails.map((email) => {
+      if (matched.has(email)) return { email, status: "passt" as const };
+      const r = known.get(email);
+      if (!r) return { email, status: "unbekannt" as const };
+      if (r.blocked === true) return { email, status: "gesperrt" as const };
+      if (r.email_consent_state !== "subscribed") return { email, status: "ohne_einwilligung" as const };
+      return { email, status: "andere_filter" as const };
+    });
+  } catch (err) {
+    reportError(err, { route: "lib/audience-store", phase: "checkAudienceEmails" });
+    return null;
+  }
 }
 
 /** Count + a small sample for the wizard ("1.240 Kunden passen") — the counts are window aggregates, only 8 rows travel. */
@@ -225,14 +286,23 @@ export async function previewAudience(
   sql: Sql | null = getSql(),
   opts: { letterMode?: "ohne_einwilligung" | "alle" | null } = {}
 ): Promise<AudiencePreview> {
+  // „Nur diese Adressen“ (≤ AUDIENCE_MAX_EMAILS): fetch every match, so each
+  // listed address can be told apart (in, unknown, no consent, other filters).
+  const listed = normalizeAudienceSpec(rawSpec).emails ?? [];
   const [match, all, letters] = await Promise.all([
-    matchAudience(rawSpec, { limit: 8 }, sql),
+    matchAudience(rawSpec, { limit: listed.length > 0 ? Math.max(8, listed.length) : 8 }, sql),
     matchAudience(rawSpec, { limit: 1, withoutConsent: true }, sql),
     opts.letterMode ? matchAudience(rawSpec, { limit: 1, letterMode: opts.letterMode }, sql) : Promise.resolve(null),
   ]);
+  const emails =
+    listed.length > 0 && match.ok
+      ? await checkAudienceEmails(listed, new Set(match.members.map((m) => m.email.trim().toLowerCase())), sql)
+      : null;
   return {
     ...(letters ? { letters: { total: letters.total, withAddress: letters.totalWithAddress } } : {}),
+    ...(emails ? { emails } : {}),
     total: match.total,
+    confirmed: match.totalConfirmed,
     withMo: match.totalWithMo,
     byLanguage: { de: match.total - match.totalEnglish, en: match.totalEnglish },
     withoutConsent: { total: all.totalNoConsent, letterReach: all.totalLetter },

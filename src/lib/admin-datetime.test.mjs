@@ -12,8 +12,11 @@ import {
   ADMIN_EMPTY,
   ADMIN_TIME,
   ADMIN_TIME_ZONE,
+  ADMIN_WEEKDAY_DATE_TIME,
   formatAdmin,
+  fromBerlinInputValue,
   toAdminDate,
+  toBerlinInputValue,
 } from "./admin-datetime.mjs";
 
 const PRESETS = [
@@ -113,4 +116,54 @@ test("epoch zero is a valid timestamp, not an empty value", () => {
 
 test("the pinned timezone is the store's", () => {
   assert.equal(ADMIN_TIME_ZONE, "Europe/Berlin");
+});
+
+test("a planned moment reads with its weekday", () => {
+  assert.equal(formatAdmin("2026-11-28T07:00:00.000Z", ADMIN_WEEKDAY_DATE_TIME), "Samstag, 28.11.2026, 08:00");
+  assert.equal(formatAdmin("2026-08-31T22:40:00.000Z", ADMIN_WEEKDAY_DATE_TIME), "Dienstag, 01.09.2026, 00:40");
+});
+
+test("datetime-local values are Berlin wall time, both ways", () => {
+  // winter (CET, +1) and summer (CEST, +2)
+  assert.equal(fromBerlinInputValue("2026-11-28T08:00"), "2026-11-28T07:00:00.000Z");
+  assert.equal(fromBerlinInputValue("2026-06-15T14:00"), "2026-06-15T12:00:00.000Z");
+  assert.equal(toBerlinInputValue("2026-11-28T07:00:00.000Z"), "2026-11-28T08:00");
+  assert.equal(toBerlinInputValue("2026-08-31T22:40:00.000Z"), "2026-09-01T00:40");
+  // seconds are accepted (some browsers send them) and ignored
+  assert.equal(fromBerlinInputValue("2026-11-28T08:00:00"), "2026-11-28T07:00:00.000Z");
+  // the round trip is stable
+  for (const v of ["2026-01-01T00:00", "2026-03-29T03:00", "2026-10-25T03:00", "2026-12-31T23:59"]) {
+    assert.equal(toBerlinInputValue(fromBerlinInputValue(v)), v);
+  }
+});
+
+test("the DST switches: a skipped time moves on, a doubled one is winter time", () => {
+  // 2026-03-29 02:30 does not exist in Berlin → 03:30 CEST
+  assert.equal(fromBerlinInputValue("2026-03-29T02:30"), "2026-03-29T01:30:00.000Z");
+  assert.equal(toBerlinInputValue(fromBerlinInputValue("2026-03-29T02:30")), "2026-03-29T03:30");
+  // 2026-10-25 02:30 exists twice → the second (CET)
+  assert.equal(fromBerlinInputValue("2026-10-25T02:30"), "2026-10-25T01:30:00.000Z");
+  assert.equal(fromBerlinInputValue("2026-10-25T01:59"), "2026-10-24T23:59:00.000Z");
+});
+
+test("datetime-local conversion does not depend on the browser's timezone", () => {
+  const original = process.env.TZ;
+  try {
+    for (const tz of ["UTC", "America/Los_Angeles", "Asia/Tokyo"]) {
+      process.env.TZ = tz;
+      assert.equal(fromBerlinInputValue("2026-11-28T08:00"), "2026-11-28T07:00:00.000Z", tz);
+      assert.equal(toBerlinInputValue("2026-11-28T07:00:00.000Z"), "2026-11-28T08:00", tz);
+    }
+  } finally {
+    if (original === undefined) delete process.env.TZ;
+    else process.env.TZ = original;
+  }
+});
+
+test("anything that is not a real date and time is null / empty", () => {
+  for (const bad of ["", null, undefined, "morgen", "2026-02-31T10:00", "2026-11-28T24:00", "2026-13-01T10:00", "2026-11-28", "28.11.2026 08:00"]) {
+    assert.equal(fromBerlinInputValue(bad), null, String(bad));
+  }
+  assert.equal(toBerlinInputValue(null), "");
+  assert.equal(toBerlinInputValue("nope"), "");
 });

@@ -21,6 +21,7 @@ import { reportError } from "./observability";
 import { normalizeEmail } from "./email-capture-store";
 import { normalizeMailTemplateDoc } from "./mail-template-doc.mjs";
 import { isWebFontStylesheetUrl, parseMailingRate, type MailingRateKey } from "./mailing-core.mjs";
+import { parseMailingRefresh } from "./mailing-schedule.mjs";
 
 export type MailingDoc = ReturnType<typeof normalizeMailTemplateDoc>;
 
@@ -51,6 +52,12 @@ export interface Mailing {
   frozenReplyTo: string | null;
   links: Array<{ url: string }>;
   merges: MailingMerges;
+  /**
+   * The content refresh at the send start (mailing-schedule.mjs; stored in
+   * merges.refresh): when it ran, the release it replaced or kept, its
+   * outcome and the German note. null = none (sent now, or not started yet).
+   */
+  refresh: MailingRefresh | null;
   materializedAt: string | null;
   finishedAt: string | null;
   nextBatchAt: string | null;
@@ -58,6 +65,8 @@ export interface Mailing {
   lastErrorAt: string | null;
   updatedAt: string | null;
 }
+
+export type MailingRefresh = NonNullable<ReturnType<typeof parseMailingRefresh>>;
 
 /** The frozen HTML / text — loaded only by the runner and the viewer (big). */
 export interface MailingFrozenBodies {
@@ -108,6 +117,9 @@ function mapMailing(r: Record<string, unknown>): Mailing {
     frozenReplyTo: (r.frozen_reply_to as string | null) ?? null,
     links: parseLinks(r.links),
     merges: parseMerges(r.merges),
+    refresh: parseMailingRefresh(
+      r.merges && typeof r.merges === "object" && !Array.isArray(r.merges) ? (r.merges as Record<string, unknown>).refresh : null
+    ),
     materializedAt: iso(r.materialized_at),
     finishedAt: iso(r.finished_at),
     nextBatchAt: iso(r.next_batch_at),
@@ -158,18 +170,31 @@ export async function getMailingFrozenBodies(campaignId: number, sql: Sql | null
   }
 }
 
-/** Create the content row of a new Rundmail (idempotent). */
+/**
+ * Create the content row of a new Rundmail (idempotent). A copy of another
+ * Rundmail passes its language and pace too; the test mail is never copied
+ * (a new Rundmail needs its own).
+ */
 export async function createMailing(
   campaignId: number,
-  input: { doc: unknown; subject?: string; preheader?: string | null; sourceTemplateId?: number | null },
+  input: {
+    doc: unknown;
+    subject?: string;
+    preheader?: string | null;
+    sourceTemplateId?: number | null;
+    language?: "de" | "en";
+    rate?: MailingRateKey;
+    engagedFirst?: boolean;
+  },
   sql: Sql | null = getSql()
 ): Promise<boolean> {
   if (!sql) return false;
   try {
     await sql`
-      INSERT INTO campaign_mailings (campaign_id, subject, preheader, doc, source_template_id)
+      INSERT INTO campaign_mailings (campaign_id, subject, preheader, doc, source_template_id, language, rate, engaged_first)
       VALUES (${campaignId}, ${input.subject ?? ""}, ${input.preheader ?? null},
-              ${JSON.stringify(normalizeMailTemplateDoc(input.doc))}::jsonb, ${input.sourceTemplateId ?? null})
+              ${JSON.stringify(normalizeMailTemplateDoc(input.doc))}::jsonb, ${input.sourceTemplateId ?? null},
+              ${input.language === "en" ? "en" : "de"}, ${parseMailingRate(input.rate)}, ${input.engagedFirst !== false})
       ON CONFLICT (campaign_id) DO NOTHING
     `;
     return true;
@@ -359,6 +384,85 @@ export async function freezeAndStartMailing(
   } catch (err) {
     reportError(err, { route: "lib/mailing-store", phase: "freeze" });
     return false;
+  }
+}
+
+/**
+ * The refresh at the send start took a new render (mailing-schedule.mjs):
+ * the frozen content of the SAME version replaced — subject, HTML, text,
+ * hash, link table and merge table — with the note, and frozen_at set to now
+ * (the marker: the refresh is not due again). From and Reply-To stay those of
+ * the release. Only while nothing can have been sent: the release it read
+ * (`expectFrozenAt`, within a second) still in place, the audience not
+ * matched, no batch and no claimed or sent recipient, the campaign active.
+ * Returns false when a guard did not hold (the runner keeps what is stored).
+ */
+export async function refreshFrozenMailing(
+  campaignId: number,
+  expect: { frozenAt: string; version: number },
+  frozen: Omit<FrozenMailing, "version" | "from" | "replyTo">,
+  note: MailingRefresh,
+  sql: Sql | null = getSql()
+): Promise<boolean> {
+  if (!sql) return false;
+  try {
+    const rows = (await sql`
+      UPDATE campaign_mailings SET
+        frozen_at = now(),
+        frozen_subject = ${frozen.subject},
+        frozen_html = ${frozen.html},
+        frozen_text = ${frozen.text},
+        frozen_hash = ${frozen.hash},
+        links = ${JSON.stringify(frozen.links)}::jsonb,
+        merges = ${JSON.stringify({ ...frozen.merges, refresh: note })}::jsonb,
+        updated_at = now()
+       WHERE campaign_id = ${campaignId}
+         AND frozen_at IS NOT NULL
+         -- the release it read (Mailing.frozenAt is whole seconds — iso() of a Date)
+         AND frozen_at BETWEEN ${expect.frozenAt}::timestamptz - interval '1 second'
+                           AND ${expect.frozenAt}::timestamptz + interval '1 second'
+         AND frozen_version = ${expect.version}
+         AND content_version = ${expect.version}
+         AND materialized_at IS NULL
+         AND finished_at IS NULL
+         AND NOT EXISTS (SELECT 1 FROM campaign_mailing_batches b WHERE b.campaign_id = ${campaignId})
+         AND NOT EXISTS (
+           SELECT 1 FROM campaign_contacts cc
+            WHERE cc.campaign_id = ${campaignId} AND cc.status IN ('sending', 'sent')
+         )
+         AND EXISTS (SELECT 1 FROM campaigns c WHERE c.id = ${campaignId} AND c.kind = 'rundmail' AND c.status = 'aktiv')
+      RETURNING campaign_id
+    `) as Array<unknown>;
+    return rows.length > 0;
+  } catch (err) {
+    reportError(err, { route: "lib/mailing-store", phase: "refreshFrozen" });
+    return false;
+  }
+}
+
+/**
+ * The refresh at the send start kept the release version: only its note is
+ * stored (merges.refresh), the frozen content and frozen_at stay. Never
+ * throws.
+ */
+export async function noteMailingRefresh(
+  campaignId: number,
+  expectFrozenAt: string,
+  note: MailingRefresh,
+  sql: Sql | null = getSql()
+): Promise<void> {
+  if (!sql) return;
+  try {
+    await sql`
+      UPDATE campaign_mailings
+         SET merges = merges || jsonb_build_object('refresh', ${JSON.stringify(note)}::jsonb), updated_at = now()
+       WHERE campaign_id = ${campaignId}
+         AND frozen_at IS NOT NULL
+         AND frozen_at BETWEEN ${expectFrozenAt}::timestamptz - interval '1 second'
+                           AND ${expectFrozenAt}::timestamptz + interval '1 second'
+    `;
+  } catch (err) {
+    reportError(err, { route: "lib/mailing-store", phase: "noteRefresh" });
   }
 }
 

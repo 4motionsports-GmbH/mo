@@ -30,6 +30,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import {
   ArrowLeft,
+  CalendarClock,
   CheckCircle2,
   CircleAlert,
   Info,
@@ -42,11 +43,26 @@ import {
   Undo2,
   XCircle,
 } from "lucide-react";
-import { ADMIN_DATE_TIME_SHORT, formatAdmin } from "@/lib/admin-datetime.mjs";
-import { num, plural, ratio } from "@/lib/admin-format.mjs";
+import {
+  ADMIN_DATE_TIME_SHORT,
+  ADMIN_WEEKDAY_DATE_TIME,
+  formatAdmin,
+  fromBerlinInputValue,
+  toBerlinInputValue,
+} from "@/lib/admin-datetime.mjs";
+import { num, plural, relativeTime } from "@/lib/admin-format.mjs";
 import { adminTabHref } from "@/lib/admin-tabs.mjs";
 import { CAMPAIGN_PHASE_LABELS } from "@/lib/campaign-def.mjs";
-import { MAILING_RATES, MAILING_RATE_LABELS, mailingProgress, minutesLeft } from "@/lib/mailing-core.mjs";
+import { MAILING_RATES, MAILING_RATE_LABELS, mailingProgress } from "@/lib/mailing-core.mjs";
+import {
+  MAILING_PLAN_MAX_DAYS,
+  formatMailingDuration,
+  mailingCanUnschedule,
+  mailingDurationMinutes,
+  mailingScheduleState,
+  realMailingRate,
+  validateMailingStart,
+} from "@/lib/mailing-schedule.mjs";
 import { stripMoBlocks, validateMailTemplateDoc } from "@/lib/mail-template-doc.mjs";
 import type { DesignerSettings } from "@/lib/mail-template-designer-settings.mjs";
 import {
@@ -77,10 +93,12 @@ import { EmailPreviewButton } from "../EmailPreviewButton";
 import { BlockEditor, type MailDoc } from "../vorlagen/BlockEditor";
 import { DesignerPanel, DesignerToggle } from "../vorlagen/DesignerPanel";
 import { useFullWidthLayout } from "../lib/shell-layout";
+import { useNow } from "../lib/use-now";
 import { LivePreview } from "../vorlagen/LivePreview";
 import { useDesignerSession } from "../vorlagen/use-designer-session";
 import { useDocHistory } from "../vorlagen/use-doc-history";
 import { EditorDraftNotice, EditorDraftStatus, useEditorDraft } from "../vorlagen/use-editor-draft";
+import { RundmailAnalytics } from "./RundmailAnalytics";
 
 type RateKey = keyof typeof MAILING_RATES;
 
@@ -110,6 +128,8 @@ export interface RundmailMailing {
   frozenAt: string | null;
   frozenFrom: string | null;
   links: Array<{ url: string }>;
+  /** The content refresh at the send start (prices, availability) — lib/mailing-schedule.mjs. */
+  refresh?: { at: string; releasedAt: string | null; outcome: "aktualisiert" | "unveraendert" | "behalten"; note: string } | null;
   materializedAt: string | null;
   finishedAt: string | null;
   lastError: string | null;
@@ -174,13 +194,21 @@ const PHASE_TONE: Record<string, "success" | "warning" | "neutral" | "destructiv
   archiviert: "neutral",
 };
 
-function toLocalInput(iso: string | null): string {
-  if (!iso) return "";
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "";
-  const p = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
-}
+/** „Samstag, 28.11.2026, 08:00 Uhr“ — a planned start always with its weekday (Berlin time). */
+const plannedLabel = (iso: string) => `${formatAdmin(iso, ADMIN_WEEKDAY_DATE_TIME)} Uhr`;
+
+/** The header badge per schedule state (mailing-schedule.mjs); the rest shows the campaign phase. */
+const SCHEDULE_BADGE: Partial<Record<string, { tone: "success" | "warning" | "neutral" | "destructive" | "info"; label: string }>> = {
+  geplant: { tone: "info", label: "Geplant" },
+  startet: { tone: "info", label: "Startet" },
+  ueberfaellig: { tone: "destructive", label: "Start überfällig" },
+  laeuft: { tone: "success", label: "Läuft" },
+  pausiert: { tone: "warning", label: "Pausiert" },
+  fertig: { tone: "neutral", label: "Versendet" },
+};
+
+/** Said wherever a start is planned (docs/CAMPAIGNS.md §9.2). */
+const REFRESH_PROMISE = "Preise und Verfügbarkeit der Produkte werden beim Versandstart aktualisiert; ausverkaufte Produkte fallen dann heraus.";
 
 function Stat({ label, value, hint }: { label: string; value: React.ReactNode; hint?: string }) {
   return (
@@ -273,7 +301,8 @@ export function RundmailWorkspace({
   const [testName, setTestName] = React.useState("Alex");
   const [testing, setTesting] = React.useState(false);
   const [when, setWhen] = React.useState<"now" | "later">("now");
-  const [startsAt, setStartsAt] = React.useState(toLocalInput(campaign.startsAt));
+  // „Start“ is typed in Berlin time, whatever zone the browser runs in.
+  const [startsAt, setStartsAt] = React.useState(toBerlinInputValue(campaign.startsAt));
   const [releasing, setReleasing] = React.useState(false);
   const [busy, setBusy] = React.useState<string | null>(null);
 
@@ -334,7 +363,32 @@ export function RundmailWorkspace({
   const issues = React.useMemo(() => validateMailTemplateDoc(doc, "bulk"), [doc]);
   const progress = mailingProgress(stats);
   const sendingNow = status === "aktiv" && frozen && !mailing.finishedAt;
-  const planned = sendingNow && campaign.startsAt != null && new Date(campaign.startsAt) > new Date() && stats.sent === 0;
+  // Re-read every 15 s: the countdown, and „Geplant“ → „Startet“ when the time comes (null until hydrated).
+  const now = useNow(15_000);
+  // One rule for the header, Versand and the Kampagnen card (mailing-schedule.mjs).
+  const schedule = mailingScheduleState({
+    status,
+    frozen,
+    startsAt: campaign.startsAt,
+    started: Boolean(mailing.materializedAt) || stats.sent > 0,
+    finished: Boolean(mailing.finishedAt),
+    now: now ?? undefined,
+  });
+  const planned = schedule.kind === "geplant";
+  // „Planung zurücknehmen“ until the first batch (the store refuses afterwards).
+  const canUnschedule = status === "aktiv" && mailingCanUnschedule(schedule, stats.sent) && !mailing.materializedAt;
+  // „Planen“: the typed Berlin time → an instant, checked like the server does.
+  const plannedAt = when === "later" ? fromBerlinInputValue(startsAt) : null;
+  const plannedCheck =
+    when !== "later"
+      ? null
+      : !startsAt
+        ? { ok: false as const, message: "Datum und Uhrzeit wählen." }
+        : !plannedAt
+          ? { ok: false as const, message: "Ungültiger Zeitpunkt." }
+          : validateMailingStart(plannedAt, { endsAt: campaign.endsAt });
+  const plannedBad = plannedCheck != null && (!plannedCheck.ok || !plannedCheck.planned);
+  const reachNow = evaluation?.audience ? (allowSingleOptIn ? evaluation.audience.total : evaluation.audience.confirmed) : null;
   const defaultTab = !frozen ? "inhalt" : "versand";
   const [tab, setTab] = React.useState(
     initialView && (RUNDMAIL_VIEWS as readonly string[]).includes(initialView) ? initialView : defaultTab
@@ -474,16 +528,39 @@ export function RundmailWorkspace({
   };
 
   const release = async () => {
-    const reach = evaluation?.audience ? (allowSingleOptIn ? evaluation.audience.total : evaluation.audience.confirmed) : null;
-    const at = when === "later" && startsAt ? new Date(startsAt).toISOString() : null;
+    const reach = reachNow;
+    const at = when === "later" ? plannedAt : null;
+    if (when === "later" && (!at || plannedBad)) {
+      toast({ variant: "error", title: "Start prüfen", description: plannedCheck && !plannedCheck.ok ? plannedCheck.message : "Der Start muss in der Zukunft liegen." });
+      return;
+    }
+    const perMinute = MAILING_RATES[mailing.rate];
+    const duration = reach != null ? formatMailingDuration(mailingDurationMinutes(reach, perMinute)) : null;
+    const line = "mt-1.5 block";
     const ok = await confirm({
       title: at ? "Rundmail planen?" : "Rundmail jetzt senden?",
-      description: [
-        `„${mailing.subject}“ geht${reach != null ? ` an etwa ${num(reach)} Empfänger:innen` : " an die Zielgruppe"}`,
-        sender.ok ? ` von ${sender.from}` : "",
-        at ? `, ab ${formatAdmin(at, ADMIN_DATE_TIME_SHORT)}.` : ", sofort.",
-        " Der Inhalt ist danach fest. Pausieren und Abbrechen bleiben jederzeit möglich.",
-      ].join(""),
+      description: (
+        <>
+          <span className="block">
+            „{mailing.subject}“ geht{reach != null ? ` an etwa ${num(reach)} Empfänger:innen` : " an die Zielgruppe"}
+            {sender.ok ? ` von ${sender.from}` : ""}.
+          </span>
+          <span className={line}>Zielgruppe: {campaign.audienceText}</span>
+          <span className={`${line} font-medium text-foreground`}>
+            Start: {at ? plannedLabel(at) : "sofort"}
+            {at && now != null ? ` (${relativeTime(at, now)})` : ""}
+          </span>
+          <span className={line}>
+            Tempo: {MAILING_RATE_LABELS[mailing.rate]} (real etwa {num(realMailingRate(perMinute))} pro Minute)
+            {duration ? ` — Dauer ${duration}` : "."}
+          </span>
+          {at && <span className={line}>{REFRESH_PROMISE}</span>}
+          <span className={line}>
+            Der Inhalt ist danach fest.{at ? " Bis zum Start lässt sich die Planung zurücknehmen;" : ""} Pausieren und Abbrechen bleiben
+            jederzeit möglich.
+          </span>
+        </>
+      ),
       confirmLabel: at ? "Planen" : "Jetzt senden",
     });
     if (!ok) return;
@@ -625,6 +702,11 @@ export function RundmailWorkspace({
   };
 
   const phaseLabel = CAMPAIGN_PHASE_LABELS[campaign.phase as keyof typeof CAMPAIGN_PHASE_LABELS] ?? campaign.phase;
+  const headerBadge = (campaign.phase !== "abgelaufen" ? SCHEDULE_BADGE[schedule.kind] : undefined) ?? {
+    tone: PHASE_TONE[campaign.phase] ?? "neutral",
+    label: phaseLabel,
+  };
+  const startPending = planned || schedule.kind === "startet" || schedule.kind === "ueberfaellig";
   const reasons = Object.entries(stats.skippedByReason).filter(([, n]) => n > 0);
   const backHref = adminTabHref("kampagne");
   const audienceHref = adminTabHref("kampagne", { edit: String(campaign.id) });
@@ -642,15 +724,20 @@ export function RundmailWorkspace({
             <StatusBadge tone="accent" dot={false}>
               Rundmail
             </StatusBadge>
-            <StatusBadge tone={PHASE_TONE[mailing.finishedAt ? "beendet" : campaign.phase] ?? "neutral"}>
-              {mailing.finishedAt ? "Versendet" : planned ? "Geplant" : phaseLabel}
-            </StatusBadge>
+            <StatusBadge tone={headerBadge.tone}>{headerBadge.label}</StatusBadge>
             {!sendsApproved && <StatusBadge tone="destructive">Versand gesperrt</StatusBadge>}
           </div>
           <p className="mt-0.5 line-clamp-2 text-xs text-muted-foreground">
             {campaign.audienceText}
             {sender.ok ? ` · Absender: ${sender.from}` : ""}
           </p>
+          {startPending && campaign.startsAt && (
+            <p className="mt-1 flex flex-wrap items-center gap-x-1.5 text-xs font-medium">
+              <CalendarClock className="size-3.5 shrink-0" aria-hidden />
+              Geplant für {plannedLabel(campaign.startsAt)}
+              {planned && now != null && <span className="font-normal text-muted-foreground">· {relativeTime(campaign.startsAt, now)}</span>}
+            </p>
+          )}
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {status === "entwurf" && (
@@ -658,7 +745,7 @@ export function RundmailWorkspace({
               Zielgruppe & Absender
             </Link>
           )}
-          {planned && (
+          {canUnschedule && (
             <Button size="sm" variant="outline" onClick={() => void control("unschedule")} loading={busy === "unschedule"}>
               Planung zurücknehmen
             </Button>
@@ -690,6 +777,34 @@ export function RundmailWorkspace({
       {mailing.lastError && (status === "pausiert" || sendingNow) && (
         <Callout tone={status === "pausiert" ? "destructive" : "warning"} title={status === "pausiert" ? "Versand pausiert" : "Hinweis vom Versand"}>
           {mailing.lastError}
+        </Callout>
+      )}
+      {startPending && !sendsApproved && (
+        <Callout tone="warning" title="Versand gesperrt — die Rundmail startet so nicht">
+          CAMPAIGN_SENDS_APPROVED ist aus: Zum geplanten Start wird die Rundmail pausiert und nichts gesendet. Vor dem Start
+          freischalten — oder die Planung zurücknehmen.
+        </Callout>
+      )}
+      {schedule.kind === "ueberfaellig" && !mailing.lastError && sendsApproved && campaign.startsAt && (
+        <Callout tone="warning" title="Start überfällig">
+          Geplant war {plannedLabel(campaign.startsAt)} — bisher ist keine Mail rausgegangen. Solange diese Seite offen ist, startet
+          sie von hier; sonst übernimmt der Versand-Job (jede Minute). Bleibt es dabei, den Cron „send-mailings“ (CRON_SECRET)
+          prüfen.
+        </Callout>
+      )}
+      {mailing.refresh && frozen && (
+        <Callout
+          tone={mailing.refresh.outcome === "behalten" ? "warning" : "info"}
+          compact
+          title={
+            mailing.refresh.outcome === "behalten"
+              ? "Preise nicht aktualisiert"
+              : mailing.refresh.outcome === "unveraendert"
+                ? "Beim Versandstart geprüft"
+                : "Beim Versandstart aktualisiert"
+          }
+        >
+          {mailing.refresh.note} ({formatAdmin(mailing.refresh.at, ADMIN_DATE_TIME_SHORT)})
         </Callout>
       )}
 
@@ -821,7 +936,12 @@ export function RundmailWorkspace({
         {/* ── Prüfen & senden ── */}
         <TabsContent value="pruefen" className="pt-4">
           {frozen ? (
-            <Callout tone="info">Die Rundmail ist freigegeben{mailing.frozenAt ? ` (${formatAdmin(mailing.frozenAt, ADMIN_DATE_TIME_SHORT)})` : ""} — den Fortschritt zeigt „Versand“.</Callout>
+            <Callout tone="info">
+              Die Rundmail ist freigegeben
+              {(mailing.refresh?.releasedAt ?? mailing.frozenAt) ? ` (${formatAdmin(mailing.refresh?.releasedAt ?? mailing.frozenAt, ADMIN_DATE_TIME_SHORT)})` : ""}
+              {startPending && campaign.startsAt ? ` und geplant für ${plannedLabel(campaign.startsAt)}. ${REFRESH_PROMISE}` : ""} — den
+              Fortschritt zeigt „Versand“.
+            </Callout>
           ) : (
             <div className="grid gap-4 lg:grid-cols-2">
               <Card>
@@ -905,7 +1025,12 @@ export function RundmailWorkspace({
                         }))}
                       />
                     </Field>
-                    <p className="-mt-2 text-2xs text-muted-foreground">{MAILING_RATE_LABELS[mailing.rate]}</p>
+                    <p className="-mt-2 text-2xs text-muted-foreground">
+                      {MAILING_RATE_LABELS[mailing.rate]} · real etwa {num(realMailingRate(MAILING_RATES[mailing.rate]))} pro Minute
+                      {reachNow != null && reachNow > 0
+                        ? ` · Dauer ${formatMailingDuration(mailingDurationMinutes(reachNow, MAILING_RATES[mailing.rate]))}`
+                        : ""}
+                    </p>
                     <Field label="Engagierte zuerst" inline className="w-fit">
                       <Checkbox checked={mailing.engagedFirst} onChange={(e) => void setPacing(mailing.rate, e.target.checked)} />
                     </Field>
@@ -922,14 +1047,32 @@ export function RundmailWorkspace({
                       />
                     </Field>
                     {when === "later" && (
-                      <Field label="Start" info="Höchstens 60 Tage im Voraus. Bis zum Start lässt sich die Planung zurücknehmen.">
-                        <Input type="datetime-local" value={startsAt} onChange={(e) => setStartsAt(e.target.value)} />
+                      <Field
+                        label="Start (deutsche Zeit)"
+                        info={`Datum und Uhrzeit in deutscher Zeit (Europe/Berlin), höchstens ${MAILING_PLAN_MAX_DAYS} Tage im Voraus. Bis zum Start lässt sich die Planung zurücknehmen. ${REFRESH_PROMISE}`}
+                      >
+                        <Input
+                          type="datetime-local"
+                          value={startsAt}
+                          onChange={(e) => setStartsAt(e.target.value)}
+                          min={now != null ? toBerlinInputValue(now) : undefined}
+                          max={now != null ? toBerlinInputValue(now + MAILING_PLAN_MAX_DAYS * 86_400_000) : undefined}
+                        />
                       </Field>
+                    )}
+                    {when === "later" && startsAt && (
+                      <p className={`-mt-2 text-2xs ${plannedBad ? "text-destructive" : "text-muted-foreground"}`} aria-live="polite">
+                        {plannedCheck && !plannedCheck.ok
+                          ? plannedCheck.message
+                          : plannedAt && plannedCheck?.planned
+                            ? `${plannedLabel(plannedAt)}${now != null ? ` · ${relativeTime(plannedAt, now)}` : ""}`
+                            : "Der Start muss in der Zukunft liegen."}
+                      </p>
                     )}
                     <Button
                       onClick={() => void release()}
                       loading={releasing}
-                      disabled={dirty || !evaluation?.ok || !tested || (when === "later" && !startsAt)}
+                      disabled={dirty || !evaluation?.ok || !tested || plannedBad}
                     >
                       <Send /> {when === "later" ? "Planen" : "Jetzt senden"}
                     </Button>
@@ -954,17 +1097,20 @@ export function RundmailWorkspace({
                       {mailing.finishedAt
                         ? `Fertig — ${num(stats.sent)} Mails versendet`
                         : planned && campaign.startsAt
-                          ? `Geplant für ${formatAdmin(campaign.startsAt, ADMIN_DATE_TIME_SHORT)}`
+                          ? `Geplant für ${plannedLabel(campaign.startsAt)}${now != null ? ` · ${relativeTime(campaign.startsAt, now)}` : ""}`
                           : status === "pausiert"
                             ? "Pausiert"
-                            : !mailing.materializedAt
-                              ? "Startet …"
-                              : `Läuft — noch etwa ${num(minutesLeft(progress.open, MAILING_RATES[mailing.rate]))} Min.`}
+                            : schedule.kind === "ueberfaellig"
+                              ? "Start überfällig — noch keine Mail versendet"
+                              : !mailing.materializedAt
+                                ? "Startet …"
+                                : `Läuft — noch ${formatMailingDuration(mailingDurationMinutes(progress.open, MAILING_RATES[mailing.rate]))}`}
                     </p>
                     <span className="text-xs text-muted-foreground tabular-nums">
                       {num(progress.done)} / {num(progress.total)} ({num(progress.percent)} %)
                     </span>
                   </div>
+                  {planned && <p className="-mt-1.5 text-xs text-muted-foreground">{REFRESH_PROMISE} Die Zielgruppe wird dann frisch ermittelt.</p>}
                   <ProgressBar value={progress.percent} label="Fortschritt" tone={status === "pausiert" ? "warning" : mailing.finishedAt ? "success" : "accent"} />
                   <dl className="grid grid-cols-2 gap-2 sm:grid-cols-5">
                     <Stat label="Empfänger" value={num(stats.total)} hint="Beim Start frisch ermittelt: Kund:innen mit Einwilligung, die zur Zielgruppe passen." />
@@ -983,69 +1129,53 @@ export function RundmailWorkspace({
                 </Callout>
               )}
 
-              <Card>
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    Ergebnis
-                    <InfoTip>
-                      Zustellung, Bounces und Beschwerden meldet Resend (Webhook). Klicks zählt Mo selbst über die Links der Mail —
-                      ohne Öffnungs-Pixel. Harte Bounces und Beschwerden sperren die Adresse automatisch.
-                    </InfoTip>
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="flex flex-col gap-4">
-                  <dl className="grid grid-cols-2 gap-2 sm:grid-cols-5">
-                    <Stat label="Zugestellt" value={num(stats.delivered)} />
-                    <Stat label="Geklickt" value={`${num(stats.clicked)} (${ratio(stats.sent ? stats.clicked / stats.sent : null)})`} />
-                    <Stat label="Bounces" value={`${num(stats.bounced)}${stats.bouncedHard ? ` · ${num(stats.bouncedHard)} hart` : ""}`} />
-                    <Stat label="Beschwerden" value={num(stats.complained)} hint="Spam-Meldungen. Über 0,3 % gefährdet die Zustellung aller Mails — dann Zielgruppe und Inhalt prüfen." />
-                    <Stat label="Abmeldungen" value={num(stats.unsubscribed)} />
-                  </dl>
-                  {mailing.links.length > 0 && (
-                    <div>
-                      <p className="mb-1.5 text-xs font-semibold">Klicks je Link</p>
-                      <ul className="flex flex-col gap-1">
-                        {mailing.links.map((l, i) => {
-                          const c = stats.linkClicks.find((x) => x.index === i);
-                          return (
-                            <li key={i} className="flex items-center gap-3 rounded-md border border-border px-2.5 py-1.5 text-xs">
-                              <span className="min-w-0 flex-1 truncate">
-                                {l.url.replace(/^https?:\/\//, "").replace(/[?#].*$/, "")}
-                              </span>
-                              <span className="shrink-0 tabular-nums text-muted-foreground">
-                                {plural(c?.recipients ?? 0, "Person", "Personen")} · {plural(c?.clicks ?? 0, "Klick", "Klicks")}
-                              </span>
-                            </li>
-                          );
-                        })}
-                      </ul>
-                    </div>
-                  )}
-                  {reasons.length > 0 && (
-                    <div>
-                      <p className="mb-1.5 text-xs font-semibold">Nicht gesendet — warum</p>
-                      <ul className="grid gap-1 sm:grid-cols-2">
-                        {reasons.map(([k, n]) => (
-                          <li key={k} className="flex items-center justify-between gap-3 rounded-md bg-surface-2 px-2.5 py-1.5 text-xs">
-                            <span>{REASON_LABELS[k] ?? k}</span>
-                            <span className="tabular-nums">{num(n)}</span>
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
+              {/* Ergebnis (delivery + the orders counted in the window), Verlauf, the
+                  blocks below, and every recipient — rundmail/RundmailAnalytics.tsx. */}
+              <RundmailAnalytics campaignId={campaign.id} campaignName={campaign.name} stats={stats} sending={sendingNow}>
+                {mailing.links.length > 0 && (
                   <div>
-                    <EmailPreviewButton
-                      path="/api/admin/rundmail/frozen"
-                      getPayload={() => ({ campaignId: campaign.id })}
-                      title={`Rundmail „${campaign.name}“`}
-                      description="So geht die Mail an alle — hier mit dem Beispiel-Vornamen „Alex“; alle Links sind in der Vorschau inaktiv."
-                      label="Versendete Mail ansehen"
-                      size="sm"
-                    />
+                    <p className="mb-1.5 text-xs font-semibold">Klicks je Link</p>
+                    <ul className="flex flex-col gap-1">
+                      {mailing.links.map((l, i) => {
+                        const c = stats.linkClicks.find((x) => x.index === i);
+                        return (
+                          <li key={i} className="flex items-center gap-3 rounded-md border border-border px-2.5 py-1.5 text-xs">
+                            <span className="min-w-0 flex-1 truncate">
+                              {l.url.replace(/^https?:\/\//, "").replace(/[?#].*$/, "")}
+                            </span>
+                            <span className="shrink-0 tabular-nums text-muted-foreground">
+                              {plural(c?.recipients ?? 0, "Person", "Personen")} · {plural(c?.clicks ?? 0, "Klick", "Klicks")}
+                            </span>
+                          </li>
+                        );
+                      })}
+                    </ul>
                   </div>
-                </CardContent>
-              </Card>
+                )}
+                {reasons.length > 0 && (
+                  <div>
+                    <p className="mb-1.5 text-xs font-semibold">Nicht gesendet — warum</p>
+                    <ul className="grid gap-1 sm:grid-cols-2">
+                      {reasons.map(([k, n]) => (
+                        <li key={k} className="flex items-center justify-between gap-3 rounded-md bg-surface-2 px-2.5 py-1.5 text-xs">
+                          <span>{REASON_LABELS[k] ?? k}</span>
+                          <span className="tabular-nums">{num(n)}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                <div>
+                  <EmailPreviewButton
+                    path="/api/admin/rundmail/frozen"
+                    getPayload={() => ({ campaignId: campaign.id })}
+                    title={`Rundmail „${campaign.name}“`}
+                    description="So geht die Mail an alle — hier mit dem Beispiel-Vornamen „Alex“; alle Links sind in der Vorschau inaktiv."
+                    label="Versendete Mail ansehen"
+                    size="sm"
+                  />
+                </div>
+              </RundmailAnalytics>
             </div>
           )}
         </TabsContent>
