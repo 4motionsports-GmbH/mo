@@ -540,7 +540,10 @@ released by hand in the desk's view „Briefe“ (below; module:
   Aktion / Einzelansprache / Rundmail), Zielgruppe fest/dynamisch (a Rundmail: „ein Inhalt
   für alle“ and „von <Absender>“ when it has its own), discount, the audience
   in plain German (`describeAudienceSpec`, [`audience-spec.mjs`](../src/lib/audience-spec.mjs)),
-  start – end, figures (Empfänger, Entwürfe, Gesendet, Klickrate — sends with
+  start – end (a planned Rundmail instead: „Geplant für <Wochentag, Datum, Uhrzeit> Uhr · in …“, the
+  countdown rendered after hydration, „Versand gesperrt — startet so nicht“ while
+  `CAMPAIGN_SENDS_APPROVED` is off, badge „Start überfällig“ with „Noch keine Mail versendet“ when its
+  start passed without a mail — `mailingScheduleState`), figures (Empfänger, Entwürfe, Gesendet, Klickrate — sends with
   any click, the button or the set link, over real sends; a Rundmail: Empfänger, Gesendet,
   Klickrate, Abmeldungen), „Prüftisch öffnen (n)“ (a Rundmail: „Inhalt gestalten“ while
   Entwurf, then „Rundmail öffnen“), the start action and a ⋯ menu (Bearbeiten, Pausieren,
@@ -564,8 +567,10 @@ The sheet's sections, top to bottom (every field, column, bound and default per 
 [`CAMPAIGNS.md`](./CAMPAIGNS.md) §2.2):
 
 - **Grundlagen** — Name, Art Aktion / Laufend / Rundmail (only when creating; it seeds the
-  defaults), Start, Ende, Priorität. A Rundmail instead shows „Versand spätestens bis“,
-  **Absender** and „Inhalt starten mit“ (a template or a starter; InfoTips) and hides Briefing,
+  defaults), Start, Ende, Priorität (date fields in Berlin time, whatever zone the browser runs
+  in). A Rundmail instead shows „Versand spätestens bis“,
+  **Absender** and „Inhalt starten mit“ (a template, a starter or „Rundmail: …“ — a copy of another
+  Rundmail's content without its test mail; InfoTips) and hides Briefing,
   Angebot, Gestaltung and Automatik — its content is made in its workspace (below); once
   released only the name is editable (callout).
 - **Briefing** — free text the AI writer reads for every mail; „Briefing
@@ -577,9 +582,21 @@ The sheet's sections, top to bottom (every field, column, bound and default per 
   Werbe-Mail / hat geklickt in den letzten n Tagen, nicht in Kampagne; the chips
   state the code's bounds), Fest / Dynamisch and „Erneut aufnehmen nach“
   (Laufend). Beside it the live count **„Passende Kund:innen mit Einwilligung“**
-  (`campaigns/audience-preview`, debounced): total, with Mo chat, DE / EN, the
+  (`campaigns/audience-preview`, debounced): total, „davon N mit Double-Opt-in“ (+ „nur sie
+  werden angeschrieben“ while `CAMPAIGN_ALLOW_SINGLE_OPT_IN` is off), with Mo chat, DE / EN, the
   plain-German description, a few names and — when there are any — „Ohne
   Einwilligung passen weitere N — davon M per Brief erreichbar“ (InfoTip).
+  A **Rundmail** starts the section with **„Empfänger“** (SegmentedControl, InfoTip): „Alle mit
+  Einwilligung“ (default), „Nur Double-Opt-in“, „Testgruppe“ and „Eigene Filter“ (the builder above
+  appears only here; the presets are shortcuts over the spec — [`CAMPAIGNS.md`](./CAMPAIGNS.md) §9.1).
+  „Testgruppe“ shows the required Textarea **„Nur diese Adressen“** (up to 50, one per line or
+  comma-separated; the line below counts them and names duplicates, addresses over the limit and
+  „Nicht erkannt: …“); „Eigene Filter“ has it as „Nur diese Adressen (optional)“ plus **„Hat
+  Rundmail erhalten“** (Select of the released / planned Rundmails, „Egal“) with „… aber nicht
+  geklickt“. With listed addresses the count adds „M von N Adressen passen“ and each other address
+  with its reason (keine Kundin / kein Kunde mit dieser Adresse, ohne Einwilligung, gesperrt, passt
+  nicht zu den übrigen Filtern). Saving a Testgruppe without a valid address is refused („… sonst
+  ginge die Rundmail an alle mit Einwilligung“); its count stays „—“.
 - **Angebot** — Rabatt, Gilt für (fest: „Individuelle Auswahl“ — der Code gilt nur für die Produkte der Mail), „Codes gültig bis“
   (Aktion): starting values for Vorbereiten; codes are minted at send. A card
   that gets a set carries no code (offer-mode.mjs).
@@ -831,8 +848,17 @@ empty state points to Kunden and the Eingang.
 A campaign of the kind Rundmail (one content for everyone; module:
 [`CAMPAIGNS.md`](./CAMPAIGNS.md) §9) opens its own workspace instead of a desk
 (`?campaign=<id>`; server file [`RundmailTab.tsx`](../src/app/admin/RundmailTab.tsx)). Header:
-„← Kampagnen“, name, badges Rundmail + phase, the audience in plain German and the Absender,
-„Zielgruppe & Absender“ (the editor). Three tabs (`?view=`):
+„← Kampagnen“, name, badges Rundmail + state (Entwurf, **Geplant**, **Startet**, **Start überfällig**,
+Läuft, Pausiert, Versendet — `mailingScheduleState`, [`mailing-schedule.mjs`](../src/lib/mailing-schedule.mjs)),
+the audience in plain German and the Absender, for a planned one **„Geplant für <Wochentag, Datum,
+Uhrzeit> Uhr · in …“** (Berlin time; the countdown re-read every 15 s after hydration),
+„Zielgruppe & Absender“ (the editor) and **„Planung zurücknehmen“** (confirmed) until the first
+batch. Callouts under it: the runner's message („Versand pausiert“ / „Hinweis vom Versand“);
+„Versand gesperrt — die Rundmail startet so nicht“ while a start is pending and
+`CAMPAIGN_SENDS_APPROVED` is off; „Start überfällig“ (no step 3 minutes after the start — the open
+page starts it, else check the cron `send-mailings`); after the start the note of the refresh with
+current prices („Beim Versandstart aktualisiert“, „Beim Versandstart geprüft“ or, warning, „Preise
+nicht aktualisiert“ with the reason — [`CAMPAIGNS.md`](./CAMPAIGNS.md) §9.2). Three tabs (`?view=`):
 
 - **Inhalt** — „Gespeichert · Version n“, „Vorlage laden“ (replaces the content with a template's,
   Mo blocks dropped; unsaved), „Rückgängig“ (several steps: every AI result and „Vorlage laden“),
@@ -852,19 +878,48 @@ A campaign of the kind Rundmail (one content for everyone; module:
 - **Prüfen & senden** (badge „!“ while the current version has no test mail) — „Prüfungen“: every
   error, warning and info of `mailing-checks.mjs`, „Erneut prüfen“; „Testmail“: An (bis zu 5
   Adressen), Vorname zum Testen, „Testmail senden“, the last test with „aktueller Stand ✓“ or
-  „veraltet“ (InfoTip with the mail-tester.com tip); „Senden“: Tempo Behutsam / Normal / Schnell,
-  „Engagierte zuerst“, Zeitpunkt Jetzt / Planen (Start, ≤ 60 days), „Jetzt senden“ / „Planen“
-  (confirm dialog with recipients, sender and duration) — disabled with the reason while a red
-  check is open.
+  „veraltet“ (InfoTip with the mail-tester.com tip); „Senden“: Tempo Behutsam / Normal / Schnell
+  with the line „Normal — 300 pro Minute · real etwa 240 pro Minute · Dauer etwa …“ (the measured
+  real speed, about 80 % of the label), „Engagierte zuerst“, Zeitpunkt Jetzt / Planen — **„Start
+  (deutsche Zeit)“** (datetime-local in Europe/Berlin, min now, max 60 days; InfoTip ends „Preise und
+  Verfügbarkeit der Produkte werden beim Versandstart aktualisiert; ausverkaufte Produkte fallen dann
+  heraus.“) with the line under it repeating the choice with its weekday and countdown („Samstag,
+  28.11.2026, 08:00 Uhr · in 15 Tagen“) or the reason it is refused (in the past, over 60 days,
+  after „Versand spätestens bis“); „Jetzt senden“ / „Planen“ (confirm dialog: subject, recipients
+  and sender, Zielgruppe, Start with weekday, Tempo with real speed and duration, for Planen the
+  sentence on prices and availability, „bis zum Start lässt sich die Planung zurücknehmen“) —
+  disabled with the reason while a red check is open or the start is not valid. Once released the
+  tab says when it was released and, while planned, for when.
 - **Versand** — the progress bar („Läuft — noch etwa n Min.“, „Fertig — n Mails versendet“,
   „Geplant für …“, „Pausiert“ with the error), tiles Empfänger, Gesendet, Ausstehend, Übersprungen, Fehler;
-  „Ergebnis“: Zugestellt, Geklickt (share of sent), Bounces, Beschwerden, Abmeldungen; „Klicks je
-  Link“ (Personen · Klicks per frozen link); „Nicht gesendet — warum“ (reasons in German);
-  „Versendete Mail ansehen“ (the frozen mail with a sample recipient); Pausieren / Fortsetzen,
-  Abbrechen (confirmed) and, for a planned Rundmail before its first mail, „Zurücknehmen“
-  (confirmed).
+  below it the analysis ([`rundmail/RundmailAnalytics.tsx`](../src/app/admin/rundmail/RundmailAnalytics.tsx);
+  the attribution rule and the figures: [`CAMPAIGNS.md`](./CAMPAIGNS.md) §9.6):
+  **Ergebnis** — the window for orders (SegmentedControl 1 Tag / 3 Tage / 7 Tage / 14 Tage / bis heute,
+  `?window=`, default 7 Tage) and „Aktualisieren“; tiles „Zustellung und Klicks“ (Zugestellt with its share,
+  Geklickt with the Klickrate, Bounces with the rate and the hard ones, Beschwerden, Abmeldungen with the
+  Abmelderate — live from the polling) and „Bestellungen bis n Tage nach dem Versand“ (Besteller with the
+  Conversion, Bestellungen, Umsatz, davon mit Code — its InfoTip names the code and all orders with it,
+  also by non-recipients —, davon nach Klick, Umsatz je Empfänger; InfoTip „Wie Bestellungen zählen“),
+  „Gemessen bis …“ (window still open or closed); **Verlauf** — Versand / Klicks / Bestellungen / Umsatz,
+  one series as columns per minute, 10 minutes, hour or day (the KPI screen's Recharts chunk,
+  `TimeBarsChart`; a hidden table for screen readers); „Klicks je Link“ (Personen · Klicks per frozen link),
+  „Nicht gesendet — warum“ (reasons in German) and „Versendete Mail ansehen“ (the frozen mail with a sample
+  recipient); **Empfänger** — search (name or e-mail), filter chips with counts (Alle, Gesendet, Zugestellt,
+  Geklickt, Bestellt, Bounce, Beschwerde, Abgemeldet, Nicht gesendet with „Grund“), the table (Person — the
+  name opens the Kunden profile —, the status chip of „Gesendet“ with the reason of a mail not sent,
+  Gesendet, Zugestellt, Klicks with the first click, Bestellungen · Umsatz with „mit Code“, Abgemeldet;
+  sorted by Gesendet, Klicks or Bestellungen (revenue); 50 per page; filter, search, sort and page on the
+  server) and „Als CSV exportieren“ (the whole selection; audit `rundmail.export`). A row opens the
+  recipient's sheet (`?recipient=<id>`): status and subject, Gesendet / Zugestellt / Erster Klick / Klicks /
+  Bestellungen / Umsatz, „Verlauf“ (sent, delivered, every click with its link, orders, bounce, complaint,
+  unsubscribe), every order after the mail in the window (items, total, refund, codes; „zählt“, „mit
+  Code“, „nach Klick“ — or why not: storniert, a later Rundmail), „Mail ansehen“ (this person's mail: the
+  frozen content with their first name, links inert) and „Kundenprofil“. The list state is linkable too
+  (`?rfilter=`, `?rgrund=`, `?rq=`, `?rsort=`, `?rdir=`, `?rpage=`; `history.replaceState`).
+  Pausieren / Fortsetzen, Abbrechen (confirmed) and, for a planned Rundmail before its first mail,
+  „Zurücknehmen“ (confirmed).
   While it sends and the page is open, the page drives the runner every 6 seconds (the cron runs
-  every minute anyway).
+  every minute anyway) and the analysis reloads its figures every 30 seconds.
 
 Screenshots: `docs/screenshots/rundmail-vorlagen/` (light and dark, 1440 and 1024 px).
 
@@ -2883,10 +2938,10 @@ them. Actions that read or act on one person's data write the admin access log
 | | `POST inbox/accept { id }` | „Entwurf übernehmen“: Einzelansprache recipient with the suggestion as note + discount, draft written, item erledigt → `{ contactId, campaignId, drafted }` (access log `inbox.accept`) |
 | | `POST inbox/run` | „Jetzt prüfen“: run the rules now, without AI suggestions |
 | Eingang, Kunden | `GET customers/list?kq=&kview=&…` | the Kunden list as JSON (same URL parameters as the screen, §2.2) — used by the Eingang's „Zuordnen“ search |
-| Kampagnen | `GET campaigns`, `POST campaigns { name, kind, … }` | all campaigns with stats / „Neue Kampagne“ (starts as Entwurf; `validateCampaignInput`) |
+| Kampagnen | `GET campaigns`, `POST campaigns { name, kind, …, templateId?, fromRundmailId? }` | all campaigns with stats / „Neue Kampagne“ (starts as Entwurf; `validateCampaignInput`); a new Rundmail starts from a template (`templateId`), from another Rundmail's content (`fromRundmailId` — subject, preview line, language, document, pace; never its test mail) or a starter |
 | | `POST campaigns/update { id, …fields }` | edit; an active campaign with a changed audience is re-matched at once |
 | | `POST campaigns/status { id, status }` | Starten / Pausieren / Fortsetzen / Beenden / Archivieren (`canTransition`; starting materialises the audience) |
-| | `POST campaigns/audience-preview { audience, letterMode? }` | the editor's live count with consent (total, with Mo, DE / EN as window aggregates, 8 sample names, plain-German description) plus `withoutConsent { total, letterReach }` — the same spec without the consent (the only match that skips it; nothing is materialised) and how many of those a letter could reach (postal address, no objection); with `letterMode` (`ohne_einwilligung` \| `alle`, 0074) also `letters { total, withAddress }` — the letter recipients under the letter rules and how many have a purchase address (the editor's „Per Brief: …“ line) |
+| | `POST campaigns/audience-preview { audience, letterMode? }` | the editor's live count with consent (total, „davon N mit Double-Opt-in“, with Mo, DE / EN as window aggregates, 8 sample names, plain-German description — campaign names for „nicht in: …“ / „hat „…“ erhalten“; with „Nur diese Adressen“ the status of every listed address: in, unknown, no consent, blocked, left out by other filters; `allowSingleOptIn` = `CAMPAIGN_ALLOW_SINGLE_OPT_IN`) plus `withoutConsent { total, letterReach }` — the same spec without the consent (the only match that skips it; nothing is materialised) and how many of those a letter could reach (postal address, no objection); with `letterMode` (`ohne_einwilligung` \| `alle`, 0074) also `letters { total, withAddress }` — the letter recipients under the letter rules and how many have a purchase address (the editor's „Per Brief: …“ line) |
 | | `POST campaigns/assist { action: audience \| brief, … }` | AI help in the editor: „Filter setzen“ from a sentence, „Briefing vorschlagen“ (proposals only) |
 | | `POST campaigns/sample { action: pick \| generate \| send_test, … }` | „Prüfen & testen“: `pick { audience }` → three varied recipients; `generate { campaignId?, config, customerId, language }` → a sample mail (subject, body, html; consent + block list checked, nothing stored); `send_test { campaignId, to, sample }` → Testkontakt + `approveAndSendCampaign` (409 `stale_sample` when the saved settings differ from the sample's) |
 | | `POST campaigns/hero-image?ai=0\|1&campaignId=&name=` (raw body `image/jpeg` \| `image/png` \| `image/webp`, `guardAdminPost` with `accept`) | the Kampagnenbild upload in the editor (new campaigns too): checks and processes the picture, stores the desktop and phone file in the Blob store → `{ heroImage, warnings }` — staged, nothing written to the database (`campaigns` / `campaigns/update` commit it). `ai` (the Bildherkunft) is required (400 `origin_required`); `campaignId` only names the files. Refusals with the German message: 415 `unsupported_media_type` (another Content-Type) / `format` (the sniffed bytes), 413 `too_large` (> 4 MB, checked on Content-Length and while reading) / `too_many_pixels` (> 40 MP), 400 `too_small` / `animated` / `empty` / `unreadable`, 503 `not_configured` (no `BLOB_READ_WRITE_TOKEN`), 502 `storage_failed`. Access log `campaign_hero.upload` (`{ campaignId, ai, bytes }`). Rules: [`EMAIL_DESIGNS.md`](./EMAIL_DESIGNS.md) „Kampagnenbild“ |
@@ -2928,6 +2983,11 @@ them. Actions that read or act on one person's data write the admin access log
 | | `GET email-hero`, `POST email-hero/suggest / generate / headline / remove` | hero image of a marketing or campaign draft; the GET's `defaultUrl` is what the mail shows without a per-draft hero — for a campaign draft the Kampagnenbild when there is one (`defaultSource: "campaign"`), else the design's default (`"design"`) |
 | Kampagnen (Rundmail) | `POST rundmail { campaignId, action, … }` | the Rundmail workspace (§3.2): `state` (polling), `save` (version-checked; 409 `frozen` / `conflict`), `pacing`, `checks`, `test { addresses, firstName, expectedVersion }`, `release { startsAt?, expectedVersion }` (409 `release_refused` with the evaluation), `unschedule`, `pause`, `resume` (403 `sends_not_approved`), `cancel { confirm: true }`, `step` (one runner step); audit `rundmail.*`. [`CAMPAIGNS.md`](./CAMPAIGNS.md) §9 |
 | | `POST rundmail/frozen { campaignId }` | „Versendete Mail ansehen“: the frozen HTML with a sample recipient, links inert |
+| | `GET rundmail/analytics?campaignId=&window=` | the „Versand“ analysis: `{ summary, series }` — `getMailingStats` plus the orders counted in the window (`1`, `3`, `7` default, `14`, `heute`; [`CAMPAIGNS.md`](./CAMPAIGNS.md) §9.6), codes, rates, „Gemessen bis“; mails per bucket during the send, clicks / orders / revenue per hour or day |
+| | `GET rundmail/recipients?campaignId=&window=&filter=&reason=&q=&sort=&dir=&page=` | the recipient list, 50 per page, filtered (`all`, `sent`, `delivered`, `clicked`, `ordered`, `bounced`, `complained`, `unsubscribed`, `not_sent` + `reason`), searched (name / e-mail) and sorted (`sent`, `clicks`, `revenue`) on the server → `{ rows, total, page, pageSize }`; a page past the end answers page 1 |
+| | `GET rundmail/recipient?campaignId=&contactId=&window=` | one recipient's sheet: send, clicks with links, orders in the window with verdict and flags, timeline → `{ recipient }` |
+| | `GET rundmail/export?campaignId=&window=&filter=&reason=&q=` | „Als CSV exportieren“: the whole selection as `text/csv` (UTF-8 with BOM, `;`, German headers, Berlin time), streamed in chunks of 2,000; audit `rundmail.export` (counts, never the search) |
+| | `POST rundmail/sent-email { contactId }` | „Mail ansehen“ (recipient sheet, Kunden → Marketing): the frozen HTML personalised for that recipient, links to their frozen targets, unsubscribe inert; 404 unless the person was sent the Rundmail |
 | Vorlagen | `GET vorlagen`, `POST vorlagen { action, … }` | the templates (§3.12): `get`, `create { name, description?, starter? \| doc? }`, `save { id, name, description, doc, expectedVersion }` (409 stale; a template in use keeps „Mos persönlicher Text“), `duplicate`, `archive { id, archived }` (refused while selected in Einstellungen), `import { file }`; audit `template.*`. [`EMAIL_TEMPLATES.md`](./EMAIL_TEMPLATES.md) |
 | | `POST vorlagen/preview { doc, use, subject?, preheader?, language?, firstName?, sample? }` | the live preview of the unsaved document through the production renderers: `bulk` (the Rundmail render of test and release) or `personal` (the campaign composer with sample data inside the template design; `sample` items \| set) → `text/html`, links inert; nothing stored |
 | | `POST vorlagen/image` (raw `image/jpeg` \| `image/png` \| `image/webp` \| `image/gif` body, ≤ 4 MB) | „Bild hochladen“ for Bild, Logo and Titelbild → `{ url, width, height, warnings }`; 503 without `BLOB_READ_WRITE_TOKEN`; writes nothing to the database |

@@ -183,15 +183,21 @@ jsonb; unknown fields and values are dropped, never guessed. Every field is opti
 | `clickedWithinDays` | clicked a marketing mail within N days |
 | `excludeMailedWithinDays` | no marketing mail within N days |
 | `excludeCampaignIds` | not (yet) a recipient of these campaigns |
+| `emails` | „Nur diese Adressen“ — at most 50 addresses, normalised (trimmed, lower case, de-duplicated); only the customers with these addresses, the consent and block rules still apply (a test group, §9.1) |
+| `receivedCampaign` | `{ id, notClicked? }` — got a real (non-test) mail of campaign `id`; with `notClicked: true` only those without a click on it (`clicked_at` / `bundle_clicked_at`) — e.g. a Cyber Monday reminder after the Black Friday Rundmail |
 
 `describeAudienceSpec` renders the spec in German („Alle Kunden mit Einwilligung für E-Mail-Werbung
-· …“) on the card, in the editor and in the desk header. The editor exposes all fields except
-`boughtAny`/`boughtNone`/`country`/`shopifyTags`; its chips and InfoTips state the code's bounds
+· …“, e.g. „nur diese 3 Adressen (Testgruppe)“, „hat „Black Friday“ erhalten, aber nicht geklickt“)
+on the card, in the editor and in the desk header. The editor exposes all fields except
+`boughtAny`/`boughtNone`/`country`/`shopifyTags` (`emails` and `receivedCampaign` in a Rundmail's
+Zielgruppe only, §9.1); its chips and InfoTips state the code's bounds
 (Lebenszyklus „Ausbauen (1–3 Mon.)“, „Weiterentwickeln (3–12 Mon.)“, Wertstufe as above), and so
 does the AI prompt of „Filter setzen“. The live count
 (`POST /api/admin/campaigns/audience-preview`, pure DB) always means „with consent“: matches, how
+many of them have a double opt-in (`confirmed`; the response also carries `allowSingleOptIn`), how
 many talked to Mo and the DE/EN split — window aggregates over the whole match (`count(*) OVER ()`),
-only 8 sample names are fetched. Below it the editor adds **„Ohne Einwilligung passen weitere N —
+only 8 sample names are fetched; with `emails` every listed address comes back with its status
+(`passt`, `unbekannt`, `ohne_einwilligung`, `gesperrt`, `andere_filter` — `checkAudienceEmails`). Below it the editor adds **„Ohne Einwilligung passen weitere N —
 davon M per Brief erreichbar“** (InfoTip): a second `matchAudience` call with `withoutConsent: true`
 counts the same spec among people WITHOUT the consent (or blocked) and how many of them have a
 postal address and no objection to advertising letters. It is the only match that skips the
@@ -1175,28 +1181,66 @@ A campaign of the kind `rundmail` sends **the same mail to everyone** in its aud
 Week announcement, a newsletter. There is no AI text per person and no review desk: a bulk mail
 cannot be checked one by one, so the system guarantees instead that every recipient gets exactly
 the content a person reviewed — one content, checked by machine, sent to the operator as a test,
-**frozen at the release** and rendered once. Personal offers stay the job of an Aktion (§2–§5).
+**frozen at the release** and rendered once (a Rundmail planned ahead once more at its send start,
+from the same content with the current prices — §9.2). Personal offers stay the job of an Aktion (§2–§5).
 The content is a block document ([`EMAIL_TEMPLATES.md`](./EMAIL_TEMPLATES.md)); the workspace is
 described in [`ADMIN_DASHBOARD.md`](./ADMIN_DASHBOARD.md) §3.2 „Rundmail“.
 
 ### 9.1 Flow
 
-1. **Neue Kampagne → Art „Rundmail“**: name, Zielgruppe (the audience builder; e-mail consent is
-   always required), **Absender** (§9.5), optionally „Versand spätestens bis“ (after it nothing more
-   is sent; the nightly job ends the campaign), „Inhalt starten mit“ a template (its Mo blocks are
-   dropped) or a starter. The workspace opens.
+1. **Neue Kampagne → Art „Rundmail“**: name, Zielgruppe, **Absender** (§9.5), optionally „Versand
+   spätestens bis“ (after it nothing more is sent; the nightly job ends the campaign), „Inhalt
+   starten mit“ a template (its Mo blocks are dropped), a starter or **„Rundmail: …“** — a copy of
+   another Rundmail's subject, preview line, language, document and pace (`fromRundmailId` on
+   `POST /api/admin/campaigns`; never its test mail — the copy needs its own), e.g. a test-group run
+   first, then the same content to everyone. The workspace opens.
+   The Zielgruppe starts with **„Empfänger“** — the common choices as shortcuts over the spec
+   (`audiencePresetOf` / `audiencePresetSpec` in [`audience-spec.mjs`](../src/lib/audience-spec.mjs)):
+   **„Alle mit Einwilligung“** (the default: consent `subscribed`, not blocked), **„Nur
+   Double-Opt-in“** (`optInLevels: [confirmed_opt_in]`), **„Testgruppe“** (`emails`, „Nur diese
+   Adressen“: up to 50 pasted addresses, one per line or comma-separated, normalised; `parseAudienceEmails`
+   names what it did not recognise) and **„Eigene Filter“** (the full builder, with „Nur diese
+   Adressen (optional)“ and **„Hat Rundmail erhalten“** + „… aber nicht geklickt“ —
+   `receivedCampaign`, §2.2). A spec that is not exactly a preset shows as „Eigene Filter“; leaving
+   it for a preset keeps it for the way back. The listed people of a test group must still be
+   customers with the e-mail consent and without a block — the gates of §1 and §3 are never
+   widened; a test group without a valid address is refused on save (it would mean „everyone“).
+   The live count shows the matches, **„davon N mit Double-Opt-in“** (with „nur sie werden
+   angeschrieben“ while `CAMPAIGN_ALLOW_SINGLE_OPT_IN` is off) and, for listed addresses, „M von N
+   Adressen passen“ with every other address and why: no customer with that address, no e-mail
+   consent, blocked, or left out by the other filters (`checkAudienceEmails`). A test group runs the
+   real batch path (batches, idempotency, tracked links, unsubscribe header) to the operator's own
+   accounts before the big send. A reminder („Hat Rundmail <X> erhalten, aber nicht geklickt“) can
+   be prepared and planned before X has gone out: its audience is matched at its own start (§9.3).
 2. **Inhalt**: subject (merge fields `{{vorname|Ersatz}}`), Vorschauzeile, language, the blocks with
    the live preview, „Vorlage laden“, „Mit KI gestalten“ (the KI-Gestalter, also for Betreff and
    Vorschauzeile — [`EMAIL_TEMPLATES.md`](./EMAIL_TEMPLATES.md) §6); Speichern is version-checked
    (`content_version`, a second window gets a conflict).
 3. **Prüfen & senden**: every check (§9.3); the **Testmail** to up to five own addresses with a
    first name to test (required for the current content version — every change needs a new one);
-   Tempo (Behutsam 60 / Normal 300 / Schnell 1,000 per minute), „Engagierte zuerst“, Zeitpunkt
-   „Jetzt“ or „Planen“ (≤ 60 days ahead); „Jetzt senden“ / „Planen“ (confirmed).
+   Tempo (Behutsam 60 / Normal 300 / Schnell 1,000 per minute — the runner really sends about 80 %
+   of that, Normal ≈ 240 per minute, and every duration shown is counted at that speed:
+   `realMailingRate`, `mailingDurationMinutes` in [`mailing-schedule.mjs`](../src/lib/mailing-schedule.mjs)),
+   „Engagierte zuerst“, Zeitpunkt „Jetzt“ or „Planen“. **Planen** takes date and time in German
+   time (Europe/Berlin, whatever zone the browser runs in — `fromBerlinInputValue` /
+   `toBerlinInputValue` in [`admin-datetime.mjs`](../src/lib/admin-datetime.mjs)) and repeats it with its
+   weekday („Samstag, 28.11.2026, 08:00 Uhr · in 15 Tagen“); the start must lie in the future (a
+   typo in the past is refused by the server too, not sent at once), at most 60 days ahead and
+   before „Versand spätestens bis“ (`validateMailingStart`). „Jetzt senden“ / „Planen“ asks first:
+   subject, reach and sender, the Zielgruppe in words, the start with weekday, tempo with real speed
+   and expected duration and — when planned — „Preise und Verfügbarkeit der Produkte werden beim
+   Versandstart aktualisiert; ausverkaufte Produkte fallen dann heraus.“ „Jetzt senden“ is unchanged:
+   it freezes and starts at once.
 4. **Versand**: progress, results, clicks per link, reasons not sent, „Versendete Mail ansehen“
-   (the frozen HTML); Pausieren / Fortsetzen / Abbrechen (the rest is `skipped`, `abgebrochen`); a
-   planned Rundmail can be „Zurücknehmen“ (back to Entwurf, content editable) until its first mail
-   went out.
+   (the frozen HTML); Pausieren / Fortsetzen / Abbrechen (the rest is `skipped`, `abgebrochen`). A
+   planned Rundmail shows **„Geplant für <Wochentag, Datum, Uhrzeit> · in …“** in the workspace
+   header, in „Versand“ and on its card in the Kampagnen overview, and can be **„Planung
+   zurücknehmen“** (back to Entwurf, content editable) until its first batch — the store refuses once
+   a recipient was claimed. State per `mailingScheduleState`: Geplant → Startet (the start has come,
+   the first step has not run) → Läuft; **„Start überfällig“** when no step ran 3 minutes after the
+   start (the cron did not run: the workspace says so and, while open, starts it itself); a start with
+   `CAMPAIGN_SENDS_APPROVED` off is announced in advance („Versand gesperrt — die Rundmail startet so
+   nicht“) and pauses at its start with that message (Fortsetzen once switched on).
 
 Status: `entwurf` → (release) `aktiv` (phase `geplant` until `starts_at`) ⇄ `pausiert` →
 `beendet` (finished or cancelled) → `archiviert`. Only the workspace moves a Rundmail; the generic
@@ -1232,6 +1276,31 @@ replacement of the placeholders and nothing else; a mail with a leftover placeho
 The test mail is the same render from the same sender with the same headers, links untracked.
 Changing the Absender after the test mail clears it (`clearMailingTest`): the release needs a test
 that showed the From, DKIM alignment and Reply-To that will go out.
+
+**Refresh at the send start** (planned Rundmails; rule in
+[`mailing-schedule.mjs`](../src/lib/mailing-schedule.mjs), tested; I/O `refreshMailingAtStart` in
+[`mailing-send.ts`](../src/lib/mailing-send.ts) and `refreshFrozenMailing` / `noteMailingRefresh` in
+[`mailing-store.ts`](../src/lib/mailing-store.ts)). Preise und Verfügbarkeit der Produkte werden beim
+Versandstart aktualisiert; ausverkaufte Produkte fallen dann heraus. When the first step of a
+Rundmail runs whose start lies at least a minute after its release (`mailingRefreshDue`: `starts_at −
+frozen_at ≥ 60 s`, the audience not matched yet), the SAME content version is rendered again with
+the CURRENT catalog — before the audience is matched; nothing has been sent, so the link table is
+rebuilt. Every render-dependent hard check of the release runs on the new render
+(`renderedMailErrors`: over 100 KB, a picture over `http://`, a `javascript:`/`data:` link, a
+leftover placeholder). Taken (`decideMailingRefresh`): one guarded UPDATE replaces subject, HTML,
+text, hash, links and merges and sets `frozen_at` to the moment it ran — the marker that it is not
+due again — only while the release it read is still in place and no batch, no claimed and no sent
+recipient exists. From and Reply-To, content version, test mail and review stay as they were: only
+the time changed. **Kept** — the release version goes out — when the render fails, the catalog
+cannot be read, the new render fails a hard check, or the content names products but the catalog can
+show none of them (all sold out or an empty catalog — never a Black Week mail without its products
+because of an outage). Either way the outcome is stored with a German note in `merges.refresh`
+(`{ at, releasedAt, outcome: aktualisiert | unveraendert | behalten, note }`, e.g. „Preise und
+Verfügbarkeit beim Versandstart aktualisiert. Nicht in der Mail: X (ausverkauft).“), shown in the
+workspace header („Beim Versandstart aktualisiert“ / „… geprüft“ / „Preise nicht aktualisiert“), and a kept one is
+reported (`reportError`, phase `refreshKept`). It never blocks or delays the send. The catalog is
+the one the whole app reads (`loadProductCatalog`: the synced blob, else the committed fallback JSON,
+[`CATALOG_SYNC.md`](./CATALOG_SYNC.md)).
 A tracked Rundmail link (`?l=`) that cannot be resolved — the database unreachable, or a copy of a
 batch whose result stayed unclear — redirects to the shop's start page (personal mails fall back to
 the cart).
@@ -1243,9 +1312,12 @@ route refuses too), warnings and infos are shown:
 
 - **Errors**: `CAMPAIGN_SENDS_APPROVED` off; subject missing, longer than 150 characters or with an
   unknown merge field; content errors ([`EMAIL_TEMPLATES.md`](./EMAIL_TEMPLATES.md) §2); the
-  Absender not usable; an empty audience; no test mail of the current version; HTML over 100 KB
+  Absender not usable; an empty audience (a warning instead while the audience hangs on a Rundmail
+  that has not finished sending — „Hat Rundmail <X> erhalten“, matched at this one's start:
+  `audience_pending`); no test mail of the current version; HTML over 100 KB
   (Gmail clips at 102 KB and hides the unsubscribe link); a picture over `http://`; a
-  `javascript:`/`data:` link.
+  `javascript:`/`data:` link — the last three and leftover placeholders are `renderedMailErrors`,
+  run again on the render at the send start (§9.2).
 - **Warnings**: subject over 60 characters (phones), mostly capitals, several „!“; typical spam
   words in subject, preview line or the operator's text (not the legal footer); no preview line;
   over 80 KB; many pictures with little text (counted on the operator's content — the legal
@@ -1253,11 +1325,12 @@ route refuses too), warnings and infos are shown:
   shorteners; `http://` links;
   recipients without double opt-in who are skipped while `CAMPAIGN_ALLOW_SINGLE_OPT_IN` is off;
   products that are sold out right now (they may be added on purpose — they are missing from the
-  whole Rundmail if still sold out at the release, because the content is frozen), products no
+  whole Rundmail if still sold out at the send start, §9.2), products no
   longer in the catalog, and products blocks without a single available product (left out with
   their title) — `docProductAvailability`.
-- **Infos**: reach and duration at the chosen pace, the personal greeting, the sender, the
-  unsubscribe link and header.
+- **Infos**: reach and duration at the real speed of the chosen pace („Dauer etwa 1 Std. 20 Min.
+  (Tempo 300 pro Minute, real etwa 240)“), the personal greeting, the sender, the unsubscribe link
+  and header.
 
 ### 9.4 Sending
 
@@ -1265,9 +1338,10 @@ route refuses too), warnings and infos are shown:
 `requireCronAuth`) and, while the workspace is open, from the page every 6 seconds (`action:
 "step"`); one runner per Rundmail at a time (`lease_until`).
 
-1. **Audience fresh at the start.** The first step matches the audience again
+1. **Content and audience fresh at the start.** The first step of a planned Rundmail renders its
+   content again with the current catalog (§9.2), then matches the audience again
    (`refreshCampaignAudience`: new subscribers in, unsubscribed people out) and fixes it
-   (`audience_mode = fest`, `materialized_at`).
+   (`audience_mode = fest`, `materialized_at`). `CAMPAIGN_SENDS_APPROVED` off pauses before either.
 2. **Claim a batch** (`claimMailingBatch`, one statement): up to the batch size of `pending`
    recipients (`FOR UPDATE SKIP LOCKED`; „Engagierte zuerst“ orders by last click, then last
    order), each with a fresh redirect token, set to `sending`; a `campaign_mailing_batches` row
@@ -1331,7 +1405,53 @@ webhook, „Delivery“ below), clicked and unsubscribed; clicks per link from `
 (any other value → the shop; [`ADMIN_DASHBOARD.md`](./ADMIN_DASHBOARD.md) §10). The KPI
 „Kampagnen-Funnel“ counts Rundmail sends in its totals; its hero comparison and lifecycle-segment
 split leave them out, and a Rundmail never makes a customer profile due (it says nothing new about
-the person). Rundmail sends do not appear in a customer's Korrespondenz.
+the person). Rundmail sends do not appear in a customer's Korrespondenz; Kunden → Marketing →
+„Kampagnen“ lists them with subject and date, „Mail ansehen“ (the frozen content personalised again
+for that person — a Rundmail send row stores no body) and „Auswertung“ (that recipient in the analysis).
+
+**The analysis** (the workspace's „Versand“ tab, [`ADMIN_DASHBOARD.md`](./ADMIN_DASHBOARD.md) §3.2;
+[`rundmail-analytics-store.ts`](../src/lib/rundmail-analytics-store.ts) over the pure, tested
+[`rundmail-analytics.mjs`](../src/lib/rundmail-analytics.mjs)): every figure above plus the orders
+counted for the Rundmail — Besteller, Bestellungen, Umsatz, „davon mit Code“, „davon nach Klick“,
+Umsatz je Empfänger — and the rates (Conversion = Besteller ÷ gesendete Mails, Klickrate, Abmelderate,
+Bounce-Rate, Beschwerden; all over the sent mails); a time series (mails per minute, 10 minutes, hour
+or day during the send; clicks, orders and revenue per hour up to four days, else per Berlin day);
+every recipient — sent, not sent with the reason, pending — paged, searched, filtered and sorted on the
+server, one person's timeline (every click with its link, the orders with items, codes and why one does
+not count) with „Mail ansehen“; the CSV export of the whole selection. Opens are not measured (no
+pixel, on purpose).
+
+**Attribution — which order counts for a Rundmail.** Nothing ties an order to a Rundmail directly
+(personal mails carry per-send `MK-` codes; a Rundmail at most one shared code), so the analysis counts
+orders by time, with an explicit rule:
+
+1. the order is the recipient's (`customer_orders.customer_id` = the send's `customer_id`) and **not
+   cancelled** (`cancelled_at` null);
+2. it was placed **after the recipient's own send** (`processed_at > sent_at`) and **within the window**
+   chosen in the UI — 1, 3, **7 (default)**, 14 days or „bis heute“, from that send, in exact 24-hour days;
+3. **last touch:** no other Rundmail send to the same person lies between that send and the order (a
+   later `sent_at`, or the same one with a higher send id). An order inside the windows of two Rundmails
+   counts once, for the later; the later send's window always contains the order when the earlier's
+   does. Personal campaign mails are no competing touch — they are attributed through their `MK-` codes
+   on the KPI screen, where the same order can appear as well.
+
+Revenue of an order = `total_cents − refunded_cents`, never below 0. Every counted order carries two
+flags, shown as figures of their own because they are the evidence: **„mit Code“** — one of the
+Rundmail's coupon codes (each coupon block, inside sections too, and each `/discount/<code>` link of the
+frozen link table) is among its discount codes, case-insensitive — the hardest evidence; **„nach
+Klick“** — the recipient clicked this Rundmail (first click, `clicked_at`) before ordering. Without
+either, an order in the window is a hint, not a proof. „davon mit Code“ also names all orders with the
+code in the same period by anyone (a forwarded or shared code).
+
+The queries run the rule set-based over all recipients at once (`att` in the store: a `LATERAL` read of
+each recipient's orders over `customer_orders_customer_idx` behind an `OFFSET 0` fence, the last touch
+over `campaign_sends_customer_idx`) — no loop per recipient, no new index. The two attribution
+statements run with `SET LOCAL jit = off`: the fenced `LATERAL` gives the planner a large cost estimate,
+and Postgres then spent ~0.6 s compiling for ~20 ms of work. Measured 2026-11-12 on the local database
+with 10,000 recipients and 1,000,000 orders in the ledger: figures ~15 ms and a list page ~30–50 ms in
+the database (~50–160 ms through the API), the CSV of 10,000 rows ~1.1 s (chunks of 2,000); the SQL gives
+exactly the figures of the pure rule (`attributeRecipientOrders`) in every window. Routes:
+[`ADMIN_DASHBOARD.md`](./ADMIN_DASHBOARD.md) §11.
 
 ### 9.7 Data model
 
@@ -1339,7 +1459,7 @@ the person). Rundmail sends do not appear in a customer's Korrespondenz.
 | --- | --- |
 | `campaigns.kind` | + `rundmail` (CHECK re-created by 0081) |
 | `campaigns.sender` | JSONB object or NULL (= the standard sender) — `{ id, address, name, replies }`; any campaign kind |
-| `campaign_mailings` | One row per Rundmail: the editable content (`subject`, `preheader`, `doc`, `language`, `source_template_id`, `content_version`), pace (`rate`, `engaged_first`), the test (`test_version`, `test_sent_at`, `test_sent_to`), the frozen release (`frozen_version`, `frozen_at`, `frozen_subject/html/text/hash/from/reply_to`, `links`, `merges`), the run (`materialized_at`, `finished_at`, `lease_until`, `next_batch_at`, `last_error`, `last_error_at`) |
+| `campaign_mailings` | One row per Rundmail: the editable content (`subject`, `preheader`, `doc`, `language`, `source_template_id`, `content_version`), pace (`rate`, `engaged_first`), the test (`test_version`, `test_sent_at`, `test_sent_to`), the frozen release (`frozen_version`, `frozen_at` — the time of the render that goes out: the release, or the refresh at the start, §9.2 —, `frozen_subject/html/text/hash/from/reply_to`, `links`, `merges` with `refresh` = the note of the refresh at the start), the run (`materialized_at`, `finished_at`, `lease_until`, `next_batch_at`, `last_error`, `last_error_at`) |
 | `campaign_mailing_batches` | One row per Resend call: `contact_ids`, `tokens`, `status` (`offen` \| `gesendet` \| `fehler` \| `unklar`), `attempts`, `error`, timestamps — the idempotency anchor |
 | `campaign_contacts` | The recipients as for every campaign: `pending` → `sending` → `sent` / `suppressed` / `skipped` with `excluded_reason` |
 | `campaign_sends` | One row per sent mail, as for every campaign (retention §6) |
@@ -1358,7 +1478,8 @@ tokens. Everything is deleted with the campaign (`ON DELETE CASCADE`).
 | `GET /api/r/<token>?l=N` | Tracked link N of a Rundmail |
 
 Files: `mailing-core.mjs` (pace, batches, freeze helpers, Resend errors), `mailing-checks.mjs`,
-`mailing-render.ts`, `mailing-send.ts` (checks, test, release, runner), `mailing-store.ts`,
+`mailing-schedule.mjs` (real speed and duration, the planned start, the schedule state, the refresh
+rule; tested), `mailing-render.ts`, `mailing-send.ts` (checks, test, release, runner), `mailing-store.ts`,
 `sender-identities.mjs` + `sender-store.ts`, `src/app/admin/RundmailTab.tsx` +
 `src/app/admin/rundmail/RundmailWorkspace.tsx`. Environment: `CAMPAIGN_SENDS_APPROVED`,
 `CAMPAIGN_ALLOW_SINGLE_OPT_IN`, `MARKETING_MIN_SEND_INTERVAL_DAYS`, `UNSUBSCRIBE_SECRET`,
