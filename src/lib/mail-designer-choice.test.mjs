@@ -32,16 +32,18 @@ test("the choice of a conversation: the stored settings without the house style,
     effort: "high",
     freedom: "ausgewogen",
     proactive: true,
+    images: true,
   });
-  const custom = designerChoiceFrom(stored({ model: FABLE_MODEL, effort: "xhigh", freedom: "frei", proactive: false }));
-  assert.deepEqual(custom, { model: FABLE_MODEL, effort: "xhigh", freedom: "frei", proactive: false });
+  const custom = designerChoiceFrom(stored({ model: FABLE_MODEL, effort: "xhigh", freedom: "frei", proactive: false, images: false }));
+  assert.deepEqual(custom, { model: FABLE_MODEL, effort: "xhigh", freedom: "frei", proactive: false, images: false });
   assert.equal("houseStyle" in custom, false);
   // unknown values fall back one by one; garbage → the defaults
-  assert.deepEqual(designerChoiceFrom({ model: "gpt-9", effort: "ultra", freedom: "frei", proactive: "ja" }), {
+  assert.deepEqual(designerChoiceFrom({ model: "gpt-9", effort: "ultra", freedom: "frei", proactive: "ja", images: "nein" }), {
     model: OPUS_MODEL,
     effort: "high",
     freedom: "frei",
     proactive: true,
+    images: true,
   });
   assert.deepEqual(designerChoiceFrom(null), designerChoiceFrom(DEFAULT_DESIGNER_SETTINGS));
   assert.deepEqual(designerChoiceFrom("x"), designerChoiceFrom(DEFAULT_DESIGNER_SETTINGS));
@@ -49,10 +51,10 @@ test("the choice of a conversation: the stored settings without the house style,
 });
 
 test("a quality level sets model and effort together; freedom and the capabilities switch stay", () => {
-  const base = designerChoiceFrom(stored({ freedom: "genau", proactive: false }));
-  assert.deepEqual(designerChoiceWithQuality(base, "schnell"), { model: SONNET_MODEL, effort: "medium", freedom: "genau", proactive: false });
-  assert.deepEqual(designerChoiceWithQuality(base, "maximal"), { model: FABLE_MODEL, effort: "high", freedom: "genau", proactive: false });
-  assert.deepEqual(designerChoiceWithQuality(base, "gruendlich"), { model: OPUS_MODEL, effort: "high", freedom: "genau", proactive: false });
+  const base = designerChoiceFrom(stored({ freedom: "genau", proactive: false, images: false }));
+  assert.deepEqual(designerChoiceWithQuality(base, "schnell"), { model: SONNET_MODEL, effort: "medium", freedom: "genau", proactive: false, images: false });
+  assert.deepEqual(designerChoiceWithQuality(base, "maximal"), { model: FABLE_MODEL, effort: "high", freedom: "genau", proactive: false, images: false });
+  assert.deepEqual(designerChoiceWithQuality(base, "gruendlich"), { model: OPUS_MODEL, effort: "high", freedom: "genau", proactive: false, images: false });
   for (const q of DESIGNER_QUALITY) {
     const c = designerChoiceWithQuality(base, q.id);
     assert.deepEqual([c.model, c.effort], [q.model, q.effort]);
@@ -72,10 +74,10 @@ test("same quality: model and effort", () => {
 });
 
 test("the request settings: the whole choice, checked — what the server merges over the stored settings", () => {
-  const choice = { model: SONNET_MODEL, effort: "medium", freedom: "genau", proactive: false, houseStyle: "nie aus der Anfrage" };
+  const choice = { model: SONNET_MODEL, effort: "medium", freedom: "genau", proactive: false, images: false, houseStyle: "nie aus der Anfrage" };
   const settings = designerRequestSettings(choice);
-  assert.deepEqual(settings, { model: SONNET_MODEL, effort: "medium", freedom: "genau", proactive: false });
-  assert.deepEqual(Object.keys(settings), ["model", "effort", "freedom", "proactive"]);
+  assert.deepEqual(settings, { model: SONNET_MODEL, effort: "medium", freedom: "genau", proactive: false, images: false });
+  assert.deepEqual(Object.keys(settings), ["model", "effort", "freedom", "proactive", "images"]);
   // the server keeps every field and never takes a house style from it
   assert.deepEqual(parseDesignerRunOverride(settings), settings);
   assert.deepEqual(mergeDesignerSettings(stored(), settings), { ...settings, houseStyle: "Wir duzen." });
@@ -100,8 +102,10 @@ test("Einstellungen card: „Standard wiederherstellen“ resets the choices but
   assert.equal(isDefaultDesignerChoice(stored({ proactive: false })), false);
   assert.equal(isDefaultDesignerChoice(stored({ freedom: "frei" })), false);
   assert.equal(isDefaultDesignerChoice(stored({ effort: "max" })), false);
+  assert.equal(isDefaultDesignerChoice(stored({ images: false })), false);
+  assert.equal(isDefaultDesignerChoice({ model: OPUS_MODEL, effort: "high", freedom: "ausgewogen", proactive: true }), true, "without the switch (older state): on");
   assert.equal(isDefaultDesignerChoice(null), false);
-  const form = stored({ model: FABLE_MODEL, effort: "max", freedom: "genau", proactive: false, houseStyle: "Rot und Schwarz.\n" });
+  const form = stored({ model: FABLE_MODEL, effort: "max", freedom: "genau", proactive: false, images: false, houseStyle: "Rot und Schwarz.\n" });
   const reset = designerSettingsWithDefaultChoices(form);
   assert.deepEqual(reset, { ...DEFAULT_DESIGNER_SETTINGS, houseStyle: "Rot und Schwarz.\n" });
   assert.equal(isDefaultDesignerChoice(reset), true);
@@ -119,6 +123,7 @@ test("Einstellungen card: dirty compares the house style as the server stores it
   assert.equal(designerSettingsDirty({ ...saved, effort: "medium" }, saved), true);
   assert.equal(designerSettingsDirty({ ...saved, freedom: "frei" }, saved), true);
   assert.equal(designerSettingsDirty({ ...saved, proactive: false }, saved), true);
+  assert.equal(designerSettingsDirty({ ...saved, images: false }, saved), true);
 });
 
 test("Einstellungen card: the house style counts as the server counts it", () => {
@@ -141,4 +146,10 @@ test("the deep link to the card and the shared explanations", () => {
     ["Genau nach Auftrag", "Ausgewogen (Standard)", "Frei gestalten"]
   );
   assert.ok(Object.isFrozen(DESIGNER_TEXTS) && Object.isFrozen(DESIGNER_TEXTS.quality));
+  // „Bilder mit KI erzeugen“ — the owner's wording; the card names the switch for one conversation
+  assert.equal(
+    DESIGNER_TEXTS.images,
+    "Die KI darf Bilder für die Mail erzeugen lassen — zum Beispiel einen Titelbereich mit eingebauter Überschrift, einen Hintergrund, ein Absperrband oder Icons. Produkte zeigt sie nur mit den echten Katalogfotos als Vorlage. Kostet je Bild etwa 0,20 € und dauert etwas länger."
+  );
+  assert.match(DESIGNER_TEXTS.card, /KI-Bilder für eine Unterhaltung/);
 });

@@ -6,6 +6,7 @@ import {
   DESIGNER_EFFORTS,
   DESIGNER_FREEDOM,
   DESIGNER_MODELS,
+  DESIGNER_PICTURES_PER_RUN,
   DESIGNER_QUALITY,
   DESIGNER_SETTINGS_KEY,
   HOUSE_STYLE_MAX_CHARS,
@@ -14,6 +15,7 @@ import {
   designerHouseStyleSection,
   designerMaxOutputTokens,
   designerModelLabel,
+  designerPictureState,
   designerQualityOf,
   designerRunRules,
   designerSettingsLabel,
@@ -29,7 +31,7 @@ test("the defaults are what the KI-Gestalter did before it had settings (tier de
   assert.equal(DESIGNER_SETTINGS_KEY, "mail_designer");
   assert.equal(DEFAULT_DESIGNER_SETTINGS.model, AI_TIERS.designer.model);
   assert.equal(DEFAULT_DESIGNER_SETTINGS.effort, AI_TIERS.designer.effort);
-  assert.deepEqual({ ...DEFAULT_DESIGNER_SETTINGS }, { model: OPUS_MODEL, effort: "high", freedom: "ausgewogen", proactive: true, houseStyle: "" });
+  assert.deepEqual({ ...DEFAULT_DESIGNER_SETTINGS }, { model: OPUS_MODEL, effort: "high", freedom: "ausgewogen", proactive: true, images: true, houseStyle: "" });
   assert.equal(designerQualityOf(DEFAULT_DESIGNER_SETTINGS), "gruendlich");
 });
 
@@ -58,8 +60,11 @@ test("parseDesignerSettings: lenient — every broken field falls back on its ow
   const s = parseDesignerSettings(
     JSON.stringify({ model: FABLE_MODEL, effort: "xhigh", freedom: "frei", proactive: false, houseStyle: "  Schwarz und Rot.\r\n\r\n\r\n\r\nImmer duzen.  " })
   );
-  assert.deepEqual(s, { model: FABLE_MODEL, effort: "xhigh", freedom: "frei", proactive: false, houseStyle: "Schwarz und Rot.\n\nImmer duzen." });
-  const mixed = parseDesignerSettings({ model: "gpt-5", effort: "ultra", freedom: "chaos", proactive: "yes", houseStyle: 42 });
+  assert.deepEqual(s, { model: FABLE_MODEL, effort: "xhigh", freedom: "frei", proactive: false, images: true, houseStyle: "Schwarz und Rot.\n\nImmer duzen." });
+  // the pictures switch: stored off stays off; a row from before the switch (none) reads as on
+  assert.equal(parseDesignerSettings({ images: false }).images, false);
+  assert.equal(parseDesignerSettings({ model: OPUS_MODEL }).images, true);
+  const mixed = parseDesignerSettings({ model: "gpt-5", effort: "ultra", freedom: "chaos", proactive: "yes", images: "nein", houseStyle: 42 });
   assert.deepEqual(mixed, { ...DEFAULT_DESIGNER_SETTINGS });
   // An over-long stored text is clipped, never refused (a stored row never breaks a run).
   assert.equal(parseDesignerSettings({ houseStyle: "x".repeat(5000) }).houseStyle.length, HOUSE_STYLE_MAX_CHARS);
@@ -77,9 +82,16 @@ test("cleanHouseStyle: control characters out, newlines and tabs kept, blank run
 test("validateDesignerSettingsInput: strict, German messages per field", () => {
   const ok = validateDesignerSettingsInput({ model: SONNET_MODEL, effort: "medium", freedom: "genau", proactive: false, houseStyle: " Keine Ausrufezeichen. " });
   assert.equal(ok.ok, true);
-  assert.deepEqual(ok.ok && ok.value, { model: SONNET_MODEL, effort: "medium", freedom: "genau", proactive: false, houseStyle: "Keine Ausrufezeichen." });
+  assert.deepEqual(ok.ok && ok.value, { model: SONNET_MODEL, effort: "medium", freedom: "genau", proactive: false, images: true, houseStyle: "Keine Ausrufezeichen." });
   const empty = validateDesignerSettingsInput({ model: OPUS_MODEL, effort: "high", freedom: "ausgewogen", proactive: true });
   assert.equal(empty.ok && empty.value.houseStyle, "");
+  // „Bilder mit KI erzeugen“: off is kept; missing (a page from before the switch) is on; anything else is refused
+  const off = validateDesignerSettingsInput({ model: OPUS_MODEL, effort: "high", freedom: "ausgewogen", proactive: true, images: false });
+  assert.equal(off.ok && off.value.images, false);
+  assert.equal(empty.ok && empty.value.images, true);
+  const broken = validateDesignerSettingsInput({ model: OPUS_MODEL, effort: "high", freedom: "ausgewogen", proactive: true, images: "aus" });
+  assert.deepEqual(!broken.ok && Object.keys(broken.errors), ["images"]);
+  assert.match(!broken.ok ? broken.errors.images : "", /Bilder mit KI erzeugen/);
   const bad = validateDesignerSettingsInput({ model: "claude-opus-4-1", effort: "turbo", freedom: "", proactive: "ja", houseStyle: "x".repeat(HOUSE_STYLE_MAX_CHARS + 1) });
   assert.equal(bad.ok, false);
   assert.deepEqual(Object.keys(!bad.ok ? bad.errors : {}).sort(), ["effort", "freedom", "houseStyle", "model", "proactive"]);
@@ -95,17 +107,22 @@ test("the panel's override keeps only valid fields and never carries a house sty
     freedom: "frei",
     proactive: false,
   });
-  assert.deepEqual(parseDesignerRunOverride({ model: "claude-opus-4-8", effort: 3, freedom: null }), {});
+  assert.deepEqual(parseDesignerRunOverride({ model: "claude-opus-4-8", effort: 3, freedom: null, images: "ja" }), {});
   assert.deepEqual(parseDesignerRunOverride("schnell"), {});
-  const saved = { model: OPUS_MODEL, effort: "high", freedom: "ausgewogen", proactive: true, houseStyle: "Hausfarbe Rot." };
+  // the pictures switch for one conversation
+  assert.deepEqual(parseDesignerRunOverride({ images: false }), { images: false });
+  const saved = { model: OPUS_MODEL, effort: "high", freedom: "ausgewogen", proactive: true, images: true, houseStyle: "Hausfarbe Rot." };
   assert.deepEqual(mergeDesignerSettings(saved, { model: SONNET_MODEL, effort: "medium", houseStyle: "evil" }), {
     model: SONNET_MODEL,
     effort: "medium",
     freedom: "ausgewogen",
     proactive: true,
+    images: true,
     houseStyle: "Hausfarbe Rot.",
   });
   assert.deepEqual(mergeDesignerSettings(saved, null), saved);
+  assert.equal(mergeDesignerSettings(saved, { images: false }).images, false);
+  assert.equal(mergeDesignerSettings({ ...saved, images: false }, { freedom: "frei" }).images, false, "the team's „off“ stays without an override");
 });
 
 test("quality level of a pair, and the one-line label", () => {
@@ -146,6 +163,24 @@ test("house style: a closed system-prompt section, empty when unset", () => {
   assert.equal(sec.match(/<hausstil>/g)?.length, 1);
   assert.equal(sec.match(/<\/hausstil>/g)?.length, 1);
   assert.ok(sec.trimEnd().endsWith("</hausstil>"));
+});
+
+test("run rules: the pictures line — on, off by the setting, or not configured; none without the option", () => {
+  const on = designerRunRules({}, { pictures: "on" });
+  assert.equal(on.split("\n- ").length, 4);
+  assert.match(on, new RegExp(`- Bilder: Du darfst mit generate_image Bilder erzeugen lassen — höchstens ${DESIGNER_PICTURES_PER_RUN} pro Auftrag`));
+  assert.ok(on.startsWith(designerRunRules({})), "the first two lines stay as they were");
+  assert.match(designerRunRules({}, { pictures: "off" }), /- Bilder: Das Team hat das Erzeugen von Bildern ausgeschaltet — rufe generate_image nicht auf/);
+  assert.match(designerRunRules({}, { pictures: "unavailable" }), /- Bilder: generate_image ist hier nicht eingerichtet/);
+  assert.equal(designerRunRules({}, { pictures: null }), designerRunRules({}));
+  assert.equal(designerRunRules({}, { pictures: /** @type {any} */ ("bunt") }), designerRunRules({}));
+  // the state of a run: the setting first, then the configuration
+  assert.equal(designerPictureState({ images: true }, true), "on");
+  assert.equal(designerPictureState({ images: true }, false), "unavailable");
+  assert.equal(designerPictureState({ images: false }, true), "off");
+  assert.equal(designerPictureState({ images: false }, false), "off");
+  assert.equal(designerPictureState(DEFAULT_DESIGNER_SETTINGS, true), "on", "on by default");
+  assert.equal(DESIGNER_PICTURES_PER_RUN, 3);
 });
 
 test("run rules: freedom and the capabilities switch, always both lines", () => {

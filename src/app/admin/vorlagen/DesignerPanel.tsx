@@ -21,11 +21,12 @@
 //   · „Einstellungen für diese Unterhaltung“ — a popover from the header
 //     („Einstellungen der KI“) and from the button next to „Gestalten“ that
 //     names the active choice („Gründlich · Opus 5.5“): Qualität, Gestaltungs-
-//     freiheit, Mo-Funktionen, and the link to the team's defaults and house
-//     style (Einstellungen → „KI-Gestalter“, in a new tab so unsaved work
-//     stays). Locked while the AI works;
+//     freiheit, Mo-Funktionen, „Bilder mit KI erzeugen“ (the picture AI the
+//     designer may delegate a picture to), and the link to the team's defaults
+//     and house style (Einstellungen → „KI-Gestalter“, in a new tab so unsaved
+//     work stays). Locked while the AI works;
 //   · under each reply (and a failure that says so) what the run used, how
-//     long it took and what it cost.
+//     long it took, how many pictures it had made and what it cost.
 //
 // The state lives in useDesignerSession (in the workspace); this file is
 // only the view. „Mit KI gestalten“ (DesignerToggle) opens and closes it.
@@ -362,8 +363,13 @@ export function DesignerPanel({ session, use, designerSettings, onClose, fields 
             erfährt es mit der nächsten Anweisung.
           </p>
           <p>
-            Wie gründlich und wie frei sie gestaltet und ob sie Mos Funktionen von sich aus einbaut, stellst du für dieses Gespräch
-            in „Einstellungen der KI“ ein; den Standard und den Hausstil in Einstellungen.
+            Fehlt ein Bild, das es im Shop nicht gibt — ein Titelbereich mit eingebauter Überschrift, ein Hintergrund, ein
+            Absperrband, Icons —, lässt sie es von einer Bild-KI erzeugen; während das Bild entsteht, gestaltet sie weiter.
+            Produkte zeigt sie dabei nur mit den echten Katalogfotos als Vorlage.
+          </p>
+          <p>
+            Wie gründlich und wie frei sie gestaltet, ob sie Mos Funktionen von sich aus einbaut und ob sie Bilder erzeugen darf,
+            stellst du für dieses Gespräch in „Einstellungen der KI“ ein; den Standard und den Hausstil in Einstellungen.
           </p>
         </InfoTip>
         <div className="ml-auto flex items-center gap-1">
@@ -657,9 +663,9 @@ function ChoiceLabel({ title, info }: { title: string; info: readonly string[] }
  * „Einstellungen für diese Unterhaltung“: Qualität (a level is a model and an
  * effort — a stored default that is an own combination shows as no level,
  * with „Standard: …“ and „Standard verwenden“), Gestaltungsfreiheit,
- * „Mo-Funktionen von sich aus einbauen“ and the link to the team's defaults
- * and house style. Every change applies to the next instruction; while the
- * AI works the controls are locked.
+ * „Mo-Funktionen von sich aus einbauen“, „Bilder mit KI erzeugen“ and the
+ * link to the team's defaults and house style. Every change applies to the
+ * next instruction; while the AI works the controls are locked.
  */
 function DesignerChoiceFields({ session, designerSettings }: { session: DesignerSession; designerSettings: DesignerSettings }) {
   const { choice, setChoice, running } = session;
@@ -727,6 +733,15 @@ function DesignerChoiceFields({ session, designerSettings }: { session: Designer
           {DESIGNER_TEXTS.proactive.map((p) => (
             <p key={p}>{p}</p>
           ))}
+        </InfoTip>
+      </div>
+      <div className="flex items-center gap-1.5">
+        <label className="flex cursor-pointer items-center gap-2 text-xs font-medium">
+          <Checkbox checked={choice.images} disabled={running} onChange={(e) => setChoice({ ...choice, images: e.target.checked })} />
+          Bilder mit KI erzeugen
+        </label>
+        <InfoTip label="Was „Bilder mit KI erzeugen“ bedeutet" panelClassName="max-w-sm">
+          {DESIGNER_TEXTS.images}
         </InfoTip>
       </div>
       <Link

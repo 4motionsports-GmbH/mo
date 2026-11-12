@@ -93,7 +93,7 @@ export async function setContactFrequencySettings(
 
 /**
  * The KI-Gestalter settings (model, effort, freedom, capabilities switch,
- * house style — mail-template-designer-settings.mjs). Defaults without a
+ * pictures switch, house style — mail-template-designer-settings.mjs). Defaults without a
  * database, without a stored row, before migration 0078 (no error report) and
  * on any read error — a stored row never breaks a run.
  */
@@ -131,6 +131,7 @@ export async function setDesignerSettings(
     effort: settings.effort,
     freedom: settings.freedom,
     proactive: settings.proactive,
+    images: settings.images,
     houseStyle: settings.houseStyle,
   });
   try {

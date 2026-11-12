@@ -7,12 +7,14 @@
 //     stored pair that is no level shows as no selected segment with
 //     „Eigene Einstellung: …“; such a pair is chosen in the rarely needed
 //     „Modell und Denktiefe selbst wählen“ (open when the stored pair is one);
-//   · Gestaltungsfreiheit and „Mo-Funktionen von sich aus einbauen“;
+//   · Gestaltungsfreiheit, „Mo-Funktionen von sich aus einbauen“ and „Bilder
+//     mit KI erzeugen“ (generate_image — the picture AI the designer may
+//     delegate a picture to);
 //   · Hausstil — part of every run's system prompt (≤ 2,000 characters,
 //     counted as the server stores it).
-// The KI-Gestalter panel can change quality, freedom and the capabilities
-// switch for one conversation and links here (`?tab=einstellungen#ki-gestalter`,
-// in a new tab); the house style always applies. „Standard wiederherstellen“
+// The KI-Gestalter panel can change quality, freedom and both switches for
+// one conversation and links here (`?tab=einstellungen#ki-gestalter`, in a
+// new tab); the house style always applies. „Standard wiederherstellen“
 // resets the choices, not the house style — „Speichern“ stores everything
 // (POST /api/admin/settings/designer). Without a database the controls are
 // disabled and the defaults apply.
@@ -220,6 +222,15 @@ export function DesignerSettingsCard({
                 </label>
                 <InfoTip label="Was „Mo-Funktionen von sich aus einbauen“ bedeutet" panelClassName="max-w-sm">
                   {paragraphs(DESIGNER_TEXTS.proactive)}
+                </InfoTip>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <label className="flex cursor-pointer items-center gap-2 text-sm">
+                  <Checkbox checked={form.images} onChange={(e) => change({ images: e.target.checked })} disabled={disabled} />
+                  Bilder mit KI erzeugen
+                </label>
+                <InfoTip label="Was „Bilder mit KI erzeugen“ bedeutet" panelClassName="max-w-sm">
+                  {DESIGNER_TEXTS.images}
                 </InfoTip>
               </div>
             </div>

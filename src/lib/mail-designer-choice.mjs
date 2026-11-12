@@ -6,9 +6,10 @@
 // Pure and tested (mail-designer-choice.test.mjs):
 //
 //   * designerChoiceFrom — the choice of a conversation: model, effort,
-//     freedom and the capabilities switch — the stored settings without the
-//     house style (the server always takes that from the stored settings).
-//     Every value is checked; an unknown one falls back to its default.
+//     freedom, the capabilities switch and the pictures switch („Bilder mit
+//     KI erzeugen“) — the stored settings without the house style (the server
+//     always takes that from the stored settings). Every value is checked; an
+//     unknown one falls back to its default.
 //   * designerChoiceWithQuality — a quality level („Schnell“, „Gründlich“,
 //     „Maximal“) sets model and effort together.
 //   * designerRequestSettings — the assist request's `settings`: the whole
@@ -21,7 +22,8 @@
 //     („Standard wiederherstellen“ keeps the house style; a change of
 //     whitespace alone is no change — the server cleans the text).
 //   * DESIGNER_TEXTS — the explanations the card and the panel show in their
-//     InfoTips (one wording for both).
+//     InfoTips (one wording for both; `images` is the owner's wording for
+//     „Bilder mit KI erzeugen“).
 
 import { adminTabHref } from "./admin-tabs.mjs";
 import {
@@ -35,7 +37,7 @@ import {
 } from "./mail-template-designer-settings.mjs";
 
 /** @typedef {import("./mail-template-designer-settings.mjs").DesignerSettings} DesignerSettings */
-/** The choice of one conversation (the assist request's `settings`). @typedef {Pick<DesignerSettings, "model" | "effort" | "freedom" | "proactive">} DesignerChoice */
+/** The choice of one conversation (the assist request's `settings`). @typedef {Pick<DesignerSettings, "model" | "effort" | "freedom" | "proactive" | "images">} DesignerChoice */
 /** @typedef {"schnell" | "gruendlich" | "maximal"} DesignerQualityId */
 
 /** The id of the card „KI-Gestalter“ in Einstellungen — the panel links to it. */
@@ -46,14 +48,14 @@ export const DESIGNER_SETTINGS_HREF = `${adminTabHref("einstellungen")}#${DESIGN
 
 /**
  * The choice of a conversation from stored settings (or another choice):
- * model, effort, freedom, capabilities — checked, defaults for anything
- * unknown; never the house style.
+ * model, effort, freedom, capabilities, pictures — checked, defaults for
+ * anything unknown; never the house style.
  * @param {unknown} settings
  * @returns {DesignerChoice}
  */
 export function designerChoiceFrom(settings) {
   const s = parseDesignerSettings(settings && typeof settings === "object" ? { ...settings, houseStyle: "" } : null);
-  return { model: s.model, effort: s.effort, freedom: s.freedom, proactive: s.proactive };
+  return { model: s.model, effort: s.effort, freedom: s.freedom, proactive: s.proactive, images: s.images };
 }
 
 /**
@@ -104,13 +106,14 @@ export function designerChoiceShort(choice) {
 }
 
 /**
- * Model, effort, freedom and the capabilities switch are the defaults?
- * („Standard wiederherstellen“ has nothing to do.)
- * @param {{ model?: unknown, effort?: unknown, freedom?: unknown, proactive?: unknown } | null | undefined} s
+ * Model, effort, freedom, the capabilities switch and the pictures switch are
+ * the defaults? („Standard wiederherstellen“ has nothing to do.) A choice
+ * without the pictures switch (from before it existed) counts as on.
+ * @param {{ model?: unknown, effort?: unknown, freedom?: unknown, proactive?: unknown, images?: unknown } | null | undefined} s
  */
 export function isDefaultDesignerChoice(s) {
   const d = DEFAULT_DESIGNER_SETTINGS;
-  return s?.model === d.model && s?.effort === d.effort && s?.freedom === d.freedom && s?.proactive === d.proactive;
+  return s?.model === d.model && s?.effort === d.effort && s?.freedom === d.freedom && s?.proactive === d.proactive && (s?.images ?? true) === d.images;
 }
 
 /**
@@ -136,6 +139,7 @@ export function designerSettingsDirty(form, saved) {
     form.effort !== saved.effort ||
     form.freedom !== saved.freedom ||
     form.proactive !== saved.proactive ||
+    (form.images ?? true) !== (saved.images ?? true) ||
     cleanHouseStyle(form.houseStyle) !== cleanHouseStyle(saved.houseStyle)
   );
 }
@@ -154,7 +158,7 @@ export function houseStyleLength(text) {
  * the InfoTips show them; lists are one paragraph per entry.
  */
 export const DESIGNER_TEXTS = Object.freeze({
-  card: "Wie der KI-Gestalter in Vorlagen und Rundmail arbeitet — für das ganze Team. Im KI-Gestalter selbst lassen sich Qualität, Gestaltungsfreiheit und Mo-Funktionen für eine Unterhaltung ändern; der Hausstil gilt immer.",
+  card: "Wie der KI-Gestalter in Vorlagen und Rundmail arbeitet — für das ganze Team. Im KI-Gestalter selbst lassen sich Qualität, Gestaltungsfreiheit, Mo-Funktionen und KI-Bilder für eine Unterhaltung ändern; der Hausstil gilt immer.",
   quality: Object.freeze([
     "Wie gründlich die KI gestaltet.",
     "Schnell: Claude Sonnet 5.5 mit mittlerer Denktiefe — für kleine Änderungen an Texten, Farben und Abständen, meist unter einer Minute, etwa halb so teuer.",
@@ -172,6 +176,8 @@ export const DESIGNER_TEXTS = Object.freeze({
     "An: Die KI baut passende Funktionen von Mo auch ohne Auftrag ein — Produkte aus dem Katalog, Gutschein-Code, Countdown, die Beratung mit Mo.",
     "Aus: nur, wenn du sie verlangst oder die Mail sie schon enthält.",
   ]),
+  images:
+    "Die KI darf Bilder für die Mail erzeugen lassen — zum Beispiel einen Titelbereich mit eingebauter Überschrift, einen Hintergrund, ein Absperrband oder Icons. Produkte zeigt sie nur mit den echten Katalogfotos als Vorlage. Kostet je Bild etwa 0,20 € und dauert etwas länger.",
   houseStyle:
     "Was die KI bei jeder Mail beachten soll — zum Beispiel Hausfarben und Schriften, du oder Sie, Tonfall, Wörter, die nie vorkommen dürfen, feste Links (Instagram, Kontakt). Gilt für alle Vorlagen und Rundmails; eine ausdrückliche Anweisung im Auftrag geht vor.",
   houseStylePlaceholder:

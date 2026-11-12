@@ -75,6 +75,11 @@ export type AiCallSite =
   // a block document built or changed from the operator's instruction.
   // Admin-side spend (no conversation FK).
   | "template_assist"
+  // The KI-Gestalter's pictures (generate_image, lib/mail-designer-pictures-io.ts):
+  // the image renders (gpt-image-2, fallback gpt-image-1.5 — text-input and
+  // image-output tokens) and the check of a picture's text (analyst tier).
+  // Admin-side spend (no conversation FK).
+  | "template_image"
   // Eingang (docs/ADMIN_DASHBOARD.md §3.1): the AI suggestion per inbox item.
   // Dashboard/admin-side spend (no conversation FK).
   | "inbox_suggestion"

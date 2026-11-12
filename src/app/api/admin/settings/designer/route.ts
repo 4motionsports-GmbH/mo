@@ -1,5 +1,5 @@
 // GET  /api/admin/settings/designer → { ok: true, settings, defaults }
-// POST /api/admin/settings/designer  { model, effort, freedom, proactive, houseStyle }
+// POST /api/admin/settings/designer  { model, effort, freedom, proactive, images?, houseStyle }
 //   → { ok: true, settings }
 //
 // Einstellungen → „KI-Gestalter“: how the AI designer of the template and
@@ -9,10 +9,12 @@
 //   effort     "low" | "medium" | "high" (default) | "xhigh" | "max"  („Denktiefe“)
 //   freedom    "genau" | "ausgewogen" (default) | "frei"               („Gestaltungsfreiheit“)
 //   proactive  boolean (default true)        („Mo-Funktionen von sich aus einbauen“)
+//   images     boolean (default true)        („Bilder mit KI erzeugen“ — generate_image)
 //   houseStyle string ≤ 2000 characters      („Hausstil“, part of every run's system prompt)
-// Every field is required on save. The KI-Gestalter panel may override model,
-// effort, freedom and proactive for one conversation (the assist request's
-// `settings`); the house style always comes from here. Audit-logged
+// Every field is required on save — `images` may be missing (a page loaded
+// before the switch existed: on). The KI-Gestalter panel may override model,
+// effort, freedom, proactive and images for one conversation (the assist
+// request's `settings`); the house style always comes from here. Audit-logged
 // (settings.designer — the choices and the house style's length, not its text).
 //
 // Auth via guardAdminGet / guardAdminPost (the proxy already gates /api/admin/*).
@@ -67,7 +69,7 @@ export async function POST(req: Request) {
     await recordAdminAccess(
       {
         action: "settings.designer",
-        detail: { model: s.model, effort: s.effort, freedom: s.freedom, proactive: s.proactive, houseStyleChars: s.houseStyle.length },
+        detail: { model: s.model, effort: s.effort, freedom: s.freedom, proactive: s.proactive, images: s.images, houseStyleChars: s.houseStyle.length },
       },
       req
     );

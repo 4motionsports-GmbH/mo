@@ -11,10 +11,11 @@
 //                  HTML / TXT ≤ 500 KB, .eml ≤ 400 KB decoded — refused with 400 before decoding),
 //     context?: { subject?, preheader?, language?: "de" | "en" },  — the Rundmail's subject, preview
 //                  line and „Sprache“ ("en": texts, subject and preview line in English)
-//     settings?: { model?, effort?, freedom?, proactive? } }  — the panel's choice for this
+//     settings?: { model?, effort?, freedom?, proactive?, images? } }  — the panel's choice for this
 //                  conversation, merged over the team's settings (Einstellungen → „KI-Gestalter“,
 //                  GET/POST /api/admin/settings/designer); invalid fields are dropped (never a 400);
-//                  the house style always comes from the stored settings
+//                  the house style always comes from the stored settings; images: false = no
+//                  generated pictures (generate_image) in this conversation
 //
 // Errors before the stream starts (guard, bad JSON, invalid body, 413 too
 // large, no ANTHROPIC_API_KEY) are the usual JSON envelope with their status.
@@ -26,18 +27,23 @@
 // `run` (DesignerRunInfo, mail-template-designer.mjs designerRunInfo):
 //   { model, effort — of the run that produced the answer; label — „Gründlich · Claude Opus 5.5 ·
 //     Denktiefe Hoch“; freedom; proactive; seconds — the whole request; costEur — every model call
-//     of the request in EUR, null when not known (a step cut off by the time limit); fallbackFrom —
-//     the chosen model when it was not open to the Anthropic account and Opus 5.5 ran instead, else
-//     null }; on an error line only once a model ran.
+//     of the request in EUR, the generated pictures (renders and text checks) included, null when
+//     not known (a step or a render cut off by the time limit); fallbackFrom — the chosen model when
+//     it was not open to the Anthropic account and Opus 5.5 ran instead, else null; pictures? — how
+//     many pictures generate_image made, only when > 0 }; on an error line only once a model ran.
 // A heartbeat line (repeating the current status) every 15 s keeps proxies
 // from closing the idle connection while the model thinks. The model is
 // aborted at 285 s (a German timeout message, or the last checked draft) so
 // the answer always arrives inside maxDuration — whatever model and effort
-// the settings choose, and a second run on Opus 5.5 shares the same 285 s; a
-// client that disconnects („Abbrechen“) aborts it too, and then no picture is
-// stored. Only PROPOSES: nothing is stored except attachment pictures the
-// accepted design uses. Metered in ai_usage (template_assist, per run with the
-// model that ran), audit-logged (template.assist, with the panel's settings).
+// the settings choose, and a second run on Opus 5.5 shares the same 285 s;
+// pictures generate_image renders in the background are awaited until 288 s
+// at most and stored by 293 s (the rest is removed from the design with a
+// warning); a client that disconnects („Abbrechen“) aborts the model and every
+// render, and then no picture is stored. Only PROPOSES: nothing is stored
+// except the attachment pictures and generated pictures the accepted design
+// uses. Metered in ai_usage (template_assist, per run with the model that ran;
+// template_image, per picture call), audit-logged (template.assist, with the
+// panel's settings).
 
 import { guardAdminPost, adminJsonError } from "@/lib/admin-api";
 import { recordAdminAccess } from "@/lib/admin-access-log";

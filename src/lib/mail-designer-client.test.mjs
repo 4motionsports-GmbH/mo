@@ -274,6 +274,20 @@ test("run line: label · m:ss min · ≈ cost — cost or duration left out when
   assert.equal(designerRunLine(undefined), "");
 });
 
+test("run line: the pictures generate_image made — before the cost (it includes them), left out when none", () => {
+  const run = parseDesignerRun({ ...RUN, pictures: 2, costEur: 0.74 });
+  assert.equal(run?.pictures, 2);
+  assert.equal(designerRunLine(run), `Gründlich · Claude Opus 5.5 · Denktiefe Hoch · 1:42 min · 2 KI-Bilder · ≈ ${eur(0.74)}`);
+  assert.equal(designerRunLine(parseDesignerRun({ ...RUN, pictures: 1 })), `Gründlich · Claude Opus 5.5 · Denktiefe Hoch · 1:42 min · 1 KI-Bild · ≈ ${eur(0.3812)}`);
+  // none, zero or junk: no key, no part
+  for (const pictures of [undefined, 0, -1, "2", Number.NaN, 0.4]) {
+    const r = parseDesignerRun({ ...RUN, pictures });
+    assert.equal(r && "pictures" in r, false, String(pictures));
+    assert.ok(!designerRunLine(r).includes("KI-Bild"));
+  }
+  assert.equal(parseDesignerRun({ ...RUN, pictures: 2.7 })?.pictures, 2);
+});
+
 test("a reply's run stays in the panel: never in the history sent to the AI, kept by „Rückgängig“", () => {
   const run = parseDesignerRun(RUN);
   const turns = [user(1, "Mach es blau"), ai(2, "Blau.", { run }), user(3, "Und größer"), { id: 4, role: "error", text: "Zeit abgelaufen.", run }];

@@ -15,7 +15,8 @@
 //     line may carry `run` (parseDesignerRun): the settings the run used,
 //     its duration and cost.
 //   * designerRunLine — the line under a reply: „Gründlich · Claude Opus 5.5
-//     · Denktiefe Hoch · 1:42 min · ≈ 0,38 €“.
+//     · Denktiefe Hoch · 1:42 min · 2 KI-Bilder · ≈ 0,38 €“ (the pictures
+//     only when generate_image made some — their cost is in the amount).
 //   * docHistoryReducer — the multi-step „Rückgängig“ of the template and
 //     Rundmail editors: every AI result and „Vorlage laden“ pushes the
 //     document it replaces (at most DESIGNER_UNDO_LIMIT steps), tagged with
@@ -28,7 +29,7 @@
 //     (never Markdown: model output must not become a link in the admin).
 //   * elapsedLabel — „42 s“, „2:05 Min.“ for the progress line.
 
-import { eur, num } from "./admin-format.mjs";
+import { eur, num, plural } from "./admin-format.mjs";
 import { normalizeMailTemplateDoc } from "./mail-template-doc.mjs";
 import { designerSettingsLabel } from "./mail-template-designer-settings.mjs";
 
@@ -51,9 +52,10 @@ export const DESIGNER_FAILED_MESSAGE = "Die KI-Gestaltung ist fehlgeschlagen —
  * error line): the model that actually ran (after a fallback: Opus 5.5 —
  * `fallbackFrom` names the one that was unavailable), its effort and the
  * line of designerSettingsLabel, the freedom and capabilities switch of the
- * run, the whole run's seconds and its cost in euros (all model calls; null
- * when unknown). Freedom, capabilities and seconds are null when the line
- * does not carry them.
+ * run, the whole run's seconds and its cost in euros (all model calls, the
+ * picture renders included; null when unknown). Freedom, capabilities and
+ * seconds are null when the line does not carry them; `pictures` (how many
+ * pictures generate_image made) only when there were some.
  * @typedef {{
  *   model: string,
  *   effort: string,
@@ -63,6 +65,7 @@ export const DESIGNER_FAILED_MESSAGE = "Die KI-Gestaltung ist fehlgeschlagen —
  *   seconds: number | null,
  *   costEur: number | null,
  *   fallbackFrom: string | null,
+ *   pictures?: number,
  * }} DesignerRun
  */
 
@@ -239,6 +242,7 @@ export function parseDesignerRun(raw) {
   const effort = oneLine(r.effort, 20);
   if (!model || !effort) return null;
   const seconds = amount(r.seconds);
+  const pictures = amount(r.pictures);
   return {
     model,
     effort,
@@ -248,6 +252,7 @@ export function parseDesignerRun(raw) {
     seconds: seconds === null ? null : Math.round(seconds),
     costEur: amount(r.costEur),
     fallbackFrom: oneLine(r.fallbackFrom, 80) || null,
+    ...(pictures !== null && Math.floor(pictures) > 0 ? { pictures: Math.min(99, Math.floor(pictures)) } : {}),
   };
 }
 
@@ -296,14 +301,16 @@ export function runDurationLabel(seconds) {
 
 /**
  * The line under a reply (or a failure): what ran, how long, what it cost —
- * „Gründlich · Claude Opus 5.5 · Denktiefe Hoch · 1:42 min · ≈ 0,38 €“; the
- * duration or the cost is left out when unknown, "" without a run.
+ * „Gründlich · Claude Opus 5.5 · Denktiefe Hoch · 1:42 min · ≈ 0,38 €“, with
+ * „2 KI-Bilder“ before the cost when pictures were generated; the duration or
+ * the cost is left out when unknown, "" without a run.
  * @param {DesignerRun | null | undefined} run
  */
 export function designerRunLine(run) {
   if (!run) return "";
   const parts = [run.label || designerSettingsLabel(run)];
   if (run.seconds != null) parts.push(`${runDurationLabel(run.seconds)} min`);
+  if (run.pictures) parts.push(plural(run.pictures, "KI-Bild", "KI-Bilder"));
   if (run.costEur != null) parts.push(`≈ ${eur(run.costEur)}`);
   return parts.join(" · ");
 }

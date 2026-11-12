@@ -13,7 +13,7 @@
 // stay for the whole conversation until removed — re-sent each turn), in the
 // Rundmail subject, preview line and language, and the choice of this
 // conversation (`settings`: quality = model + effort, freedom, Mo's
-// capabilities). The choice starts as the team's stored settings
+// capabilities, „Bilder mit KI erzeugen“). The choice starts as the team's stored settings
 // (Einstellungen → „KI-Gestalter“), lives as long as the workspace and is
 // locked while a request runs; the server merges it over the stored
 // settings — the house style always comes from those. The result goes to

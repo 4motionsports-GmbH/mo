@@ -5,21 +5,24 @@
 // The operator describes a mail or a change in everyday language and may
 // attach screenshots, pictures, PDFs, HTML or .eml files. The model runs a
 // tool loop (mail-template-designer.mjs runDesigner): it searches the catalog,
-// lists the shop's collections and hands in the whole block document, which
-// is normalised and checked against the catalog, the attachments, the
-// operator's words, the team's house style and the current mail before it is
-// accepted. The editor shows the result as an unsaved change — nothing is
-// stored here except the attachment pictures the accepted design uses
-// (template pictures, Blob).
+// lists the shop's collections, has pictures generated (generate_image — the
+// picture AI renders in the background, mail-designer-pictures-io.ts) and
+// hands in the whole block document, which is normalised and checked against
+// the catalog, the attachments, the operator's words, the team's house style,
+// the pictures of the run and the current mail before it is accepted. The
+// editor shows the result as an unsaved change — nothing is stored here
+// except the attachment pictures and generated pictures the accepted design
+// uses (template pictures, Blob).
 //
 // How it runs comes from the team's settings (Einstellungen → „KI-Gestalter“,
 // admin_settings `mail_designer`, getDesignerSettings) with the panel's
 // choice for this conversation on top (the request's `settings`,
 // mergeDesignerSettings): the model (Opus 5.5 by default, Sonnet 5.5 or Fable
 // 5.2), the effort („Denktiefe“, with an output cap that grows with it), the
-// freedom and the capabilities switch (working rules in the user content) and
-// the house style (the last section of the system prompt; its links, codes
-// and numbers count as named). When the chosen model is not open to this
+// freedom, the capabilities switch and the pictures switch (working rules in
+// the user content — the pictures line also says when the picture service is
+// not configured) and the house style (the last section of the system
+// prompt; its links, codes and numbers count as named). When the chosen model is not open to this
 // Anthropic account (Fable 5.2 under zero data retention, a model the key may
 // not use), the request runs once more on Opus 5.5 — same effort, same
 // deadline, a leading warning — when enough time is left
@@ -31,10 +34,14 @@
 // reads the long prompt from the cache), the I/O of
 // mail-template-designer-io.ts, the usage meter (per run with the model that
 // ran, summed over all steps, also for a run that fails late), the run line
-// (model, seconds, cost — designerRunInfo) and the error report. When the
-// operator cancels (the client disconnects) nothing more happens after the
-// model: no second run, no picture stored for a result nobody receives — the
-// usage is still recorded. Never throws.
+// (model, seconds, cost of the model calls and the picture calls, pictures —
+// designerRunInfo) and the error report. After an accepted design the
+// pictures it uses are awaited (until shortly after the deadline), stored and
+// swapped in (finishDesignerPictures: a picture that failed is removed
+// cleanly, a photo-like one labelled). When the operator cancels (the client
+// disconnects) nothing more happens after the model: no second run, every
+// picture render aborted, no picture stored for a result nobody receives —
+// the usage is still recorded. Never throws.
 
 import { anthropic } from "@ai-sdk/anthropic";
 import { anthropicOptionsWithEffort } from "./ai-models.mjs";
@@ -43,7 +50,7 @@ import { getDesignerSettings } from "./admin-settings-store";
 import { reportError } from "./observability";
 import { getBaseUrl } from "./base-url";
 import { docProductRefs, normalizeMailTemplateDoc, stripMoBlocks } from "./mail-template-doc.mjs";
-import { designerMaxOutputTokens, designerRunRules, mergeDesignerSettings } from "./mail-template-designer-settings.mjs";
+import { designerMaxOutputTokens, designerPictureState, designerRunRules, mergeDesignerSettings } from "./mail-template-designer-settings.mjs";
 import {
   DESIGNER_LIMITS,
   checkDesignSubmission,
@@ -56,6 +63,8 @@ import {
   designerRunInfo,
   designerSystemPrompt,
   designerUserContent,
+  finishDesignerPictures,
+  pictureIndexesInDoc,
   resolveRefsAgainstCatalog,
   runDesigner,
   runDesignerWithFallback,
@@ -64,6 +73,14 @@ import {
   type DesignerRequest,
   type DesignerRunInfo,
 } from "./mail-template-designer.mjs";
+import { DESIGNER_PICTURE_LIMITS } from "./mail-designer-pictures.mjs";
+import {
+  createDesignerPictureStudio,
+  designerAiLabelIconUrl,
+  isDesignerPictureConfigured,
+  storeDesignerPictures,
+  type PictureStudio,
+} from "./mail-designer-pictures-io";
 import {
   isKnownShopPage,
   listShopCollections,
@@ -143,6 +160,16 @@ export async function assistMailTemplate(
     }
   };
   if (!process.env.ANTHROPIC_API_KEY) return { ok: false, message: "Kein KI-Schlüssel konfiguriert (ANTHROPIC_API_KEY)." };
+  /** One picture studio per model run; a second run (fallback) starts afresh — the first run's pictures are of no use to it. */
+  const studios: PictureStudio[] = [];
+  // The pictures of a run render in the background: the operator going away
+  // aborts them; the route's time limit does not (they may finish a few
+  // seconds past it — the studio's own timer ends them).
+  const picturesCancel = new AbortController();
+  const onAbort = () => {
+    if (isDisconnect(opts.signal)) picturesCancel.abort(opts.signal?.reason);
+  };
+  opts.signal?.addEventListener("abort", onAbort, { once: true });
   try {
     progress("start", "Der KI-Gestalter startet …");
     // The team's settings (defaults without a database), the panel's choice on top; the house style always from the store.
@@ -160,6 +187,8 @@ export async function assistMailTemplate(
 
     const { catalog, isCatalogImage, shopFilePrefixes } = await loadDesignerCatalog();
     if (isDisconnect(opts.signal)) return CANCELLED;
+    // generate_image: on, switched off (the team's or this conversation's setting), or not configured
+    const pictureState = designerPictureState(settings, isDesignerPictureConfigured());
     const current = input.doc ? normalizeMailTemplateDoc(input.doc) : null;
     const operatorText = [
       input.instruction,
@@ -171,7 +200,7 @@ export async function assistMailTemplate(
     const checkContext = {
       use: input.use,
       operatorText,
-      // the team's house style: its links, codes and numbers count as named (it never unlocks own HTML)
+      // the team's house style: its links, codes and numbers count as named
       houseStyle: settings.houseStyle,
       currentDoc: current,
       // the text of HTML / EML / TXT attachments as the model reads it — a second source of named values
@@ -194,15 +223,27 @@ export async function assistMailTemplate(
       context: input.context,
       today: new Date(),
       docProducts: current ? describeDocProducts(catalog, docProductRefs(current)) : [],
-      rules: designerRunRules(settings),
+      rules: designerRunRules(settings, { pictures: pictureState }),
     });
     const providerOptions = designerProviderOptions(anthropicOptionsWithEffort(TIER, settings.effort));
     const maxOutputTokens = designerMaxOutputTokens(settings.effort, DESIGNER_LIMITS.answerTokens);
+
+    const pictureCalls = () => studios.flatMap((st) => st.calls());
+    const picturesMade = () => studios.reduce((n, st) => n + st.produced(), 0);
 
     // The chosen model — and once more on Opus 5.5 when it is not open to this account (runDesignerWithFallback).
     const { run, model, fallbackFrom, calls } = await runDesignerWithFallback({
       model: settings.model,
       runOnce: async (runModel: string) => {
+        for (const earlier of studios) earlier.abort("Ein zweiter Lauf hat begonnen.");
+        const studio = createDesignerPictureStudio({
+          state: pictureState,
+          catalog,
+          deadlineAt: opts.deadlineAt ?? null,
+          cancelSignal: picturesCancel.signal,
+          onProgress: (text) => progress("images", text),
+        });
+        studios.push(studio);
         const result = await runDesigner({
           model: anthropic(runModel),
           system,
@@ -211,6 +252,8 @@ export async function assistMailTemplate(
           maxOutputTokens,
           searchProducts: (query: string, max?: number) => searchDesignerProducts(catalog, query, max),
           listCollections: listShopCollections,
+          pictures: studio,
+          // `round` carries the pictures started in this run — the only placeholders a design may use
           checkSubmission: (submission, round) => checkDesignSubmission(submission, { ...checkContext, now: new Date(), ...round }),
           onProgress: (p) => progress(p.stage, p.text),
           onError: (err) => reportError(err, { route: "lib/mail-template-assist", phase: "tool" }),
@@ -234,7 +277,9 @@ export async function assistMailTemplate(
       onFallback: (from, _to, error) => reportError(error, { route: "lib/mail-template-assist", phase: "model_unavailable", model: from }),
       onProgress: (p) => progress(p.stage, p.text),
     });
-    const runInfo = () => designerRunInfo({ settings, model, fallbackFrom, ms: Date.now() - startedAt, calls });
+    const runInfo = () =>
+      designerRunInfo({ settings, model, fallbackFrom, ms: Date.now() - startedAt, calls: [...calls, ...pictureCalls()], pictures: picturesMade() });
+    const lastStudio = studios[studios.length - 1] ?? null;
     // The operator cancelled: no picture is stored for a draft nobody receives (template files are never deleted).
     if (isDisconnect(opts.signal)) return CANCELLED;
     // Aborted but not a disconnect: the route's time limit.
@@ -255,11 +300,35 @@ export async function assistMailTemplate(
       reportError(run.error ?? new Error("designer run ended early"), { route: "lib/mail-template-assist", phase: "fallback", model, steps: run.steps });
     }
 
-    const stored = await storeDesignerImages(run.doc, run.usedAttachments, originals, {
-      deadlineAt: opts.deadlineAt ?? null,
-      onProgress: (text) => progress("images", text),
+    // The generated pictures the design uses: awaited (a little past the deadline at most), the rest aborted.
+    const usedPictures = pictureIndexesInDoc(run.doc);
+    for (const st of studios) if (st !== lastStudio) st.abort("Nicht verwendet.");
+    const settled = lastStudio
+      ? await lastStudio.settle({
+          used: usedPictures,
+          until: opts.deadlineAt != null ? opts.deadlineAt + DESIGNER_PICTURE_LIMITS.afterDeadlineMs : null,
+        })
+      : [];
+    if (isDisconnect(opts.signal)) return CANCELLED;
+    // Attachment pictures and generated pictures are stored side by side, then swapped in.
+    const [stored, storedPictures] = await Promise.all([
+      storeDesignerImages(run.doc, run.usedAttachments, originals, {
+        deadlineAt: opts.deadlineAt ?? null,
+        onProgress: (text) => progress("images", text),
+      }),
+      storeDesignerPictures(settled, usedPictures, {
+        deadlineAt: opts.deadlineAt ?? null,
+        onProgress: (text) => progress("images", text),
+      }),
+    ]);
+    const finished = finishDesignerPictures(stored.doc, {
+      urls: storedPictures.urls,
+      failed: storedPictures.failed,
+      pictures: lastStudio?.pictures() ?? [],
+      labelIconUrl: designerAiLabelIconUrl(),
+      language: input.context.language,
     });
-    const doc = input.use === "bulk" ? stripMoBlocks(stored.doc) : stored.doc;
+    const doc = input.use === "bulk" ? stripMoBlocks(finished.doc) : finished.doc;
     return {
       ok: true,
       doc,
@@ -268,7 +337,7 @@ export async function assistMailTemplate(
       preheader: input.use === "bulk" ? run.preheader : null,
       warnings: designerRequestWarnings({
         warnings: run.warnings,
-        storedWarnings: stored.warnings,
+        storedWarnings: [...stored.warnings, ...finished.warnings],
         runFallback: run.fallback,
         fallbackFrom,
         timedOut,
@@ -279,5 +348,9 @@ export async function assistMailTemplate(
   } catch (err) {
     reportError(err, { route: "lib/mail-template-assist", phase: "assist" });
     return { ok: false, message: designerFailureMessage(err) };
+  } finally {
+    // No render outlives the request (after an accepted design every used picture is settled already).
+    opts.signal?.removeEventListener("abort", onAbort);
+    for (const st of studios) st.abort();
   }
 }

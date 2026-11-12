@@ -1,13 +1,14 @@
 // KI-Gestalter settings — which model designs, how long it thinks, how freely
-// it changes a mail, whether it adds Mo's capabilities by itself, and the
-// team's house style. Pure and tested (mail-template-designer-settings.test.mjs).
+// it changes a mail, whether it adds Mo's capabilities by itself, whether it
+// may have pictures generated (generate_image, mail-designer-pictures.mjs) and
+// the team's house style. Pure and tested (mail-template-designer-settings.test.mjs).
 //
 // Stored as ONE row of admin_settings (key DESIGNER_SETTINGS_KEY, migration
 // 0078 — no new migration), edited in Einstellungen → „KI-Gestalter“ and read
 // by mail-template-assist.ts on every run. The KI-Gestalter panel may override
-// model, effort, freedom and the capabilities switch for one conversation
-// (parseDesignerRunOverride); the house style always comes from the stored
-// settings. Every value is parsed leniently at read time — an unknown or
+// model, effort, freedom, the capabilities switch and the pictures switch for
+// one conversation (parseDesignerRunOverride); the house style always comes
+// from the stored settings. Every value is parsed leniently at read time — an unknown or
 // broken value falls back to the default — so a stored row never breaks a run.
 
 import { AI_EFFORTS, FABLE_MODEL, OPUS_MODEL, SONNET_MODEL } from "./ai-models.mjs";
@@ -17,6 +18,13 @@ export const DESIGNER_SETTINGS_KEY = "mail_designer";
 
 /** Characters of the house style (the system prompt carries it on every run). */
 export const HOUSE_STYLE_MAX_CHARS = 2000;
+
+/**
+ * Pictures one run may have generated (generate_image — the limit itself is
+ * enforced in mail-designer-pictures.mjs, which reads it from here: this
+ * module is also loaded in the browser, the picture core is not).
+ */
+export const DESIGNER_PICTURES_PER_RUN = 3;
 
 /**
  * The models the operator may choose — a closed list (ids from ai-models.mjs,
@@ -65,13 +73,15 @@ export const DESIGNER_FREEDOM = Object.freeze([
 
 /**
  * The defaults — what the KI-Gestalter did before it had settings: Opus 5.5
- * at effort high (tier `designer`), balanced freedom, capabilities on.
+ * at effort high (tier `designer`), balanced freedom, capabilities on — and
+ * pictures by the picture AI allowed (12.11.2026).
  */
 export const DEFAULT_DESIGNER_SETTINGS = Object.freeze({
   model: OPUS_MODEL,
   effort: "high",
   freedom: "ausgewogen",
   proactive: true,
+  images: true,
   houseStyle: "",
 });
 
@@ -83,10 +93,12 @@ export const DEFAULT_DESIGNER_SETTINGS = Object.freeze({
  *   effort: DesignerEffort,
  *   freedom: DesignerFreedom,
  *   proactive: boolean,
+ *   images: boolean,
  *   houseStyle: string,
  * }} DesignerSettings
+ *   images: the designer may have pictures generated (generate_image) — „Bilder mit KI erzeugen“
  */
-/** @typedef {Partial<Pick<DesignerSettings, "model" | "effort" | "freedom" | "proactive">>} DesignerRunOverride */
+/** @typedef {Partial<Pick<DesignerSettings, "model" | "effort" | "freedom" | "proactive" | "images">>} DesignerRunOverride */
 
 const MODEL_IDS = DESIGNER_MODELS.map((m) => m.id);
 const FREEDOM_IDS = DESIGNER_FREEDOM.map((f) => f.id);
@@ -145,13 +157,16 @@ export function parseDesignerSettings(raw) {
     effort: isEffort(r.effort) ? /** @type {DesignerEffort} */ (r.effort) : /** @type {DesignerEffort} */ (DEFAULT_DESIGNER_SETTINGS.effort),
     freedom: isFreedom(r.freedom) ? /** @type {DesignerFreedom} */ (r.freedom) : /** @type {DesignerFreedom} */ (DEFAULT_DESIGNER_SETTINGS.freedom),
     proactive: typeof r.proactive === "boolean" ? r.proactive : DEFAULT_DESIGNER_SETTINGS.proactive,
+    images: typeof r.images === "boolean" ? r.images : DEFAULT_DESIGNER_SETTINGS.images,
     houseStyle: clipChars(cleanHouseStyle(r.houseStyle), HOUSE_STYLE_MAX_CHARS),
   };
 }
 
 /**
  * The body of a save (Einstellungen → „KI-Gestalter“ → „Speichern“): every
- * field required and checked; German messages per field.
+ * field required and checked; German messages per field. `images` may be
+ * missing (a page loaded before the switch existed) — then it is on, the
+ * default; when present it must be true or false.
  * @param {unknown} raw
  * @returns {{ ok: true, value: DesignerSettings } | { ok: false, errors: Record<string, string> }}
  */
@@ -163,6 +178,7 @@ export function validateDesignerSettingsInput(raw) {
   if (!isEffort(r.effort)) errors.effort = "Bitte eine Denktiefe aus der Liste wählen.";
   if (!isFreedom(r.freedom)) errors.freedom = "Bitte eine Gestaltungsfreiheit wählen.";
   if (typeof r.proactive !== "boolean") errors.proactive = "„Mo-Funktionen von sich aus einbauen“ fehlt.";
+  if (r.images != null && typeof r.images !== "boolean") errors.images = "„Bilder mit KI erzeugen“ muss an oder aus sein.";
   if (r.houseStyle != null && typeof r.houseStyle !== "string") errors.houseStyle = "Der Hausstil muss Text sein.";
   const houseStyle = cleanHouseStyle(r.houseStyle);
   if (houseStyle.length > HOUSE_STYLE_MAX_CHARS) {
@@ -176,6 +192,7 @@ export function validateDesignerSettingsInput(raw) {
       effort: /** @type {DesignerEffort} */ (r.effort),
       freedom: /** @type {DesignerFreedom} */ (r.freedom),
       proactive: /** @type {boolean} */ (r.proactive),
+      images: typeof r.images === "boolean" ? r.images : DEFAULT_DESIGNER_SETTINGS.images,
       houseStyle,
     },
   };
@@ -197,6 +214,7 @@ export function parseDesignerRunOverride(raw) {
   if (isEffort(r.effort)) out.effort = /** @type {DesignerEffort} */ (r.effort);
   if (isFreedom(r.freedom)) out.freedom = /** @type {DesignerFreedom} */ (r.freedom);
   if (typeof r.proactive === "boolean") out.proactive = r.proactive;
+  if (typeof r.images === "boolean") out.images = r.images;
   return out;
 }
 
@@ -297,14 +315,42 @@ const PROACTIVE_TEXT = Object.freeze({
   off: "Mo-Funktionen: Baue Produkte, Gutschein-Code, Countdown, die Beratung mit Mo und andere Mo-Bausteine NUR ein, wenn die Anweisung sie verlangt oder die aktuelle Mail sie schon enthält — nicht von dir aus. Fehlt aus deiner Sicht etwas, nenne es in notes.",
 });
 
+/** The pictures line of the working rules, by whether generate_image may run in this run. */
+const PICTURES_TEXT = Object.freeze({
+  on: `Bilder: Du darfst mit generate_image Bilder erzeugen lassen — höchstens ${DESIGNER_PICTURES_PER_RUN} pro Auftrag, wo die Mail ein Bild braucht, das es im Shop nicht gibt (wie im Leitfaden unter „Bilder erzeugen lassen“ beschrieben).`,
+  off: "Bilder: Das Team hat das Erzeugen von Bildern ausgeschaltet — rufe generate_image nicht auf. Nutze Anhänge, Bilder der Mail, Produktbilder, Farbflächen und Typografie; fehlt ein Bild, nenne es in notes.",
+  unavailable:
+    "Bilder: generate_image ist hier nicht eingerichtet (es fehlt der Bilddienst) — rufe es nicht auf. Nutze Anhänge, Bilder der Mail, Produktbilder, Farbflächen und Typografie; fehlt ein Bild, nenne es in notes.",
+});
+
 /**
  * The team's working rules for this run, for the user content (after the
  * material, right before the instruction): freedom and the capabilities
- * switch. Always two lines, so the model never guesses the defaults.
+ * switch — always both lines, so the model never guesses the defaults — and,
+ * when `pictures` says whether generate_image may run in this run ("on", or
+ * "off" by the setting, or "unavailable" without the picture service), the
+ * pictures line.
  * @param {DesignerSettings | DesignerRunOverride} s
+ * @param {{ pictures?: "on" | "off" | "unavailable" | null }} [opts]
  */
-export function designerRunRules(s) {
+export function designerRunRules(s, opts = {}) {
   const freedom = isFreedom(s?.freedom) ? /** @type {DesignerFreedom} */ (s.freedom) : /** @type {DesignerFreedom} */ (DEFAULT_DESIGNER_SETTINGS.freedom);
   const proactive = typeof s?.proactive === "boolean" ? s.proactive : DEFAULT_DESIGNER_SETTINGS.proactive;
-  return `So arbeitest du bei diesem Auftrag (Einstellungen des Teams):\n- ${FREEDOM_TEXT[freedom]}\n- ${proactive ? PROACTIVE_TEXT.on : PROACTIVE_TEXT.off}`;
+  const lines = [FREEDOM_TEXT[freedom], proactive ? PROACTIVE_TEXT.on : PROACTIVE_TEXT.off];
+  const pictures = opts?.pictures;
+  if (pictures === "on" || pictures === "off" || pictures === "unavailable") lines.push(PICTURES_TEXT[pictures]);
+  return `So arbeitest du bei diesem Auftrag (Einstellungen des Teams):\n${lines.map((l) => `- ${l}`).join("\n")}`;
+}
+
+/**
+ * Whether generate_image may run in a run: "off" when the team switched
+ * pictures off (or this conversation did), "unavailable" without the picture
+ * service (OPENAI_API_KEY and the Blob store — the I/O layer knows), else "on".
+ * @param {{ images?: boolean } | null | undefined} s
+ * @param {boolean} configured
+ * @returns {"on" | "off" | "unavailable"}
+ */
+export function designerPictureState(s, configured) {
+  if (s?.images === false) return "off";
+  return configured ? "on" : "unavailable";
 }

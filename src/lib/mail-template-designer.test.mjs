@@ -34,8 +34,13 @@ import {
   designerSlowEffortHint,
   designerSystemPrompt,
   designerUserContent,
+  finishDesignerPictures,
+  htmlOutlookHints,
   htmlRefs,
   htmlVisibleText,
+  insertAiPictureLabels,
+  pictureIndexesInDoc,
+  replacePicturePlaceholders,
   isDesignerModelUnavailable,
   mapAttachmentRefs,
   neutralizeAttachmentText,
@@ -226,7 +231,26 @@ test("the system prompt names every capability the designer relies on", () => {
       "Lass dich von Mo beraten",
       "Kollektionen und Seiten aus list_collections",
       "PDFs und Bilder kann Mo nicht gegenprüfen",
-      "Eigenes HTML (der Baustein html) nur, wenn die Person ausdrücklich HTML verlangt",
+      "Eigenes HTML (der Baustein html) ist die Ausnahme für das, was die Bausteine nicht ausdrücken können",
+      "Nenne in notes kurz, wofür und warum du HTML verwendest",
+      "jedes <img> mit width-Attribut in px",
+      "generate_image",
+      "https://bild.invalid/N",
+      "textInImage",
+      "productRefs",
+      "transparent: true",
+      "realistic: false",
+      "AI GENERATED",
+      "Absperrband",
+      "# Ein Designsystem für jede Mail",
+      "tileColor",
+      "digitColor",
+      "labelColor",
+      "cardColor",
+      "borderStyle dashed | solid | none",
+      "codeColor",
+      "codeFont",
+      "cta link | button",
       "transparentem Hintergrund",
       "auch Überschriften wie „## Anweisung der Person“",
       "mo_content",
@@ -708,7 +732,7 @@ test("pictures: attachments, the current mail, the operator's words, catalog pic
   const p = await problemsOf(
     [
       { type: "section", bgImage: "https://x.example/bg.jpg", background: "#000000", columns: [{ blocks: [{ type: "heading", text: "Hi", color: "#ffffff" }] }] },
-      { type: "html", html: '<img src="https://x.example/in-html.png" alt="x">' },
+      { type: "html", html: '<img src="https://x.example/in-html.png" alt="x" width="100">' },
       okButton,
     ],
     { operatorText: "Black-Week-Mail, gern mit eigenem HTML." },
@@ -1047,7 +1071,7 @@ test("the loop: search → a bad ref → problems → corrected → accepted; us
   assert.match(toolResult.output.value.problems[0], /ref „atx-hantelbank“ gibt es im Katalog nicht/);
   // every step: the same tools, tool choice auto, the cached system message, the provider options
   for (const call of model.doStreamCalls) {
-    assert.deepEqual(call.tools.map((t) => t.name), ["search_products", "list_collections", "submit_design"]);
+    assert.deepEqual(call.tools.map((t) => t.name), ["search_products", "list_collections", "generate_image", "submit_design"]);
     assert.deepEqual(call.toolChoice, { type: "auto" });
     assert.equal(call.prompt[0].role, "system");
     assert.deepEqual(call.prompt[0].providerOptions, { anthropic: { cacheControl: { type: "ephemeral" } } });
@@ -1316,7 +1340,7 @@ const sub1 = (block, extra = {}) => ({
   ...extra,
 });
 
-test("prompt: tracking told truthfully, no fixed outline, Mo's chat link, html only on request", () => {
+test("prompt: tracking told truthfully, no fixed outline, Mo's chat link", () => {
   for (const use of ["bulk", "personal", "template"]) {
     const p = designerSystemPrompt({ use });
     for (const gone of ["Umsatz-Tracking", "Mo misst Klicks und Umsatz", "werden der Mail zugeordnet", "EINEN Haupt-Call-to-Action", "meist 6–15 Bausteine", "Eine Botschaft, ein Ziel"]) {
@@ -1478,29 +1502,54 @@ test("htmlRefs: every address a client opens — srcset, picture/source, poster,
   assert.ok(htmlRefs("<div style=\"background:image-set('https://a.example/x.gif' 1x\"></div>").unsafe.some((u) => /image-set/.test(u)));
 });
 
-test("own HTML only when the operator asks for it; an html block of the current mail kept as it is stays", async () => {
-  const block = { type: "html", html: '<p>Hallo <a href="https://motionsports.de/">Shop</a></p>' };
-  const p = await problemsOf([block, okButton]);
-  assert.equal(p.length, 1);
-  assert.match(p[0], /„Eigenes HTML“ .*: Bitte Bausteine statt eigenem HTML verwenden — eigenes HTML nur, wenn die Person ausdrücklich HTML verlangt/);
-  assert.deepEqual(await problemsOf([block, okButton], { operatorText: "Bitte mit einem HTML-Abschnitt." }), []);
-  // the operator's existing block: kept (same id or same html) passes, a changed one does not
+test("own HTML where the blocks cannot express the design — no request for „HTML“ needed, checked like everything else", async () => {
+  const block = { type: "html", html: '<table role="presentation"><tr><td style="font-size:28px">Hallo <a href="https://motionsports.de/">Shop</a></td></tr></table>' };
+  // allowed without the word „HTML“ in the instruction (the prompt keeps it the exception, the reason goes into notes)
+  assert.deepEqual(await problemsOf([block, okButton]), []);
+  const accepted = await checkDesignSubmission(sub1(block), ctx());
+  assert.equal(accepted.ok, true);
+  assert.ok(accepted.doc.blocks.some((b) => b.type === "html"));
+  // the operator's existing block: kept (same id or same html) passes, a changed one is checked like new html
   const currentDoc = normalizeMailTemplateDoc({ blocks: [{ type: "html", id: "h1", html: '<p>Alt <a href="https://partner.example/x">Partner</a></p>' }, { type: "footer" }] });
   const kept = { type: "html", id: "h1", html: currentDoc.blocks[0].html };
   assert.deepEqual(await problemsOf([kept, okButton], { currentDoc }), []);
   assert.deepEqual(await problemsOf([{ ...kept, id: undefined }, okButton], { currentDoc }), [], "same html without its id");
-  const changed = await problemsOf([{ ...kept, html: '<p>Neu <a href="https://partner.example/x">Partner</a></p>' }, okButton], { currentDoc });
-  assert.match(changed[0], /Bitte Bausteine statt eigenem HTML verwenden .* oder lass den bestehenden html-Baustein unverändert/);
-  // the last round drops the model's html — and says so
-  const last = await checkDesignSubmission(sub1(block), ctx({ round: 3, lastRound: true }));
-  assert.equal(last.ok, true);
-  assert.ok(!last.doc.blocks.some((b) => b.type === "html"));
-  assert.ok(last.warnings.includes("Eigenes HTML der KI entfernt („Eigenes HTML“) — Mo baut Mails aus Bausteinen; bitte prüfen, ob etwas fehlt."));
-  // allowed html that cannot be checked is a major problem, dropped in the last round
+  const changed = await problemsOf([{ ...kept, html: '<p>Neu <a href="https://evil.example/x">Partner</a></p>' }, okButton], { currentDoc });
+  assert.match(changed[0], /\(Link im HTML\): Der Link auf „evil\.example“/);
+  // links, pictures, codes and numbers inside the model's html are checked as everywhere
+  const invented = await problemsOf([{ type: "html", html: '<p>Nur heute 30 % auf <img src="https://evil.example/x.gif" width="10" alt="x"></p>' }, okButton]);
+  assert.ok(invented.some((m) => /\(im HTML\): Die Bildquelle „https:\/\/evil\.example\/x\.gif“ ist nicht erlaubt/.test(m)), invented.join("\n"));
+  assert.ok(invented.some((m) => /„30 %“ steht nicht in der Anweisung/.test(m)), invented.join("\n"));
+  // html that would break the mail (an open table) is a validation error the model fixes
+  assert.ok((await problemsOf([{ type: "html", html: "<table><tr><td>offen" }, okButton])).some((m) => /unvollständige Tabellen- oder Bereichs-Tags/.test(m)));
+  // html that cannot be checked is a major problem, dropped in the last round — and named
   const escaped = { type: "html", html: '<div style="background:url(https://evil\\2e example/x.gif)">x</div>' };
-  assert.ok((await problemsOf([escaped, okButton], { operatorText: "mit HTML" })).some((m) => /Backslashes/.test(m)));
-  const dropped = await checkDesignSubmission(sub1(escaped), ctx({ operatorText: "mit HTML", round: 3, lastRound: true }));
+  assert.ok((await problemsOf([escaped, okButton])).some((m) => /Backslashes/.test(m)));
+  const dropped = await checkDesignSubmission(sub1(escaped), ctx({ round: 3, lastRound: true }));
   assert.ok(!dropped.doc.blocks.some((b) => b.type === "html"));
+  assert.ok(dropped.warnings.includes("Eigenes HTML der KI entfernt („Eigenes HTML“) — es ließ sich nicht sicher prüfen; bitte prüfen, ob etwas fehlt."), JSON.stringify(dropped.warnings));
+});
+
+test("own HTML: the Outlook traps are minor problems (one round), then warnings for the operator", async () => {
+  const html =
+    '<table role="presentation"><tr><td><img src="https://cdn.shopify.com/s/files/1/0823/4896/6217/files/bank.jpg?v=1" alt="Bank">' +
+    '<a href="https://motionsports.de/" style="padding:12px 24px;background:#e30613;color:#ffffff">Los</a><p style="padding:8px">Text</p></td></tr></table>';
+  const hints = htmlOutlookHints(html);
+  assert.equal(hints.length, 3, hints.join("\n"));
+  assert.ok(hints.some((h) => /kein width-Attribut in px/.test(h)));
+  assert.ok(hints.some((h) => /Link mit padding/.test(h)));
+  assert.ok(hints.some((h) => /padding an <p>/.test(h)));
+  // the renderer's sanitizer removes <style> and comments first — what it removes is no finding
+  assert.deepEqual(htmlOutlookHints('<style>.x{display:none}</style><!--[if mso]><div style="display:none">x</div><![endif]--><table role="presentation"><tr><td>ok</td></tr></table>'), []);
+  assert.deepEqual(htmlOutlookHints('<img src="https://x/a.jpg" width="600" alt="a">'), []);
+  assert.match(htmlOutlookHints('<img src="https://x/a.jpg" width="1200" alt="a">')[0], /breiter als 600 px/);
+  // first round: back to the model; a later round: accepted with the hints as warnings
+  const first = await checkDesignSubmission(sub1({ type: "html", html }), ctx({ operatorText: "Black Week", isCatalogImage: () => true }));
+  assert.equal(first.ok, false);
+  assert.ok(first.problems.every((p) => /Eigenes HTML/.test(p)) && first.problems.length === 3, first.problems.join("\n"));
+  const second = await checkDesignSubmission(sub1({ type: "html", html }), ctx({ operatorText: "Black Week", isCatalogImage: () => true, round: 2 }));
+  assert.equal(second.ok, true);
+  assert.ok(second.warnings.some((w) => /^„Eigenes HTML“: Ein <img> im HTML hat kein width-Attribut/.test(w)), JSON.stringify(second.warnings));
 });
 
 test("foreign addresses in allowed html are removed in the last round; what cannot be removed drops the block, named", async () => {
@@ -2006,7 +2055,7 @@ test("the run line: model and effort that ran, the label, the request's seconds,
   assert.deepEqual(Object.keys(plain).sort(), ["costEur", "effort", "fallbackFrom", "freedom", "label", "model", "proactive", "seconds"]);
 });
 
-test("the house style counts as named (links, codes, numbers) — but a word „HTML“ in it never unlocks own HTML", async () => {
+test("the house style counts as named (links, codes, numbers); own HTML needs no unlocking", async () => {
   const houseStyle = "Kurs-Link immer https://partner-studio.de/kurse. Treue-Code TREUE10, 15 % für Stammkunden. Kein eigenes HTML.";
   const operatorText = "Eine Mail über unsere Kurse.";
   const sub = mail([
@@ -2019,11 +2068,10 @@ test("the house style counts as named (links, codes, numbers) — but a word „
   assert.ok(without.problems.some((p) => /TREUE10/.test(p)), without.problems.join("\n"));
   const withStyle = await checkDesignSubmission(sub, ctx({ operatorText, houseStyle }));
   assert.equal(withStyle.ok, true, withStyle.ok ? "" : withStyle.problems.join("\n"));
-  // own HTML: only the operator's own words ask for it
+  // own HTML is allowed where the blocks cannot express the design — a house style saying „Kein eigenes HTML“ is the model's guidance, not a gate
   const html = mail([{ type: "html", html: "<p>Hallo</p>" }, okButton]);
   const res = await checkDesignSubmission(html, ctx({ operatorText, houseStyle }));
-  assert.equal(res.ok, false);
-  assert.ok(res.problems.some((p) => /Bitte Bausteine statt eigenem HTML verwenden/.test(p)), res.problems.join("\n"));
+  assert.equal(res.ok, true, res.ok ? "" : res.problems.join("\n"));
 });
 
 test("runDesignerWithFallback: an unavailable model runs once more on Opus 5.5 — same deadline, both calls collected, the reason reported", async () => {
@@ -2143,4 +2191,321 @@ test("the request's outcome texts: failure behind the fallback reason and the sl
   // the hint only after a run the time limit cut short, only at a slow effort
   assert.deepEqual(designerRequestWarnings({ warnings: [cut], runFallback: "steps", timedOut: true, effort: "max" }), [cut]);
   assert.deepEqual(designerRequestWarnings({ warnings: [cut], runFallback: "timeout", timedOut: true, effort: "medium" }), [cut]);
+});
+
+// ── generated pictures (generate_image, 2026-11-12) ──────────────────────────
+
+/** The pictures of a run as the studio reports them (createPictureStudio pictures()). */
+const pics = (...list) =>
+  list.map(([n, status, extra = {}]) => ({ n, label: `Bild ${n}`, purpose: "hero", aspect: "wide", width: 1536, height: 1024, status, realistic: true, transparent: false, ...extra }));
+
+test("pictures in the check: only the ones generate_image started in this run — never a failed one, the logo, the hero's fallback or a link", async () => {
+  const img = (src, extra = {}) => ({ type: "image", src, alt: "Winterbild", ...extra });
+  const pictures = pics([1, "pending"], [2, "ready"], [3, "failed", { reason: "nicht rechtzeitig fertig", label: "Absperrband" }]);
+  // pending and ready pictures of this run pass; the short form bild:N too
+  assert.deepEqual(await problemsOf([img("https://bild.invalid/1"), img("https://bild.invalid/2"), okButton], { pictures }), []);
+  assert.deepEqual(await problemsOf([img("bild:2"), okButton], { pictures }), []);
+  // a placeholder no picture of this run stands behind
+  assert.match((await problemsOf([img("https://bild.invalid/7"), okButton], { pictures }))[0], /stammt nicht von generate_image in diesem Auftrag/);
+  assert.match((await problemsOf([img("https://bild.invalid/1"), okButton]))[0], /stammt nicht von generate_image in diesem Auftrag/, "without pictures in the context");
+  // a failed one: the model replaces it, retries or drops the block
+  assert.match((await problemsOf([img("https://bild.invalid/3"), okButton], { pictures }))[0], /Bild 3 \(„Absperrband“\) konnte nicht erzeugt werden \(nicht rechtzeitig fertig\) — generate_image mit einer anderen Beschreibung erneut aufrufen/);
+  // background pictures and html take them too
+  const section = { type: "section", bgImage: "https://bild.invalid/2", background: "#111111", minHeight: 300, columns: [{ blocks: [{ type: "heading", text: "Winter", color: "#ffffff" }] }] };
+  assert.deepEqual(await problemsOf([section, okButton], { pictures }), []);
+  assert.deepEqual(await problemsOf([{ type: "html", html: '<img src="https://bild.invalid/2" width="600" alt="Winter">' }, okButton], { pictures }), []);
+  // the short form inside html too
+  const short = mapAttachmentRefs({ blocks: [{ type: "html", html: '<img src="bild:2" width="600" alt="W"><td style="background:url(bild:1)">' }] });
+  assert.equal(short.blocks[0].html, '<img src="https://bild.invalid/2" width="600" alt="W"><td style="background:url(https://bild.invalid/1)">');
+  // never the logo, never the hero's fallback (that slot shows Mo's or the campaign's picture), never a link target
+  const logo = await checkDesignSubmission({ doc: { style: { logoUrl: "https://bild.invalid/2" }, blocks: [{ type: "heading", text: "Hi" }, okButton] }, notes: "" }, ctx({ pictures }));
+  assert.match(logo.problems[0], /^style \(logoUrl\): Ein erzeugtes Bild ist kein Logo/);
+  const hero = await checkDesignSubmission(
+    { doc: { blocks: [{ type: "hero", src: "https://bild.invalid/2", alt: "x" }, { type: "mo_content" }, { type: "footer" }] }, notes: "" },
+    ctx({ use: "personal", pictures })
+  );
+  assert.ok(hero.problems.some((p) => /Der Titelbild-Baustein \(hero\) zeigt in jeder Mail Mos KI-Bild/.test(p)), hero.problems.join("\n"));
+  assert.match((await problemsOf([{ ...okButton, href: "https://bild.invalid/2" }], { pictures }))[0], /Erzeugte Bilder sind keine Link-Ziele/);
+  // a placeholder in the current mail (forged) is never „known“
+  const currentDoc = normalizeMailTemplateDoc({ blocks: [img("https://bild.invalid/5"), { type: "footer" }] });
+  assert.match((await problemsOf([img("https://bild.invalid/5"), okButton], { currentDoc }))[0], /stammt nicht von generate_image/);
+});
+
+test("pictures in the check: text in a picture belongs in the alt text; a background picture with text is flagged", async () => {
+  const pictures = pics([1, "pending", { text: "Winter-Power" }]);
+  const withAlt = await problemsOf([{ type: "image", src: "https://bild.invalid/1", alt: "WINTER POWER — Training zu Hause" }, okButton], { pictures });
+  assert.deepEqual(withAlt, [], "case and punctuation do not matter");
+  const without = await problemsOf([{ type: "image", src: "https://bild.invalid/1", alt: "Ein Home-Gym" }, okButton], { pictures });
+  assert.equal(without.length, 1);
+  assert.match(without[0], /Der Text im Bild \(„Winter-Power“\) gehört auch in den alt-Text/);
+  const bg = await problemsOf(
+    [{ type: "section", bgImage: "https://bild.invalid/1", background: "#111111", columns: [{ blocks: [{ type: "text", text: "Jetzt trainieren.", color: "#ffffff" }] }] }, okButton],
+    { pictures }
+  );
+  assert.match(bg[0], /Bild 1 trägt den Text „Winter-Power“ — ein Hintergrundbild hat keinen alt-Text/);
+  // minor: one round, then accepted with a warning for the operator
+  const later = await checkDesignSubmission(
+    mail([{ type: "section", bgImage: "https://bild.invalid/1", background: "#111111", columns: [{ blocks: [{ type: "text", text: "Jetzt trainieren.", color: "#ffffff" }] }] }, okButton]),
+    ctx({ pictures, round: 2 })
+  );
+  assert.equal(later.ok, true);
+  assert.ok(later.warnings.some((w) => /steht nur im Hintergrundbild/.test(w)), JSON.stringify(later.warnings));
+});
+
+test("replacePicturePlaceholders: a stored picture takes its place; one that failed is removed cleanly", () => {
+  const raw = {
+    style: { accentColor: "#111111" },
+    blocks: [
+      { id: "i1", type: "image", src: "https://bild.invalid/1", alt: "Titel", width: "full" },
+      { id: "i2", type: "image", src: "https://bild.invalid/2", alt: "Band", width: "full" },
+      {
+        id: "s1",
+        type: "section",
+        bgImage: "https://bild.invalid/2",
+        background: "#222222",
+        minHeight: 300,
+        columns: [{ blocks: [{ id: "h1", type: "heading", text: "Winter", color: "#ffffff" }, { id: "i3", type: "image", src: "https://bild.invalid/2", alt: "Icon", width: 56 }] }],
+      },
+      { id: "x1", type: "html", html: '<table role="presentation"><tr><td style="background-image:url(https://bild.invalid/2)"><img src="https://bild.invalid/2" width="600" alt="weg"><img src="https://bild.invalid/1" width="600" alt="bleibt"></td></tr></table>' },
+      { id: "f", type: "footer" },
+    ],
+  };
+  const url1 = "https://mo.example.com/api/email-hero-image/template-ki-1.jpg";
+  const { doc, removed } = replacePicturePlaceholders(normalizeMailTemplateDoc(raw), new Map([[1, url1]]));
+  // picture 1 stored: swapped in, also inside html
+  assert.equal(doc.blocks[0].src, url1);
+  // picture 2 failed: its image blocks gone (top and column), the background cleared with its colour kept, html cleaned
+  assert.deepEqual(doc.blocks.map((b) => b.id), ["i1", "s1", "x1", "f"]);
+  const sec = doc.blocks[1];
+  assert.equal(sec.bgImage, "");
+  assert.equal(sec.background, "#222222");
+  assert.deepEqual(sec.columns[0].blocks.map((b) => b.id), ["h1"]);
+  const html = doc.blocks[2].html;
+  assert.ok(!html.includes("bild.invalid"), html);
+  assert.ok(html.includes(url1) && !html.includes('alt="weg"'), html);
+  assert.match(html, /background-image:none/);
+  assert.deepEqual(
+    removed.map((r) => `${r.n}:${r.where}`).sort(),
+    ["2:background", "2:html", "2:image"]
+  );
+  assert.deepEqual(pictureIndexesInDoc(doc), []);
+  assert.deepEqual(pictureIndexesInDoc(raw), [1, 2]);
+});
+
+test("finishDesignerPictures: the EU label under photo-like pictures (once), warnings for what failed, graphics unlabelled", () => {
+  const icon = "https://mo.example.com/eu-ai-icon-email.png";
+  const raw = normalizeMailTemplateDoc({
+    blocks: [
+      { type: "image", src: "https://bild.invalid/1", alt: "Winter-Power", width: "full", background: "#111111" },
+      { type: "image", src: "https://bild.invalid/2", alt: "Absperrband", width: "full" },
+      { type: "section", bgImage: "https://bild.invalid/3", background: "#222222", columns: [{ blocks: [{ type: "heading", text: "Training", color: "#ffffff" }] }] },
+      { type: "text", text: "Mehr erfahren." },
+      { type: "footer" },
+    ],
+  });
+  const pictures = [
+    ...pics([1, "ready", { label: "Titelbild", warnings: ["Bild 1: Der Text im Bild ist nicht sicher richtig (erwartet „Winter-Power“) — bitte prüfen oder das Bild neu erzeugen lassen."] }]),
+    ...pics([2, "ready", { label: "Absperrband", purpose: "decoration", realistic: false }]),
+    ...pics([3, "failed", { label: "Hintergrund", reason: "vom Bilddienst abgelehnt — das Motiv anders beschreiben" }]),
+  ];
+  const urls = new Map([
+    [1, "https://mo.example.com/api/email-hero-image/template-ki-1.jpg"],
+    [2, "https://mo.example.com/api/email-hero-image/template-ki-2.png"],
+  ]);
+  const out = finishDesignerPictures(raw, { urls, pictures, labelIconUrl: icon });
+  const types = out.doc.blocks.map((b) => (b.type === "image" ? (b.src === icon ? "label" : "image") : b.type));
+  assert.deepEqual(types, ["image", "label", "image", "section", "text", "footer"], "the label under the photo-like picture only");
+  const label = out.doc.blocks[1];
+  assert.deepEqual([label.alt, label.width, label.align, label.background], ["KI-generiertes Bild", 73, "right", "#111111"]);
+  assert.equal(out.doc.blocks[3].bgImage, "", "the failed background is cleared");
+  assert.deepEqual(out.warnings, [
+    "Bild 3 („Hintergrund“) konnte nicht erzeugt werden (vom Bilddienst abgelehnt — das Motiv anders beschreiben) — das Hintergrundbild ist entfernt, die Hintergrundfarbe bleibt.",
+    "Bild 1: Der Text im Bild ist nicht sicher richtig (erwartet „Winter-Power“) — bitte prüfen oder das Bild neu erzeugen lassen.",
+    "Unter Bild 1 steht das EU-Kennzeichen „AI GENERATED“ — KI-Bilder, die wie ein Foto wirken, werden gekennzeichnet (KI-Verordnung, wie bei Mos KI-Titelbildern).",
+  ]);
+  // a second turn keeps the label it already has — never twice
+  const again = finishDesignerPictures(mapAttachmentRefs({ ...out.doc, blocks: [{ type: "image", src: "https://bild.invalid/1", alt: "Winter-Power", width: "full" }, ...out.doc.blocks.slice(1)] }), {
+    urls,
+    pictures: pics([1, "ready"]),
+    labelIconUrl: icon,
+  });
+  assert.equal(again.doc.blocks.filter((b) => b.src === icon).length, 1);
+  // English mail: the English alt text; a picture stored but its upload failed; no https icon (local) → a warning instead
+  const en = finishDesignerPictures(raw, { urls: new Map([[1, urls.get(1)]]), failed: new Map([[2, "Speichern fehlgeschlagen"]]), pictures, labelIconUrl: icon, language: "en" });
+  assert.equal(en.doc.blocks[1].alt, "AI-generated image");
+  assert.ok(en.warnings.includes("Bild 2 („Absperrband“) konnte nicht gespeichert werden (Speichern fehlgeschlagen) — der Bild-Baustein ist entfernt."), JSON.stringify(en.warnings));
+  const local = finishDesignerPictures(raw, { urls, pictures, labelIconUrl: "http://localhost:3000/eu-ai-icon-email.png" });
+  assert.ok(!local.doc.blocks.some((b) => b.src?.includes("eu-ai-icon")));
+  assert.ok(local.warnings.includes("Bild 1: wirkt wie ein Foto und ist KI-generiert — bitte darunter „KI-generiertes Bild“ vermerken (KI-Verordnung)."), JSON.stringify(local.warnings));
+  // nothing to do without placeholders
+  const plain = normalizeMailTemplateDoc({ blocks: [{ type: "heading", text: "Hi" }, { type: "footer" }] });
+  assert.deepEqual(finishDesignerPictures(plain, { urls: new Map(), pictures: [], labelIconUrl: icon }), { doc: plain, warnings: [] });
+});
+
+test("insertAiPictureLabels: after the top-level block that shows the picture, a column picture under its section, never past the block limit", () => {
+  const icon = "https://mo.example.com/eu-ai-icon-email.png";
+  const doc = normalizeMailTemplateDoc({
+    blocks: [
+      { type: "section", columns: [{ blocks: [{ type: "image", src: "https://bild.invalid/1", alt: "a" }] }, { blocks: [{ type: "text", text: "b" }] }] },
+      { type: "footer" },
+    ],
+  });
+  const r = insertAiPictureLabels(doc, { pictures: [1], iconUrl: icon });
+  assert.deepEqual(r.doc.blocks.map((b) => b.type), ["section", "image", "footer"]);
+  assert.deepEqual(r.labelled, [1]);
+  // the top-level limit: no label, the picture is named
+  const full = normalizeMailTemplateDoc({
+    blocks: [{ type: "image", src: "https://bild.invalid/1", alt: "a" }, ...Array.from({ length: 38 }, (_, i) => ({ type: "text", text: `T${i}` })), { type: "footer" }],
+  });
+  const capped = insertAiPictureLabels(full, { pictures: [1], iconUrl: icon });
+  assert.deepEqual([capped.labelled, capped.skipped], [[], [1]]);
+  assert.equal(capped.doc.blocks.length, full.blocks.length);
+});
+
+test("the loop with generate_image: the placeholder comes back at once, the picture renders while the model goes on, the design with it is accepted", async () => {
+  const { createPictureStudio } = await import("./mail-designer-pictures.mjs");
+  let renders = 0;
+  let release;
+  const gate = new Promise((resolve) => (release = resolve));
+  const studio = createPictureStudio({
+    render: async (job) => {
+      renders++;
+      await gate;
+      return {
+        ok: true,
+        image: { bytes: new Uint8Array([1]), width: job.width, height: job.height, transparent: false, model: "gpt-image-2" },
+        calls: [{ model: "gpt-image-2", usage: { inputTokens: 100, outputTokens: 6000, cacheReadTokens: 0, cacheWriteTokens: 0 }, usageComplete: true }],
+        warnings: [],
+      };
+    },
+  });
+  const picture = { purpose: "hero", aspect: "wide", prompt: "A home gym at dusk with warm light, #111111 and #ffd400, calm top area for lettering.", textInImage: "Winter-Power" };
+  const withPicture = {
+    doc: { blocks: [{ type: "image", src: "https://bild.invalid/1", alt: "Winter-Power", width: "full" }, { type: "heading", text: "Winter-Training" }, { type: "product", ref: BENCH }, okButton, { type: "footer" }] },
+    notes: "Titelbild erzeugt.",
+  };
+  const model = new MockLanguageModelV3({
+    doStream: [
+      toolStep([["c1", "generate_image", picture]]),
+      toolStep([["c2", "search_products", { query: "Hantelbank" }]]),
+      toolStep([["c3", "submit_design", withPicture]]),
+    ],
+  });
+  const seen = [];
+  const { promise, events } = run(model, {
+    pictures: studio,
+    checkSubmission: (input, round) => {
+      seen.push(round.pictures.map((p) => `${p.n}:${p.status}`));
+      return checkDesignSubmission(input, ctx({ operatorText: "Winter-Mail mit einer Hantelbank", ...round }));
+    },
+  });
+  const res = await promise;
+  assert.equal(res.ok, true, res.message);
+  assert.equal(renders, 1, "started at once");
+  assert.deepEqual(seen, [["1:pending"]], "the check saw the picture of this run, still rendering");
+  assert.equal(res.doc.blocks[0].src, "https://bild.invalid/1");
+  // the tool's answer reached the model in the next step; the tool list never changed
+  const answer = model.doStreamCalls[1].prompt.at(-1).content[0];
+  assert.equal(answer.toolName, "generate_image");
+  assert.equal(answer.output.value.src, "https://bild.invalid/1");
+  for (const call of model.doStreamCalls) assert.deepEqual(call.tools.map((t) => t.name), ["search_products", "list_collections", "generate_image", "submit_design"]);
+  assert.ok(events.some((e) => e.stage === "images" && e.text === "Lässt ein Bild erzeugen: Titelbereich „Winter-Power“ …"));
+  assert.ok(events.some((e) => e.stage === "design" && e.text === "Gestaltet weiter, während das Bild entsteht …"));
+  release();
+  const settled = await studio.settle({ used: pictureIndexesInDoc(res.doc) });
+  assert.equal(settled[0].status, "ready");
+});
+
+test("the loop without a picture studio: generate_image stays in the list and says pictures cannot be made here", async () => {
+  const model = new MockLanguageModelV3({
+    doStream: [toolStep([["c1", "generate_image", { purpose: "hero", aspect: "wide", prompt: "A home gym at dusk, warm light." }]]), toolStep([["c2", "submit_design", design(BENCH)]])],
+  });
+  const res = await run(model).promise;
+  assert.equal(res.ok, true);
+  const answer = model.doStreamCalls[1].prompt.at(-1).content[0].output.value;
+  assert.equal(answer.ok, false);
+  assert.match(answer.note, /Bilder können hier nicht erzeugt werden/);
+});
+
+test("the run line: the picture calls are priced with the model calls; the pictures counted; a cut-off render makes the cost unknown", () => {
+  const u = (input, output) => ({ inputTokens: input, outputTokens: output, cacheReadTokens: 0, cacheWriteTokens: 0 });
+  const opus = { model: OPUS_MODEL, usage: u(10_000, 2_000), usageComplete: true };
+  // gpt-image-2: $5 per million text-input tokens, $30 per million image-output tokens → 150 × 5 + 6,200 × 30 = $0.18675
+  const image = { model: "gpt-image-2", usage: u(150, 6_200), usageComplete: true };
+  const check = { model: SONNET_MODEL, usage: u(1_600, 120), usageComplete: true };
+  // Opus 5.5 $0.08 + the render $0.18675 + the text check (Sonnet 5.5) $0.0044 = $0.27115
+  assert.equal(designerCostEur([opus], DEFAULT_MODEL_PRICES, 1), 0.08);
+  const withPicture = designerCostEur([opus, image, check], DEFAULT_MODEL_PRICES, 1);
+  assert.ok(Math.abs(withPicture - 0.27115) <= 0.0001, String(withPicture));
+  const info = designerRunInfo({ settings: DEFAULT_DESIGNER_SETTINGS, model: OPUS_MODEL, ms: 90_000, calls: [opus, image, check], pictures: 1, prices: DEFAULT_MODEL_PRICES, rate: 1 });
+  assert.equal(info.pictures, 1);
+  assert.equal(info.costEur, withPicture);
+  assert.equal("pictures" in designerRunInfo({ settings: DEFAULT_DESIGNER_SETTINGS, model: OPUS_MODEL, ms: 1, calls: [opus], prices: DEFAULT_MODEL_PRICES, rate: 1 }), false);
+  assert.equal(designerCostEur([opus, { ...image, usageComplete: false }], DEFAULT_MODEL_PRICES, 1), null);
+});
+
+test("the guide: the design system, the fixed blocks in the mail's look, the picture tool and own HTML as the exception", () => {
+  for (const use of ["bulk", "personal", "template"]) {
+    const p = designerSystemPrompt({ use });
+    // the design system comes before the general design advice, inside the team's working rules
+    assert.ok(p.indexOf("# Arbeitsregeln des Teams") < p.indexOf("# Ein Designsystem für jede Mail"));
+    assert.ok(p.indexOf("# Ein Designsystem für jede Mail") < p.indexOf("# Gestaltung — so sieht gute Arbeit aus"));
+    assert.match(p, /wende es auf JEDEN Baustein an — auch auf Countdown, Gutschein, Produkte und erzeugte Bilder/);
+    assert.match(p, /Ohne eigene Farben übernehmen countdown, coupon und products Schrift und Farben der Mail/);
+    assert.match(p, /Produkt-Kacheln im eigenen Look baust du besser mit product-Bausteinen in den Spalten eines Abschnitts/);
+    // the picture tool: when, never prices in pictures, async placeholders, removed cleanly, the limit, recipes
+    assert.match(p, /# Bilder erzeugen lassen \(generate_image\)/);
+    assert.match(p, /Ob das bei diesem Auftrag geht, steht in den Arbeitsregeln des Teams \(Zeile „Bilder“\)/);
+    assert.match(p, /erfinde nie Produktfotos/);
+    assert.match(p, /Nie Preise, Prozente, Codes, Fristen, Rechtliches oder Links ins Bild/);
+    assert.match(p, /Der Text im Bild steht auch im alt-Text/);
+    assert.match(p, /Rufe generate_image früh auf/);
+    assert.match(p, /entfernt Mo den Bild-Baustein bzw\. das Hintergrundbild \(die Hintergrundfarbe bleibt\)/);
+    assert.match(p, /Höchstens 3 Bilder pro Auftrag/);
+    assert.match(p, /lässt du mit generate_image neu erzeugen \(im eigenen Look, nie eine Kopie\)/);
+    // own HTML: the exception, with the reason in notes — no longer „only when the person asks for HTML“
+    assert.ok(!p.includes("nur, wenn die Person ausdrücklich HTML verlangt"));
+    assert.match(p, /Eigenes HTML \(der Baustein html\) ist die Ausnahme/);
+  }
+  // the house style stays the very last section with the new guide
+  const style = "Hausfarben Schwarz und Gelb.";
+  assert.ok(designerSystemPrompt({ use: "bulk", houseStyle: style }).endsWith(`${style}\n</hausstil>`));
+});
+
+test("an accepted draft keeps a failed or unknown picture for the final swap — which removes it cleanly; never as logo or hero fallback", async () => {
+  const pictures = pics([1, "ready"], [2, "failed", { reason: "nicht rechtzeitig fertig", label: "Band" }]);
+  const doc = {
+    style: { logoUrl: "https://bild.invalid/1" },
+    blocks: [
+      { type: "image", src: "https://bild.invalid/1", alt: "Winterbild", width: "full" },
+      { type: "image", src: "https://bild.invalid/2", alt: "Band", width: "full" },
+      { type: "html", html: '<table role="presentation"><tr><td><img src="https://bild.invalid/2" width="600" alt="Band"></td></tr></table>' },
+      { type: "heading", text: "Winter" },
+      okButton,
+      { type: "footer" },
+    ],
+  };
+  const last = await checkDesignSubmission({ doc, notes: "" }, ctx({ pictures, round: 3, lastRound: true }));
+  assert.equal(last.ok, true);
+  // the logo lost the picture; the failed one is still there for finishDesignerPictures (and the html block stayed)
+  assert.equal(last.doc.style.logoUrl, null);
+  assert.deepEqual(pictureIndexesInDoc(last.doc), [1, 2]);
+  assert.ok(last.doc.blocks.some((b) => b.type === "html"));
+  assert.ok(!last.warnings.some((w) => /Nicht überprüfbare Angaben entfernt/.test(w)), JSON.stringify(last.warnings));
+  const done = finishDesignerPictures(last.doc, { urls: new Map([[1, "https://mo.example.com/api/email-hero-image/template-ki-1.jpg"]]), pictures, labelIconUrl: null });
+  assert.deepEqual(pictureIndexesInDoc(done.doc), []);
+  assert.equal(done.doc.blocks.filter((b) => b.type === "image").length, 1, "the failed picture's block is gone");
+  assert.ok(!done.doc.blocks.find((b) => b.type === "html").html.includes("<img"));
+  assert.match(done.warnings[0], /^Bild 2 \(„Band“\) konnte nicht erzeugt werden \(nicht rechtzeitig fertig\) — der Bild-Baustein ist entfernt\.$/);
+});
+
+test("the guide: the fixed blocks take the mail's look automatically — also on a dark card; their fields stand in the block reference", () => {
+  const p = designerSystemPrompt({ use: "bulk" });
+  // the block reference (the format's own catalog) names the new fields
+  for (const field of ["tileColor:", "digitColor:", "labelColor:", "cardColor:", "borderStyle:", "codeColor:", "codeFont:", "cta:"]) assert.ok(p.includes(`    - ${field}`), field);
+  assert.match(p, /Die festen Bausteine countdown, coupon und products sehen ohne eigene Farbfelder automatisch aus wie die Mail/);
+  assert.match(p, /— auch auf einer dunklen Karte\. Ihre Felder \(countdown: tileColor, digitColor, labelColor, background, padTop\/padBottom · coupon: cardColor, borderStyle, radius, textColor, codeColor, codeFont, cta, accent, background, padTop\/padBottom · products: cardColor, textColor\)/);
+  // dark designs: no longer „products and countdown on a white panel“ — only as the fallback
+  assert.ok(!/products, countdown und Mos Bausteine stehen auf einer dunklen Karte auf einer weißen Fläche/.test(p));
+  assert.match(p, /Countdown, Gutschein und Produkte stehen auch dort auf dem dunklen Grund in Schriften und Farben der Mail, solange diese darauf lesbar sind — nur sonst legt Mo sie auf eine weiße Fläche/);
 });

@@ -6,8 +6,9 @@
 // working rules — and that a thinking block is handed back on the next step
 // of the tool loop with the earlier messages unchanged (the API refuses a tool
 // result after thinking without it; Fable 5.2 refuses any edit of the history
-// before a replayed thinking block). The answers are scripted Server-Sent
-// Events in the Messages API format.
+// before a replayed thinking block) — also around generate_image, whose
+// picture renders in the background (a scripted studio, no OpenAI). The
+// answers are scripted Server-Sent Events in the Messages API format.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createAnthropic } from "@ai-sdk/anthropic";
@@ -17,6 +18,7 @@ import {
   DESIGNER_QUALITY,
   designerHouseStyleSection,
   designerMaxOutputTokens,
+  designerPictureState,
   designerRunRules,
 } from "./mail-template-designer-settings.mjs";
 import {
@@ -25,8 +27,11 @@ import {
   designerProviderOptions,
   designerSystemPrompt,
   designerUserContent,
+  finishDesignerPictures,
+  pictureIndexesInDoc,
   runDesigner,
 } from "./mail-template-designer.mjs";
+import { createPictureStudio } from "./mail-designer-pictures.mjs";
 
 const NOW = new Date("2026-11-11T10:00:00Z");
 
@@ -86,7 +91,7 @@ const DESIGN = {
   preheader: "Alles für dein Home-Gym",
 };
 
-/** runDesigner wired like mail-template-assist.ts for the given settings (default: the stored defaults). */
+/** runDesigner wired like mail-template-assist.ts for the given settings (default: the stored defaults; the picture service configured). */
 function runWith(provider, over = {}, settings = DEFAULT_DESIGNER_SETTINGS) {
   return runDesigner({
     model: provider(settings.model),
@@ -96,7 +101,7 @@ function runWith(provider, over = {}, settings = DEFAULT_DESIGNER_SETTINGS) {
       use: "bulk",
       today: NOW,
       attachments: [{ index: 1, name: "vorbild.png", kind: "image", width: 600, height: 900, parts: [{ data: new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]), mediaType: "image/png" }] }],
-      rules: designerRunRules(settings),
+      rules: designerRunRules(settings, { pictures: designerPictureState(settings, true) }),
     }),
     providerOptions: designerProviderOptions(anthropicOptionsWithEffort("designer", settings.effort)),
     maxOutputTokens: designerMaxOutputTokens(settings.effort, DESIGNER_LIMITS.answerTokens),
@@ -138,8 +143,11 @@ test("the request of the tier designer: model, cap, adaptive thinking, effort, c
   // prompt caching: a breakpoint on the system prompt and top-level automatic caching
   assert.ok(Array.isArray(body.system) && body.system.some((s) => s.cache_control?.type === "ephemeral"), "system breakpoint");
   assert.deepEqual(body.cache_control, { type: "ephemeral" });
-  // the same three tools on every step, tool choice left to the model
-  assert.deepEqual(body.tools.map((t) => t.name).sort(), ["list_collections", "search_products", "submit_design"]);
+  // the same four tools on every step (generate_image always in the list), tool choice left to the model
+  assert.deepEqual(body.tools.map((t) => t.name), ["search_products", "list_collections", "generate_image", "submit_design"]);
+  const picture = body.tools.find((t) => t.name === "generate_image");
+  assert.deepEqual(picture.input_schema.required, ["purpose", "prompt", "aspect"]);
+  assert.deepEqual(picture.input_schema.properties.aspect.enum, ["wide", "banner", "square", "tall"]);
   assert.ok(!body.tool_choice || body.tool_choice.type === "auto");
   // the attachment arrives as a picture behind its label
   const user = body.messages[0];
@@ -235,8 +243,9 @@ test("the „Maximal“ level at Denktiefe „Sehr hoch“: Fable 5.2 over the w
   const systemText = first.system.map((s) => s.text).join("");
   assert.ok(systemText.endsWith(designerHouseStyleSection(settings)), "the house style is the last section");
   const userTexts = first.messages[0].content.filter((c) => c.type === "text").map((c) => c.text);
-  assert.equal(userTexts.at(-2), `## Arbeitsregeln des Teams\n${designerRunRules(settings)}`);
+  assert.equal(userTexts.at(-2), `## Arbeitsregeln des Teams\n${designerRunRules(settings, { pictures: "on" })}`);
   assert.match(userTexts.at(-2), /GENAU NACH AUFTRAG/);
+  assert.match(userTexts.at(-2), /- Bilder: Du darfst mit generate_image Bilder erzeugen lassen/);
   assert.match(userTexts.at(-1), /^## Anweisung der Person/);
 
   // append-only: the same system prompt and tools, the first request's messages unchanged as the prefix,
@@ -255,4 +264,78 @@ test("the „Maximal“ level at Denktiefe „Sehr hoch“: Fable 5.2 over the w
   assert.equal(toolResult.role, "user");
   assert.equal(toolResult.content.find((c) => c.type === "tool_result")?.tool_use_id, "toolu_1");
   assert.equal(second.messages.length, first.messages.length + 2);
+});
+
+test("generate_image in the append-only loop: the placeholder comes back at once, the next request only appends, the design with it is accepted and finished", async () => {
+  const rendered = [];
+  const studio = createPictureStudio({
+    state: "on",
+    render: async (job) => {
+      rendered.push(job);
+      return {
+        ok: true,
+        image: { bytes: new Uint8Array([1, 2, 3]), width: job.width, height: job.height, transparent: false, model: "gpt-image-2" },
+        calls: [{ model: "gpt-image-2", usage: { inputTokens: 150, outputTokens: 6200, cacheReadTokens: 0, cacheWriteTokens: 0 }, usageComplete: true }],
+        warnings: [],
+      };
+    },
+  });
+  const request = { purpose: "hero", aspect: "wide", prompt: "A dark home gym at dusk, warm rim light, #111111 and #e30613, calm area at the top for the lettering.", textInImage: "Winter-Power", name: "Titelbild mit Überschrift" };
+  const withPicture = {
+    ...DESIGN,
+    doc: {
+      ...DESIGN.doc,
+      blocks: [{ type: "image", src: "https://bild.invalid/1", alt: "Winter-Power — Training im Home-Gym", width: "full", padTop: 0, padBottom: 0 }, ...DESIGN.doc.blocks],
+    },
+  };
+  const { provider, requests } = scripted([
+    sse(
+      [
+        { type: "thinking", thinking: "", signature: "sig-pic-1" },
+        { type: "tool_use", id: "toolu_1", name: "generate_image", input: request },
+      ],
+      "tool_use"
+    ),
+    sse([{ type: "tool_use", id: "toolu_2", name: "submit_design", input: withPicture }], "tool_use"),
+  ]);
+  const progress = [];
+  const res = await runWith(provider, { pictures: studio, onProgress: (p) => progress.push(p) });
+  assert.equal(res.ok, true, res.message);
+  assert.equal(requests.length, 2);
+  const [first, second] = requests.map((r) => r.body);
+  // the same tools and system prompt on both steps; the first request's messages unchanged, then exactly two more
+  assert.deepEqual(second.tools, first.tools);
+  assert.deepEqual(second.system, first.system);
+  assert.deepEqual(second.messages.slice(0, first.messages.length), first.messages);
+  assert.equal(second.messages.length, first.messages.length + 2);
+  const [assistant, toolMessage] = second.messages.slice(first.messages.length);
+  assert.deepEqual(assistant.content.find((c) => c.type === "thinking"), { type: "thinking", thinking: "", signature: "sig-pic-1" });
+  assert.ok(assistant.content.some((c) => c.type === "tool_use" && c.id === "toolu_1" && c.name === "generate_image"));
+  const result = toolMessage.content.find((c) => c.type === "tool_result");
+  assert.equal(result.tool_use_id, "toolu_1");
+  const answerText = typeof result.content === "string" ? result.content : result.content.map((c) => c.text ?? "").join("");
+  const answer = JSON.parse(answerText);
+  assert.equal(answer.ok, true);
+  assert.equal(answer.src, "https://bild.invalid/1");
+  assert.deepEqual([answer.width, answer.height, answer.heightAt600], [1536, 1024, 400]);
+  assert.match(answer.note, /entsteht jetzt im Hintergrund/);
+  // the picture started at once, the line for the panel said so
+  assert.equal(rendered.length, 1);
+  assert.equal(rendered[0].text, "Winter-Power");
+  assert.ok(progress.some((p) => p.stage === "images" && p.text === "Lässt ein Bild erzeugen: Titelbild mit Überschrift …"));
+  // the placeholder of a picture started in this run is accepted …
+  assert.deepEqual(pictureIndexesInDoc(res.doc), [1]);
+  // … and after the run the stored picture takes its place; a photo-like hero gets the EU label below it
+  const settled = await studio.settle({ used: [1] });
+  assert.equal(settled[0].status, "ready");
+  const finished = finishDesignerPictures(res.doc, {
+    urls: new Map([[1, "https://mo.example.com/api/email-hero-image/template-ki-1.jpg"]]),
+    pictures: studio.pictures(),
+    labelIconUrl: "https://mo.example.com/eu-ai-icon-email.png",
+  });
+  assert.equal(finished.doc.blocks[0].src, "https://mo.example.com/api/email-hero-image/template-ki-1.jpg");
+  assert.equal(finished.doc.blocks[1].src, "https://mo.example.com/eu-ai-icon-email.png");
+  assert.deepEqual(pictureIndexesInDoc(finished.doc), []);
+  // the render's usage is a billed call of the request
+  assert.deepEqual(studio.calls().map((c) => [c.model, c.usage.outputTokens, c.usageComplete]), [["gpt-image-2", 6200, true]]);
 });
