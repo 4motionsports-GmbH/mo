@@ -197,3 +197,37 @@ test("usdEurRate parses USD_EUR_RATE and falls back to the default", () => {
   assert.equal(usdEurRate({ USD_EUR_RATE: "garbage" }), 0.92);
   assert.equal(usdEurRate({ USD_EUR_RATE: "-1" }), 0.92);
 });
+
+test("per-model cache prices: the 5.x models read the cache below 0.1× input", () => {
+  // Fable 5.2: $8 input, cache read $0.20, write $10, output $40.
+  const fable = usdCostForUsage({
+    model: "claude-fable-5-2",
+    inputTokens: 1_000_000,
+    outputTokens: 100_000,
+    cacheReadTokens: 600_000,
+    cacheWriteTokens: 200_000,
+  });
+  assert.ok(Math.abs(fable - (0.2 * 8 + 0.6 * 0.2 + 0.2 * 10 + 0.1 * 40)) < 1e-9);
+  // Opus 5.5 reads at $0.20 (0.05×), Sonnet 5.5 at $0.10.
+  const opus = usdCostForUsage({ model: "claude-opus-5-5", inputTokens: 1_000_000, outputTokens: 0, cacheReadTokens: 1_000_000 });
+  assert.ok(Math.abs(opus - 0.2) < 1e-9);
+  const sonnet = usdCacheSavingsForUsage({ model: "claude-sonnet-5-5", cacheReadTokens: 1_000_000, cacheWriteTokens: 1_000_000 });
+  assert.ok(Math.abs(sonnet - ((2 - 0.1) - (2.5 - 2))) < 1e-9);
+  // A model without its own cache prices keeps the multipliers (unchanged history).
+  assert.ok(Math.abs(usdCostForUsage({ model: "claude-sonnet-4-6", inputTokens: 1_000_000, outputTokens: 0, cacheReadTokens: 1_000_000 }) - 0.3) < 1e-9);
+});
+
+test("parseModelPrices: cache prices are validated, and an input override drops the base cache prices", () => {
+  const p = parseModelPrices(
+    JSON.stringify({
+      "claude-fable-5-2": { input: 6 },
+      "claude-opus-5-5": { cacheRead: 0.15 },
+      "claude-sonnet-5-5": { cacheWrite: -1 },
+      "new-model": { input: 1, output: 2, cacheRead: 0.05 },
+    })
+  );
+  assert.deepEqual(p["claude-fable-5-2"], { input: 6, output: 40 });
+  assert.deepEqual(p["claude-opus-5-5"], { input: 4, output: 20, cacheRead: 0.15, cacheWrite: 5 });
+  assert.deepEqual(p["claude-sonnet-5-5"], DEFAULT_MODEL_PRICES["claude-sonnet-5-5"]);
+  assert.deepEqual(p["new-model"], { input: 1, output: 2, cacheRead: 0.05 });
+});

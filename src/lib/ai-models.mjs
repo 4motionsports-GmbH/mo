@@ -27,6 +27,10 @@
 //             a whole block document. Rare and operator-run, so quality beats
 //             speed: Opus 5.5 at effort `high` with the most thinking headroom
 //             (owner, 11.11.2026: „a good AI for high quality templates“).
+//             The operator may choose another model and effort for it
+//             (Einstellungen → „KI-Gestalter“, mail-template-designer-settings.mjs:
+//             Sonnet 5.5, Opus 5.5 or Fable 5.2, effort low … max) — this tier
+//             is the default.
 //   bulk    — high-volume, per-item analysis and translation: Haiku 4.5
 //             without thinking — the cheapest model that does these well.
 //
@@ -36,12 +40,14 @@
 
 export const SONNET_MODEL = "claude-sonnet-5-5";
 export const OPUS_MODEL = "claude-opus-5-5";
+/** Anthropic's most capable model open to all customers — only by the operator's choice in the KI-Gestalter settings. */
+export const FABLE_MODEL = "claude-fable-5-2";
 export const HAIKU_MODEL = "claude-haiku-4-5";
 
 /** @typedef {"chat" | "writer" | "analyst" | "deep" | "strategist" | "designer" | "bulk"} AiTier */
 
 /**
- * @type {Record<AiTier, { model: string, thinking?: "adaptive" | "between_tools", effort?: "low" | "medium" | "high", thinkingHeadroom: number }>}
+ * @type {Record<AiTier, { model: string, thinking?: "adaptive" | "between_tools", effort?: "low" | "medium" | "high" | "xhigh" | "max", thinkingHeadroom: number }>}
  */
 export const AI_TIERS = {
   chat: { model: SONNET_MODEL, thinking: "between_tools", effort: "high", thinkingHeadroom: 0 },
@@ -73,6 +79,22 @@ export function anthropicOptionsFor(tier) {
   if (t.effort) anthropic.effort = t.effort;
   if (t.thinking) anthropic.fallbacks = "default";
   return Object.keys(anthropic).length > 0 ? { anthropic } : {};
+}
+
+/** The effort levels of the 5.x models, lowest first. */
+export const AI_EFFORTS = Object.freeze(["low", "medium", "high", "xhigh", "max"]);
+
+/**
+ * The `providerOptions` of a tier with another effort — for a call site whose
+ * operator may choose it (the KI-Gestalter settings). Thinking mode and the
+ * refusal fallback stay the tier's; an unknown effort keeps the tier's own.
+ * @param {AiTier} tier
+ * @param {string | null | undefined} effort
+ */
+export function anthropicOptionsWithEffort(tier, effort) {
+  const base = anthropicOptionsFor(tier);
+  if (!base.anthropic || typeof effort !== "string" || !AI_EFFORTS.includes(effort)) return base;
+  return { ...base, anthropic: { ...base.anthropic, effort } };
 }
 
 /**

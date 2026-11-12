@@ -20,15 +20,24 @@ export const DEFAULT_USD_EUR_RATE = 0.92;
  * MODEL_PRICES_JSON — see the header.
  */
 export const DEFAULT_MODEL_PRICES = {
+  // Optional per-model prompt-cache prices (USD/MTok): `cacheRead` and
+  // `cacheWrite` (5-minute TTL). Without them the provider-wide multipliers
+  // below apply (0.1× / 1.25× input) — the 5.x models read the cache cheaper
+  // than that (list pricing 2026-11).
+  // Anthropic — Fable tier: only by the operator's choice in the KI-Gestalter
+  // settings (mail-template-designer-settings.mjs). Opus 4.8 / Opus 5 are its
+  // server-side refusal fallbacks.
+  "claude-fable-5-2": { input: 8, output: 40, cacheRead: 0.2, cacheWrite: 10 },
+  "claude-opus-5": { input: 5, output: 25, cacheRead: 0.5, cacheWrite: 6.25 },
   // Anthropic — Sonnet tier (chat, drafts, analysis passes; lib/ai-models.mjs).
   // Sonnet 5 is the server-side refusal fallback of Sonnet 5.5.
-  "claude-sonnet-5-5": { input: 2, output: 10 },
+  "claude-sonnet-5-5": { input: 2, output: 10, cacheRead: 0.1, cacheWrite: 2.5 },
   "claude-sonnet-5": { input: 2, output: 10 },
   // Previous Sonnet generations — historical ai_usage rows keep their price.
   "claude-sonnet-4-5-20250929": { input: 3, output: 15 },
   "claude-sonnet-4-6": { input: 3, output: 15 },
   // Anthropic — Opus tier (customer-profile regeneration). 4.x for history.
-  "claude-opus-5-5": { input: 4, output: 20 },
+  "claude-opus-5-5": { input: 4, output: 20, cacheRead: 0.2, cacheWrite: 5 },
   "claude-opus-4-8": { input: 5, output: 25 },
   "claude-opus-4-7": { input: 5, output: 25 },
   // Anthropic — Haiku tier (back-office conversation analysis + insights rollup):
@@ -95,7 +104,21 @@ export function parseModelPrices(rawJson, base = DEFAULT_MODEL_PRICES) {
     }
     // Both sides must resolve (a brand-new model must supply both).
     if (!isNonNegNumber(nextInput) || !isNonNegNumber(nextOutput)) continue;
-    merged[model] = { input: nextInput, output: nextOutput };
+    // Cache prices: an override of `input` drops the base cache prices (they
+    // were the base input's), unless the override names its own.
+    /** @type {{ input: number, output: number, cacheRead?: number, cacheWrite?: number }} */
+    const entry = { input: nextInput, output: nextOutput };
+    let bad = false;
+    for (const k of /** @type {const} */ (["cacheRead", "cacheWrite"])) {
+      if (price[k] !== undefined) {
+        if (!isNonNegNumber(price[k])) bad = true;
+        else entry[k] = price[k];
+      } else if (price.input === undefined && isNonNegNumber(baseEntry?.[k])) {
+        entry[k] = baseEntry[k];
+      }
+    }
+    if (bad) continue;
+    merged[model] = entry;
   }
   return merged;
 }
@@ -117,13 +140,24 @@ export function priceForModel(model, prices = DEFAULT_MODEL_PRICES) {
   return prices[model] ?? null;
 }
 
-// Anthropic prompt-caching multipliers on the INPUT price (provider-wide, not
-// per-model): a cached-prefix READ bills at 0.1× input, a cache WRITE (prefix
+// Anthropic prompt-caching multipliers on the INPUT price (the fallback for a
+// model without its own cacheRead / cacheWrite): a cached-prefix READ bills at
+// 0.1× input, a cache WRITE (prefix
 // creation, 5-minute TTL) at 1.25× input. Chat requests set cache_control
 // breakpoints (see api/chat/route.ts), and the usage store records the
 // read/write splits so the cost KPI prices them at their real rates.
 export const CACHE_READ_INPUT_MULTIPLIER = 0.1;
 export const CACHE_WRITE_INPUT_MULTIPLIER = 1.25;
+
+/** USD/MTok of a cache read: the model's own price, else 0.1× input. */
+function cacheReadPrice(p) {
+  return isNonNegNumber(p.cacheRead) ? p.cacheRead : p.input * CACHE_READ_INPUT_MULTIPLIER;
+}
+
+/** USD/MTok of a cache write (5-minute TTL): the model's own price, else 1.25× input. */
+function cacheWritePrice(p) {
+  return isNonNegNumber(p.cacheWrite) ? p.cacheWrite : p.input * CACHE_WRITE_INPUT_MULTIPLIER;
+}
 
 /**
  * USD cost of one usage record. Returns 0 for an unknown model (no guessing —
@@ -150,11 +184,7 @@ export function usdCostForUsage(
   // Guard against inconsistent records (splits exceeding the total): never let
   // the uncached remainder go negative.
   const uncachedTok = Math.max(0, inTok - readTok - writeTok);
-  const inputUsd =
-    (uncachedTok +
-      readTok * CACHE_READ_INPUT_MULTIPLIER +
-      writeTok * CACHE_WRITE_INPUT_MULTIPLIER) *
-    p.input;
+  const inputUsd = uncachedTok * p.input + readTok * cacheReadPrice(p) + writeTok * cacheWritePrice(p);
   return (inputUsd + outTok * p.output) / 1_000_000;
 }
 
@@ -174,10 +204,7 @@ export function usdCacheSavingsForUsage(
   if (!p) return 0;
   const readTok = isNonNegNumber(cacheReadTokens) ? cacheReadTokens : 0;
   const writeTok = isNonNegNumber(cacheWriteTokens) ? cacheWriteTokens : 0;
-  const savedUsd =
-    (readTok * (1 - CACHE_READ_INPUT_MULTIPLIER) -
-      writeTok * (CACHE_WRITE_INPUT_MULTIPLIER - 1)) *
-    p.input;
+  const savedUsd = readTok * (p.input - cacheReadPrice(p)) - writeTok * (cacheWritePrice(p) - p.input);
   return savedUsd / 1_000_000;
 }
 
