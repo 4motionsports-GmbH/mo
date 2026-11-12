@@ -250,8 +250,9 @@ mails (`.eml`). Each answer replaces the editor's document as an **unsaved chang
 „Rückgängig“); in a Rundmail it may also propose subject and preview line („Übernehmen“).
 
 **Model and loop.** [`mail-template-assist.ts`](../src/lib/mail-template-assist.ts) runs the tier
-**`designer`** ([`AI_MODELS.md`](./AI_MODELS.md): the strongest model, adaptive thinking, effort
-high; `ai_usage` call site `template_assist`, summed over all steps) through the agentic loop of
+**`designer`** with the model and effort of the team's settings (below; by default Opus 5.5 with
+adaptive thinking at effort high — models, prices and limits: [`AI_MODELS.md`](./AI_MODELS.md);
+`ai_usage` call site `template_assist`, summed over all steps) through the agentic loop of
 [`mail-template-designer.mjs`](../src/lib/mail-template-designer.mjs) (`runDesigner`, AI SDK
 `streamText` with tools, at most 8 steps):
 
@@ -261,8 +262,8 @@ high; `ai_usage` call site `template_assist`, summed over all steps) through the
 - `submit_design` — the **whole** document, notes (what it did, what is still missing) and, for a
   Rundmail, subject and preview line.
 
-**The prompt is the capability guide** (`designerSystemPrompt`, stable per use so the prompt cache
-serves it): the format, the full block catalog with every field, layout recipes (header with
+**The prompt is the capability guide** (`designerSystemPrompt`, stable per use and house style so the
+prompt cache serves it): the format, the full block catalog with every field, layout recipes (header with
 navigation, image + text, zigzag, product tiles, benefit bar, coloured band, text on a picture,
 boxed card) with **no fixed outline** (two differently built examples; a promo outline is only one
 option when the operator sets no structure), Mo's capabilities to use **without being asked**
@@ -275,15 +276,65 @@ fixed coupon code is not measured — so no own UTM or tracking links), design a
 rules (hierarchy, contrast,
 mobile first, Outlook without rounded corners, no spam words), how to rebuild a screenshot (layout,
 grid, spacing, colours, the nearest font — as a motion-sports mail, never foreign texts, logos or
-links) and how to change a mail (every requested change, nothing else; the editor's current, maybe
-hand-edited document is the reference).
+links) and how to change a mail (every requested change, nothing else unless the freedom of the
+settings allows more; the editor's current, maybe hand-edited document is the reference).
+
+**Settings** (2026-11-12, owner: „high quality … and let the user make changes to the settings to
+have a bit more control“). The team sets once how the KI-Gestalter works — Einstellungen →
+„KI-Gestalter“ ([`ADMIN_DASHBOARD.md`](./ADMIN_DASHBOARD.md) §3.10; one `admin_settings` row,
+key `mail_designer`, migration 0078, no new one; `GET`/`POST settings/designer`, §11) — and every
+run reads them (`getDesignerSettings`; the defaults without a database, a row or migration 0078).
+The panel may change quality, freedom and the capabilities switch for one conversation (§3.12; the
+request's `settings`, merged over the stored ones with `mergeDesignerSettings` — an invalid field is
+dropped, never refused); the house style comes only from Einstellungen. Rules and texts:
+[`mail-template-designer-settings.mjs`](../src/lib/mail-template-designer-settings.mjs) (tested).
+
+- **Qualität** — which model runs and how long it thinks: Schnell, Gründlich (the default) or
+  Maximal, or under „Modell und Denktiefe selbst wählen“ any of the three models with any
+  **Denktiefe** (Niedrig … Maximal; the models, efforts, prices and output caps behind them:
+  [`AI_MODELS.md`](./AI_MODELS.md) „The KI-Gestalter“). More Denktiefe is more careful, slower and
+  dearer; the time limit stays 285 s, so at „Sehr hoch“ or „Maximal“ a run more often ends with the
+  timeout message or its last checked draft — both then suggest a quality level (they think at most
+  „Hoch“) or a lower Denktiefe.
+- **Gestaltungsfreiheit** — a working rule (`designerRunRules`) placed as its own part of the user
+  content right before the operator's instruction: **Genau nach Auftrag** changes only what the
+  instruction asks (layout, order, texts, colours and blocks stay; ideas go into the notes);
+  **Ausgewogen** (default) carries out the instruction with small improvements to readability,
+  spacing and structure; **Frei gestalten** treats the instruction as the goal — structure, order,
+  design and texts may be improved freely, blocks added or removed, bigger changes named in the
+  notes.
+- **Mo-Funktionen von sich aus einbauen** (default on) — the second working rule: on, the designer
+  adds products, coupon, countdown, Mo's chat link and Mo blocks where they help the mail; off, only
+  when the instruction asks for them or the current mail already has them (what it misses goes into
+  the notes). The capability guide gives both rules precedence over everything it asks to add or
+  change by itself („Arbeitsregeln des Teams“); duties always hold — „Mos persönlicher Text“ in a
+  personal template, the format, the allowed sources and the checks below.
+- **Hausstil** (≤ 2,000 characters) — the very last section of the system prompt of every run
+  (`designerHouseStyleSection`, in a wrapper its text cannot close): colours, fonts, tone, words that
+  never appear. It overrides the designer's own style decisions; an explicit instruction overrides
+  it. Its links, codes and numbers count as named in the checks, like the operator's own words — but
+  the word „HTML“ in it never allows own HTML. Without a house style the prompt is byte for byte the
+  one without settings (its cache stays); a new house style starts a new cache.
+- **The run line** — every answer (and a failure once a model ran) says what the run used and cost:
+  the NDJSON `run` with the model and effort that produced it, the level label („Gründlich · Claude
+  Opus 5.5 · Denktiefe Hoch“), freedom, capabilities switch, the seconds of the whole request and the
+  cost of all its model calls in euros (`designerRunInfo`; unknown when the time limit cut a step off —
+  how it is priced: [`AI_MODELS.md`](./AI_MODELS.md)); the panel shows it under the reply.
+- **Fallback** — when the chosen model is not open to this Anthropic account (Claude Fable 5.2
+  requires 30-day data retention — [`AI_MODELS.md`](./AI_MODELS.md)), the request runs once more on
+  Claude Opus 5.5 with the same settings inside the same 285 s, and the answer leads with „Claude
+  Fable 5.2 ist für dieses Anthropic-Konto nicht verfügbar — diese Gestaltung kam von Claude Opus
+  5.5. In Einstellungen → KI-Gestalter lässt sich ein anderes Modell wählen.“; the run line names
+  Opus 5.5 (`fallbackFrom` the chosen model). Without time for it (under 60 s left) or when Opus 5.5
+  is the choice, the failure names the model and Einstellungen → KI-Gestalter; after „Abbrechen“
+  nothing runs again.
 
 **Nothing the model writes is trusted.** Every submission is normalised and checked
 (`checkDesignSubmission`): product refs must exist in the catalog; pictures may come only from the
 attachments (`anhang:N`), the current mail, the catalog, Mo's own picture route or addresses the
 operator wrote — never an address with a user name (`…@host`) or a placeholder; shop links must be
 real pages (catalog, collections and pages looked up in Shopify, the shop, its search) or
-addresses from the operator or the current mail, and text-block links are checked exactly as the
+addresses from the operator, the house style or the current mail, and text-block links are checked exactly as the
 renderer will link them (`proseLinks`); codes, prices, percentages and deadlines only as the
 operator gave them or the current mail has them; the estimated size of the finished mail stays
 under 95 KB (Mo's pieces included for personal templates, `estimatedMailBytes`); custom HTML only
@@ -321,8 +372,9 @@ stored as a template picture (§7); without `BLOB_READ_WRITE_TOKEN` it is cleare
 
 **Route.** `POST /api/admin/vorlagen/assist` (`maxDuration` 300 s): errors before the stream are
 the usual JSON envelope (400, 413, 503 without `ANTHROPIC_API_KEY`); then NDJSON lines
-`progress` (with a heartbeat every 15 s) and exactly one `result` or `error`; the model is stopped
-at 285 s so the answer always arrives. Contract: [`ADMIN_DASHBOARD.md`](./ADMIN_DASHBOARD.md) §11.
+`progress` (with a heartbeat every 15 s) and exactly one `result` or `error` (with the run line
+`run`); the model is stopped at 285 s — whatever model and effort the settings choose, a second run
+included — so the answer always arrives. Contract: [`ADMIN_DASHBOARD.md`](./ADMIN_DASHBOARD.md) §11.
 
 ## 7. Pictures
 
@@ -349,9 +401,10 @@ and never erased with a person ([`email-hero-blob.mjs`](../src/lib/email-hero-bl
 | `src/lib/mail-template-slots.mjs` (+ test) | Live data of product blocks: product card data, text lines, empty blocks, raw block limits |
 | `src/lib/mail-template-store.ts` | `mail_templates` I/O, versions, usage |
 | `src/lib/mail-template-design.ts` | Template → design (`vorlage-<id>`), slots, card rows |
-| `src/lib/mail-template-designer.mjs` (+ test) | KI-Gestalter core: prompt, request, attachments as content, checks, tool loop |
+| `src/lib/mail-template-designer.mjs` (+ test, `-provider` test) | KI-Gestalter core: prompt, request, attachments as content, working rules, checks, tool loop, fallback rule, run line |
+| `src/lib/mail-template-designer-settings.mjs` (+ test) | KI-Gestalter settings: models, Denktiefe, quality levels, freedom, capabilities switch, house style, output cap |
 | `src/lib/mail-template-designer-io.ts` | KI-Gestalter I/O: catalog, collections, attachments (sharp), picture storage |
-| `src/lib/mail-template-assist.ts` | KI-Gestalter wiring: model, caching, usage |
+| `src/lib/mail-template-assist.ts` | KI-Gestalter wiring: settings, model, caching, fallback run, usage, run line |
 | `src/lib/mail-designer-client.mjs`, `mail-designer-attachments.mjs`, `admin-stream-core.mjs` (+ tests) | Panel logic: request body, turns, attachment limits, NDJSON reading |
 | `src/lib/block-editor-core.mjs` (+ test) | Editor logic: limits, summaries, issues per row, column widths, moving |
 | `src/lib/mail-template-image.ts` | Picture upload pipeline |

@@ -165,6 +165,7 @@ Everything an operator can point a colleague at is in the URL:
 | Kampagnen | `?filter=<chip>` | desk queue filter chip: `doi`, `soi`, `en`, `discount`, `set`, `hints`, `blocked` (absent = Alle) |
 | Kampagnen | `?campaign=<id>&view=inhalt\|pruefen\|versand` | a Rundmail's workspace tab (absent = Inhalt before the release, Versand after; kept in sync with `history.replaceState`) |
 | Vorlagen | `?vorlage=<id>` | the template open in the editor (absent = the list; kept in sync) |
+| Einstellungen | `#ki-gestalter` | the card „KI-Gestalter“ (§3.10), scrolled into view — the KI-Gestalter panel's „Standard und Hausstil ändern“ opens `?tab=einstellungen#ki-gestalter` in a new tab |
 | KPIs | `?kpiRange=7d\|30d\|90d\|custom`, `?kpiFrom=`, `?kpiTo=` | period (validated + clamped by [`kpi-range.mjs`](../src/lib/kpi-range.mjs)) |
 | KPIs | `?kpiFresh=<unix seconds>` | freshness floor for the Shopify cache — set by „Aktualisieren“ (§5.0) |
 | Konfigurator | `?kpiRange=7d\|30d\|90d` | period of „Wirkung“ (presets only; anything else = 30 days) |
@@ -190,7 +191,8 @@ Eingang system strip links each active campaign's desk
 Einzelansprache land on `?tab=kampagne&campaign=einzelansprache&contact=<id>`.
 Kunden → Überblick → „Ähnliche Kunden“ links each person
 (`?tab=kunden&customer=…`) and „Als Zielgruppe verwenden“ opens
-`?tab=kampagne&edit=new&audience=<json>`.
+`?tab=kampagne&edit=new&audience=<json>`. The KI-Gestalter (Vorlagen, Rundmail) opens
+`?tab=einstellungen#ki-gestalter` in a new tab, so the unsaved mail stays.
 
 ### 2.3 Files
 
@@ -213,7 +215,7 @@ src/app/admin/
 ├── kpi/                  # KpiToolbar, KpiSection, KpiTile (+ DeltaPill), FunnelBars, Sparkline, RevenueOrders (the drill-down), revenue-view (+ revenue-colors, revenue-series), groups, KpiTopQuestions, charts (next/dynamic) → charts-recharts + chart-geometry, sections/* (one file per section, §3.5)
 ├── gespraeche/           # GespraecheWorkspace, ConversationFilters, StatsPanel, ConversationList, ConversationDetail, ReportPanel, badges
 ├── wissen/               # WissenWorkspace, QaEntryEditor, ProductField, badges, useQaQueue
-├── einstellungen/        # EmailSettingsWorkspace (incl. SendersCard „Absender“), ShopifySyncCard, SystemStatusCard, DesignPreviewDialog
+├── einstellungen/        # EmailSettingsWorkspace (incl. SendersCard „Absender“), DesignerSettingsCard („KI-Gestalter“), ShopifySyncCard, SystemStatusCard, DesignPreviewDialog
 ├── feedback/, analytics/, verbesserung/
 ├── HeroImagePanel.tsx, useEmailHero.ts, EmailPreviewButton.tsx, EmailPreviewFrame.tsx, EmailTextModeToggle.tsx   # shared e-mail widgets
 ├── lib/                  # admin-fetch, use-async-action, use-step-loop, use-media-query, fetch-pdf, prepare-hero-upload
@@ -225,7 +227,8 @@ Shared, pure logic sits in `src/lib/*.mjs` with `node --test` suites next to it
 `admin-customer-filter`, `customer-signals`, `customer-timeline`,
 `campaign-def`, `audience-spec`, `kpi-range`, `ttl-cache`, `retention-options`,
 `mail-template-doc`, `mail-template-render`, `mailing-core`, `mailing-checks`,
-`sender-identities`, …).
+`sender-identities`, `mail-template-designer-settings`, `mail-designer-client`,
+`mail-designer-choice`, …).
 
 ### 2.4 Client helpers (`src/app/admin/lib`)
 
@@ -833,9 +836,10 @@ A campaign of the kind Rundmail (one content for everyone; module:
 
 - **Inhalt** — „Gespeichert · Version n“, „Vorlage laden“ (replaces the content with a template's,
   Mo blocks dropped; unsaved), „Rückgängig“ (several steps: every AI result and „Vorlage laden“),
-  „Mit KI gestalten“ (the KI-Gestalter panel of §3.12 — here it also proposes Betreff and
+  „Mit KI gestalten“ (the KI-Gestalter panel of §3.12, with its settings for the conversation and
+  the line under each reply — here it also proposes Betreff and
   Vorschauzeile with „Übernehmen“; tooltip names `ANTHROPIC_API_KEY` when it is missing; the
-  conversation survives switching tabs, a run is aborted at the release), Speichern; Betreff
+  conversation and its settings survive switching tabs, a run is aborted at the release), Speichern; Betreff
   (merge fields, InfoTip), Sprache, Vorschauzeile; the block editor and the live preview of the
   Vorlagen screen (§3.12). After the release the content is read-only (callout).
 - **Prüfen & senden** (badge „!“ while the current version has no test mail) — „Prüfungen“: every
@@ -1324,7 +1328,8 @@ directive's measured effect from the newest run) and Mo's self-snapshot
 
 The e-mail design library (the registered code designs with **one** „Vorschau“
 per design — the e-mail type is switched inside the dialog), the per-type design
-assignment (`email-designs/assign`; `null`/`classic` clears), the read-only send
+assignment (`email-designs/assign`; `null`/`classic` clears), the **KI-Gestalter** card
+(below), the read-only send
 configuration (sender, inbound address, logo override), the **Kontakthäufigkeit**
 card (below), the **Shopify-Abgleich**
 card and the **Systemstatus** card (decision D-5): DB, Shopify, Resend send +
@@ -1349,6 +1354,30 @@ read through `platform-flags.mjs`, `page-context.ts` and `consent-variants.mjs` 
 (screenshots `docs/screenshots/systemstatus/`, the voucher rows
 `docs/screenshots/2026-10-11-reward-switches/`). Details:
 [`EMAIL_DESIGNS.md`](./EMAIL_DESIGNS.md).
+
+**KI-Gestalter** (2026-11-12, [`einstellungen/DesignerSettingsCard.tsx`](../src/app/admin/einstellungen/DesignerSettingsCard.tsx),
+after „Aktives Design je E-Mail-Typ“, anchor `#ki-gestalter`; the rules in
+[`mail-template-designer-settings.mjs`](../src/lib/mail-template-designer-settings.mjs), the form logic in
+[`mail-designer-choice.mjs`](../src/lib/mail-designer-choice.mjs), both tested; one `admin_settings` row, key
+`mail_designer` — migration 0078, no new one; how a run uses them: [`EMAIL_TEMPLATES.md`](./EMAIL_TEMPLATES.md) §6) —
+how the KI-Gestalter of Vorlagen and Rundmail (§3.12) works for the whole team, InfoTip on the title:
+**Qualität** Schnell · Gründlich · Maximal (a model and an effort each: Claude Sonnet 5.5 · Mittel, Claude Opus
+5.5 · Hoch — the default —, Claude Fable 5.2 · Hoch; InfoTip with what each is for, its time and cost). A stored
+pair that is no level selects no segment and shows e.g. „Eigene Einstellung: Claude Opus 5.5 · Denktiefe Sehr hoch“, with the
+Disclosure **„Modell und Denktiefe selbst wählen“** open (closed otherwise): Select **Modell** (Claude Fable 5.2,
+Claude Opus 5.5, Claude Sonnet 5.5; InfoTip with each model's note) and Select **Denktiefe** (Niedrig, Mittel,
+Hoch, Sehr hoch, Maximal; InfoTip: higher is more careful but slower and more expensive, a run has at most five minutes and
+otherwise ends with its last checked draft). **Gestaltungsfreiheit** Genau nach Auftrag · Ausgewogen (default) ·
+Frei gestalten and the checkbox **„Mo-Funktionen von sich aus einbauen“** (default on), each with its InfoTip.
+Textarea **Hausstil** (InfoTip; placed in every run's system prompt; placeholder with an example) with the counter
+„n / 2.000 Zeichen“, counted as the server stores the text (cleaned) — over the limit the counter turns red, an error
+names the limit and „Speichern“ stays disabled. **„Standard wiederherstellen“** sets the choices to the defaults and
+keeps the house style (still to be saved); **„Speichern“** (only with a change; `settings/designer`,
+`useAsyncAction`) → toast „Einstellungen gespeichert“ with the new line („Gründlich · Claude Opus 5.5 · Denktiefe
+Hoch“), an error toast with the route's German message. In the KI-Gestalter itself quality, freedom and the
+capabilities switch can be changed for one conversation (§3.12); the house style always applies. Without a database
+a Callout and disabled controls (the defaults apply); before migration 0078 the card shows the defaults and saving
+answers „Migration 0078 fehlt — bitte zuerst ausführen.“
 
 **Kontakthäufigkeit** (migration 0078, `ContactFrequencyCard` in
 [`einstellungen/EmailSettingsWorkspace.tsx`](../src/app/admin/einstellungen/EmailSettingsWorkspace.tsx),
@@ -1560,6 +1589,19 @@ use), client workspace [`vorlagen/VorlagenWorkspace.tsx`](../src/app/admin/vorla
   sidebar, screen shortcuts and browser navigation are not guarded. In a template with „Mos
   persönlicher Text“ it works as a personal template (Mo's blocks must stay). Explanations behind InfoTips („Was der KI-Gestalter kann“, „Was Anhänge
   bewirken“).
+  **Settings for this conversation** (2026-11-12): „Einstellungen der KI“ (the sliders button in the header) and
+  the button next to „Gestalten“ that names the active choice („Gründlich · Opus 5.5“, „Maximal · Fable 5.2“,
+  „Eigene · Opus 5.5 · Sehr hoch“) open the popover „Einstellungen für diese Unterhaltung“ at the button used:
+  **Qualität** Schnell · Gründlich · Maximal, **Gestaltungsfreiheit** Genau nach Auftrag · Ausgewogen · Frei
+  gestalten and **„Mo-Funktionen von sich aus einbauen“** — the controls and InfoTips of the Einstellungen card
+  (§3.10) — and the link „Standard und Hausstil ändern“ (`?tab=einstellungen#ki-gestalter` in a new tab, so the
+  unsaved mail stays). A team default that is an own model/effort pair shows as no selected level with „Standard:
+  Eigene Einstellung · …“ and „Standard verwenden“. The choice starts as the team's settings, lasts as long as the editor
+  (closing the panel, switching the Rundmail tab and „Neues Gespräch“ keep it), goes with every instruction
+  (`settings` of `vorlagen/assist`) and is locked while the AI works (the popover says so). **Under each reply** —
+  and under a failure that reports it — a muted line says what the run used and cost: „Gründlich · Claude Opus 5.5
+  · Denktiefe Hoch · 1:42 min · ≈ 0,38 €“ (the whole run; the cost of all its model calls, left out when unknown;
+  after a fallback the model that actually ran — the reply's warning names the one that was unavailable).
 - **Bausteine** ([`vorlagen/BlockEditor.tsx`](../src/app/admin/vorlagen/BlockEditor.tsx), shared
   with the Rundmail; logic in [`block-editor-core.mjs`](../src/lib/block-editor-core.mjs)) —
   „Farben & Schrift“ ([`DocStyleFields.tsx`](../src/app/admin/vorlagen/DocStyleFields.tsx); Farben ·
@@ -2857,7 +2899,7 @@ them. Actions that read or act on one person's data write the admin access log
 | Vorlagen | `GET vorlagen`, `POST vorlagen { action, … }` | the templates (§3.12): `get`, `create { name, description?, starter? \| doc? }`, `save { id, name, description, doc, expectedVersion }` (409 stale; a template in use keeps „Mos persönlicher Text“), `duplicate`, `archive { id, archived }` (refused while selected in Einstellungen), `import { file }`; audit `template.*`. [`EMAIL_TEMPLATES.md`](./EMAIL_TEMPLATES.md) |
 | | `POST vorlagen/preview { doc, use, subject?, preheader?, language?, firstName?, sample? }` | the live preview of the unsaved document through the production renderers: `bulk` (the Rundmail render of test and release) or `personal` (the campaign composer with sample data inside the template design; `sample` items \| set) → `text/html`, links inert; nothing stored |
 | | `POST vorlagen/image` (raw `image/jpeg` \| `image/png` \| `image/webp` \| `image/gif` body, ≤ 4 MB) | „Bild hochladen“ for Bild, Logo and Titelbild → `{ url, width, height, warnings }`; 503 without `BLOB_READ_WRITE_TOKEN`; writes nothing to the database |
-| | `POST vorlagen/assist { instruction (≤ 6,000; may be empty with attachments), doc?, use: bulk\|personal\|template, history? (≤ 8 turns), attachments? (≤ 6 × { name, mediaType, data base64 }), context? { subject, preheader, language? de\|en } }` | the KI-Gestalter: errors before the stream as the JSON envelope (400, 413 above ≈ 4.4 MB, 503 without `ANTHROPIC_API_KEY`); then `application/x-ndjson` — `{type:"progress",stage,text}` lines (heartbeat every 15 s), exactly one `{type:"result",doc,notes,subject,preheader,warnings}` or `{type:"error",message}`; `maxDuration` 300, the model stops at 285 s. A proposal — nothing stored but the attachment pictures the accepted design uses. Tier `designer`, `ai_usage` `template_assist`, audit `template.assist { use, attachments, kinds }`. [`EMAIL_TEMPLATES.md`](./EMAIL_TEMPLATES.md) §6 |
+| | `POST vorlagen/assist { instruction (≤ 6,000; may be empty with attachments), doc?, use: bulk\|personal\|template, history? (≤ 8 turns), attachments? (≤ 6 × { name, mediaType, data base64 }), context? { subject, preheader, language? de\|en }, settings? { model?, effort?, freedom?, proactive? } }` | the KI-Gestalter: errors before the stream as the JSON envelope (400, 413 above ≈ 4.4 MB, 503 without `ANTHROPIC_API_KEY`); `settings` is the panel's choice for the conversation (the panel sends all four with every request), merged over the stored settings of `settings/designer` (`mergeDesignerSettings`; invalid fields are dropped, the house style always comes from the stored settings); then `application/x-ndjson` — `{type:"progress",stage,text}` lines (heartbeat every 15 s), exactly one `{type:"result",doc,notes,subject,preheader,warnings,run}` or `{type:"error",message,run?}` — `run { model, effort, label, freedom, proactive, seconds, costEur, fallbackFrom }`: the model that actually ran and its effort, the line of `designerSettingsLabel` („Gründlich · Claude Opus 5.5 · Denktiefe Hoch“), the run's freedom and capabilities switch, the whole run's seconds (rounded), the cost in euros of all model calls of the request (`eurCostForUsage`; null when unknown, e.g. a step cut off by the time limit) and, when the chosen model was not open to the Anthropic account and Opus 5.5 ran instead, the chosen model's id (else null); an error line carries it only once a model ran; the panel shows it under the reply (§3.12); `maxDuration` 300, the model stops at 285 s. A proposal — nothing stored but the attachment pictures the accepted design uses. Tier `designer` (the default; model and effort from the settings), `ai_usage` `template_assist` (with the model that ran), audit `template.assist { use, attachments, kinds, settings? }` (the panel's choice when sent). [`EMAIL_TEMPLATES.md`](./EMAIL_TEMPLATES.md) §6 |
 | Wissen | `GET qa/list?status=`, `POST qa/scan / answer / publish / unpublish / dismiss / restore` | the Q&A queue |
 | KPIs | `POST kpi/top-questions { personaLabel, force? }` | on-demand Top-Fragen summary |
 | Konfigurator | `POST konfigurator/settings { enabled, tag, extraProductIds, focus, notes }` | „Mo im Konfigurator“: store the configurator settings (`admin_settings` key `configurator`, 0078) → `{ ok, settings }`; German 400 on invalid input, 503 without a database or before 0078; audit `settings.configurator` |
@@ -2870,6 +2912,8 @@ them. Actions that read or act on one person's data write the admin access log
 | Einstellungen | `POST email-designs/preview / assign` | design preview (`preview { designKey, kind, sample?: items \| set }`; a `vorlage-<id>` key renders the template — marketing and campaign samples as an item mail or a set mail) and per-type assignment |
 | | `POST settings/contact-frequency { maxMails, windowDays }` | „Kontakthäufigkeit“: store the warning threshold (`admin_settings`, 0078; whole numbers 0–50 / 0–365, 0 = aus) → `{ ok, settings }`; German 400 on invalid input, 503 without a database or before migration 0078 („Migration 0078 fehlt — bitte zuerst ausführen.“); audit `settings.contact_frequency` |
 | | `POST settings/senders { action: save \| test, … }` | „Absender“: `save { senders: [{ id?, address, name, replies }] }` (validated: verified domains only, ≤ 10, German field errors) → `{ ok, senders }`; `test { sender \| null, to }` sends one short branded mail from that identity (`null` = the standard sender) → `{ ok, from }`, Resend's refusal as the message; audit `settings.senders` / `settings.senders_test` |
+| | `GET settings/designer` | „KI-Gestalter“: `{ ok, settings, defaults }` — the stored settings (the defaults without a row, a database or migration 0078) and `DEFAULT_DESIGNER_SETTINGS`; no UI caller (the card, the Vorlagen editor and the Rundmail get them server-side) |
+| | `POST settings/designer { model, effort, freedom, proactive, houseStyle }` | „KI-Gestalter“ (§3.10): store the team's settings (`admin_settings` key `mail_designer`, 0078). Every field required — `model` `claude-fable-5-2` \| `claude-opus-5-5` \| `claude-sonnet-5-5`, `effort` `low` \| `medium` \| `high` \| `xhigh` \| `max`, `freedom` `genau` \| `ausgewogen` \| `frei`, `proactive` boolean, `houseStyle` text of at most 2,000 characters after cleaning (`validateDesignerSettingsInput`) → `{ ok, settings }` (as stored); 400 `bad_request` with the first German field message, 503 `no_database` / `migration_missing` („Migration 0078 fehlt — bitte zuerst ausführen.“), 500 `internal_error`; audit `settings.designer` (the choices and the house style's length, not its text) |
 | | `GET shopify/status` | Shopify-Abgleich: `{ health, runs, outbox, alignment, flags }` (pure DB) |
 | | `POST shopify/import { action: start \| step \| cancel }` | the full customer + order import, stepped (`useStepLoop`); a finished import computes a first batch of figures |
 | | `POST shopify/outbox { id }` | „Erneut versuchen“ for a dead write-back |

@@ -15,7 +15,7 @@ docs name the tier and link here instead of repeating model ids.
 | `analyst` | `claude-sonnet-5-5` | adaptive, effort `medium` | insights rollup (also the Komplettanalyse's), the Komplettanalyse's aggregate customer knowledge (an input digest for the strategist), hero image check (vision) |
 | `deep` | `claude-opus-5-5` | adaptive (always on), effort `medium` | the **Vollprofil** of the central customer profile — nightly upkeep, the Kunden button, the Analyse report (structured output: summary + persona, level, budget, goals, owned, interests, next steps) |
 | `strategist` | `claude-opus-5-5` | adaptive (always on), effort `high` (retry ladder `medium`, `low` after a timeout) | the operator's business decisions (owner 06.10.2026: the best suitable model for decisions): the Komplettanalyse's two decision passes — „Entscheidungen“ and „Maßnahmen“ ([`strategist-call.ts`](../src/lib/strategist-call.ts), structured output, call site `analytics_report`); the Verbesserung's three passes — Wirkungs-Check, Vorschläge Chat & Prompt, Vorschläge Betrieb (call site `improvement`, [`IMPROVEMENT_LOOP.md`](./IMPROVEMENT_LOOP.md)) |
-| `designer` | `claude-opus-5-5` | adaptive (always on), effort `high`, the most thinking headroom (32,000 + an answer budget of 32,000) | the operator's e-mail designer (owner 11.11.2026: „a good AI for high quality templates“): the **KI-Gestalter** of Vorlagen and Rundmail — an agentic tool loop that reads screenshots / PDFs / mails, searches the catalog and hands in a whole block document ([`mail-template-assist.ts`](../src/lib/mail-template-assist.ts) over [`mail-template-designer.mjs`](../src/lib/mail-template-designer.mjs), call site `template_assist`; until 11.11.2026 a one-shot `writer` call) |
+| `designer` | `claude-opus-5-5` — the default of the operator's settings, which may choose `claude-sonnet-5-5` or `claude-fable-5-2` instead ([below](#the-ki-gestalter-designer-tier-agentic)) | adaptive (always on), effort `high` by default (`low` … `max` by the settings), the most thinking headroom (32,000 + an answer budget of 32,000 at `high`) | the operator's e-mail designer (owner 11.11.2026: „a good AI for high quality templates“; 12.11.2026: „high quality … and let the user make changes to the settings“): the **KI-Gestalter** of Vorlagen and Rundmail — an agentic tool loop that reads screenshots / PDFs / mails, searches the catalog and hands in a whole block document ([`mail-template-assist.ts`](../src/lib/mail-template-assist.ts) over [`mail-template-designer.mjs`](../src/lib/mail-template-designer.mjs), call site `template_assist`; until 11.11.2026 a one-shot `writer` call) |
 | `bulk` | `claude-haiku-4-5` | none | per-conversation analysis, Q&A translation |
 
 The profile depth decides the tier: people with a Mo chat or correspondence get
@@ -31,18 +31,21 @@ model inside the same call instead of failing the request.
 ### Prices
 
 USD per million tokens, the defaults in `ai-pricing.mjs` (list prices checked
-2026-09). The prompt-cache columns are the provider-wide multipliers on the
-input price (`CACHE_READ_INPUT_MULTIPLIER` 0.1×, `CACHE_WRITE_INPUT_MULTIPLIER`
-1.25× for the 5-minute TTL); `/api/chat` ([`PROMPT_CACHING.md`](./PROMPT_CACHING.md))
-and the KI-Gestalter (`template_assist`, below) set cache breakpoints. Anthropic's
-current list price for cache READS on the 5.5 models is 0.05× ($0.10 Sonnet 5.5,
-$0.20 Opus 5.5) — the KPI's 0.1× over-states those reads twofold (a conservative
-estimate until `ai-pricing.mjs` gets per-model cache multipliers).
+2026-09; Fable 5.2 and the per-model cache prices 2026-11). The prompt-cache
+columns are a model's own `cacheRead` / `cacheWrite` where `ai-pricing.mjs`
+names them (the 5.5 models read the cache at 0.05× input, Fable 5.2 at 0.025×),
+otherwise the provider-wide multipliers on the input price
+(`CACHE_READ_INPUT_MULTIPLIER` 0.1×, `CACHE_WRITE_INPUT_MULTIPLIER` 1.25× for
+the 5-minute TTL); `/api/chat` ([`PROMPT_CACHING.md`](./PROMPT_CACHING.md)) and
+the KI-Gestalter (`template_assist`, below) set cache breakpoints.
 
 | Model | Input | Output | Cache read | Cache write (5 min) |
 |---|---|---|---|---|
-| `claude-sonnet-5-5` (and its refusal fallback `claude-sonnet-5`) | $2 | $10 | $0.20 | $2.50 |
-| `claude-opus-5-5` | $4 | $20 | $0.40 | $5.00 |
+| `claude-fable-5-2` (only by the KI-Gestalter settings) | $8 | $40 | $0.20 | $10.00 |
+| `claude-opus-5-5` | $4 | $20 | $0.20 | $5.00 |
+| `claude-sonnet-5-5` | $2 | $10 | $0.10 | $2.50 |
+| `claude-sonnet-5` (refusal fallback of Sonnet 5.5) | $2 | $10 | $0.20 | $2.50 |
+| `claude-opus-5` (a refusal fallback of Fable 5.2) | $5 | $25 | $0.50 | $6.25 |
 | `claude-haiku-4-5` | $1 | $5 | $0.10 | $1.25 |
 | `text-embedding-3-small` | $0.02 | — | — | — |
 | `gpt-image-2` (text input / image output tokens) | $5 | $30 | — | — |
@@ -181,10 +184,54 @@ the aggregate customer knowledge `analyst`, optional per-customer profiles
 ### The KI-Gestalter (designer tier, agentic)
 
 One run of the e-mail designer ([`EMAIL_TEMPLATES.md`](./EMAIL_TEMPLATES.md) §6)
-is a `streamText` tool loop on Opus 5.5 at effort `high`
+is a `streamText` tool loop on the model and effort of the operator's settings —
+by default Opus 5.5 at effort `high`
 ([`mail-template-designer.mjs`](../src/lib/mail-template-designer.mjs) `runDesigner`,
-tested with `MockLanguageModelV3`):
+tested with `MockLanguageModelV3`; what goes over the wire per setting is tested
+against the real `@ai-sdk/anthropic` in `mail-template-designer-provider.test.mjs`):
 
+- **Model and effort from the settings** (Einstellungen → „KI-Gestalter“, the
+  panel's choice for one conversation on top; rules in
+  [`mail-template-designer-settings.mjs`](../src/lib/mail-template-designer-settings.mjs),
+  what each setting does to a run: [`EMAIL_TEMPLATES.md`](./EMAIL_TEMPLATES.md) §6).
+  Three quality levels, a model and an effort each — **Schnell** = Sonnet 5.5 at
+  `medium`, **Gründlich** = Opus 5.5 at `high` (the default, the tier itself),
+  **Maximal** = Fable 5.2 at `high` — or any of the three models with any effort
+  („Eigene Einstellung“). The effort goes out as `output_config.effort`
+  (`anthropicOptionsWithEffort("designer", effort)`: adaptive thinking and the
+  refusal fallback stay the tier's). Most of the quality gain arrives by `high`;
+  `xhigh` and `max` use many more tokens and much more time — a run then hits the
+  285 s limit far more often, and the failure or the cleaned draft says so and
+  suggests a quality level or a lower effort (`designerSlowEffortHint`). The limit
+  is not raised for them (`maxDuration` stays 300 s).
+- **Claude Fable 5.2** (`claude-fable-5-2`, Anthropic's most capable model open to
+  all customers, $8 / $40 per MTok — about twice Opus 5.5): thinking is always on
+  (adaptive; effort is the control, all five levels), a forced `tool_choice` is a
+  400 (the loop uses `auto`), and the history-editing check is enforced for every
+  account — a thinking block sent back after an edit of the system prompt, the
+  tools or an earlier message is a 400. The loop is append-only: the same tool
+  list on every step, a fixed system prompt (the house style is part of it for the
+  whole run), messages only appended (tested: the second request repeats the first
+  one's messages unchanged, then the answer with its thinking block and the tool
+  result). Fable 5.2 requires 30-day data retention: an organization under zero
+  data retention gets `400 invalid_request_error` on every request. Refusal
+  fallback `fallbacks: "default"` (to `claude-opus-4-8` / `claude-opus-5`); 1M
+  context, 128K output (`@ai-sdk/anthropic` 3.0.125 matches it through its
+  `claude-fable-5` capability branch).
+- **Automatic fallback to Opus 5.5** — when the chosen model is not open to the
+  Anthropic account (`isDesignerModelUnavailable`: a 404 `not_found_error` about
+  the model, a 403 `permission_error`, a 400 `invalid_request_error` naming the
+  data-retention requirement or the model as unavailable / not allowed — also
+  inside a `RetryError` or a cause chain; never 429 / 529 / 5xx, 401, 413, aborts,
+  refusals or a cut-off answer), the request runs **once** more on Opus 5.5 with
+  the same effort, prompt, content and checks — not when the operator cancelled
+  or the time ran out, and only with at least 60 s left of the same 285 s
+  (`designerFallbackModel`, `runDesignerWithFallback`, tested). The design then
+  leads with a warning that names both models (the texts:
+  [`EMAIL_TEMPLATES.md`](./EMAIL_TEMPLATES.md) §6); the error is reported
+  (`phase: model_unavailable`). Without a second run the failure names the model
+  and Einstellungen → KI-Gestalter; when Opus 5.5 is refused too, the key and the
+  account's access.
 - **Tools, never forced** — `search_products` (the configurator's ranked catalog
   search, cards with ref, price label, stock, product page and JPG/PNG pictures),
   `list_collections` (the shop's collections and pages from Shopify Admin — the
@@ -197,14 +244,19 @@ tested with `MockLanguageModelV3`):
   Tool choice stays `auto` (the 5.5 models reject a forced one); a model that
   answers in text only gets one reminder. The tool list is the same on every
   step, so replayed thinking blocks and the cache stay valid. At most 8 steps.
-- **Caching** — the system prompt (stable per use and deployment: no dates; the
-  only configured value in it is Mo's chat deep link `CAMPAIGN_MO_DEEPLINK_URL`
-  without its `utm_*`) carries a cache breakpoint and the call sets top-level
-  automatic caching
+- **Caching** — the system prompt (stable per use, deployment and house style: no
+  dates; the configured values in it are Mo's chat deep link
+  `CAMPAIGN_MO_DEEPLINK_URL` without its `utm_*` and, as its very last section,
+  the team's house style — without one the prompt is byte for byte the same as
+  before the settings, tested) carries a cache breakpoint and the call sets
+  top-level automatic caching
   (`providerOptions.anthropic.cacheControl`), so every later step of the loop reads
-  the prompt, the attachments and the steps so far from the cache.
-- **Output cap** — `maxOutputTokensFor("designer", 32000)` = 64,000 (thinking
-  counts toward `max_tokens`).
+  the prompt, the attachments and the steps so far from the cache. The cache is
+  per model: a change of model (or a fallback run) starts a new one.
+- **Output cap** — `designerMaxOutputTokens(effort, 32000)`: the answer budget
+  plus the thinking room of the effort (thinking counts toward `max_tokens`) —
+  40,000 at `low`, 48,000 `medium`, 64,000 `high` (= `maxOutputTokensFor("designer",
+  32000)`), 96,000 `xhigh`, 128,000 `max` (the three models' limit).
 - **Bounded** — the route (`POST /api/admin/vorlagen/assist`, `maxDuration` 300)
   streams NDJSON progress with a heartbeat every 15 s and aborts the model at
   285 s; a watchdog settles the run 5 s later even if the transport ignores the
@@ -219,10 +271,21 @@ tested with `MockLanguageModelV3`):
   SDK's two retries of a 429 / 529 / 503 surface as a `RetryError`, so the old
   `err.statusCode` check never said „ausgelastet“), maps a cut-off answer
   (`length`), a refusal (`content-filter`, after the server-side fallback), an
-  abort and unreadable attachments to German messages.
+  abort, unreadable attachments and a model that is not open to the account
+  (named, with the way to another one) to German messages.
 - **Usage** — summed over ALL steps in `onStepFinish` (input, output, cache read,
-  cache write), recorded once per run under `template_assist` — also for a run
-  that fails after some steps.
+  cache write), recorded once per run under `template_assist` with the model that
+  ran — also for a run that fails after some steps; a request with a fallback is
+  two runs (the refused first one has no tokens, so no row).
+- **Cost line** — every result (and a failure once a model ran) carries `run`:
+  the model and effort that produced the answer, the level label, seconds and
+  `costEur` = `eurCostForUsage` over every model call of the request, each priced
+  at its own model with its cache prices (`designerCostEur`, `designerRunInfo`;
+  `MODEL_PRICES_JSON` and `USD_EUR_RATE` apply). It is `null` when not known: a
+  step cut off by the time limit never reports its tokens (`usageComplete`), or a
+  model without a price. A server-side refusal fallback is priced at the model
+  that was asked. The panel shows the line under each reply
+  ([`ADMIN_DASHBOARD.md`](./ADMIN_DASHBOARD.md) §3.12).
 
 ## OpenAI
 
@@ -257,4 +320,7 @@ characters as the single-shot call, spread over more rows.
 
 Edit the tier in `ai-models.mjs`, add the price to `ai-pricing.mjs` (the test
 fails otherwise), re-check the output caps and route `maxDuration`s of the tier's
-call sites, and update this file.
+call sites, and update this file. A model the KI-Gestalter's operator may choose
+goes into `DESIGNER_MODELS` of `mail-template-designer-settings.mjs` (its test
+checks the price; the fallback model is `DESIGNER_FALLBACK_MODEL` in
+`mail-template-designer.mjs`).
