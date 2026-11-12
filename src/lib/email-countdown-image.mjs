@@ -21,6 +21,14 @@
 // sharp. Frames are blended in plain JS on a raw RGB buffer (a few glyph blits
 // per frame), so sixty frames cost tens of milliseconds — the GIF encode is
 // the only real work (~0.7 s for a full hour, ~32 KB).
+//
+// Template colours (format 2 of the block templates, docs/EMAIL_TEMPLATES.md):
+// the URL may carry `bg`, `tile`, `digit` and `label` (6 hex digits each,
+// signed by `cs`, email-countdown-token.mjs) — the ground, the tiles (their
+// hairline a shade of them), the digits and the words (heading, units,
+// "expired"). The glyphs are tinted by their alpha; every colour left out
+// keeps the light look, and without any the image is byte for byte the one
+// above.
 
 import { DIGIT_CELL, GLYPHS, SPRITE_SCALE } from "./generated/countdown-sprite.mjs";
 
@@ -37,6 +45,95 @@ const BG = "#ffffff";
 const TILE = "#f5f5f5";
 /** 1px (at 1×) hairline around each tile — the product cards' border colour. */
 const TILE_EDGE = "#e5e5e5";
+
+/** The colour parameters of the image URL, in the order countdownColorQuery writes them. */
+export const COUNTDOWN_COLOR_PARAMS = Object.freeze(/** @type {const} */ (["bg", "tile", "digit", "label"]));
+
+/**
+ * @typedef {{ bg: string | null, tile: string | null, digit: string | null, label: string | null }} CountdownColors
+ *   each "#rrggbb" or null (= the light look's colour)
+ */
+
+/** "#rrggbb" of a value that is exactly six hex digits (an optional "#" in front), else null. */
+function hex6(v) {
+  const m = /^#?([0-9a-f]{6})$/i.exec(typeof v === "string" ? v : "");
+  return m ? `#${m[1].toLowerCase()}` : null;
+}
+
+/**
+ * The colours of a request: `bg`, `tile`, `digit` and `label` from the query
+ * (URLSearchParams or a plain object) — each exactly six hex digits, anything
+ * else is null (= the light look's colour).
+ * @param {URLSearchParams | Record<string, unknown> | null | undefined} params
+ * @returns {CountdownColors}
+ */
+export function parseCountdownColors(params) {
+  const get = (/** @type {string} */ k) =>
+    params == null ? null : typeof (/** @type {any} */ (params).get) === "function" ? /** @type {URLSearchParams} */ (params).get(k) : /** @type {any} */ (params)[k];
+  /** @type {any} */
+  const out = {};
+  for (const k of COUNTDOWN_COLOR_PARAMS) {
+    const v = get(k);
+    out[k] = typeof v === "string" && /^[0-9a-f]{6}$/i.test(v) ? `#${v.toLowerCase()}` : null;
+  }
+  return out;
+}
+
+/**
+ * The query of a set of colours — "bg=111111&tile=262626&digit=f5c400&label=bdbdbd",
+ * only the valid ones, always in this order (the canonical form the
+ * signature covers); "" without any.
+ * @param {Partial<Record<"bg" | "tile" | "digit" | "label", unknown>> | null | undefined} colors
+ */
+export function countdownColorQuery(colors) {
+  if (!colors || typeof colors !== "object") return "";
+  return COUNTDOWN_COLOR_PARAMS.map((k) => {
+    const c = hex6(colors[k]);
+    return c ? `${k}=${c.slice(1)}` : null;
+  })
+    .filter(Boolean)
+    .join("&");
+}
+
+/** [r, g, b] of "#rrggbb". */
+const rgbOf = (/** @type {string} */ hex) => [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
+
+/**
+ * The hairline around a tile of colour `tile`: a shade of it — darker on a
+ * light tile (#f5f5f5 → #e5e5e5, the light look's edge), lighter on a dark one.
+ * @param {string} tile  "#rrggbb"
+ */
+export function countdownEdgeColor(tile) {
+  const rgb = rgbOf(hex6(tile) ?? TILE);
+  const lum = (0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2]) / 255;
+  const toward = lum > 0.45 ? 0 : 255;
+  const t = toward === 0 ? 0.065 : 0.12;
+  return `#${rgb.map((c) => Math.round(c + (toward - c) * t).toString(16).padStart(2, "0")).join("")}`;
+}
+
+/**
+ * What a render draws with: the light look (no colours — its glyphs keep the
+ * colours they were drawn in), or the given colours over it.
+ * @param {Partial<CountdownColors> | null | undefined} colors
+ */
+function paletteOf(colors) {
+  const c = {
+    bg: hex6(colors?.bg),
+    tile: hex6(colors?.tile),
+    digit: hex6(colors?.digit),
+    label: hex6(colors?.label),
+  };
+  return {
+    /** any colour of its own — the GIF is then encoded without dithering (flat grounds stay flat) */
+    custom: Boolean(c.bg || c.tile || c.digit || c.label),
+    bg: c.bg ?? BG,
+    tile: c.tile ?? TILE,
+    edge: c.tile ? countdownEdgeColor(c.tile) : TILE_EDGE,
+    /** null: the glyph's own colour (the light look's red digits, dark heading, grey units) */
+    digit: c.digit ? rgbOf(c.digit) : null,
+    label: c.label ? rgbOf(c.label) : null,
+  };
+}
 
 /**
  * Days / hours / minutes until the deadline, rounded down; `expired` once it
@@ -180,6 +277,42 @@ async function decodedGlyph(sharp, key) {
   return g;
 }
 
+/**
+ * Alpha-blend one glyph onto the RGB frame at (left, top): in its own colour,
+ * or with `tint` ([r, g, b]) in that colour — only the glyph's alpha counts
+ * (the sprite draws every glyph in one flat colour, so its antialiasing is
+ * all in the alpha).
+ * @param {number[] | null} [tint]
+ */
+function paint(frame, frameWidth, frameHeight, g, left, top, tint = null) {
+  if (!tint) {
+    blit(frame, frameWidth, frameHeight, g, left, top);
+    return;
+  }
+  const [tr, tg, tb] = tint;
+  for (let y = 0; y < g.height; y++) {
+    const dy = top + y;
+    if (dy < 0 || dy >= frameHeight) continue;
+    for (let x = 0; x < g.width; x++) {
+      const dx = left + x;
+      if (dx < 0 || dx >= frameWidth) continue;
+      const a = g.data[(y * g.width + x) * 4 + 3];
+      if (a === 0) continue;
+      const di = (dy * frameWidth + dx) * 3;
+      if (a === 255) {
+        frame[di] = tr;
+        frame[di + 1] = tg;
+        frame[di + 2] = tb;
+      } else {
+        const ia = 255 - a;
+        frame[di] = ((tr * a + frame[di] * ia + 127) / 255) | 0;
+        frame[di + 1] = ((tg * a + frame[di + 1] * ia + 127) / 255) | 0;
+        frame[di + 2] = ((tb * a + frame[di + 2] * ia + 127) / 255) | 0;
+      }
+    }
+  }
+}
+
 /** Alpha-blend one RGBA glyph onto the RGB frame at (left, top). */
 function blit(frame, frameWidth, frameHeight, g, left, top) {
   for (let y = 0; y < g.height; y++) {
@@ -207,22 +340,24 @@ function blit(frame, frameWidth, frameHeight, g, left, top) {
 }
 
 /**
- * The static part of a frame — white card plus the tiles' grey shapes —
+ * The static part of a frame — the ground plus the tiles' shapes, in the
+ * palette's colours (the light look: white card, light-grey tiles) —
  * rasterised from SVG. Keyed by the tile geometry (it only changes when the
  * digit count changes, e.g. from 100 to 99 days), so an hour of frames
  * usually shares one raster.
+ * @param {{ bg: string, tile: string, edge: string }} palette
  */
-async function baseRaster(sharp, W, H, tiles, cache) {
+async function baseRaster(sharp, W, H, tiles, cache, palette) {
   const key = tiles.map((t) => `${t.x},${t.y},${t.width},${t.height}`).join("|");
   let base = cache.get(key);
   if (!base) {
-    let shapes = rect(0, 0, W, H, BG, 14);
+    let shapes = rect(0, 0, W, H, palette.bg, 14);
     for (const t of tiles) {
       // Stroke inset by half its width so the hairline stays inside the tile.
-      shapes += rect(t.x + S / 2, t.y + S / 2, t.width - S, t.height - S, TILE, 12, TILE_EDGE);
+      shapes += rect(t.x + S / 2, t.y + S / 2, t.width - S, t.height - S, palette.tile, 12, palette.edge);
     }
     const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}">${shapes}</svg>`;
-    base = await sharp(Buffer.from(svg)).flatten({ background: BG }).raw().toBuffer();
+    base = await sharp(Buffer.from(svg)).flatten({ background: palette.bg }).raw().toBuffer();
     cache.set(key, base);
   }
   return base;
@@ -230,8 +365,11 @@ async function baseRaster(sharp, W, H, tiles, cache) {
 
 /**
  * Render the animated countdown GIF (2×) for a deadline: one frame per
- * minute from `now` on (see the header), `frames` at most.
- * @param {{ expiresAt: string | Date, language?: "de" | "en", now?: Date, width?: number, frames?: number }} input
+ * minute from `now` on (see the header), `frames` at most. `colors` (the
+ * URL's, already checked) draws it in a template's colours; without them —
+ * or with none valid — it is the light look, byte for byte.
+ * @param {{ expiresAt: string | Date, language?: "de" | "en", now?: Date, width?: number, frames?: number,
+ *   colors?: Partial<CountdownColors> | null }} input
  * @returns {Promise<Buffer>}
  */
 export async function renderCountdownImage(input) {
@@ -241,37 +379,42 @@ export async function renderCountdownImage(input) {
   const width = input.width === COUNTDOWN_MOBILE_WIDTH ? COUNTDOWN_MOBILE_WIDTH : COUNTDOWN_WIDTH;
   const W = width * S;
   const H = COUNTDOWN_HEIGHT * S;
+  const palette = paletteOf(input.colors);
   const times = countdownFrameTimes(input.expiresAt, now, input.frames ?? COUNTDOWN_FRAMES);
   const bases = new Map();
   const frames = [];
   for (const at of times) {
     const r = countdownRemaining(input.expiresAt, at);
     if (r.expired) {
-      const frame = Buffer.from(await baseRaster(sharp, W, H, [], bases));
+      const frame = Buffer.from(await baseRaster(sharp, W, H, [], bases, palette));
       const g = await decodedGlyph(sharp, `${lang}_expired`);
-      blit(frame, W, H, g, Math.round((W - g.width) / 2), Math.round((H - g.height) / 2));
+      paint(frame, W, H, g, Math.round((W - g.width) / 2), Math.round((H - g.height) / 2), palette.label);
       frames.push(frame);
       continue;
     }
     const L = countdownLayout(r, lang, width);
-    const frame = Buffer.from(await baseRaster(sharp, W, H, L.tiles, bases));
-    blit(frame, W, H, await decodedGlyph(sharp, `${lang}_heading`), L.headingX, L.headingY);
+    const frame = Buffer.from(await baseRaster(sharp, W, H, L.tiles, bases, palette));
+    paint(frame, W, H, await decodedGlyph(sharp, `${lang}_heading`), L.headingX, L.headingY, palette.label);
     for (const t of L.tiles) {
       for (let i = 0; i < t.value.length; i++) {
         const g = await decodedGlyph(sharp, `d${t.value[i]}`);
-        blit(
+        paint(
           frame, W, H, g,
           t.digitsX + i * DIGIT_CELL.width + Math.round((DIGIT_CELL.width - g.width) / 2),
-          t.digitsY + (DIGIT_CELL.height - g.height)
+          t.digitsY + (DIGIT_CELL.height - g.height),
+          palette.digit
         );
       }
-      blit(frame, W, H, await decodedGlyph(sharp, t.unitKey), t.unitX, t.unitY);
+      paint(frame, W, H, await decodedGlyph(sharp, t.unitKey), t.unitX, t.unitY, palette.label);
     }
     frames.push(frame);
   }
   // A vertical strip of frames → animated GIF: 64 colours are plenty for the
-  // flat card, `loop: 1` plays the hour once and holds the last frame.
+  // flat card, `loop: 1` plays the hour once and holds the last frame. In a
+  // template's colours without dithering: the palette rarely holds a ground
+  // like #ffd400 exactly, and dithering would sprinkle it — a visible texture
+  // against the mail's flat row of that colour (and a GIF twice the size).
   return sharp(Buffer.concat(frames), { raw: { width: W, height: H * frames.length, channels: 3, pageHeight: H } })
-    .gif({ delay: frames.map(() => COUNTDOWN_FRAME_MS), loop: 1, colours: 64, effort: 1 })
+    .gif({ delay: frames.map(() => COUNTDOWN_FRAME_MS), loop: 1, colours: 64, effort: 1, ...(palette.custom ? { dither: 0 } : {}) })
     .toBuffer();
 }

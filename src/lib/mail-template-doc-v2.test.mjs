@@ -6,6 +6,7 @@ import assert from "node:assert/strict";
 import { V1_RENDER_CASES } from "./__fixtures__/mail-template-v1-cases.mjs";
 import {
   DEFAULT_MAIL_STYLE,
+  MAIL_BLOCK_CATALOG,
   MAIL_CHILD_BLOCK_TYPES,
   MAIL_FONT_KEYS,
   MAIL_TEMPLATE_DOC_VERSION,
@@ -14,15 +15,22 @@ import {
   MAIL_TOP_ONLY_TYPES,
   classicFontFor,
   contrastRatio,
+  countdownLook,
   docBlockCount,
   docFontKeys,
+  docFormatVersion,
   docProductRefs,
   mailFontGoogleFamily,
   mailFontMsoStack,
   mailFontStack,
+  mixColor,
+  mutedInk,
   normalizeColumnWidths,
   normalizeMailBlock,
   normalizeMailTemplateDoc,
+  readableInk,
+  shadeOf,
+  strongInk,
   validateMailTemplateDoc,
   walkMailBlocks,
 } from "./mail-template-doc.mjs";
@@ -428,4 +436,141 @@ test("no starter, fixture or showcase document trips the address and custom-HTML
       assert.deepEqual(bad, [], `${name} (${use})`);
     }
   }
+});
+
+// ── the fixed blocks in the mail's look (12.11.2026) ─────────────────────────
+
+test("coupon, countdown, products: the look fields are kept when valid, omitted when unset or invalid, numbers clamped", () => {
+  const c = normalizeMailBlock({
+    type: "coupon",
+    code: "bw25",
+    cardColor: "#FFF",
+    borderStyle: "solid",
+    radius: "30",
+    textColor: "#222222",
+    codeColor: "#ffd400",
+    codeFont: "bebas",
+    cta: "button",
+    padTop: 8,
+  });
+  assert.deepEqual(
+    [c.cardColor, c.borderStyle, c.radius, c.textColor, c.codeColor, c.codeFont, c.cta, c.padTop],
+    ["#ffffff", "solid", 24, "#222222", "#ffd400", "bebas", "button", 8]
+  );
+  // defaults are never stored: dashed, 8 px, the link
+  const plain = normalizeMailBlock({ type: "coupon", code: "X1", borderStyle: "dashed", radius: 8, cta: "link", cardColor: "red", codeFont: "comic", codeColor: "" });
+  for (const k of ["cardColor", "borderStyle", "radius", "textColor", "codeColor", "codeFont", "cta"]) assert.equal(k in plain, false, k);
+  assert.equal(normalizeMailBlock({ type: "coupon", radius: -4 }).radius, 0);
+  assert.equal(normalizeMailBlock({ type: "coupon", borderStyle: "none" }).borderStyle, "none");
+  assert.equal("borderStyle" in normalizeMailBlock({ type: "coupon", borderStyle: "double" }), false);
+
+  const cd = normalizeMailBlock({ type: "countdown", until: "2030-01-01T00:00:00Z", tileColor: "#262626", digitColor: "#F5C400", labelColor: "#bdbdbd", background: "#111", padTop: 500, padBottom: "12" });
+  assert.deepEqual(
+    [cd.tileColor, cd.digitColor, cd.labelColor, cd.background, cd.padTop, cd.padBottom],
+    ["#262626", "#f5c400", "#bdbdbd", "#111111", 120, 12]
+  );
+  const bare = normalizeMailBlock({ type: "countdown", tileColor: "rgb(0,0,0)", digitColor: null });
+  assert.deepEqual(Object.keys(bare), ["id", "type", "until", "heading"]);
+
+  const pr = normalizeMailBlock({ type: "products", refs: ["rack"], cardColor: "#1a1a1a", textColor: "#FFFFFF", padTop: 10 });
+  assert.deepEqual([pr.cardColor, pr.textColor, "padTop" in pr], ["#1a1a1a", "#ffffff", false]);
+  assert.deepEqual(Object.keys(normalizeMailBlock({ type: "products", refs: ["rack"], cardColor: "#12" })), ["id", "type", "title", "refs", "layout"]);
+  // every new field is documented in the catalog (the KI-Gestalter's interface)
+  for (const [type, keys] of [
+    ["coupon", ["cardColor", "borderStyle", "radius", "textColor", "codeColor", "codeFont", "cta", "padTop", "padBottom", "background"]],
+    ["countdown", ["tileColor", "digitColor", "labelColor", "padTop", "padBottom", "background"]],
+    ["products", ["cardColor", "textColor"]],
+  ]) {
+    for (const k of keys) assert.ok(MAIL_BLOCK_CATALOG[type].fields[k], `${type}.${k}`);
+  }
+  // normalising twice changes nothing
+  const doc = normalizeMailTemplateDoc({ blocks: [c, cd, pr] });
+  assert.deepEqual(normalizeMailTemplateDoc(doc), doc);
+});
+
+test("countdownLook: own colours first, else the automatic look of the style", () => {
+  // the default style: white ground, the classic light-grey tile, accent digits, a muted grey
+  assert.deepEqual(countdownLook({}, DEFAULT_MAIL_STYLE), { bg: "#ffffff", tile: "#f5f5f5", digit: "#008ccb", label: "#646464" });
+  // a dark card: lighter tiles, the accent (it reads on them), a light muted label
+  const dark = { ...DEFAULT_MAIL_STYLE, cardBackground: "#111111", textColor: "#eeeeee", headingColor: "#ffffff", accentColor: "#ffd400" };
+  const d = countdownLook({}, dark);
+  assert.deepEqual(d, { bg: "#111111", tile: "#292929", digit: "#ffd400", label: "#a1a1a1" });
+  assert.ok(contrastRatio(d.tile, d.bg) >= 1.22, "visibly different");
+  assert.ok(contrastRatio(d.label, d.bg) >= 4.5 && contrastRatio(d.label, d.tile) >= 4.5, "the label reads on ground and tiles");
+  // the block's background is the ground; an accent that vanishes on the tiles gives way to the heading colour
+  const band = countdownLook({ background: "#ffd400" }, { ...DEFAULT_MAIL_STYLE, accentColor: "#ffd400", headingColor: "#111111" });
+  assert.equal(band.bg, "#ffd400");
+  assert.equal(band.digit, "#111111");
+  assert.ok(contrastRatio(band.label, band.bg) >= 4.5);
+  // text colour unreadable on the card (black on black): the label switches to a light ink
+  const black = countdownLook({}, { ...DEFAULT_MAIL_STYLE, cardBackground: "#000000" });
+  assert.ok(contrastRatio(black.label, "#000000") >= 4.5);
+  // own colours win, the rest still adapts to them
+  const own = countdownLook({ tileColor: "#ffffff", digitColor: "#c61724", labelColor: "#333333" }, dark);
+  assert.deepEqual(own, { bg: "#111111", tile: "#ffffff", digit: "#c61724", label: "#333333" });
+  assert.equal(countdownLook({ tileColor: "#ffffff" }, dark).digit, "#111111", "yellow on white does not read: the stronger ink");
+});
+
+test("colour helpers: mixColor, shadeOf, mutedInk, readableInk", () => {
+  assert.equal(mixColor("#000000", "#ffffff", 0.5), "#808080");
+  assert.equal(mixColor("#ffffff", "#000000", 0.04), "#f5f5f5");
+  assert.equal(mixColor("nope", "#ffffff", 0.5), "nope");
+  assert.equal(shadeOf("#ffffff"), "#f5f5f5");
+  assert.equal(shadeOf("#111111"), "#292929");
+  for (const g of ["#ffffff", "#000000", "#ffd400", "#008ccb", "#7c3aed", "#1f2937", "#fafafa"]) {
+    const s = shadeOf(g);
+    assert.notEqual(s, g, g);
+    assert.ok(contrastRatio(s, g) >= 1.08, `${g} → ${s}`);
+  }
+  assert.equal(mutedInk("#111111", "#ffffff"), "#646464");
+  for (const [base, grounds] of [["#111111", ["#ffffff"]], ["#ffffff", ["#111111", "#292929"]], ["#777777", ["#808080"]], ["#ffd400", ["#ffffff"]]]) {
+    const m = mutedInk(base, grounds);
+    for (const g of grounds) assert.ok(contrastRatio(m, g) >= 4.5, `${base} on ${g} → ${m}`);
+  }
+  assert.equal(readableInk("#767676", "#ffffff"), "#767676"); // 4.54 : 1
+  assert.equal(readableInk("#777777", "#ffffff"), "#111111"); // 4.48 : 1
+  assert.equal(readableInk("#eeeeee", "#ffffff"), "#111111");
+  assert.equal(readableInk("#eeeeee", "#111111", 4.5, "#ff0000"), "#eeeeee");
+  assert.equal(strongInk("#000000"), "#ffffff");
+});
+
+test("docFormatVersion: a raw version-1 document reads as 1, everything else as the current format", () => {
+  assert.equal(docFormatVersion({ v: 1, blocks: [] }), 1);
+  assert.equal(docFormatVersion(JSON.stringify({ v: 1 })), 1);
+  assert.equal(docFormatVersion({ v: 2 }), MAIL_TEMPLATE_DOC_VERSION);
+  assert.equal(docFormatVersion({ blocks: [] }), MAIL_TEMPLATE_DOC_VERSION, "no v: an import, AI output");
+  for (const raw of [null, "{", [], { v: "1" }, { v: 0 }, { v: 1.5 }, { v: 99 }]) assert.equal(docFormatVersion(raw), MAIL_TEMPLATE_DOC_VERSION, JSON.stringify(raw));
+  // normalising writes the current version
+  assert.equal(docFormatVersion(normalizeMailTemplateDoc({ v: 1, blocks: [] })), MAIL_TEMPLATE_DOC_VERSION);
+});
+
+test("contrast of the new colour pairs: own colours are judged on the card / tiles / ground", () => {
+  const doc = normalizeMailTemplateDoc({
+    style: { accentColor: "#ffd400", buttonTextColor: "#ffffff" },
+    blocks: [
+      { id: "c1", type: "coupon", code: "A10", headline: "x", cardColor: "#111111", textColor: "#222222", codeColor: "#333333", accent: "#1a1a1a" },
+      { id: "c2", type: "coupon", code: "B10", headline: "x", cta: "button" },
+      { id: "c3", type: "coupon", code: "C10", headline: "x", cardColor: "#111111", textColor: "#ffffff", codeColor: "#ffd400" },
+      { id: "d1", type: "countdown", until: "2099-01-01T00:00:00Z", tileColor: "#eeeeee", digitColor: "#ffffff", labelColor: "#f0f0f0" },
+      { id: "d2", type: "countdown", until: "2099-01-01T00:00:00Z", background: "#111111" },
+      { id: "p1", type: "products", refs: ["x"], cardColor: "#ffffff", textColor: "#fafafa" },
+      { id: "p2", type: "products", refs: ["x"], cardColor: "#111111", textColor: "#ffffff" },
+      { id: "f", type: "footer" },
+    ],
+  });
+  const { warnings } = validateMailTemplateDoc(doc, "bulk", { now: new Date("2026-11-12T00:00:00Z") });
+  const of = (id) => warnings.filter((w) => w.blockId === id && /Kontrast/.test(w.message)).map((w) => w.message);
+  const c1 = of("c1");
+  assert.ok(c1.some((m) => /Schrift auf dem Hintergrund/.test(m)), "text on the card");
+  assert.ok(c1.some((m) => /Code auf der Karte/.test(m)));
+  assert.ok(c1.some((m) => /Überschrift in der Rahmenfarbe/.test(m)));
+  assert.ok(of("c2").some((m) => /Button-Schrift auf der Buttonfarbe/.test(m)), "white on yellow");
+  assert.deepEqual(of("c3"), []);
+  const d1 = of("d1");
+  assert.ok(d1.some((m) => /Ziffern auf den Kacheln/.test(m)));
+  assert.ok(d1.some((m) => /Beschriftung auf dem Hintergrund/.test(m)));
+  assert.ok(d1.some((m) => /Beschriftung auf den Kacheln/.test(m)));
+  assert.deepEqual(of("d2"), [], "the automatic look always reads");
+  assert.ok(of("p1").length === 1);
+  assert.deepEqual(of("p2"), []);
 });

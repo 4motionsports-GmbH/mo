@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { countdownSecret, signCountdownToken, verifyCountdownToken } from "./email-countdown-token.mjs";
+import { countdownSecret, signCountdownColors, signCountdownToken, verifyCountdownColors, verifyCountdownToken } from "./email-countdown-token.mjs";
 
 test("round trip keeps deadline (to the second) and language", () => {
   const token = signCountdownToken({ expiresAt: "2026-09-12T21:59:30.500Z", language: "en" }, "s3cret");
@@ -24,4 +24,24 @@ test("the secret falls back to the chat shared secret", () => {
   assert.equal(countdownSecret({ UNSUBSCRIBE_SECRET: "a", CHAT_SHARED_SECRET: "b" }), "a");
   assert.equal(countdownSecret({ CHAT_SHARED_SECRET: "b" }), "b");
   assert.equal(countdownSecret({}), undefined);
+});
+
+test("colour signature: binds the canonical colour query to the token", () => {
+  const token = signCountdownToken({ expiresAt: "2026-11-30T22:59:00Z", language: "de" }, "s3cret");
+  const query = "bg=111111&tile=292929&digit=ffd400&label=a1a1a1";
+  const sig = signCountdownColors(token, query, "s3cret");
+  assert.match(sig, /^[A-Za-z0-9_-]{22}$/, "URL-safe, fixed length");
+  assert.equal(verifyCountdownColors(token, query, sig, "s3cret"), true);
+  // other colours, another token, another secret, a cut or missing signature: refused
+  assert.equal(verifyCountdownColors(token, query.replace("ffd400", "ff0000"), sig, "s3cret"), false);
+  const other = signCountdownToken({ expiresAt: "2026-12-01T22:59:00Z", language: "de" }, "s3cret");
+  assert.equal(verifyCountdownColors(other, query, sig, "s3cret"), false);
+  assert.equal(verifyCountdownColors(token, query, sig, "other"), false);
+  assert.equal(verifyCountdownColors(token, query, sig.slice(0, -1), "s3cret"), false);
+  assert.equal(verifyCountdownColors(token, query, null, "s3cret"), false);
+  assert.equal(verifyCountdownColors(token, query, sig, undefined), false);
+  // nothing to sign: no colours, no token, no secret
+  assert.equal(signCountdownColors(token, "", "s3cret"), null);
+  assert.equal(signCountdownColors("", query, "s3cret"), null);
+  assert.equal(signCountdownColors(token, query, undefined), null);
 });

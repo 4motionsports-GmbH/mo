@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  COUNTDOWN_COLOR_PARAMS,
   COUNTDOWN_FRAMES,
   COUNTDOWN_FRAME_MS,
   COUNTDOWN_HEIGHT,
@@ -9,9 +10,12 @@ import {
   COUNTDOWN_CACHE_WINDOW_MS,
   countdownCacheSeconds,
   countdownCacheWindow,
+  countdownColorQuery,
+  countdownEdgeColor,
   countdownFrameTimes,
   countdownLayout,
   countdownRemaining,
+  parseCountdownColors,
   renderCountdownImage,
 } from "./email-countdown-image.mjs";
 import { GLYPHS, SPRITE_SCALE } from "./generated/countdown-sprite.mjs";
@@ -137,4 +141,71 @@ test("renderCountdownImage yields a 2× frame of the card size, for live and exp
   const expired = await renderCountdownImage({ expiresAt: "2026-09-01T00:00:00Z", language: "en", now, frames: 1 });
   assert.equal((await sharp(expired).metadata()).width, COUNTDOWN_WIDTH * 2);
   assert.ok(expired.length < live.length + 20000);
+});
+
+test("colour parameters: exactly six hex digits each, anything else is the light look's colour", () => {
+  assert.deepEqual(COUNTDOWN_COLOR_PARAMS, ["bg", "tile", "digit", "label"]);
+  const q = new URLSearchParams("bg=111111&tile=292929&digit=F5C400&label=a1a1a1&w=m&cs=x");
+  assert.deepEqual(parseCountdownColors(q), { bg: "#111111", tile: "#292929", digit: "#f5c400", label: "#a1a1a1" });
+  const bad = new URLSearchParams("bg=%23111111&tile=fff&digit=ggg000&label=1111111");
+  assert.deepEqual(parseCountdownColors(bad), { bg: null, tile: null, digit: null, label: null });
+  assert.deepEqual(parseCountdownColors({ bg: "abcdef", label: 7 }), { bg: "#abcdef", tile: null, digit: null, label: null });
+  assert.deepEqual(parseCountdownColors(null), { bg: null, tile: null, digit: null, label: null });
+});
+
+test("countdownColorQuery: the canonical query (fixed order, valid colours only) the signature covers", () => {
+  assert.equal(countdownColorQuery({ label: "#A1A1A1", bg: "#111111", tile: "292929", digit: "#f5c400" }), "bg=111111&tile=292929&digit=f5c400&label=a1a1a1");
+  assert.equal(countdownColorQuery({ bg: "#111111", tile: "red", digit: null }), "bg=111111");
+  assert.equal(countdownColorQuery({}), "");
+  assert.equal(countdownColorQuery(null), "");
+  // parse ∘ query is stable
+  const q = "bg=ffd400&tile=f5cc00&digit=111111&label=64550b";
+  assert.equal(countdownColorQuery(parseCountdownColors(new URLSearchParams(q))), q);
+});
+
+test("countdownEdgeColor: a hairline a shade darker than a light tile, lighter than a dark one", () => {
+  assert.equal(countdownEdgeColor("#f5f5f5"), "#e5e5e5", "the light look's own edge");
+  assert.equal(countdownEdgeColor("#292929"), "#434343");
+  assert.equal(countdownEdgeColor("#000000"), "#1f1f1f");
+});
+
+test("without colours the image is the light look, byte for byte; signed colours tint ground, tiles, digits and words", async () => {
+  const { default: sharp } = await import("sharp");
+  const base = { expiresAt: "2026-09-11T23:59:00Z", language: "de", now, frames: 2 };
+  const plain = await renderCountdownImage(base);
+  for (const colors of [undefined, null, {}, { bg: null, tile: null }, { bg: "nope", digit: "#12" }]) {
+    assert.ok(plain.equals(await renderCountdownImage({ ...base, colors })), JSON.stringify(colors));
+  }
+  const colors = { bg: "#111111", tile: "#292929", digit: "#ffd400", label: "#a1a1a1" };
+  const dark = await renderCountdownImage({ ...base, colors, frames: 1 });
+  const m = await sharp(dark).metadata();
+  assert.equal(m.width, COUNTDOWN_WIDTH * 2);
+  const raw = await sharp(dark).raw().toBuffer({ resolveWithObject: true });
+  const px = (x, y) => { const i = (y * raw.info.width + x) * raw.info.channels; return [raw.data[i], raw.data[i + 1], raw.data[i + 2]]; };
+  const near = (a, b, d = 3) => a.every((v, i) => Math.abs(v - b[i]) <= d);
+  // the ground is the row's colour (within one step of the GIF palette) — flat, no dithering
+  assert.ok(near(px(30, 30), [0x11, 0x11, 0x11]), `ground ${px(30, 30)}`);
+  const L = countdownLayout({ days: 3, hours: 13, minutes: 59 }, "de");
+  const t = L.tiles[0];
+  assert.ok(near(px(t.x + 6, t.y + Math.round(t.height / 2)), [0x29, 0x29, 0x29]), `tile ${px(t.x + 6, t.y + 30)}`);
+  let yellow = 0;
+  let red = 0;
+  let label = 0;
+  for (let y = 0; y < raw.info.height; y += 2) {
+    for (let x = 0; x < raw.info.width; x += 2) {
+      const c = px(x, y);
+      if (near(c, [0xff, 0xd4, 0x00], 8)) yellow++;
+      if (c[0] > 180 && c[1] < 60 && c[2] < 60) red++;
+      if (near(c, [0xa1, 0xa1, 0xa1], 8)) label++;
+    }
+  }
+  assert.ok(yellow > 300, `digits in the digit colour (${yellow})`);
+  assert.equal(red, 0, "no red of the light look left");
+  assert.ok(label > 30, `heading and units in the label colour (${label})`);
+  // the whole hour stays small (64 colours, flat grounds)
+  const hour = await renderCountdownImage({ ...base, colors: { bg: "#ffd400", tile: "#f5cc00", digit: "#111111", label: "#64550b" }, frames: undefined });
+  assert.ok(hour.length < 120_000, `${hour.length} bytes`);
+  const expired = await renderCountdownImage({ expiresAt: "2026-09-01T00:00:00Z", language: "en", now, frames: 1, colors });
+  const e = await sharp(expired).raw().toBuffer({ resolveWithObject: true });
+  assert.ok(near([e.data[0], e.data[1], e.data[2]], [0x11, 0x11, 0x11]), "expired: the same ground");
 });

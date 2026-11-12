@@ -13,16 +13,16 @@
 // renderer places an unplaced piece after Mo's text), the legal footer is
 // always rendered.
 //
-// The renderers that need data run here, inside the design context: the
-// fixed product blocks (catalog, loaded before rendering, so the synchronous
-// shell can lay them out through the classic product renderers), the
-// „Produkt-Highlight“ blocks (the same catalog data handed over as DATA — the
-// template renderer draws their card in the template's own look; they may
-// stand inside the columns of a section) and the live countdown (signed
-// token). Everything is fail-soft: an unreadable template resolves to null
-// (the caller falls back to the selected / classic design).
+// What needs data is resolved here and handed to the renderer as DATA, which
+// it draws in the template's own look: the fixed product blocks (catalog,
+// loaded before rendering, so the synchronous shell can lay them out — the
+// classic rows / grid in the template's fonts and colours), the
+// „Produkt-Highlight“ blocks (they may stand inside the columns of a
+// section) and the live countdown (signed token, its picture in the block's
+// colours — countdownLook). Everything is fail-soft: an unreadable template
+// resolves to null (the caller falls back to the selected / classic design).
 
-import type { EmailSectionRowOptions, ResolvedEmailDesign } from "./email-design-context";
+import type { EmailSectionRowOptions, OfferCountdownInput, ResolvedEmailDesign } from "./email-design-context";
 import { activeEmailRenderData } from "./email-design-context";
 import type { EmailTheme } from "./email-theme-context";
 import type { BrandedEmailOptions } from "./email-template";
@@ -32,16 +32,12 @@ import {
   classicSectionRowHtml,
   emailLogoUrl,
   emailMoIconUrl,
+  offerCountdownInput,
   renderCtaButton,
-  renderOfferCountdown,
   renderSectionRow,
 } from "./email-template";
-import {
-  productGridItem,
-  productRowItems,
-  renderEmailProductGrid,
-  renderEmailProductRows,
-} from "./email-products";
+import { productGridItem, productRowItems } from "./email-products";
+import { COUNTDOWN_HEIGHT } from "./email-countdown-image.mjs";
 import { resolveProductSelections } from "./product-catalog";
 import { getBaseUrl } from "./base-url";
 import { reportError } from "./observability";
@@ -49,6 +45,7 @@ import { getCachedMailTemplate, type MailTemplateDoc } from "./mail-template-sto
 import {
   applyMergeFields,
   classicFontFor,
+  countdownLook,
   docHasHero,
   docProductRefs,
   docSupportsPersonal,
@@ -57,18 +54,34 @@ import {
   templateDesignKey,
   walkMailBlocks,
 } from "./mail-template-doc.mjs";
-import { isDarkCard, mailWhitePanel, renderMailTemplateHtml, type MailRenderContext } from "./mail-template-render.mjs";
-import { emptyProductBlocks, productHighlightSlot, productListText } from "./mail-template-slots.mjs";
+import {
+  isDarkCard,
+  mailWhitePanel,
+  renderMailTemplateHtml,
+  type MailRenderContext,
+  type MailSlotCountdown,
+  type MailSlotProducts,
+} from "./mail-template-render.mjs";
+import { emptyProductBlocks, mailProductImageUrl, productHighlightSlot, productListText } from "./mail-template-slots.mjs";
 import { MAILING_HTML_HARD_LIMIT } from "./mailing-checks.mjs";
 import { countdownText } from "./offer-countdown.mjs";
 import type { Product } from "./types";
 
 /**
- * A slot of the template renderer (MailRenderContext.slots): the pre-rendered
- * card rows and text of a products / countdown block, or — `product` — the
- * card data of a „Produkt-Highlight“ block (html "").
+ * A slot of the template renderer (MailRenderContext.slots): its line(s) of
+ * the text part and the DATA the renderer lays out in the template's look —
+ * `product` (a „Produkt-Highlight“ card), `products` (the rows / grid of a
+ * products block), `countdown` (the signed live image in the block's colours
+ * and the line under it). `html` stays "": pre-rendered rows are only what a
+ * version-1 document of the fixtures hands in.
  */
-export type MailSlot = { html: string; text: string; product?: ReturnType<typeof productHighlightSlot>["product"] };
+export type MailSlot = {
+  html: string;
+  text: string;
+  product?: ReturnType<typeof productHighlightSlot>["product"];
+  products?: MailSlotProducts;
+  countdown?: MailSlotCountdown;
+};
 
 /** The kinds a template may be the design of (marketing mails only — DOI and summary keep the code designs). */
 export const TEMPLATE_DESIGN_KINDS = ["marketing", "campaign"] as const;
@@ -117,9 +130,10 @@ function withSidePadding(padding: string, side: number): string {
 }
 
 /**
- * The classic content rows inside a template (the `products` rows / grid, the
- * countdown, Mo's buttons and footnote, the composer's offer rows): the
- * template's card colour and side padding instead of white and 60px. The
+ * The classic content rows inside a template (Mo's buttons and footnote, the
+ * composer's offer rows — the template's own products and countdown are drawn
+ * by the renderer): the template's card colour and side padding instead of
+ * white and 60px. The
  * classic renderers write dark text, so on a dark card (black below 4.5:1)
  * the piece sits on a white panel instead of turning unreadable — the same
  * panel the renderer gives Mo's text (mail-template-render.mjs
@@ -215,14 +229,18 @@ export async function docProductAvailability(
 
 /**
  * The slots of the blocks that need live data, by block id — every block of
- * the tree, the ones inside sections included:
- *   * `products` — the classic product rows / grid as a card row + the text;
- *   * `countdown` — the live countdown (until it has expired);
- *   * `product` („Produkt-Highlight“) — no HTML, the card DATA (the grid's
- *     price line, a mail-safe picture, the short description) + the text.
+ * the tree, the ones inside sections included — as DATA the template
+ * renderer lays out in the template's own look (fonts, colours, buttons):
+ *   * `products` — the products of the rows / grid (the shared price
+ *     projection, a mail-safe picture; the rows' description and button
+ *     label) + the text;
+ *   * `countdown` — the live image URLs, signed and in the block's colours
+ *     (countdownLook), and the line under it (until it has expired);
+ *   * `product` („Produkt-Highlight“) — the card DATA (the grid's price
+ *     line, a mail-safe picture, the short description) + the text.
  * A block whose products are not available gets no slot (it is left out of a
- * send). MUST run inside withEmailDesign(...) of the template, so the classic
- * renderers use its colours and font.
+ * send). Runs inside withEmailDesign(...) of the template (the price
+ * projection and the signing are design-independent).
  */
 export function renderDocSlots(
   doc: MailTemplateDoc,
@@ -236,13 +254,24 @@ export function renderDocSlots(
         const list = (b.refs as string[]).map((r) => products.get(r)).filter((p): p is Product => Boolean(p));
         if (list.length === 0) continue;
         const items = list.map((p) => productGridItem(p, language));
-        const inner =
-          b.layout === "grid"
-            ? renderEmailProductGrid(items)
-            : renderEmailProductRows(productRowItems(list, { locale: language }));
+        const grid = b.layout === "grid";
+        // the rows' description and button label (no highlights: the catalog's short description)
+        const rows = grid ? [] : productRowItems(list, { locale: language });
         slots[b.id] = {
-          html: renderSectionRow(inner, { padding: "10px 60px 20px", align: "center" }),
+          html: "",
           text: productListText(items),
+          products: {
+            layout: grid ? "grid" : "rows",
+            items: items.map((it, i) => ({
+              name: it.name,
+              imageUrl: mailProductImageUrl(it.imageUrl, list[i]?.images),
+              url: it.url ?? null,
+              priceLabel: it.priceLabel ?? null,
+              compareAtLabel: it.compareAtLabel ?? null,
+              description: rows[i]?.description ?? null,
+              ctaLabel: rows[i]?.ctaLabel ?? null,
+            })),
+          },
         };
       } else if (b.type === "product" && b.ref) {
         const display = products.get(b.ref as string);
@@ -250,14 +279,35 @@ export function renderDocSlots(
           slots[b.id] = productHighlightSlot(productGridItem(display, language), display, { showPrice: b.showPrice !== false });
         }
       } else if (b.type === "countdown" && b.until) {
-        const html = renderOfferCountdown({ expiresAt: b.until, language });
-        if (html) slots[b.id] = { html, text: countdownText(b.until, language) };
+        const look = countdownLook(b, doc.style);
+        const data = offerCountdownInput({ expiresAt: b.until as string, language, colors: look });
+        if (data) slots[b.id] = { html: "", text: countdownText(b.until, language), countdown: templateCountdownSlot(data) };
       }
     } catch (err) {
       reportError(err, { route: "lib/mail-template-design", phase: "renderDocSlots" });
     }
   }
   return slots;
+}
+
+/**
+ * The countdown slot of a template block: the signed image URLs (in the
+ * block's colours), their sizes and the line under the image — the classic
+ * countdown's words („Dein Angebot gilt noch 3 Tage 4 Stunden“ — „bis …“).
+ */
+function templateCountdownSlot(data: OfferCountdownInput): MailSlotCountdown {
+  const { copy } = data;
+  const hours = data.hours > 0 || data.days === 0 ? ` ${data.hours} ${copy.hours}` : "";
+  return {
+    imageUrl: data.imageUrl,
+    imageUrlMobile: data.imageUrlMobile,
+    imageAlt: data.imageAlt,
+    imageWidth: data.imageWidth,
+    imageHeight: COUNTDOWN_HEIGHT,
+    imageWidthMobile: data.imageWidthMobile,
+    lead: `${copy.heading} ${data.days} ${copy.days}${hours}`,
+    until: `${copy.until} ${data.deadlineLabel}`,
+  };
 }
 
 /** The Mo pieces of a composer's options (everything it produced, rendered as card rows). */

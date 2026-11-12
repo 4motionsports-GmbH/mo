@@ -89,7 +89,33 @@ function generator(rand) {
       case "product":
         return { type, ref: pick(["atx®-hantelbank-klappbar-schwarz-silber", "rack-1", "kettlebell~123"]), layout: pick(["stacked", "side"]), showImage: rand() < 0.8, showPrice: rand() < 0.8, showDescription: rand() < 0.4, buttonLabel: pick(["Zum Produkt", "", "Ansehen"]), align: pick(["left", "center", "right"]), nameSize: maybe(0.3, () => int(12, 40)), ...box() };
       case "coupon":
-        return { type, code: pick(["BLACKWEEK25", "SALE10", "MO-2026_X"]), headline: words(3), terms: words(5), accent: maybe(0.3, color), ...box() };
+        return {
+          type,
+          code: pick(["BLACKWEEK25", "SALE10", "MO-2026_X"]),
+          headline: words(3),
+          terms: words(5),
+          accent: maybe(0.3, color),
+          cardColor: maybe(0.3, color),
+          borderStyle: maybe(0.3, () => pick(["dashed", "solid", "none"])),
+          radius: maybe(0.3, () => int(0, 24)),
+          textColor: maybe(0.2, color),
+          codeColor: maybe(0.2, color),
+          codeFont: maybe(0.2, () => pick(MAIL_FONT_KEYS)),
+          cta: maybe(0.4, () => pick(["link", "button"])),
+          ...box(),
+        };
+      case "countdown":
+        return {
+          type,
+          until: "2030-11-30T22:59:00Z",
+          heading: maybe(0.6, () => words(3)),
+          tileColor: maybe(0.3, color),
+          digitColor: maybe(0.3, color),
+          labelColor: maybe(0.3, color),
+          ...box(),
+        };
+      case "products":
+        return { type, title: maybe(0.6, () => words(2)), refs: ["rack-1", "kettlebell~123", "atx®-hantelbank-klappbar-schwarz-silber"].slice(0, int(1, 3)), layout: pick(["rows", "grid"]), cardColor: maybe(0.3, color), textColor: maybe(0.3, color) };
       case "divider":
         return { type, color: maybe(0.5, color), thickness: int(1, 8), widthPct: int(10, 100), lineStyle: pick(["solid", "dashed", "dotted"]), align: pick(["left", "center", "right"]), ...box() };
       case "spacer":
@@ -143,21 +169,54 @@ function generator(rand) {
       cardRadius: int(0, 24),
     },
     blocks: [
-      ...Array.from({ length: int(1, 9) }, () => (rand() < 0.45 ? section() : block(pick(MAIL_CHILD_BLOCK_TYPES)))),
+      ...Array.from({ length: int(1, 9) }, () => {
+        const r = rand();
+        // the top-level only blocks with live data: the countdown and the fixed products
+        return r < 0.45 ? section() : r < 0.55 ? block(pick(["countdown", "products"])) : block(pick(MAIL_CHILD_BLOCK_TYPES));
+      }),
       { type: "footer", showSocial: rand() < 0.5, background: maybe(0.3, color), textColor: maybe(0.3, color) },
     ],
   });
 }
 
-/** Product data for every product block — the way mail-template-design.ts hands it over. */
+/** The live data of every product, products and countdown block — the way mail-template-design.ts hands it over. */
 function slotsFor(doc) {
   const slots = {};
+  const item = (ref, i, rows) => ({
+    name: `Produkt ${ref}`,
+    imageUrl: i === 2 ? null : "https://cdn.shopify.com/p.jpg",
+    url: i === 1 ? null : "https://www.motionsports.de/products/p",
+    priceLabel: "399,00 €",
+    compareAtLabel: i === 0 ? "499,00 €" : null,
+    description: rows ? "Stabil, klappbar, platzsparend." : null,
+    ctaLabel: rows ? "Zum Produkt" : null,
+  });
   const visit = (b) => {
     if (b.type === "product" && b.ref) {
       slots[b.id] = {
         html: "",
         text: `${b.ref} — 399,00 €\nhttps://www.motionsports.de/products/${encodeURIComponent(b.ref)}`,
         product: { name: `Produkt ${b.ref}`, imageUrl: "https://cdn.shopify.com/p.jpg", url: "https://www.motionsports.de/products/p", priceLabel: "399,00 €", compareAtLabel: "499,00 €", description: "Stabil, klappbar, platzsparend." },
+      };
+    }
+    if (b.type === "products" && b.refs?.length) {
+      slots[b.id] = { html: "", text: "- Produkt — 399,00 €", products: { layout: b.layout, items: b.refs.map((r, i) => item(r, i, b.layout === "rows")) } };
+    }
+    if (b.type === "countdown" && b.until) {
+      const signed = b.id.length % 2 === 0;
+      slots[b.id] = {
+        html: "",
+        text: "Dein Angebot gilt noch 3 Tage",
+        countdown: {
+          imageUrl: signed ? "https://mo.example.com/api/email-countdown/t?bg=111111&tile=292929&digit=ffd400&label=a1a1a1&cs=s" : null,
+          imageUrlMobile: signed ? "https://mo.example.com/api/email-countdown/t?w=m&bg=111111&tile=292929&digit=ffd400&label=a1a1a1&cs=s" : null,
+          imageAlt: "Dein Angebot gilt noch 3 Tage",
+          imageWidth: 564,
+          imageHeight: 116,
+          imageWidthMobile: 350,
+          lead: "Dein Angebot gilt noch 3 Tage 4 Stunden",
+          until: "bis Sa., 30.11.2030, 23:59 Uhr",
+        },
       };
     }
     if (b.type === "section") for (const c of b.columns ?? []) for (const k of c.blocks ?? []) visit(k);

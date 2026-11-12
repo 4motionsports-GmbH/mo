@@ -21,20 +21,31 @@
 // response leaves its network). Browsers and mail proxies still get
 // `no-store` and fetch again on every open. Nothing is logged or stored per
 // fetch.
+//
+// A template's countdown (docs/EMAIL_TEMPLATES.md) carries its colours:
+// ?bg=…&tile=…&digit=…&label=… (six hex digits each) and their signature
+// `cs` (email-countdown-token.mjs signCountdownColors). Only signed colours
+// are drawn — an invalid value, a missing or wrong signature gives the light
+// look — so nobody can make the route render colours no mail carries (each
+// distinct URL would be a fresh render). The colours are part of the memo
+// key; the light look stays one image per token and variant.
 
-import { verifyCountdownToken, countdownSecret } from "@/lib/email-countdown-token.mjs";
+import { verifyCountdownToken, countdownSecret, verifyCountdownColors } from "@/lib/email-countdown-token.mjs";
 import {
   COUNTDOWN_MOBILE_WIDTH,
   countdownCacheSeconds,
   countdownCacheWindow,
+  countdownColorQuery,
+  parseCountdownColors,
   renderCountdownImage,
+  type CountdownColors,
 } from "@/lib/email-countdown-image.mjs";
 import { reportError } from "@/lib/observability";
 
 export const maxDuration = 10;
 export const dynamic = "force-dynamic";
 
-/** Images of the current minute, per token and variant (bounded). */
+/** Images of the current minute, per token, variant and colours (bounded). */
 const MEMO_MAX = 100;
 const memo = new Map<string, Promise<Buffer>>();
 let memoWindow = -1;
@@ -43,6 +54,7 @@ function countdownGif(
   token: string,
   parsed: { expiresAt: string | Date; language: "de" | "en" },
   mobile: boolean,
+  colors: CountdownColors | null,
   nowMs: number
 ): { gif: Promise<Buffer>; endsAt: number } {
   const window = countdownCacheWindow(nowMs);
@@ -52,7 +64,8 @@ function countdownGif(
     memo.clear();
     memoWindow = window.index;
   }
-  const key = `${mobile ? "m" : "d"}|${token}`;
+  const query = countdownColorQuery(colors);
+  const key = `${mobile ? "m" : "d"}|${token}${query ? `|${query}` : ""}`;
   let gif = memo.get(key);
   if (!gif) {
     gif = renderCountdownImage({
@@ -60,6 +73,7 @@ function countdownGif(
       language: parsed.language,
       width: mobile ? COUNTDOWN_MOBILE_WIDTH : undefined,
       now: new Date(window.endsAt),
+      colors,
     });
     const own = gif;
     memo.set(key, own);
@@ -82,15 +96,25 @@ function notFound(): Response {
   });
 }
 
+/** The request's colours when their signature matches, else null (the light look). */
+function signedColors(token: string, params: URLSearchParams, secret: string | undefined): CountdownColors | null {
+  const colors = parseCountdownColors(params);
+  const query = countdownColorQuery(colors);
+  return query && verifyCountdownColors(token, query, params.get("cs"), secret) ? colors : null;
+}
+
 export async function GET(req: Request, ctx: { params: Promise<{ token: string }> }) {
   const { token } = await ctx.params;
-  const parsed = verifyCountdownToken(token, countdownSecret());
+  const secret = countdownSecret();
+  const parsed = verifyCountdownToken(token, secret);
   if (!parsed) return notFound();
+  const params = new URL(req.url).searchParams;
   // ?w=m → the phone-width variant (the mail shows it via its mobile media
   // query); not part of the signature, it only picks a canvas size.
-  const mobile = new URL(req.url).searchParams.get("w") === "m";
+  const mobile = params.get("w") === "m";
+  const colors = signedColors(token, params, secret);
   try {
-    const { gif, endsAt } = countdownGif(token, parsed, mobile, Date.now());
+    const { gif, endsAt } = countdownGif(token, parsed, mobile, colors, Date.now());
     const bytes = await gif;
     // Whatever is left of the minute — 0 (a render that finished after the
     // minute ended) → not kept on the CDN at all.

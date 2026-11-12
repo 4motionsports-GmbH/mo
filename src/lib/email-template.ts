@@ -128,8 +128,14 @@ import {
 import { countdownCopy, countdownText, deadlineLabel, remainingParts } from "./offer-countdown.mjs";
 import { couponCopy, discountRedeemUrl } from "./discount-coupon.mjs";
 import { parseDiscountScope } from "./discount-scope.mjs";
-import { countdownSecret, signCountdownToken } from "./email-countdown-token.mjs";
-import { COUNTDOWN_HEIGHT, COUNTDOWN_MOBILE_WIDTH, COUNTDOWN_WIDTH } from "./email-countdown-image.mjs";
+import { countdownSecret, signCountdownColors, signCountdownToken } from "./email-countdown-token.mjs";
+import {
+  COUNTDOWN_HEIGHT,
+  COUNTDOWN_MOBILE_WIDTH,
+  COUNTDOWN_WIDTH,
+  countdownColorQuery,
+  type CountdownColors,
+} from "./email-countdown-image.mjs";
 import { buttonRadiusFor, fontNeedsWebFont, fontStackFor, msoFontStackFor } from "./email-theme.mjs";
 import { MSO_HTML_ATTRS, msoHeadHtml, msoPaddingAlt } from "./email-outlook.mjs";
 import { EMAIL_SHELL_CSS } from "./email-shell-css.mjs";
@@ -352,6 +358,36 @@ export function renderMoPromoBlock(input: MoPromoBlockInput): string {
 }
 
 /**
+ * Everything a countdown shows for a deadline (the input of the
+ * offerCountdown hook), or null once the deadline has passed. `colors` draws
+ * the live image in a template's colours (email-countdown-image.mjs — the
+ * URL carries them, signed); without them it is the light look.
+ */
+export function offerCountdownInput(input: {
+  expiresAt: string;
+  language: "de" | "en";
+  now?: Date;
+  colors?: Partial<CountdownColors> | null;
+}): OfferCountdownInput | null {
+  const r = remainingParts(input.expiresAt, input.now);
+  if (r.expired) return null;
+  const c = countdownCopy(input.language);
+  return {
+    expiresAt: input.expiresAt,
+    language: input.language,
+    days: r.days,
+    hours: r.hours,
+    deadlineLabel: deadlineLabel(input.expiresAt, input.language),
+    copy: { heading: c.heading, days: c.days(r.days), hours: c.hours(r.hours), until: c.until },
+    imageUrl: countdownImageUrl(input.expiresAt, input.language, undefined, input.colors),
+    imageAlt: countdownText(input.expiresAt, input.language, input.now),
+    imageWidth: COUNTDOWN_WIDTH,
+    imageUrlMobile: countdownImageUrl(input.expiresAt, input.language, "m", input.colors),
+    imageWidthMobile: COUNTDOWN_MOBILE_WIDTH,
+  };
+}
+
+/**
  * The offer countdown row (campaign + marketing mails, under the offer). Days
  * and hours are a snapshot at render time (offer-countdown.mjs); returns ""
  * once the deadline has passed so an expired offer never shows a counter.
@@ -361,22 +397,8 @@ export function renderOfferCountdown(input: {
   language: "de" | "en";
   now?: Date;
 }): string {
-  const r = remainingParts(input.expiresAt, input.now);
-  if (r.expired) return "";
-  const c = countdownCopy(input.language);
-  const built: OfferCountdownInput = {
-    expiresAt: input.expiresAt,
-    language: input.language,
-    days: r.days,
-    hours: r.hours,
-    deadlineLabel: deadlineLabel(input.expiresAt, input.language),
-    copy: { heading: c.heading, days: c.days(r.days), hours: c.hours(r.hours), until: c.until },
-    imageUrl: countdownImageUrl(input.expiresAt, input.language),
-    imageAlt: countdownText(input.expiresAt, input.language, input.now),
-    imageWidth: COUNTDOWN_WIDTH,
-    imageUrlMobile: countdownImageUrl(input.expiresAt, input.language, "m"),
-    imageWidthMobile: COUNTDOWN_MOBILE_WIDTH,
-  };
+  const built = offerCountdownInput(input);
+  if (!built) return "";
   const override = activeEmailDesignRenderers()?.offerCountdown;
   if (override) return override(built);
   // Outlook/Word sizes an image by its width/height attributes only (CSS width
@@ -451,16 +473,24 @@ export function renderDiscountCoupon(input: {
 /**
  * The live countdown image URL for a deadline, or null without a signing
  * secret (UNSUBSCRIBE_SECRET / CHAT_SHARED_SECRET — the unsubscribe links
- * need the same one, so a production deployment always has it).
+ * need the same one, so a production deployment always has it). `colors`
+ * (a template's look) add `bg`, `tile`, `digit`, `label` and their signature
+ * `cs`; without them the URL is the light look's, as it always was.
  */
 function countdownImageUrl(
   expiresAt: string,
   language: "de" | "en",
-  variant?: "m"
+  variant?: "m",
+  colors?: Partial<CountdownColors> | null
 ): string | null {
-  const token = signCountdownToken({ expiresAt, language }, countdownSecret());
+  const secret = countdownSecret();
+  const token = signCountdownToken({ expiresAt, language }, secret);
   if (!token) return null;
-  return `${getBaseUrl()}/api/email-countdown/${encodeURIComponent(token)}${variant ? `?w=${variant}` : ""}`;
+  const params: string[] = variant ? [`w=${variant}`] : [];
+  const query = countdownColorQuery(colors);
+  const sig = query ? signCountdownColors(token, query, secret) : null;
+  if (query && sig) params.push(query, `cs=${sig}`);
+  return `${getBaseUrl()}/api/email-countdown/${encodeURIComponent(token)}${params.length ? `?${params.join("&")}` : ""}`;
 }
 
 function renderSocialRow(): string {

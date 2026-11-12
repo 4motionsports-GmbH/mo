@@ -30,14 +30,23 @@
 // HTML goes through the fence of mail-template-html.mjs, and merge fields are
 // never replaced inside a link target.
 //
-// What needs I/O or the active design context comes in pre-rendered through
-// the context — the TypeScript layer (mail-template-design.ts,
-// mailing-render.ts) builds it:
-//   * `slots[blockId]`: the product rows/grid of a `products` block and the
-//     live countdown of a `countdown` block (both through the classic
-//     renderers, inside the template's theme tokens), and the DATA of a
-//     `product` block (`product`: name, picture, link, price labels,
-//     description) — laid out here in the template's own look;
+// The fixed blocks in the mail's look (12.11.2026): from format 2 on
+// (docFormatVersion — a raw `"v": 1` document keeps the classic look byte for
+// byte) the coupon, the countdown and the product lists take the document's
+// fonts and colours where their own look fields are unset — the coupon's
+// texts in the text colour, its code in the heading font and colour; the
+// countdown picture in countdownLook's colours (its ground = the row's
+// colour), a phone variant swapped in on small screens; the products' names
+// in the heading font and colour, the button in the mail's button look.
+//
+// What needs I/O or the active design context comes in through the context —
+// the TypeScript layer (mail-template-design.ts, mailing-render.ts) builds it:
+//   * `slots[blockId]`: DATA laid out here in the template's own look — the
+//     products of a `products` block (`products`: the rows / grid items), the
+//     live countdown of a `countdown` block (`countdown`: the signed picture
+//     URLs, already in the block's colours, and the line under it), a
+//     `product` block's card (`product`: name, picture, link, price labels,
+//     description); pre-rendered `html` rows only for version-1 documents;
 //   * `mo`: the pieces of a personal mail the composer produced (Mo's text,
 //     the offer rows, the Mo hint, the buttons) — placed by the Mo blocks;
 //   * `hero`: the per-mail picture (KI-Hero / Kampagnenbild);
@@ -50,19 +59,26 @@
 // footer when the template lacks Mo's text altogether.
 
 import { EMAIL_SHELL_CSS } from "./email-shell-css.mjs";
-import { MSO_HTML_ATTRS, msoHeadHtml, msoPaddingAlt, nbsp } from "./email-outlook.mjs";
+import { MSO_HTML_ATTRS, hideFromOutlook, msoHeadHtml, msoPaddingAlt, nbsp } from "./email-outlook.mjs";
 import { buttonRadiusFor } from "./email-theme.mjs";
 import { emailProseToText, renderEmailProseHtml } from "./email-prose.mjs";
 import { couponCodeType, discountRedeemUrl } from "./discount-coupon.mjs";
 import {
+  COUPON_RADIUS,
   MO_BLOCK_TYPES,
   PROSE_URL_RE,
   contrastRatio,
+  countdownLook,
   docFontKeys,
+  docFormatVersion,
   mailFontGoogleFamily,
   mailFontMsoStack,
   mailFontStack,
+  mixColor,
+  mutedInk,
   normalizeMailTemplateDoc,
+  readableInk,
+  strongInk,
   walkMailBlocks,
 } from "./mail-template-doc.mjs";
 import { sanitizeCustomHtml } from "./mail-template-html.mjs";
@@ -125,6 +141,24 @@ const CLASSIC_LINK_COLOR = "#008ccb";
  */
 
 /**
+ * The data of a `products` block (format 2), resolved at send time from the
+ * catalog (mail-template-design.ts): the products of the rows / grid in the
+ * shared price projection, drawn here in the mail's look. `description` and
+ * `ctaLabel` are the rows' (null in the grid).
+ * @typedef {{ layout: "rows" | "grid", items: ReadonlyArray<MailSlotProduct & { ctaLabel?: string | null }> }} MailSlotProducts
+ */
+
+/**
+ * The live countdown of a `countdown` block (format 2): the signed image URLs
+ * — already carrying the block's colours (countdownLook), desktop and phone
+ * variant (?w=m) — their sizes at 1×, the alt text and the line under the
+ * image („Dein Angebot gilt noch 3 Tage 4 Stunden“ — „bis Sa., …“). No image
+ * URL without a signing secret: then only the line.
+ * @typedef {{ imageUrl: string | null, imageUrlMobile: string | null, imageAlt: string, imageWidth: number,
+ *   imageHeight: number, imageWidthMobile: number, lead: string, until: string }} MailSlotCountdown
+ */
+
+/**
  * @typedef {{
  *   subject: string,
  *   preheader?: string | null,
@@ -138,7 +172,8 @@ const CLASSIC_LINK_COLOR = "#008ccb";
  *     socialLinks: ReadonlyArray<{ alt: string, icon: string, url: string }>,
  *     aiLabelIconUrl?: string | null,
  *   },
- *   slots?: Record<string, { html: string, text: string, product?: MailSlotProduct } | undefined>,
+ *   slots?: Record<string, { html: string, text: string, product?: MailSlotProduct, products?: MailSlotProducts,
+ *     countdown?: MailSlotCountdown } | undefined>,
  *   mo?: {
  *     heading: string,
  *     bodyHtml: string,
@@ -254,18 +289,8 @@ function couponCodeFit(code, room) {
   return { fontSize, lineHeight, letterSpacing };
 }
 
-/** The darker or the lighter ink, whichever reads better on `bg`. */
-function strongInk(bg) {
-  const dark = contrastRatio("#111111", bg) ?? 21;
-  const light = contrastRatio("#ffffff", bg) ?? 1;
-  return dark >= light ? "#111111" : "#ffffff";
-}
-
-/** `preferred` when it reads on `bg` (WCAG ratio ≥ `min`), else `fallback`. */
-function ink(preferred, bg, min = 4.5, fallback = strongInk(bg)) {
-  const ratio = contrastRatio(preferred, bg);
-  return ratio == null || ratio >= min ? preferred : fallback;
-}
+/** `preferred` when it reads on `bg` (WCAG ratio ≥ `min`), else `fallback` (mail-template-doc.mjs readableInk). */
+const ink = readableInk;
 
 /**
  * The inline type of a text element. Optional settings only add declarations
@@ -367,11 +392,15 @@ export function sectionColumnWidths(section, contentPadding = 60) {
 // ── the renderer ─────────────────────────────────────────────────────────────
 
 /**
- * Everything the block renderers share for one render.
+ * Everything the block renderers share for one render. `auto`: the document
+ * is format 2 (docFormatVersion) — its fixed blocks (coupon, countdown,
+ * products) take the look of its style where their own fields are unset; a
+ * raw version-1 document keeps their classic look byte for byte.
  * @param {ReturnType<typeof normalizeMailTemplateDoc>} doc
  * @param {MailRenderContext} ctx
+ * @param {boolean} [auto]
  */
-function environment(doc, ctx) {
+function environment(doc, ctx, auto = true) {
   const style = doc.style;
   const locale = ctx.locale === "en" ? "en" : "de";
   return {
@@ -379,6 +408,9 @@ function environment(doc, ctx) {
     style,
     locale,
     en: locale === "en",
+    auto,
+    /** Set once a countdown with a phone variant is rendered: the head then carries the swap rule. */
+    phoneCountdown: false,
     merge: ctx.merge ?? ((t) => t),
     bodyFont: mailFontStack(style.fontFamily),
     headingFontKey: style.headingFont ?? style.fontFamily,
@@ -677,35 +709,95 @@ function buttonTable(R, b, label) {
                     </table>`;
 }
 
+/**
+ * The coupon card: kicker, code, headline, terms and „Code einlösen“ (a link,
+ * or with `cta: "button"` a button in the mail's button look). Its own
+ * fields — card colour, frame style, corners, text and code colour, code
+ * font — come first. Without them a format-2 document takes the mail's look:
+ * the texts in its text colour (the terms muted), the code in the heading
+ * colour and font, each a readable ink on the card's ground. A version-1
+ * document keeps the classic coupon (dark code, grey terms, the template's
+ * colours only where they read on a foreign colour).
+ */
 function couponRows(R, b, box) {
   const en = R.en;
   const bg = envBg(b, box);
   const accent = R.style.accentColor;
-  // The frame in the accent colour — unless the accent IS the background (white on white).
-  const frame = b.accent ?? (accent === bg ? strongInk(bg) : accent);
+  const card = b.cardColor ?? null;
+  // what the texts stand on: the card's own colour, else the colour around it
+  const ground = card ?? bg;
+  // The frame in the accent colour — unless it vanishes on the colour around
+  // an unfilled card (white on white): then the stronger ink.
+  const vanishes = R.auto ? !card && (contrastRatio(accent, bg) ?? 21) < 1.2 : accent === bg;
+  const frame = b.accent ?? (vanishes ? strongInk(bg) : accent);
+  const borderStyle = b.borderStyle ?? "dashed";
+  const borderPx = borderStyle === "none" ? 0 : 2;
+  const radius = b.radius ?? COUPON_RADIUS;
   const narrow = !box.top && box.width < NARROW_COLUMN;
   const cellPadX = box.top ? 28 : narrow ? 10 : 20;
-  // In a column the code shrinks to its room (frame 2 × 2 px, cell padding); the card keeps 24 px.
+  // In a column the code shrinks to its room (frame, cell padding); the card keeps 24 px.
   const code = box.top
     ? { fontSize: 24, lineHeight: 30, letterSpacing: 2 }
-    : couponCodeFit(b.code, box.width - 2 * sidePad(b, box) - 4 - 2 * cellPadX);
-  // The coupon has no text colour of its own: on a colour other than the
-  // card's (its own background, a coloured column) the template's text and
-  // link colours give way to readable ones.
-  const foreign = bg !== R.style.cardBackground;
-  const textColor = foreign ? ink(R.style.textColor, bg) : R.style.textColor;
-  const linkStyle = foreign
-    ? `color: ${ink(R.style.linkColor ?? accent, bg, 3, ink(accent, bg, 3))}; text-decoration: underline; word-wrap: break-word;`
-    : R.linkStyle;
+    : couponCodeFit(b.code, box.width - 2 * sidePad(b, box) - 2 * borderPx - 2 * cellPadX);
+  let textColor;
+  let linkStyle;
+  let codeColor;
+  let termsColor;
+  let codeFont;
+  if (R.auto) {
+    textColor = b.textColor ?? ink(R.style.textColor, ground);
+    linkStyle = `color: ${ink(R.style.linkColor ?? accent, ground, 3, ink(accent, ground, 3))}; text-decoration: underline; word-wrap: break-word;`;
+    // bold from ~18.7 px on is large text (3 : 1); a code shrunk for a narrow column needs 4.5 : 1
+    codeColor = b.codeColor ?? ink(R.style.headingColor, ground, code.fontSize >= 19 ? 3 : 4.5);
+    termsColor = b.textColor ?? mutedInk(textColor, ground);
+    codeFont = mailFontStack(b.codeFont ?? R.headingFontKey);
+  } else {
+    // Version 1: on a colour other than the card's (its own background, a
+    // coloured column) the template's text and link colours give way to
+    // readable ones.
+    const foreign = ground !== R.style.cardBackground;
+    textColor = b.textColor ?? (foreign ? ink(R.style.textColor, ground) : R.style.textColor);
+    linkStyle = foreign
+      ? `color: ${ink(R.style.linkColor ?? accent, ground, 3, ink(accent, ground, 3))}; text-decoration: underline; word-wrap: break-word;`
+      : R.linkStyle;
+    codeColor = b.codeColor ?? ink("#111111", ground);
+    termsColor = b.textColor ?? ink("#555555", ground, 4.5, textColor);
+    codeFont = b.codeFont ? mailFontStack(b.codeFont) : R.bodyFont;
+  }
+  // the kicker is small print: muted like the terms from format 2 on
+  const kickerColor = R.auto ? termsColor : textColor;
   const t = (size, color) => typeCss({ font: R.bodyFont, size, lineHeight: "1.5", weight: 400, color });
-  const redeem = discountRedeemUrl(b.code);
+  const redeem = discountRedeemUrl(b.code) ?? R.ctx.assets.shopUrl;
+  const ctaLabel = en ? "Redeem code" : "Code einlösen";
   const terms = b.terms ? R.merge(b.terms) : "";
+  const frameCss = borderPx ? ` border: ${borderPx}px ${borderStyle} ${frame};` : "";
+  // The card's colour fills the cell, rounded inside the frame (Word: square, the bgcolor).
+  const fill = card
+    ? ` bgcolor="${card}" style="mso-line-height-rule: exactly; padding: ${narrow ? 14 : 16}px ${cellPadX}px; background-color: ${card};${radius > borderPx ? ` border-radius: ${radius - borderPx}px;` : ""}"`
+    : ` style="mso-line-height-rule: exactly; padding: ${narrow ? 14 : 16}px ${cellPadX}px;"`;
+  // The button in the mail's button look — unless the accent vanishes on the
+  // card's ground (a black button on a black column): then the frame's colour
+  // (or the stronger ink) fills it, with a label that reads on it.
+  const shows = (/** @type {string} */ c) => (contrastRatio(c, ground) ?? 21) >= 1.3;
+  const buttonFill = shows(accent) ? accent : shows(frame) ? frame : strongInk(ground);
+  const buttonText = buttonFill === accent ? R.style.buttonTextColor : ink(R.style.buttonTextColor, buttonFill, 3);
+  const cta =
+    b.cta === "button"
+      ? `
+                          <table cellspacing="0" cellpadding="0" border="0" width="100%" role="presentation" style="direction: ltr;">
+                            <tr>
+                              <td align="center" style="mso-line-height-rule: exactly; padding: 12px 0 0;">${buttonTable(R, { href: redeem, align: "center", size: narrow ? "s" : undefined, fullWidth: narrow, color: buttonFill, textColor: buttonText }, ctaLabel)}
+                              </td>
+                            </tr>
+                          </table>`
+      : `
+                          <p style="${t(TEXT_PX.m, textColor)} Margin-top: 8px;" align="center"><a href="${escapeAttr(redeem)}" target="_blank" style="${linkStyle} font-weight: 700;">${ctaLabel} &#8594;</a></p>`;
   const inner = `
-                    <table cellspacing="0" cellpadding="0" border="0"${box.top ? "" : ' width="100%"'} align="center" role="presentation" style="direction: ltr; Margin: 0 auto; border-collapse: separate !important; border-spacing: 0; border: 2px dashed ${frame}; border-radius: 8px;">
+                    <table cellspacing="0" cellpadding="0" border="0"${box.top ? "" : ' width="100%"'} align="center" role="presentation" style="direction: ltr; Margin: 0 auto; border-collapse: separate !important; border-spacing: 0;${frameCss} border-radius: ${radius}px;">
                       <tr>
-                        <td align="center" style="mso-line-height-rule: exactly; padding: ${narrow ? 14 : 16}px ${cellPadX}px;">
-                          <p style="${t(TEXT_PX.s, textColor)} text-transform: uppercase; letter-spacing: 1px;" align="center">${en ? "Your code" : "Dein Code"}</p>
-                          <p style="mso-line-height-rule: exactly; font-family: ${R.bodyFont}; font-size: ${code.fontSize}px; line-height: ${code.lineHeight}px; font-weight: 700; letter-spacing: ${code.letterSpacing}px; color: ${ink("#111111", bg)}; Margin: 4px 0 6px;${narrow ? " word-break: break-all;" : ""}" align="center">${escapeHtml(b.code)}</p>${
+                        <td align="center"${fill}>
+                          <p style="${t(TEXT_PX.s, kickerColor)} text-transform: uppercase; letter-spacing: 1px;" align="center">${en ? "Your code" : "Dein Code"}</p>
+                          <p style="mso-line-height-rule: exactly; font-family: ${codeFont}; font-size: ${code.fontSize}px; line-height: ${code.lineHeight}px; font-weight: 700; letter-spacing: ${code.letterSpacing}px; color: ${codeColor}; Margin: 4px 0 6px;${narrow ? " word-break: break-all;" : ""}" align="center">${escapeHtml(b.code)}</p>${
                             b.headline
                               ? `
                           <p style="${t(TEXT_PX.m, b.accent ?? textColor)} font-weight: 700;" align="center">${escapeHtml(R.merge(b.headline))}</p>`
@@ -713,15 +805,290 @@ function couponRows(R, b, box) {
                           }${
                             terms
                               ? `
-                          <p style="${t(TEXT_PX.s, ink("#555555", bg, 4.5, textColor))}" align="center">${escapeHtml(terms)}</p>`
+                          <p style="${t(TEXT_PX.s, termsColor)}" align="center">${escapeHtml(terms)}</p>`
                               : ""
-                          }
-                          <p style="${t(TEXT_PX.m, textColor)} Margin-top: 8px;" align="center"><a href="${escapeAttr(redeem ?? R.ctx.assets.shopUrl)}" target="_blank" style="${linkStyle} font-weight: 700;">${en ? "Redeem code" : "Code einlösen"} &#8594;</a></p>
+                          }${cta}
                         </td>
                       </tr>
                     </table>`;
   const [tp, bp] = vpad(b, box, 14, 14);
   return row(inner, { padding: padCss(tp, sidePad(b, box), bp), align: "center", bgcolor: rowBg(b, box), pad: box.top });
+}
+
+/** The swap of the phone countdown (format 2): on small screens the 350-px image replaces the desktop one. */
+const PHONE_COUNTDOWN_CSS = `
+      @media only screen and (max-width:480px) {
+        .cd-desk { display: none !important; }
+        .cd-phone { display: block !important; }
+      }`;
+
+/**
+ * The live countdown of a format-2 document (top level only) in the mail's
+ * look: its heading in the heading font and a readable heading colour, the
+ * image drawn in the block's colours (countdownLook — its ground is the
+ * row's colour, so it blends into the row; the signed URLs carry the colours,
+ * mail-template-design.ts), the phone variant swapped in on small screens
+ * (hidden from Outlook, which keeps the desktop image at the content width),
+ * and the exact deadline in the label colour under it. With its own
+ * background the block is one band (heading and image on it).
+ * @param {any} R
+ * @param {any} b
+ * @param {MailSlotCountdown} cd
+ */
+function countdownRows(R, b, cd) {
+  const top = R.top;
+  const look = countdownLook(b, R.style);
+  const band = Boolean(b.background);
+  const heading = b.heading ? R.merge(b.heading) : "";
+  const out = [];
+  if (heading) {
+    const h = { ...plainHeading("m", "center"), color: ink(R.style.headingColor, look.bg, 3), background: b.background ?? null, padTop: b.padTop, padBottom: 8 };
+    out.push(headingRows(R, h, top, heading));
+  }
+  const room = Math.max(20, top.width - 2 * top.padX);
+  const w = Math.min(cd.imageWidth, room);
+  const h = Math.max(1, Math.round((w * cd.imageHeight) / Math.max(1, cd.imageWidth)));
+  const alt = escapeAttr(cd.imageAlt);
+  let media = "";
+  if (cd.imageUrl) {
+    // Word sizes the image by its attributes (the content width); browsers follow the CSS.
+    media = `
+                    <img src="${escapeAttr(cd.imageUrl)}" width="${w}" height="${h}" alt="${alt}" border="0" class="cd-desk" style="width: 100%; max-width: ${cd.imageWidth}px; height: auto; display: block; Margin: 0 auto;">`;
+    if (cd.imageUrlMobile) {
+      R.phoneCountdown = true;
+      media += `
+                    ${hideFromOutlook(`<img src="${escapeAttr(cd.imageUrlMobile)}" width="${cd.imageWidthMobile}" alt="${alt}" border="0" class="cd-phone" style="width: 100%; max-width: ${cd.imageWidthMobile}px; height: auto; display: none; Margin: 0 auto;">`)}`;
+    }
+  }
+  const caption = `
+                    <p style="${typeCss({ font: R.bodyFont, size: 13, lineHeight: "1.5", weight: 400, color: look.label, margin: media ? "8px 0 0" : "0" })}" align="center"><strong>${escapeHtml(cd.lead)}</strong>${cd.until ? ` &#8212; ${escapeHtml(cd.until)}` : ""}</p>`;
+  const t = heading ? 4 : b.padTop ?? (band ? 12 : 4);
+  const bt = b.padBottom ?? (band ? 22 : 14);
+  out.push(row(`${media}${caption}`, { padding: padCss(t, top.padX, bt), align: "center", bgcolor: rowBg(b, top) }));
+  return out.join("");
+}
+
+/** The product rows / grid of a format-2 `products` block. */
+const LIST_ROW_IMAGE = 140;
+const LIST_GRID_TILE = 240;
+const LIST_GRID_IMAGE = 220;
+/** Inner padding and corners of the card behind each product (`cardColor`). */
+const LIST_CARD_PAD = 12;
+const LIST_CARD_RADIUS = 8;
+/** The inner padding of mailWhitePanel. */
+const PANEL_PAD = 16;
+
+/**
+ * The fixed products of a format-2 document (top level only) in the mail's
+ * look, from the slot's data — the classic rows (picture | name, price,
+ * description, „Zum Produkt“) or the 2-up grid, in the same Outlook-safe
+ * structure, but the names in the heading font and colour, prices and
+ * descriptions in the body font and text colour (or the block's
+ * `textColor`), the button in the mail's button look and, with `cardColor`,
+ * each product on a card of its own. On a dark card whose colours read on it
+ * the products stand on the dark card; when they do not, the classic white
+ * panel carries them (with inks that read on white).
+ * @param {any} R
+ * @param {any} b
+ * @param {MailSlotProducts} data
+ */
+function productListRows(R, b, data) {
+  const top = R.top;
+  const ground = top.bg;
+  const card = b.cardColor ?? null;
+  const onCard = card ?? ground;
+  const reads = (/** @type {string} */ c, /** @type {string} */ g, /** @type {number} */ min) => (contrastRatio(c, g) ?? 21) >= min;
+  let name = b.textColor ?? R.style.headingColor;
+  let text = b.textColor ?? R.style.textColor;
+  const panel = !card && isDarkCard(ground) && !(reads(text, ground, 4.5) && reads(name, ground, 3));
+  const textGround = panel ? "#ffffff" : onCard;
+  // An own text colour stands as set (validation warns) — except on the white panel.
+  if (panel || !b.textColor) {
+    name = ink(name, textGround, 3);
+    text = ink(text, textGround);
+  }
+  const look = {
+    name,
+    text,
+    card,
+    strike: ink(SALE_STRIKE_COLOR, textGround, 3, text),
+    line: mixColor(textGround, strongInk(textGround), 0.12),
+  };
+  const parts = [];
+  if (b.title) parts.push(headingRows(R, { ...plainHeading("m", "center"), color: ink(R.style.headingColor, ground, 3) }, top, R.merge(b.title)));
+  const room = Math.max(160, top.width - 2 * top.padX);
+  const items = (data.items ?? []).filter((it) => it && it.name);
+  const inner = data.layout === "grid" ? productGridHtml(R, items, look) : productRowsHtml(R, items, look, room);
+  // The panel's own padding comes out of the row's, so the products keep their room.
+  const side = panel ? Math.max(0, top.padX - PANEL_PAD) : top.padX;
+  parts.push(row(panel ? mailWhitePanel(inner) : inner, { padding: padCss(10, side, 20), align: "center", bgcolor: ground }));
+  return parts.join("");
+}
+
+/** A product's link around `html` (name, picture), or the html itself without a link. */
+function productLink(it, html, style) {
+  return it.url ? `<a href="${escapeAttr(it.url)}" target="_blank" style="${style}">${html}</a>` : html;
+}
+
+/** The price line of a listed product: the struck compare-at price before the current one. */
+function productPriceHtml(it, look, css, align) {
+  if (!it.priceLabel) return "";
+  const strike = it.compareAtLabel ? `<span style="text-decoration: line-through; color: ${look.strike};">${escapeHtml(it.compareAtLabel)}</span> ` : "";
+  return `
+                          <p style="${css}" align="${align}">${strike}<strong style="color: ${look.text};">${escapeHtml(it.priceLabel)}</strong></p>`;
+}
+
+/**
+ * The rows: picture in the left third, name, price, description and the
+ * button in the right two thirds; a hairline between the rows — or, with a
+ * card colour, each row a card of its own (12 px apart).
+ */
+function productRowsHtml(R, items, look, room) {
+  const nameCss = typeCss({ font: mailFontStack(R.headingFontKey), size: 14, lineHeight: "1.35", weight: 700, color: look.name, margin: "0 0 4px" });
+  const priceCss = typeCss({ font: R.bodyFont, size: 13, lineHeight: "1.4", weight: 400, color: look.text, margin: "0 0 8px" });
+  const descCss = typeCss({ font: R.bodyFont, size: 13, lineHeight: "1.6", weight: 400, color: look.text });
+  const card = look.card;
+  const imageCell = Math.round(room * 0.33);
+  // Word sizes a picture by its attribute: never wider than its cell's room.
+  const img = Math.max(40, Math.min(LIST_ROW_IMAGE, imageCell - LIST_CARD_PAD));
+  const rows = items.map((it, i) => {
+    const image = it.imageUrl
+      ? productLink(
+          it,
+          `<img src="${escapeAttr(it.imageUrl)}" class="prow-image" alt="${escapeAttr(it.name)}" border="0" width="${img}" height="${img}" style="width: ${img}px; height: ${img}px; max-width: 100%; display: block; Margin: 0 auto; border: none; outline: none; object-fit: cover;">`,
+          "display: block; text-decoration: none;"
+        )
+      : "";
+    const description = it.description?.trim()
+      ? `
+                          <p style="${descCss}" align="left">${escapeHtml(it.description.trim())}</p>`
+      : "";
+    // full width: the shell CSS centres every table without a margin of its own
+    const button = it.url
+      ? `
+                          <table cellspacing="0" cellpadding="0" border="0" width="100%" role="presentation" style="direction: ltr;">
+                            <tr>
+                              <td align="left" style="mso-line-height-rule: exactly; padding: 12px 0 0;">${buttonTable(R, { href: it.url, align: "left", size: "s" }, it.ctaLabel?.trim() || (R.en ? "View product" : "Zum Produkt"))}
+                              </td>
+                            </tr>
+                          </table>`
+      : "";
+    const text = `
+                          <p style="${nameCss}" align="left">${productLink(it, escapeHtml(it.name), `text-decoration: none; color: ${look.name};`)}</p>${productPriceHtml(it, look, priceCss, "left")}${description}${button}`;
+    if (card) {
+      const cells = image
+        ? `
+                            <td width="33%" align="center" valign="middle" style="mso-line-height-rule: exactly; width: 33%; padding: ${LIST_CARD_PAD}px 0 ${LIST_CARD_PAD}px ${LIST_CARD_PAD}px; vertical-align: middle;">${image}</td>
+                            <td width="67%" align="left" valign="middle" style="mso-line-height-rule: exactly; width: 67%; padding: ${LIST_CARD_PAD}px; vertical-align: middle;">${text}
+                            </td>`
+        : `
+                            <td align="left" valign="middle" style="mso-line-height-rule: exactly; padding: ${LIST_CARD_PAD}px; vertical-align: middle;">${text}
+                            </td>`;
+      return `
+                      <tr>
+                        <td style="mso-line-height-rule: exactly; padding: ${i === 0 ? 0 : LIST_CARD_PAD}px 0 0;">
+                          <table cellspacing="0" cellpadding="0" border="0" width="100%" role="presentation" bgcolor="${card}" style="width: 100%; direction: ltr; border-collapse: separate !important; border-spacing: 0; border-radius: ${LIST_CARD_RADIUS}px; background-color: ${card};">
+                            <tr>${cells}
+                            </tr>
+                          </table>
+                        </td>
+                      </tr>`;
+    }
+    const divider =
+      i === 0
+        ? ""
+        : `
+                      <tr>
+                        <td colspan="2" style="mso-line-height-rule: exactly; padding: 18px 0 0;">
+                          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-top: 1px solid ${look.line}; border-spacing: 0 !important; border-collapse: collapse !important;"><tr><td style="font-size: 0; line-height: 0; mso-line-height-rule: exactly; mso-line-height-alt: 1px;">&nbsp;</td></tr></table>
+                        </td>
+                      </tr>`;
+    if (!image) {
+      return `${divider}
+                      <tr>
+                        <td colspan="2" align="left" valign="middle" style="mso-line-height-rule: exactly; padding: 18px 0 0; vertical-align: middle;">${text}
+                        </td>
+                      </tr>`;
+    }
+    return `${divider}
+                      <tr>
+                        <td width="33%" align="center" valign="middle" style="mso-line-height-rule: exactly; width: 33%; padding: 18px 12px 0 0; vertical-align: middle;">${image}</td>
+                        <td width="67%" align="left" valign="middle" style="mso-line-height-rule: exactly; width: 67%; padding: 18px 0 0 4px; vertical-align: middle;">${text}
+                        </td>
+                      </tr>`;
+  });
+  return `
+                    <table cellspacing="0" cellpadding="0" border="0" width="100%" role="presentation" style="width: 100%; direction: ltr; border-spacing: 0 !important; border-collapse: collapse !important;${card ? "" : " table-layout: fixed !important;"}">
+                      <tbody>${rows.join("")}
+                      </tbody>
+                    </table>`;
+}
+
+/**
+ * The 2-up grid: inline-block tiles of 240 px (two per row, wrapping), in
+ * Outlook explicit two-cell rows of a ghost table — the classic grid's
+ * structure. With a card colour each tile is a card (6 px apart).
+ */
+function productGridHtml(R, items, look) {
+  const card = look.card;
+  const nameCss = typeCss({ font: mailFontStack(R.headingFontKey), size: 13, lineHeight: "1.3", weight: 700, color: look.name });
+  const priceCss = typeCss({ font: R.bodyFont, size: 13, lineHeight: "1.4", weight: 400, color: look.text, margin: "4px 0 0" });
+  const gutter = card ? 6 : 0;
+  const pad = card ? LIST_CARD_PAD : 10;
+  const img = LIST_GRID_TILE - 2 * gutter - 2 * pad;
+  const imgH = card ? img : LIST_GRID_IMAGE;
+  const spacer = (h) => `
+                        <tr>
+                          <td height="${h}" style="mso-line-height-rule: exactly; font-size: 0; line-height: ${h}px;">&nbsp;</td>
+                        </tr>`;
+  const tile = (it) => {
+    const image = it.imageUrl
+      ? `
+                        <tr>
+                          <td align="center" style="mso-line-height-rule: exactly; vertical-align: top; padding: ${card ? `${pad}px ${pad}px 0` : `0 ${pad}px`};">${productLink(
+                            it,
+                            `<img src="${escapeAttr(it.imageUrl)}" class="grid-image" alt="${escapeAttr(it.name)}" border="0" width="${img}" height="${imgH}" style="width: ${img}px; height: ${imgH}px; max-width: 100%; display: block; Margin: 0 auto; border: none; outline: none; object-fit: cover;">`,
+                            "display: block; text-decoration: none;"
+                          )}</td>
+                        </tr>${spacer(card ? 12 : 16)}`
+      : card
+        ? spacer(pad)
+        : "";
+    const body = `${image}
+                        <tr>
+                          <td align="center" style="mso-line-height-rule: exactly; vertical-align: top; padding: 0 ${card ? pad : 15}px;">
+                            <p style="${nameCss}" align="center">${productLink(it, escapeHtml(it.name), `text-decoration: none; color: ${look.name};`)}</p>${productPriceHtml(it, look, priceCss, "center")}
+                          </td>
+                        </tr>${spacer(card ? 14 : 20)}`;
+    const content = card
+      ? `
+                        <tr>
+                          <td style="mso-line-height-rule: exactly; padding: 0 ${gutter}px ${LIST_CARD_PAD}px;">
+                            <table cellspacing="0" cellpadding="0" border="0" width="100%" role="presentation" bgcolor="${card}" style="width: 100%; direction: ltr; border-collapse: separate !important; border-spacing: 0; border-radius: ${LIST_CARD_RADIUS}px; background-color: ${card};">${body}
+                            </table>
+                          </td>
+                        </tr>`
+      : body;
+    return `<div class="grid-column" style="width: 100%; vertical-align: top; font-size: 0px; display: inline-block; max-width: 50%;"><table cellspacing="0" cellpadding="0" border="0" align="center" width="${LIST_GRID_TILE}" role="presentation" class="grid-tile" style="width: 100%; max-width: ${LIST_GRID_TILE}px; direction: ltr; border-spacing: 0 !important; border-collapse: collapse !important; table-layout: fixed !important;">
+                      <tbody>${content}
+                      </tbody>
+                    </table></div>`;
+  };
+  // Outlook cannot wrap inline-blocks: explicit two-cell rows of fixed halves;
+  // an odd last tile spans both columns so it stays centred.
+  const cell = (/** @type {number} */ i) => (i === items.length - 1 && i % 2 === 0 ? `<td colspan="2" align="center" valign="top">` : `<td width="50%" valign="top">`);
+  const tiles = items
+    .map((it, i) => {
+      const separator = i === 0 ? "" : i % 2 === 0 ? `<!--[if mso]></td></tr><tr>${cell(i)}<![endif]-->` : `<!--[if mso]></td>${cell(i)}<![endif]-->`;
+      return `${separator}${tile(it)}`;
+    })
+    .join("");
+  return `
+                    <div style="font-size: 0; text-align: center; direction: ltr;">
+                      <!--[if mso]><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>${cell(0)}<![endif]-->
+                      ${tiles}
+                      <!--[if mso]></td></tr></table><![endif]-->
+                    </div>`;
 }
 
 /**
@@ -1021,7 +1388,7 @@ function sectionRows(R, s) {
  */
 export function renderMailTemplateHtml(rawDoc, ctx) {
   const doc = normalizeMailTemplateDoc(rawDoc);
-  const R = environment(doc, ctx);
+  const R = environment(doc, ctx, docFormatVersion(rawDoc) >= 2);
   const { style, merge, en } = R;
   const top = R.top;
 
@@ -1080,6 +1447,16 @@ export function renderMailTemplateHtml(rawDoc, ctx) {
       case "products":
       case "countdown": {
         const slot = ctx.slots?.[b.id];
+        // Format 2 draws them from the slot's data in the mail's look; a
+        // version-1 document (or a slot of pre-rendered rows only) keeps the rows.
+        if (R.auto && b.type === "products" && slot?.products?.items?.some((it) => it?.name)) {
+          parts.push(productListRows(R, b, slot.products));
+          break;
+        }
+        if (R.auto && b.type === "countdown" && slot?.countdown) {
+          parts.push(countdownRows(R, b, slot.countdown));
+          break;
+        }
         const title = b.type === "products" ? b.title : b.heading;
         if (slot?.html) {
           if (title) parts.push(headingRows(R, plainHeading("m", "center"), top, merge(title)));
@@ -1165,7 +1542,7 @@ export function renderMailTemplateHtml(rawDoc, ctx) {
     <meta name="supported-color-schemes" content="light only">
     <title>${escapeHtml(merge(ctx.subject))}</title>${msoHeadHtml(mailFontMsoStack(style.fontFamily))}${webFontHead}
     <style type="text/css">
-${EMAIL_SHELL_CSS}
+${EMAIL_SHELL_CSS}${R.phoneCountdown ? PHONE_COUNTDOWN_CSS : ""}
     </style>
   </head>
   <body id="body" bgcolor="${outerBg}" style="-webkit-text-size-adjust: none; -ms-text-size-adjust: none; background-color: ${outerBg}; Margin: 0; padding: 0;">${preheaderHtml}

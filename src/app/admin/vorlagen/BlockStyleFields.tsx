@@ -8,7 +8,7 @@
 // typing. Collapsed by default; its row says how many settings are made.
 
 import * as React from "react";
-import { TEXT_BULLETS } from "@/lib/mail-template-doc.mjs";
+import { TEXT_BULLETS, countdownLook, readableInk } from "@/lib/mail-template-doc.mjs";
 import { EMAIL_BUTTON_SHAPES } from "@/lib/email-theme.mjs";
 import { Checkbox, Disclosure, Field, SegmentedControl, Select } from "../ui";
 import type { MailDoc } from "./BlockEditor";
@@ -44,7 +44,14 @@ const BULLET_LABELS: Record<string, string> = {
 const SHAPE_LABELS: Record<string, string> = { pill: "Pille", rounded: "Abgerundet", square: "Eckig" };
 
 /** Abstand oben / unten (+ Hintergrund) — the box every content block takes. */
-function BoxFields({ block, onPatch, disabled, style, background = true }: StyleProps & { background?: boolean }) {
+function BoxFields({
+  block,
+  onPatch,
+  disabled,
+  style,
+  background = true,
+  backgroundInfo = BACKGROUND_INFO,
+}: StyleProps & { background?: boolean; backgroundInfo?: string }) {
   const r = block as Record<string, unknown>;
   return (
     <div className="grid gap-3 sm:grid-cols-3">
@@ -71,7 +78,7 @@ function BoxFields({ block, onPatch, disabled, style, background = true }: Style
       {background && (
         <ColorField
           label="Hintergrund"
-          info={BACKGROUND_INFO}
+          info={backgroundInfo}
           value={(r.background as string | null | undefined) ?? null}
           fallback={style.cardBackground}
           onChange={(v) => onPatch({ background: v })}
@@ -292,7 +299,9 @@ function StyleFieldsFor(props: StyleProps) {
           <BoxFields {...props} />
         </>
       );
-    case "coupon":
+    case "coupon": {
+      // what the coupon's texts stand on — the pickers show the automatic colours
+      const ground = color("cardColor") ?? color("background") ?? style.cardBackground;
       return (
         <>
           <div className="grid gap-3 sm:grid-cols-3">
@@ -305,9 +314,157 @@ function StyleFieldsFor(props: StyleProps) {
               onChange={(accent) => onPatch({ accent })}
               disabled={disabled}
             />
+            <ColorField
+              label="Kartenfarbe"
+              info="Die Fläche der Gutschein-Karte selbst. Leer = ohne Füllung — der Hintergrund drumherum."
+              placeholder="Ohne Füllung"
+              value={color("cardColor")}
+              fallback={ground}
+              none
+              onChange={(cardColor) => onPatch({ cardColor })}
+              disabled={disabled}
+            />
+            <NumberField
+              label="Ecken (px)"
+              info="Abgerundete Ecken der Karte, 0–24 px. Outlook für Windows zeigt sie eckig."
+              value={r.radius as number | undefined}
+              min={0}
+              max={24}
+              placeholder="8"
+              onCommit={(radius) => onPatch({ radius })}
+              disabled={disabled}
+            />
+          </div>
+          <div className="flex flex-wrap gap-x-5 gap-y-3">
+            <Field label="Rahmen">
+              <SegmentedControl
+                label="Rahmen"
+                size="sm"
+                value={(r.borderStyle as string | undefined) ?? "dashed"}
+                onChange={(v) => onPatch({ borderStyle: v === "dashed" ? null : v })}
+                options={[
+                  { value: "dashed", label: "Gestrichelt" },
+                  { value: "solid", label: "Durchgezogen" },
+                  { value: "none", label: "Ohne" },
+                ]}
+                disabled={disabled}
+              />
+            </Field>
+            <Field
+              label="Einlösen als"
+              info="Link = „Code einlösen →“ als Textlink. Button = ein gefüllter Button im Button-Look der Mail (Akzentfarbe, Button-Schriftfarbe und Button-Form unter „Farben & Schrift“)."
+            >
+              <SegmentedControl
+                label="Einlösen als"
+                size="sm"
+                value={(r.cta as string | undefined) ?? "link"}
+                onChange={(v) => onPatch({ cta: v === "link" ? null : v })}
+                options={[
+                  { value: "link", label: "Link" },
+                  { value: "button", label: "Button" },
+                ]}
+                disabled={disabled}
+              />
+            </Field>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <ColorField
+              label="Schriftfarbe"
+              info="„Dein Code“, Überschrift und Bedingungen. Leer = die Textfarbe der Mail, auf der Karte gut lesbar."
+              placeholder="Automatisch"
+              value={color("textColor")}
+              fallback={readableInk(style.textColor, ground)}
+              onChange={(textColor) => onPatch({ textColor })}
+              disabled={disabled}
+            />
+            <ColorField
+              label="Farbe des Codes"
+              info="Leer = die Überschriftenfarbe der Mail, auf der Karte gut lesbar."
+              placeholder="Automatisch"
+              value={color("codeColor")}
+              fallback={readableInk(style.headingColor, ground, 3)}
+              onChange={(codeColor) => onPatch({ codeColor })}
+              disabled={disabled}
+            />
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field label="Schrift des Codes" info={WEB_FONT_INFO}>
+              <FontSelect
+                value={(r.codeFont as string | undefined) ?? null}
+                emptyLabel="Wie die Überschriften"
+                onChange={(codeFont) => onPatch({ codeFont })}
+                disabled={disabled}
+              />
+            </Field>
           </div>
           <BoxFields {...props} />
         </>
+      );
+    }
+    case "countdown": {
+      // the automatic look (the pickers show it while a field is empty)
+      const look = countdownLook(block, style);
+      return (
+        <>
+          <div className="grid gap-3 sm:grid-cols-3">
+            <ColorField
+              label="Kacheln"
+              info="Die Kacheln hinter den Zahlen. Leer = automatisch: ein Ton heller (auf dunklem Hintergrund) bzw. etwas dunkler (auf hellem Hintergrund) als der Hintergrund."
+              placeholder="Automatisch"
+              value={color("tileColor")}
+              fallback={look.tile}
+              onChange={(tileColor) => onPatch({ tileColor })}
+              disabled={disabled}
+            />
+            <ColorField
+              label="Ziffern"
+              info="Leer = die Akzentfarbe, wenn sie auf den Kacheln gut lesbar ist, sonst die Überschriftenfarbe."
+              placeholder="Automatisch"
+              value={color("digitColor")}
+              fallback={look.digit}
+              onChange={(digitColor) => onPatch({ digitColor })}
+              disabled={disabled}
+            />
+            <ColorField
+              label="Beschriftung"
+              info="Tage, Stunden, Minuten, die Zeile im Bild und die Zeile mit dem genauen Ende darunter. Leer = eine gedämpfte, gut lesbare Schriftfarbe."
+              placeholder="Automatisch"
+              value={color("labelColor")}
+              fallback={look.label}
+              onChange={(labelColor) => onPatch({ labelColor })}
+              disabled={disabled}
+            />
+          </div>
+          <BoxFields
+            {...props}
+            backgroundInfo="Eine eigene Farbe hinter dem Countdown — zugleich der Grund des Countdown-Bilds, es geht nahtlos darin auf. Leer = die Kartenfarbe der Mail."
+          />
+        </>
+      );
+    }
+    case "products":
+      return (
+        <div className="grid gap-3 sm:grid-cols-2">
+          <ColorField
+            label="Kartenfarbe"
+            info="Eine Karte hinter jedem Produkt. Leer = ohne Karte, direkt auf der Kartenfarbe der Mail."
+            placeholder="Ohne Karte"
+            value={color("cardColor")}
+            fallback={style.cardBackground}
+            none
+            onChange={(cardColor) => onPatch({ cardColor })}
+            disabled={disabled}
+          />
+          <ColorField
+            label="Schriftfarbe"
+            info="Name, Preis und Beschreibung. Leer = die Überschriften- und Textfarbe der Mail, gut lesbar."
+            placeholder="Wie die Mail"
+            value={color("textColor")}
+            fallback={readableInk(style.textColor, color("cardColor") ?? style.cardBackground)}
+            onChange={(textColor) => onPatch({ textColor })}
+            disabled={disabled}
+          />
+        </div>
       );
     case "menu":
       return (

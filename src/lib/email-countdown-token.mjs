@@ -2,7 +2,9 @@
 // (/api/email-countdown/<token>): it carries only the deadline and the
 // language, signed with the same secret the unsubscribe links use, so the
 // route cannot be turned into a free image service for arbitrary content and
-// the URL reveals nothing about the recipient.
+// the URL reveals nothing about the recipient. A template's colours ride along
+// in the query, bound to the token by a signature of their own
+// (signCountdownColors).
 
 import { createHmac, timingSafeEqual } from "node:crypto";
 
@@ -55,4 +57,36 @@ export function verifyCountdownToken(token, secret) {
   }
   if (given.length !== expected.length || !timingSafeEqual(given, expected)) return null;
   return { expiresAt: new Date(Number(m[1]) * 1000).toISOString(), language: m[2] };
+}
+
+/** Characters of the colour signature (base64url of the HMAC — 132 bits). */
+const COLOR_SIG_CHARS = 22;
+
+/**
+ * The signature (`cs`) of a countdown image's colours: binds the canonical
+ * colour query (email-countdown-image.mjs countdownColorQuery — "bg=…&tile=…")
+ * to the token. Without it anyone could make the public route draw the image
+ * in colours no mail carries, and every distinct URL is a fresh render
+ * (~0.7 s of CPU) that neither the per-minute memo nor the CDN shares.
+ * @param {string} token  the signed countdown token of the URL
+ * @param {string} query  the canonical colour query
+ * @param {string | undefined} secret
+ * @returns {string | null} null without a secret, token or colours
+ */
+export function signCountdownColors(token, query, secret) {
+  if (!secret || typeof token !== "string" || !token || typeof query !== "string" || !query) return null;
+  return b64url(createHmac("sha256", secret).update(`colors.${token}.${query}`).digest()).slice(0, COLOR_SIG_CHARS);
+}
+
+/**
+ * Is `sig` the signature of these colours for this token?
+ * @param {string} token
+ * @param {string} query  the canonical colour query of the request
+ * @param {unknown} sig  the request's `cs`
+ * @param {string | undefined} secret
+ */
+export function verifyCountdownColors(token, query, sig, secret) {
+  const expected = signCountdownColors(token, query, secret);
+  if (!expected || typeof sig !== "string" || sig.length !== expected.length) return false;
+  return timingSafeEqual(Buffer.from(sig), Buffer.from(expected));
 }

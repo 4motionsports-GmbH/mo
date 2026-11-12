@@ -86,8 +86,10 @@ key `vorlage-<id>`, label „Vorlage: …“) — the format, the renderer and t
 [`EMAIL_TEMPLATES.md`](./EMAIL_TEMPLATES.md). Since format v2 (2026-11-11) a block document
 expresses free layouts — sections with up to four columns, background pictures, web fonts,
 per-block styling — and the KI-Gestalter builds them from a brief or a screenshot; inside a
-template the classic rows (product rows / grid, countdown, Mo's buttons) follow its card colour
-and side padding through a `sectionRow` override. A registered design (this recipe) is still the
+template the classic rows of the composer (Mo's offer rows and buttons) follow its card colour
+and side padding through a `sectionRow` override, while the template's own coupon, countdown and
+product lists are drawn in its fonts and colours (since 2026-11-12, the countdown picture in the
+block's colours — „Offer countdown, set card and coupon“ below). A registered design (this recipe) is still the
 way for what a block document cannot express. The template renderer and the classic shell share their
 CSS ([`email-shell-css.mjs`](../src/lib/email-shell-css.mjs)).
 
@@ -249,6 +251,22 @@ white ground, dark heading, red digits on light-grey tiles with a fine border, g
 sits without a break in the white card of the Performance design and on the white card of the
 classic design. After changing wording or colours, run the script again and commit the generated
 module.
+
+**Template colours** (2026-11-12). A template's countdown block ([`EMAIL_TEMPLATES.md`](./EMAIL_TEMPLATES.md)
+§2) draws the image in the template's look: the URL carries
+`?bg=111111&tile=292929&digit=ffd400&label=a1a1a1` (each exactly six hex digits — the ground, the
+tiles, the digits, the words: heading, units and „Angebot abgelaufen“; `&w=m` still picks the phone
+variant) and their signature `cs` — an HMAC over the token and the canonical colour query
+(`countdownColorQuery`, `signCountdownColors` in `email-countdown-token.mjs`, tested). The route
+draws only signed colours: an invalid value, a missing or wrong signature gives the light look — so
+nobody can make the public route render colours no mail carries, each distinct URL would otherwise
+be a fresh render that neither the memo nor the CDN shares. The colours are part of the per-minute
+memo key (the light look stays one image per token and variant). The glyphs are tinted by their
+alpha, the tiles' hairline is a shade of the tile colour (`countdownEdgeColor`), the ground is the
+colour of the mail row around it, and a coloured image is encoded without dithering so its flat
+ground matches that row (within one step of the 64-colour palette, ~30–40 KB for the hour). Without
+colour parameters the image is byte for byte the light one — the classic and Performance
+countdowns never send any.
 
 Fallbacks: the `alt` text „Dein Angebot gilt noch …“ for blocked images, the exact deadline always
 as an HTML line under the image, the same line as a snapshot in the text part; without a signing
@@ -634,7 +652,7 @@ documented in `.env.example`. The prompt once given for the default image is in
 | `src/lib/email-hero-references.mjs` | Product reference photos: selection, prompt block, load/scale, tested |
 | `src/lib/email-hero-qa.mjs` | Automatic picture check (vision model), verdict and re-render choice, tested |
 | `src/lib/email-hero-marking.mjs` | Machine-readable AI marking (IPTC/XMP + EXIF) in every hero file, tested |
-| `src/lib/email-countdown-image.mjs` + `api/email-countdown` | Live countdown GIF (ticks every minute for an hour) from pre-rendered glyphs, signed token (`email-countdown-token.mjs`), tested |
+| `src/lib/email-countdown-image.mjs` + `api/email-countdown` | Live countdown GIF (ticks every minute for an hour) from pre-rendered glyphs, signed token and signed template colours (`email-countdown-token.mjs`), tested |
 | `src/lib/offer-countdown.mjs` | The earlier deadline and the countdown line, tested |
 | `src/lib/discount-coupon.mjs` | Coupon wording and the `/discount/<code>` link, tested |
 | `src/lib/email-hero-blob.mjs` + `api/email-hero-image` | Private Blob write and public delivery of the hero pictures (with path validation); `erasableHeroPathnames` — what the erasure may delete (never a `campaign-default-…` file), tested |

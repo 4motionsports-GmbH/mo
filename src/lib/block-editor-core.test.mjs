@@ -407,6 +407,18 @@ test("styledFieldCount counts the design settings a block has", () => {
   assert.equal(styledFieldCount(at("b")), 2, "size m is the default");
   assert.equal(styledFieldCount(at("f")), 2);
   assert.equal(styledFieldCount({ type: "countdown" }), 0);
+  // the fixed blocks' look (12.11.2026): defaults are never stored, so they never count
+  const look = normalizeMailTemplateDoc({
+    blocks: [
+      { id: "cd", type: "countdown", tileColor: "#262626", digitColor: "#ffd400", background: "#111111" },
+      { id: "cp", type: "coupon", code: "X10", borderStyle: "dashed", radius: 8, cta: "link", cardColor: "#ffd400", codeFont: "bebas" },
+      { id: "pr", type: "products", refs: ["x"], textColor: "#ffffff" },
+    ],
+  });
+  const lookAt = (id) => findMailBlock(look, id).block;
+  assert.equal(styledFieldCount(lookAt("cd")), 3);
+  assert.equal(styledFieldCount(lookAt("cp")), 2, "dashed, 8 px and the link are the defaults");
+  assert.equal(styledFieldCount(lookAt("pr")), 1);
   for (const [type, keys] of Object.entries(BLOCK_STYLE_FIELDS)) {
     assert.ok(MAIL_BLOCK_CATALOG[type], type);
     for (const k of keys) assert.ok(k in MAIL_BLOCK_CATALOG[type].fields, `${type}.${k} is a catalog field`);

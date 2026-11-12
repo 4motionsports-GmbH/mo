@@ -10,7 +10,7 @@ import assert from "node:assert/strict";
 import { readFileSync, writeFileSync } from "node:fs";
 import { EMAIL_SHELL_CSS } from "./email-shell-css.mjs";
 import { lintOutlookHtml, MAIL_SIZE_BUDGET_BYTES } from "./email-outlook.mjs";
-import { MAIL_TEMPLATE_STARTERS, applyMergeFields, contrastRatio, normalizeMailTemplateDoc } from "./mail-template-doc.mjs";
+import { MAIL_TEMPLATE_STARTERS, applyMergeFields, contrastRatio, countdownLook, normalizeMailTemplateDoc } from "./mail-template-doc.mjs";
 import {
   MAIL_CARD_WIDTH,
   MAIL_FOOTER_MARKER,
@@ -704,15 +704,26 @@ test("coupon in a narrow column: the code shrinks to fit, the ticket fills the c
 
 test("coupon on a colour other than the card's: readable label, terms and link", () => {
   const style = { cardBackground: "#111111", textColor: "#ffffff", linkColor: "#ffffff", accentColor: "#ffd400" };
-  const html = renderMailTemplateHtml(docOf([{ type: "coupon", code: "DARK10", headline: "10 %", terms: "Bedingungen", background: "#ffffff" }], style), ctx());
-  const coupon = html.slice(html.indexOf("Dein Code") - 400, html.indexOf("Code einlösen") + 40);
-  assert.doesNotMatch(coupon, /color: #ffffff/);
-  assert.match(coupon, /color: #111111; Margin: 0; text-transform: uppercase;/);
-  assert.match(coupon, /color: #555555; Margin: 0;" align="center">Bedingungen/);
-  // on the card colour itself the template's colours stay
+  const blocks = [{ type: "coupon", code: "DARK10", headline: "10 %", terms: "Bedingungen", background: "#ffffff" }];
+  const slice = (html) => html.slice(html.indexOf("Dein Code") - 400, html.indexOf("Code einlösen") + 40);
+  // version 1: the classic coupon — dark label, grey terms
+  const v1 = slice(renderMailTemplateHtml({ ...docOf(blocks, style), v: 1 }, ctx()));
+  assert.doesNotMatch(v1, /color: #ffffff/);
+  assert.match(v1, /color: #111111; Margin: 0; text-transform: uppercase;/);
+  assert.match(v1, /color: #555555; Margin: 0;" align="center">Bedingungen/);
+  // format 2: the mail's text colour made readable, label and terms muted from it
+  const v2 = slice(renderMailTemplateHtml(docOf(blocks, style), ctx()));
+  assert.doesNotMatch(v2, /color: #ffffff/);
+  assert.match(v2, /color: #646464; Margin: 0; text-transform: uppercase;/);
+  assert.match(v2, /color: #646464; Margin: 0;" align="center">Bedingungen/);
+  assert.match(v2, /color: #111111; Margin: 0; font-weight: 700;" align="center">10 %/);
+  // on the card colour itself the template's colours stay (v2: the label muted)
   const onCard = renderMailTemplateHtml(docOf([{ type: "coupon", code: "DARK10", headline: "10 %" }], style), ctx());
-  assert.match(onCard, /color: #ffffff; Margin: 0; text-transform: uppercase;/);
+  assert.match(onCard, /color: #acacac; Margin: 0; text-transform: uppercase;/);
+  assert.match(onCard, /color: #ffffff; Margin: 0; font-weight: 700;" align="center">10 %/);
   assert.match(onCard, /border: 2px dashed #ffd400;/);
+  const onCardV1 = renderMailTemplateHtml({ ...docOf([{ type: "coupon", code: "DARK10", headline: "10 %" }], style), v: 1 }, ctx());
+  assert.match(onCardV1, /color: #ffffff; Margin: 0; text-transform: uppercase;/);
 });
 
 test("social icons can stand left or right", () => {
@@ -1132,4 +1143,207 @@ test("text part: menu lines, product lines from the slot, merged coupon terms", 
 test("the render context of a send: assets and footer of the fixtures are complete", () => {
   // guards the shared fixture context the snapshots were taken with
   assert.ok(FIXTURE_ASSETS.socialLinks.length >= 1 && FIXTURE_FOOTER.unsubscribeHtml.includes("unsubscribe"));
+});
+
+// ── the fixed blocks in the mail's look (coupon, countdown, products) ────────
+
+/** A countdown slot as mail-template-design.ts hands it over (signed URLs in the block's colours). */
+const countdownSlot = (extra = {}) => ({
+  html: "",
+  text: "Dein Angebot gilt noch 3 Tage",
+  countdown: {
+    imageUrl: "https://mo.example.com/api/email-countdown/tok?bg=111111&tile=292929&digit=ffd400&label=a1a1a1&cs=sig",
+    imageUrlMobile: "https://mo.example.com/api/email-countdown/tok?w=m&bg=111111&tile=292929&digit=ffd400&label=a1a1a1&cs=sig",
+    imageAlt: "Dein Angebot gilt noch 3 Tage und 4 Stunden",
+    imageWidth: 564,
+    imageHeight: 116,
+    imageWidthMobile: 350,
+    lead: "Dein Angebot gilt noch 3 Tage 4 Stunden",
+    until: "bis Sa., 12.12.2026, 23:59 Uhr",
+    ...extra,
+  },
+});
+/** A products slot (the rows' description and button label; null in the grid). */
+const productsSlot = (layout, n = 2) => ({
+  html: "",
+  text: "- Produkt 1 — 399,00 €",
+  products: {
+    layout,
+    items: Array.from({ length: n }, (_, i) => ({
+      ...product(i + 1, i === 1 ? { compareAtLabel: "499,00 €" } : {}),
+      description: layout === "rows" ? `Beschreibung ${i + 1}` : null,
+      ctaLabel: layout === "rows" ? "Zum Produkt" : null,
+    })),
+  },
+});
+/** The automatic look of the first countdown of a raw document. */
+const countdownLookOf = (doc) => {
+  const d = normalizeMailTemplateDoc(doc);
+  return countdownLook(d.blocks.find((b) => b.type === "countdown"), d.style);
+};
+const DARK_STYLE = { cardBackground: "#111111", textColor: "#eeeeee", headingColor: "#ffffff", accentColor: "#ffd400", buttonTextColor: "#111111", headingFont: "oswald", buttonShape: "square" };
+
+test("coupon look: card colour, frame style, corners, text and code colour, code font", () => {
+  const html = renderMailTemplateHtml(
+    docOf([{ type: "coupon", code: "GELB20", headline: "20 %", terms: "Nur online", cardColor: "#ffd400", borderStyle: "solid", radius: 16, textColor: "#222222", codeColor: "#000000", codeFont: "bebas", accent: "#111111" }]),
+    ctx()
+  );
+  assert.match(html, /border-spacing: 0; border: 2px solid #111111; border-radius: 16px;"/);
+  // the card's colour fills the cell (Word: the bgcolor), rounded inside the 2 px frame
+  assert.match(html, /<td align="center" bgcolor="#ffd400" style="mso-line-height-rule: exactly; padding: 16px 28px; background-color: #ffd400; border-radius: 14px;">/);
+  assert.match(html, /font-family: 'Bebas Neue', Impact, 'Arial Narrow', Arial, sans-serif; font-size: 24px; line-height: 30px; font-weight: 700; letter-spacing: 2px; color: #000000;/);
+  assert.match(html, /color: #222222; Margin: 0; text-transform: uppercase; letter-spacing: 1px;" align="center">Dein Code/);
+  assert.match(html, /color: #222222; Margin: 0;" align="center">Nur online/);
+  assert.match(html, /color: #111111; Margin: 0; font-weight: 700;" align="center">20 %/, "the headline in the frame colour");
+  // without a frame: no border at all, the corners stay
+  const none = renderMailTemplateHtml(docOf([{ type: "coupon", code: "X10", borderStyle: "none", radius: 0 }]), ctx());
+  assert.doesNotMatch(none, /border: 2px/);
+  assert.match(none, /border-spacing: 0; border-radius: 0px;"/);
+  assert.deepEqual(lint(html), []);
+  assert.deepEqual(lint(none), []);
+});
+
+test("coupon look (format 2): the code in the heading font and colour, texts in the text colour, made readable", () => {
+  const style = { headingFont: "playfair", headingColor: "#c61724", textColor: "#333333", fontFamily: "lato" };
+  const html = renderMailTemplateHtml(docOf([{ type: "coupon", code: "TREUE15", headline: "15 %", terms: "Einmalig" }], style), ctx());
+  assert.match(html, /font-family: 'Playfair Display', Georgia, 'Times New Roman', serif; font-size: 24px; line-height: 30px; font-weight: 700; letter-spacing: 2px; color: #c61724;/);
+  assert.match(html, /font-family: 'Lato', Arial, Helvetica, sans-serif; font-size: 14px; line-height: 1\.5; font-weight: 400; color: #333333; Margin: 0; font-weight: 700;" align="center">15 %/);
+  // version 1 keeps the classic coupon: the body font and the dark ink for the code
+  const v1 = renderMailTemplateHtml({ ...docOf([{ type: "coupon", code: "TREUE15", headline: "15 %" }], style), v: 1 }, ctx());
+  assert.match(v1, /font-family: 'Lato', Arial, Helvetica, sans-serif; font-size: 24px; line-height: 30px; font-weight: 700; letter-spacing: 2px; color: #111111;/);
+  // a heading colour that vanishes on the card gives way to a readable ink
+  const pale = renderMailTemplateHtml(docOf([{ type: "coupon", code: "PALE10" }], { headingColor: "#fafafa" }), ctx());
+  assert.match(pale, /letter-spacing: 2px; color: #111111; Margin: 4px 0 6px;" align="center">PALE10/);
+});
+
+test("coupon with cta button: a filled button in the mail's button look, Outlook's padding on the cell; never invisible", () => {
+  const style = { accentColor: "#008ccb", buttonTextColor: "#ffffff", buttonShape: "rounded" };
+  const html = renderMailTemplateHtml(docOf([{ type: "coupon", code: "SOMMER10", headline: "10 %", cta: "button" }], style), ctx());
+  const coupon = html.slice(html.indexOf("Dein Code"), html.indexOf(MAIL_FOOTER_MARKER));
+  assert.match(coupon, /<td align="center" bgcolor="#008ccb" style="mso-line-height-rule: exactly; mso-padding-alt: 16px 30px 16px 30px; border-radius: 8px;" valign="top">/);
+  assert.match(coupon, /<a href="https:\/\/motionsports\.de\/discount\/SOMMER10" target="_blank" style="font-size: 14px; line-height: 18px; color: #ffffff;[^"]*"><span style="color: #ffffff;">Code einlösen<\/span><\/a>/);
+  assert.doesNotMatch(coupon, /&#8594;/, "no arrow link");
+  assert.deepEqual(lint(html), []);
+  // an accent that vanishes on the coupon's ground (black on a black column): the frame colour fills it
+  const column = renderMailTemplateHtml(
+    docOf([{ type: "section", background: "#111111", columns: [{ blocks: [{ type: "coupon", code: "SPALTE15", cta: "button" }] }, { blocks: [{ type: "text", text: "x", color: "#ffffff" }] }] }], {
+      accentColor: "#111111",
+      buttonTextColor: "#ffd400",
+    }),
+    ctx()
+  );
+  assert.match(column, /border: 2px dashed #ffffff;/);
+  assert.match(column, /bgcolor="#ffffff" style="mso-line-height-rule: exactly; mso-padding-alt: /);
+  assert.match(column, /<span style="color: #111111;">Code einlösen<\/span>/);
+  assert.deepEqual(lint(column), []);
+});
+
+test("countdown (format 2): image in the block's colours, the phone variant hidden from Outlook, the line in the label colour", () => {
+  const doc = docOf([{ id: "cd", type: "countdown", until: "2030-01-01T00:00:00Z", heading: "Endet in" }], DARK_STYLE);
+  const html = renderMailTemplateHtml(doc, ctx({ slots: { cd: countdownSlot() } }));
+  // the heading in the heading font, a readable heading colour, on the card
+  assert.match(html, /bgcolor="#111111" style="mso-line-height-rule: exactly; padding: 24px 60px 8px;" valign="top">\s*<p style="[^"]*'Oswald'[^"]*color: #ffffff;[^"]*" align="center">Endet in<\/p>/);
+  // desktop image: Word sizes it by the content width; browsers by the CSS
+  assert.match(html, /<img src="https:\/\/mo\.example\.com\/api\/email-countdown\/tok\?bg=111111&amp;tile=292929&amp;digit=ffd400&amp;label=a1a1a1&amp;cs=sig" width="480" height="99" alt="Dein Angebot gilt noch 3 Tage und 4 Stunden" border="0" class="cd-desk" style="width: 100%; max-width: 564px; height: auto; display: block; Margin: 0 auto;">/);
+  assert.match(html, /<!--\[if !mso\]><!--><img src="https:\/\/mo\.example\.com\/api\/email-countdown\/tok\?w=m&amp;[^"]*" width="350" [^>]*class="cd-phone" style="[^"]*display: none;[^"]*"><!--<!\[endif\]-->/);
+  // the swap rule only in a mail that has the phone image
+  assert.match(html, /\.cd-desk \{ display: none !important; \}\s*\.cd-phone \{ display: block !important; \}/);
+  assert.doesNotMatch(renderMailTemplateHtml(docOf([{ type: "text", text: "x" }]), ctx()), /cd-phone/);
+  // the exact deadline under the image in the label colour (countdownLook)
+  assert.match(html, /color: #a1a1a1; Margin: 8px 0 0;" align="center"><strong>Dein Angebot gilt noch 3 Tage 4 Stunden<\/strong> &#8212; bis Sa\., 12\.12\.2026, 23:59 Uhr<\/p>/);
+  assert.deepEqual(lint(html), []);
+  // without a signing secret: no image, only the line
+  const bare = renderMailTemplateHtml(doc, ctx({ slots: { cd: countdownSlot({ imageUrl: null, imageUrlMobile: null }) } }));
+  assert.doesNotMatch(bare, /<img [^>]*cd-desk|cd-phone/);
+  assert.match(bare, /Margin: 0;" align="center"><strong>Dein Angebot gilt noch/);
+});
+
+test("countdown band: its background carries heading and image (the image's ground), spacing as set", () => {
+  const doc = docOf([{ id: "cd", type: "countdown", until: "2030-01-01T00:00:00Z", heading: "Nur noch kurz", background: "#ffd400", padTop: 40, padBottom: 30 }], { accentColor: "#ffd400" });
+  const html = renderMailTemplateHtml(doc, ctx({ slots: { cd: countdownSlot() } }));
+  assert.match(html, /bgcolor="#ffd400" style="mso-line-height-rule: exactly; padding: 40px 60px 8px;" valign="top">\s*<p style="[^"]*color: #111111;[^"]*" align="center">Nur noch kurz/);
+  assert.match(html, /bgcolor="#ffd400" style="mso-line-height-rule: exactly; padding: 4px 60px 30px;" valign="top">\s*<img /);
+  const look = countdownLookOf(doc);
+  assert.equal(look.bg, "#ffd400");
+  assert.match(html, new RegExp(`color: ${look.label}; Margin: 8px 0 0;`));
+  // no heading: the band's own default spacing around the image
+  const noHeading = renderMailTemplateHtml(docOf([{ id: "cd", type: "countdown", until: "2030-01-01T00:00:00Z", background: "#ffd400" }]), ctx({ slots: { cd: countdownSlot() } }));
+  assert.match(noHeading, /bgcolor="#ffd400" style="mso-line-height-rule: exactly; padding: 12px 60px 22px;" valign="top">\s*<img /);
+});
+
+test("countdown and products keep the pre-rendered rows of a version-1 document (and of a slot without data)", () => {
+  const rows = '\n                <tr><td>KLASSISCH</td></tr>';
+  const blocks = [{ id: "cd", type: "countdown", until: "2030-01-01T00:00:00Z", heading: "Endet in" }, { id: "pr", type: "products", refs: ["p1"], title: "Deals" }];
+  const slots = { cd: { ...countdownSlot(), html: rows }, pr: { ...productsSlot("rows"), html: rows } };
+  const v1 = renderMailTemplateHtml({ ...docOf(blocks), v: 1 }, ctx({ slots }));
+  assert.equal(v1.split("KLASSISCH").length - 1, 2);
+  assert.doesNotMatch(v1, /cd-desk|Beschreibung 1/);
+  const legacy = renderMailTemplateHtml(docOf(blocks), ctx({ slots: { cd: { html: rows, text: "x" }, pr: { html: rows, text: "x" } } }));
+  assert.equal(legacy.split("KLASSISCH").length - 1, 2);
+});
+
+test("products (format 2) rows: names in the heading font and colour, texts in the text colour, the button in the mail's look", () => {
+  const style = { headingFont: "oswald", headingColor: "#1f4e3d", textColor: "#333333", accentColor: "#1f4e3d", buttonTextColor: "#ffffff", buttonShape: "rounded" };
+  const html = renderMailTemplateHtml(docOf([{ id: "pr", type: "products", refs: ["p1", "p2"], title: "Für dich" }], style), ctx({ slots: { pr: productsSlot("rows") } }));
+  const list = body(html);
+  assert.match(list, /<p style="[^"]*'Oswald'[^"]*font-size: 14px;[^"]*color: #1f4e3d; Margin: 0 0 4px;" align="left"><a href="https:\/\/motionsports\.de\/products\/p1" target="_blank" style="text-decoration: none; color: #1f4e3d;">Produkt 1<\/a><\/p>/);
+  assert.match(list, /color: #333333; Margin: 0 0 8px;" align="left"><span style="text-decoration: line-through; color: #c61724;">499,00 €<\/span> <strong style="color: #333333;">399,00 €<\/strong><\/p>/);
+  assert.match(list, /color: #333333; Margin: 0;" align="left">Beschreibung 1<\/p>/);
+  assert.match(list, /bgcolor="#1f4e3d" style="mso-line-height-rule: exactly; mso-padding-alt: 12px 22px 12px 22px; border-radius: 8px;"/);
+  assert.match(list, /<span style="color: #ffffff;">Zum Produkt<\/span>/);
+  // picture in the left third, a hairline between the rows, the title in the heading colour
+  assert.match(list, /<img src="https:\/\/cdn\.shopify\.com\/p1\.jpg" class="prow-image" alt="Produkt 1" border="0" width="140" height="140"/);
+  assert.match(list, /border-top: 1px solid #e2e2e2;/);
+  assert.match(list, /color: #1f4e3d;[^"]*" align="center">Für dich<\/p>/);
+  assert.doesNotMatch(list, /#000000/, "no classic black");
+  assert.deepEqual(lint(html), []);
+});
+
+test("products (format 2) grid and cards: 2-up tiles with the Outlook ghost table, each product on its own card", () => {
+  const html = renderMailTemplateHtml(docOf([{ id: "pr", type: "products", refs: ["p1", "p2", "p3"], layout: "grid", cardColor: "#f4f6f8" }]), ctx({ slots: { pr: productsSlot("grid", 3) } }));
+  const list = body(html);
+  assert.equal((list.match(/class="grid-column"/g) ?? []).length, 3);
+  assert.match(list, /<!--\[if mso\]><table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td width="50%" valign="top"><!\[endif\]-->/);
+  assert.match(list, /<!--\[if mso\]><\/td><\/tr><tr><td colspan="2" align="center" valign="top"><!\[endif\]-->/, "the odd last tile spans both columns");
+  assert.equal((list.match(/bgcolor="#f4f6f8" style="width: 100%; direction: ltr; border-collapse: separate !important; border-spacing: 0; border-radius: 8px; background-color: #f4f6f8;"/g) ?? []).length, 3);
+  assert.match(list, /class="grid-image" alt="Produkt 1" border="0" width="204" height="204"/, "the picture inside the card's padding");
+  assert.deepEqual(lint(html), []);
+  const rows = renderMailTemplateHtml(docOf([{ id: "pr", type: "products", refs: ["p1", "p2"], cardColor: "#1a1a1a", textColor: "#ffffff" }], DARK_STYLE), ctx({ slots: { pr: productsSlot("rows") } }));
+  assert.equal((body(rows).match(/bgcolor="#1a1a1a" style="width: 100%;/g) ?? []).length, 2);
+  assert.doesNotMatch(body(rows), /border-top: 1px solid/, "cards instead of hairlines");
+  assert.match(body(rows), /text-decoration: none; color: #ffffff;">Produkt 1<\/a>/);
+  assert.deepEqual(lint(rows), []);
+});
+
+test("products on a dark card: on the dark ground when the colours read, else on the white panel", () => {
+  const readable = renderMailTemplateHtml(docOf([{ id: "pr", type: "products", refs: ["p1"] }], DARK_STYLE), ctx({ slots: { pr: productsSlot("rows", 1) } }));
+  assert.doesNotMatch(body(readable), /<td bgcolor="#ffffff" align="center" style="background-color: #ffffff; border-radius: 8px; padding: 16px;">/);
+  assert.match(body(readable), /color: #eeeeee; Margin: 0;" align="left">Beschreibung 1/);
+  assert.match(body(readable), /<td class="content-pad" align="center" bgcolor="#111111" style="mso-line-height-rule: exactly; padding: 10px 60px 20px;"/);
+  // black text on a black card (the style was never adapted): the classic white panel, inks that read on it
+  const unreadable = renderMailTemplateHtml(docOf([{ id: "pr", type: "products", refs: ["p1"] }], { cardBackground: "#111111" }), ctx({ slots: { pr: productsSlot("rows", 1) } }));
+  assert.match(body(unreadable), /<td bgcolor="#ffffff" align="center" style="background-color: #ffffff; border-radius: 8px; padding: 16px;">/);
+  assert.match(body(unreadable), /padding: 10px 44px 20px;/, "the panel's padding comes out of the row's");
+  assert.match(body(unreadable), /color: #111111; Margin: 0;" align="left">Beschreibung 1/);
+  assert.deepEqual(lint(unreadable), []);
+});
+
+test("a dark showcase of every new look field renders Outlook-safe and under the size budget", () => {
+  const doc = docOf(
+    [
+      { id: "cd", type: "countdown", until: "2030-01-01T00:00:00Z", heading: "Endet in", tileColor: "#262626", digitColor: "#f5c400", labelColor: "#bdbdbd", background: "#000000", padTop: 32, padBottom: 32 },
+      { id: "cp", type: "coupon", code: "BLACKWEEK25", headline: "25 %", terms: "bis 30.11.", cardColor: "#1f1f1f", borderStyle: "solid", radius: 20, textColor: "#eeeeee", codeColor: "#f5c400", codeFont: "bebas", cta: "button", background: "#000000", padTop: 20 },
+      { type: "section", columns: [{ blocks: [{ type: "coupon", code: "SPALTE15", cta: "button", borderStyle: "none", cardColor: "#262626" }] }, { blocks: [{ type: "coupon", code: "LINK10" }] }] },
+      { id: "pg", type: "products", refs: ["p1", "p2", "p3", "p4"], layout: "grid", title: "Deals", cardColor: "#1c1c1c", textColor: "#ffffff" },
+      { id: "pr", type: "products", refs: ["p1", "p2"], title: "Für dich", cardColor: "#1c1c1c" },
+    ],
+    DARK_STYLE
+  );
+  const slots = { cd: countdownSlot(), pg: productsSlot("grid", 4), pr: productsSlot("rows") };
+  for (const previewPlaceholders of [false, true]) {
+    const html = renderMailTemplateHtml(doc, ctx({ slots, previewPlaceholders }));
+    assert.deepEqual(lint(html), [], `preview=${previewPlaceholders}`);
+    assert.ok(bytes(html) < MAIL_SIZE_BUDGET_BYTES, `${bytes(html)} bytes`);
+    assert.doesNotMatch(html, /undefined|NaN|null/);
+  }
 });

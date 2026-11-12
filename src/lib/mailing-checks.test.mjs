@@ -85,6 +85,11 @@ test("image-heavy counts the content only — the legal footer's text and icons 
     base({ html: html(`<p>${"Viel Text über unsere Angebote. ".repeat(20)}</p><img src="https://x.de/a.jpg" alt="a"><img src="https://x.de/b.jpg" alt="b">${footer}`) })
   );
   assert.ok(!keys(withText.warnings).includes("image_heavy"));
+  // A countdown's phone twin is the same picture: one image, not two.
+  const countdownOnly = mailingChecks(
+    base({ html: html(`<img src="https://x.de/cd.gif" alt="Countdown" class="cd-desk"><!--[if !mso]><!--><img src="https://x.de/cd.gif?w=m" alt="Countdown" class="cd-phone"><!--<![endif]--><a href="https://motionsports.de">Zum Shop</a>${footer}`) })
+  );
+  assert.ok(!keys(countdownOnly.warnings).includes("image_heavy"));
 });
 
 test("visibleText drops markup, comments, styles and the hidden preheader filler", () => {

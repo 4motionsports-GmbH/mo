@@ -28,6 +28,13 @@
 // template's own look). New optional fields are OMITTED while unset, so a
 // version-1 document normalises to exactly the JSON it had.
 //
+// The fixed blocks in the mail's look (12.11.2026, owner: „those fixed
+// building blocks such as the countdown or the code should be editable … so
+// that it matches the template“): coupon, countdown and products take look
+// fields (card colour, frame, corners, text / code / tile / digit / label
+// colours, the code's font, link or button); unset, a format-2 document gives
+// them the look of its style (countdownLook here, the rest in the renderer).
+//
 // This module is the single description of the format: the block catalog
 // (labels, fields, limits, which use allows which block), normalisation of
 // untrusted input (API bodies, imports, AI output), validation with German
@@ -335,11 +342,13 @@ export const MAIL_BLOCK_CATALOG = Object.freeze({
     label: "Produkte",
     group: "angebot",
     description:
-      "Feste Produkte aus dem Katalog mit Bild, Name, aktuellem Preis und Link — für alle Empfänger gleich (z. B. die Deals der Woche).",
+      "Feste Produkte aus dem Katalog mit Bild, Name, aktuellem Preis und Link — für alle Empfänger gleich (z. B. die Deals der Woche). In Schriften, Farben und Button-Look der Mail.",
     fields: {
       title: "Überschrift über den Produkten oder leer",
       refs: "Katalog-Referenzen (Handle oder Handle~VariantenId), 1–8 Stück",
       layout: "rows (Zeilen mit Beschreibung) | grid (Raster, 2 pro Zeile)",
+      cardColor: "Farbe #rrggbb einer Karte hinter jedem Produkt oder leer (= ohne Karte, auf der Kartenfarbe der Mail)",
+      textColor: "Schriftfarbe #rrggbb von Name, Preis und Beschreibung oder leer (= Überschriften- und Textfarbe der Mail)",
     },
     personal: true,
     bulk: true,
@@ -370,12 +379,19 @@ export const MAIL_BLOCK_CATALOG = Object.freeze({
     label: "Gutschein-Code",
     group: "angebot",
     description:
-      "Ein für alle gleicher Rabattcode (in Shopify angelegt) als Gutschein-Karte mit „Code einlösen“-Link, der den Code im Warenkorb hinterlegt.",
+      "Ein für alle gleicher Rabattcode (in Shopify angelegt) als Gutschein-Karte mit „Code einlösen“-Link oder -Button, der den Code im Warenkorb hinterlegt. Ohne eigene Farben in Schrift und Farben der Mail.",
     fields: {
       code: "Der Code, genau wie in Shopify (z. B. BLACKWEEK25)",
       headline: "Was er bringt, z. B. „25 % auf alles“",
       terms: "Bedingungen, z. B. „Gültig bis 30.11. · nicht kombinierbar“",
-      accent: "Farbe #rrggbb des Rahmens oder leer (= Akzentfarbe)",
+      accent: "Farbe #rrggbb von Rahmen und Überschrift oder leer (= Rahmen in der Akzentfarbe, Überschrift in der Schriftfarbe)",
+      cardColor: "Farbe #rrggbb der Gutschein-Karte selbst oder leer (= ohne Füllung, der Hintergrund drumherum)",
+      borderStyle: "Rahmen: dashed (gestrichelt, Standard) | solid (durchgezogen) | none (ohne Rahmen)",
+      radius: "abgerundete Ecken der Karte in px, 0–24 (Standard 8)",
+      textColor: "Schriftfarbe #rrggbb von „Dein Code“, Überschrift und Bedingungen oder leer (= Textfarbe der Mail, auf der Karte gut lesbar)",
+      codeColor: "Farbe #rrggbb des Codes oder leer (= Überschriftenfarbe der Mail)",
+      codeFont: "Schrift des Codes (Schlüssel wie fontFamily) oder leer (= Schrift der Überschriften)",
+      cta: "link (Standard: der Link „Code einlösen →“) | button (gefüllter Button im Button-Look der Mail: Akzentfarbe, Button-Schriftfarbe, Button-Form)",
       ...BOX_FIELD_DOCS,
     },
     personal: true,
@@ -385,8 +401,19 @@ export const MAIL_BLOCK_CATALOG = Object.freeze({
   countdown: {
     label: "Countdown",
     group: "angebot",
-    description: "Ein Live-Countdown bis zu einem festen Zeitpunkt — die Zahlen stimmen bei jedem Öffnen.",
-    fields: { until: "Ende als Datum/Uhrzeit (ISO)", heading: "Text darüber oder leer" },
+    description:
+      "Ein Live-Countdown bis zu einem festen Zeitpunkt — die Zahlen stimmen bei jedem Öffnen. Ohne eigene Farben passt er sich dem Stil der Mail an (Hintergrund, Akzentfarbe, Schrift).",
+    fields: {
+      until: "Ende als Datum/Uhrzeit (ISO)",
+      heading: "Text darüber oder leer",
+      tileColor: "Farbe #rrggbb der Zahlen-Kacheln oder leer (= automatisch ein Ton heller bzw. dunkler als der Hintergrund)",
+      digitColor: "Farbe #rrggbb der Ziffern oder leer (= Akzentfarbe, wenn sie auf den Kacheln gut lesbar ist, sonst Überschriftenfarbe)",
+      labelColor:
+        "Farbe #rrggbb der Beschriftungen — Tage/Stunden/Minuten, die Zeile im Bild und die Zeile darunter — oder leer (= gedämpfte, gut lesbare Schriftfarbe)",
+      padTop: BOX_FIELD_DOCS.padTop,
+      padBottom: BOX_FIELD_DOCS.padBottom,
+      background: "Hintergrundfarbe #rrggbb des Bausteins, zugleich der Grund des Countdown-Bilds (nahtlos), oder leer (= Kartenfarbe)",
+    },
     personal: true,
     bulk: true,
     inColumns: false,
@@ -650,6 +677,18 @@ function boxInto(out, r, { background = true } = {}) {
   return out;
 }
 
+/** Copy optional #rrggbb fields (omitted while unset or invalid). */
+function colorsInto(out, r, keys) {
+  for (const k of keys) {
+    const c = color(r[k]);
+    if (c) out[k] = c;
+  }
+  return out;
+}
+
+/** The corner radius of a coupon card (px) while its `radius` is unset. */
+export const COUPON_RADIUS = 8;
+
 /** Copy the optional type settings of a text block (omitted while unset). */
 function textStyleInto(out, r, { maxSize = 72 } = {}) {
   const fontSize = nint(r.fontSize, 10, maxSize);
@@ -875,14 +914,17 @@ export function normalizeMailBlock(raw, takenIds = new Set(), opts = {}) {
       if (border) out.borderColor = border;
       return boxInto(out, r);
     }
-    case "products":
-      return {
+    case "products": {
+      const out = {
         id,
         type,
         title: line(r.title, L.headingChars),
         refs: refs(r.refs),
         layout: oneOf(r.layout, ["rows", "grid"], "rows"),
       };
+      colorsInto(out, r, ["cardColor", "textColor"]);
+      return out;
+    }
     case "product": {
       const out = {
         id,
@@ -911,10 +953,20 @@ export function normalizeMailBlock(raw, takenIds = new Set(), opts = {}) {
       };
       const accent = color(r.accent);
       if (accent) out.accent = accent;
+      colorsInto(out, r, ["cardColor"]);
+      if (r.borderStyle === "solid" || r.borderStyle === "none") out.borderStyle = r.borderStyle;
+      const radius = nint(r.radius, 0, 24);
+      if (radius != null && radius !== COUPON_RADIUS) out.radius = radius;
+      colorsInto(out, r, ["textColor", "codeColor"]);
+      if (isMailFontKey(r.codeFont)) out.codeFont = r.codeFont;
+      if (r.cta === "button") out.cta = "button";
       return boxInto(out, r);
     }
-    case "countdown":
-      return { id, type, until: isoDate(r.until), heading: line(r.heading, L.headingChars) };
+    case "countdown": {
+      const out = { id, type, until: isoDate(r.until), heading: line(r.heading, L.headingChars) };
+      colorsInto(out, r, ["tileColor", "digitColor", "labelColor"]);
+      return boxInto(out, r);
+    }
     case "menu": {
       /** @type {Array<{ label: string, href: string }>} */
       const items = [];
@@ -1218,6 +1270,129 @@ export function contrastRatio(a, b) {
   return (hi + 0.05) / (lo + 0.05);
 }
 
+/** The darker or the lighter ink (#111111 / #ffffff), whichever reads better on `bg`. */
+export function strongInk(bg) {
+  const dark = contrastRatio("#111111", bg) ?? 21;
+  const light = contrastRatio("#ffffff", bg) ?? 1;
+  return dark >= light ? "#111111" : "#ffffff";
+}
+
+/** `preferred` when it reads on `bg` (WCAG ratio ≥ `min`), else `fallback` (the stronger ink). */
+export function readableInk(preferred, bg, min = 4.5, fallback = strongInk(bg)) {
+  const ratio = contrastRatio(preferred, bg);
+  return ratio == null || ratio >= min ? preferred : fallback;
+}
+
+/**
+ * The colour `t` (0–1) of the way from `a` to `b` (sRGB, rounded), #rrggbb —
+ * `a` itself when either is not a #rrggbb colour.
+ * @param {string} a @param {string} b @param {number} t
+ */
+export function mixColor(a, b, t) {
+  const pa = /^#([0-9a-f]{6})$/i.exec(String(a ?? ""));
+  const pb = /^#([0-9a-f]{6})$/i.exec(String(b ?? ""));
+  if (!pa || !pb) return a;
+  const k = Math.min(1, Math.max(0, t));
+  return `#${[0, 2, 4]
+    .map((i) => {
+      const x = parseInt(pa[1].slice(i, i + 2), 16);
+      const y = parseInt(pb[1].slice(i, i + 2), 16);
+      return Math.round(x + (y - x) * k)
+        .toString(16)
+        .padStart(2, "0");
+    })
+    .join("")}`;
+}
+
+/**
+ * A muted ink for small print and labels: `base` (else the stronger ink of the
+ * first ground) faded toward the first ground as far as it still reads at
+ * 4.5 : 1 on every one of `grounds` — at most 35 % of the way.
+ * @param {string} base
+ * @param {string | ReadonlyArray<string>} grounds
+ */
+export function mutedInk(base, grounds) {
+  const list = (Array.isArray(grounds) ? grounds : [grounds]).filter((g) => luminance(g) != null);
+  if (list.length === 0) return base;
+  const worst = (/** @type {string} */ c) => Math.min(...list.map((g) => contrastRatio(c, g) ?? 21));
+  let solid = luminance(base) != null && worst(base) >= 4.5 ? base : strongInk(list[0]);
+  const other = solid === "#111111" ? "#ffffff" : "#111111";
+  if (worst(solid) < 4.5 && worst(other) > worst(solid)) solid = other;
+  for (const t of [0.35, 0.3, 0.25, 0.2, 0.15, 0.1, 0.05]) {
+    const c = mixColor(solid, list[0], t);
+    if (worst(c) >= 4.5) return c;
+  }
+  return solid;
+}
+
+/**
+ * A shade of `ground` that is visibly different from it — lighter on a dark
+ * ground, slightly darker on a light one (#ffffff → #f5f5f5, the classic
+ * countdown tile; #111111 → #292929): the first step of 2 % toward white /
+ * black that reaches a contrast of 1.22 : 1 (dark) or 1.08 : 1 (light).
+ * @param {string} ground
+ */
+export function shadeOf(ground) {
+  const dark = strongInk(ground) === "#ffffff";
+  const toward = dark ? "#ffffff" : "#000000";
+  const target = dark ? 1.22 : 1.08;
+  for (let k = 2; k <= 20; k++) {
+    const c = mixColor(ground, toward, k * 0.02);
+    if ((contrastRatio(c, ground) ?? 21) >= target) return c;
+  }
+  return mixColor(ground, toward, 0.4);
+}
+
+/**
+ * The colours of a countdown block — its own fields over the automatic look
+ * of the document style (format 2): `bg` = the block's background, else the
+ * card colour (the image's own ground, so it blends into its row); `tile` = a
+ * visibly different shade of it (shadeOf); `digit` = the accent colour when
+ * it reads on the tiles (≥ 3 : 1), else the heading colour, else the stronger
+ * ink; `label` (units, the line in the image, the line under it) = a muted
+ * ink that reads on ground and tiles (mutedInk of the text colour).
+ * @param {Record<string, any> | null | undefined} block  the countdown block (background, tileColor, digitColor, labelColor)
+ * @param {Record<string, any> | null | undefined} style  the document style
+ * @returns {{ bg: string, tile: string, digit: string, label: string }}
+ */
+export function countdownLook(block, style) {
+  const s = { ...DEFAULT_MAIL_STYLE, ...(style ?? {}) };
+  const bg = color(block?.background) ?? color(s.cardBackground) ?? DEFAULT_MAIL_STYLE.cardBackground;
+  const tile = color(block?.tileColor) ?? shadeOf(bg);
+  const reads = (/** @type {unknown} */ c) => {
+    const hex = color(c);
+    return hex && (contrastRatio(hex, tile) ?? 0) >= 3 ? hex : null;
+  };
+  const digit = color(block?.digitColor) ?? reads(s.accentColor) ?? reads(s.headingColor) ?? strongInk(tile);
+  const label = color(block?.labelColor) ?? mutedInk(color(s.textColor) ?? DEFAULT_MAIL_STYLE.textColor, [bg, tile]);
+  return { bg, tile, digit, label };
+}
+
+// ── format version ───────────────────────────────────────────────────────────
+
+/**
+ * The format version a RAW document declares (`v`): 1 for a document written
+ * before format 2, else the current version — a document without `v` (an
+ * import, a request body, AI output) reads as current. Normalising writes the
+ * current version, so only a raw `"v": 1` document reads as 1: the renderer
+ * keeps the classic look of the fixed blocks (coupon, countdown, products)
+ * there, byte for byte; from format 2 on they take the document's style.
+ * @param {unknown} raw
+ * @returns {number}
+ */
+export function docFormatVersion(raw) {
+  let v = raw;
+  if (typeof v === "string") {
+    try {
+      v = JSON.parse(v);
+    } catch {
+      v = null;
+    }
+  }
+  const n = v && typeof v === "object" && !Array.isArray(v) ? /** @type {Record<string, unknown>} */ (v).v : undefined;
+  return typeof n === "number" && Number.isInteger(n) && n >= 1 && n < MAIL_TEMPLATE_DOC_VERSION ? n : MAIL_TEMPLATE_DOC_VERSION;
+}
+
 // ── merge fields ─────────────────────────────────────────────────────────────
 
 /**
@@ -1349,11 +1524,11 @@ export function validateMailTemplateDoc(doc, use, opts = {}) {
     }
     return style.cardBackground ?? "#ffffff";
   };
-  const contrast = (b, fg, bg, min) => {
+  const contrast = (b, fg, bg, min, what = "Schrift auf dem Hintergrund") => {
     if (!fg || !bg) return;
     const ratio = contrastRatio(fg, bg);
     if (ratio != null && ratio < min) {
-      warn(b, `${nameOf(b)}: Schrift auf dem Hintergrund schlecht lesbar (Kontrast ${ratio.toFixed(1).replace(".", ",")} : 1) — kräftigere bzw. hellere Farbe wählen.`);
+      warn(b, `${nameOf(b)}: ${what} schlecht lesbar (Kontrast ${ratio.toFixed(1).replace(".", ",")} : 1) — kräftigere bzw. hellere Farbe wählen.`);
     }
   };
 
@@ -1393,6 +1568,8 @@ export function validateMailTemplateDoc(doc, use, opts = {}) {
         break;
       case "products":
         if (b.refs.length === 0) err(b, `${label}: noch kein Produkt gewählt.`);
+        // an own text colour stands as set (without one the renderer picks a readable ink)
+        contrast(b, b.textColor, b.cardColor ?? bg, 4.5);
         break;
       case "product":
         if (!b.ref) err(b, `${label}: noch kein Produkt gewählt.`);
@@ -1405,11 +1582,27 @@ export function validateMailTemplateDoc(doc, use, opts = {}) {
         else if (!/^[A-Z0-9][A-Z0-9_-]{1,39}$/.test(b.code)) err(b, `${label}: Der Code darf nur Buchstaben, Ziffern, - und _ enthalten.`);
         if (!b.headline) warn(b, `${label}: Ohne Text darüber sieht niemand, was der Code bringt.`);
         if (use === "personal") warn(b, `${label}: Ein fester Code steht in JEDER persönlichen Mail — der persönliche Rabatt kommt über „Mos Angebot“.`);
+        {
+          // Own colours stand as set — judged on the card's own colour (else the
+          // colour around it); without them the renderer picks readable inks.
+          const ground = b.cardColor ?? bg;
+          contrast(b, b.textColor, ground, 4.5);
+          contrast(b, b.codeColor, ground, 3, "Code auf der Karte");
+          if (b.headline && b.accent && b.cardColor) contrast(b, b.accent, ground, 3, "Überschrift in der Rahmenfarbe");
+          if (b.cta === "button") contrast(b, style.buttonTextColor, style.accentColor, 3, "Button-Schrift auf der Buttonfarbe");
+        }
         break;
-      case "countdown":
+      case "countdown": {
         if (!b.until) err(b, `${label}: Ende fehlt.`);
         else if (Date.parse(b.until) <= now) err(b, `${label}: Das Ende liegt in der Vergangenheit.`);
+        const look = countdownLook(b, style);
+        if (b.digitColor) contrast(b, b.digitColor, look.tile, 3, "Ziffern auf den Kacheln");
+        if (b.labelColor) {
+          contrast(b, b.labelColor, look.bg, 4.5, "Beschriftung auf dem Hintergrund");
+          contrast(b, b.labelColor, look.tile, 4.5, "Beschriftung auf den Kacheln");
+        }
         break;
+      }
       case "menu":
         if (!b.items?.length) err(b, `${label}: noch kein Link eingetragen.`);
         else if (b.items.some((it) => !it.label || !it.href)) err(b, `${label}: Jeder Link braucht Text und Adresse (https://…).`);
