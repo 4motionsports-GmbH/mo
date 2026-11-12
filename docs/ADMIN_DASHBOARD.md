@@ -1572,6 +1572,10 @@ or as the design of Mo's personal mails (module, format, renderer, AI and upload
 [`VorlagenTab.tsx`](../src/app/admin/VorlagenTab.tsx) (the list with where each template is in
 use), client workspace [`vorlagen/VorlagenWorkspace.tsx`](../src/app/admin/vorlagen/VorlagenWorkspace.tsx).
 
+- **Width** — the editor (and a Rundmail's „Inhalt“) asks the shell for the whole screen width while
+  it is open (`useFullWidthLayout`, [`lib/shell-layout.tsx`](../src/app/admin/lib/shell-layout.tsx);
+  up to 1,920 px instead of the shell's `max-w-7xl`); the preview column never gets narrower than the
+  mail at 100 %, fills the screen height and stays in view while the blocks scroll (≥ 1280 px wide).
 - **List** — Aktiv · Archiv, „Importieren“ (a `.json` exported here or elsewhere), „Neue Vorlage“
   (dialog: name, the starter „Black Week“ / „Newsletter“ / „Persönliche Kampagne“ / „Leer“,
   description). One card per template: name, badge „Persönliche Mails + Rundmail“ (has „Mos

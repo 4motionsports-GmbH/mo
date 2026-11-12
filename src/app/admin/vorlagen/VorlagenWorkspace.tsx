@@ -70,6 +70,7 @@ import {
 import { adminFetch, errorMessage } from "../lib/admin-fetch";
 import { BlockEditor, type MailDoc, type MailDocChange } from "./BlockEditor";
 import { DesignerPanel, DesignerToggle } from "./DesignerPanel";
+import { useFullWidthLayout } from "../lib/shell-layout";
 import { LivePreview } from "./LivePreview";
 import { useDesignerSession } from "./use-designer-session";
 import { useDocHistory } from "./use-doc-history";
@@ -388,6 +389,8 @@ function TemplateEditorView({
   onClose: () => void;
   onOpen: (id: number) => void;
 }) {
+  // The editor and its live preview use the whole screen width (the list keeps the shell's width).
+  useFullWidthLayout();
   const { confirm, confirmDialog } = useConfirm();
   const [loaded, setLoaded] = React.useState<FullTemplate | null>(null);
   const [loadError, setLoadError] = React.useState<string | null>(null);
@@ -685,7 +688,7 @@ function TemplateEditorView({
         </Field>
       </div>
 
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)]">
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(41rem,1.15fr)] 2xl:grid-cols-[minmax(0,1fr)_minmax(41rem,1.3fr)]">
         <div className="flex min-w-0 flex-col gap-3">
           {designerOpen && aiConfigured && (
             <DesignerPanel
@@ -714,7 +717,7 @@ function TemplateEditorView({
             uploadConfigured={uploadConfigured}
           />
         </div>
-        <div className="flex min-w-0 flex-col gap-2 xl:sticky xl:top-4 xl:self-start">
+        <div className="flex min-w-0 flex-col gap-2 xl:sticky xl:top-[4.5rem] xl:h-[calc(100dvh-8.5rem)] xl:self-start">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <p className="text-sm font-semibold">Vorschau</p>
             <SegmentedControl

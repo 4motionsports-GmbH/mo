@@ -10,6 +10,7 @@
 // Keyboard: bare digits 1…9/0 jump to the n-th screen, `/` focuses the Kunden
 // search — both ignored while typing in a field or with a modifier held.
 
+import { ShellLayoutProvider } from "./lib/shell-layout";
 import * as React from "react";
 import Link, { useLinkStatus } from "next/link";
 import { useRouter } from "next/navigation";
@@ -214,6 +215,8 @@ export function AdminShell({
   const meta = adminTabMeta(tab);
   const labelsVisible = useMediaQuery("(min-width: 1280px)", true);
   const [drawerOpen, setDrawerOpen] = React.useState(false);
+  // A work area next to a live mail preview asks for the whole width (lib/shell-layout).
+  const [fullWidth, setFullWidth] = React.useState(false);
 
   // Close the drawer once the navigation landed on the new screen.
   React.useEffect(() => {
@@ -325,10 +328,10 @@ export function AdminShell({
         <main
           className={cn(
             "mx-auto w-full flex-1 px-4 pb-16 pt-6 sm:px-6",
-            meta.wide ? "max-w-7xl" : "max-w-5xl"
+            fullWidth ? "max-w-[120rem]" : meta.wide ? "max-w-7xl" : "max-w-5xl"
           )}
         >
-          {children}
+          <ShellLayoutProvider value={setFullWidth}>{children}</ShellLayoutProvider>
         </main>
       </div>
 

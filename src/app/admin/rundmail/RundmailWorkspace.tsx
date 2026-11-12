@@ -76,6 +76,7 @@ import { adminFetch, errorMessage } from "../lib/admin-fetch";
 import { EmailPreviewButton } from "../EmailPreviewButton";
 import { BlockEditor, type MailDoc } from "../vorlagen/BlockEditor";
 import { DesignerPanel, DesignerToggle } from "../vorlagen/DesignerPanel";
+import { useFullWidthLayout } from "../lib/shell-layout";
 import { LivePreview } from "../vorlagen/LivePreview";
 import { useDesignerSession } from "../vorlagen/use-designer-session";
 import { useDocHistory } from "../vorlagen/use-doc-history";
@@ -338,6 +339,8 @@ export function RundmailWorkspace({
   const [tab, setTab] = React.useState(
     initialView && (RUNDMAIL_VIEWS as readonly string[]).includes(initialView) ? initialView : defaultTab
   );
+  // „Inhalt“ (editor + live preview) uses the whole screen width.
+  useFullWidthLayout(tab === "inhalt");
   // The tab is linkable (`?view=`), kept in sync without a server render.
   React.useEffect(() => {
     const url = new URL(window.location.href);
@@ -764,7 +767,7 @@ export function RundmailWorkspace({
             </>
           )}
 
-          <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)]">
+          <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(41rem,1.15fr)] 2xl:grid-cols-[minmax(0,1fr)_minmax(41rem,1.3fr)]">
             <div className="flex min-w-0 flex-col gap-3">
               {designerOpen && aiConfigured && !frozen && (
                 <DesignerPanel
@@ -808,7 +811,7 @@ export function RundmailWorkspace({
               </Field>
               <BlockEditor doc={doc} onChange={setDoc} use="bulk" issues={issues} uploadConfigured={uploadConfigured} disabled={frozen} />
             </div>
-            <div className="flex min-w-0 flex-col gap-2 xl:sticky xl:top-4 xl:self-start">
+            <div className="flex min-w-0 flex-col gap-2 xl:sticky xl:top-[4.5rem] xl:h-[calc(100dvh-8.5rem)] xl:self-start">
               <p className="text-sm font-semibold">Vorschau</p>
               <LivePreview doc={doc} use="bulk" subject={subject} preheader={preheader} language={language} title={`Vorschau ${campaign.name}`} />
             </div>

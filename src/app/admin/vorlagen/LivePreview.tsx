@@ -78,7 +78,7 @@ export function LivePreview({
   }, [payload]);
 
   return (
-    <div className="flex h-full min-h-[560px] flex-col">
+    <div className="flex min-h-[560px] flex-1 flex-col xl:min-h-0">
       {use === "personal" && (
         <div className="flex items-center justify-center">
           <SegmentedControl
