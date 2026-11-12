@@ -23,7 +23,14 @@ import {
   type ContactFrequencyWarning,
 } from "./contact-frequency.mjs";
 
-export type { ContactFrequencySettings, ContactFrequencyWarning };
+import {
+  DEFAULT_DESIGNER_SETTINGS,
+  DESIGNER_SETTINGS_KEY,
+  parseDesignerSettings,
+  type DesignerSettings,
+} from "./mail-template-designer-settings.mjs";
+
+export type { ContactFrequencySettings, ContactFrequencyWarning, DesignerSettings };
 
 /** SQLSTATE 42P01 (undefined_table) on the error or one level down — the
  * code shipped before migration 0078 ran. */
@@ -80,6 +87,63 @@ export async function setContactFrequencySettings(
   } catch (err) {
     if (isMissingTable(err)) return { ok: false, reason: "missing_table" };
     reportError(err, { route: "lib/admin-settings-store", phase: "setContactFrequencySettings" });
+    return { ok: false, reason: "failed" };
+  }
+}
+
+/**
+ * The KI-Gestalter settings (model, effort, freedom, capabilities switch,
+ * house style — mail-template-designer-settings.mjs). Defaults without a
+ * database, without a stored row, before migration 0078 (no error report) and
+ * on any read error — a stored row never breaks a run.
+ */
+export async function getDesignerSettings(sql: Sql | null = getSql()): Promise<DesignerSettings> {
+  if (!sql) return { ...DEFAULT_DESIGNER_SETTINGS } as DesignerSettings;
+  try {
+    const rows = (await sql`
+      SELECT value FROM admin_settings WHERE key = ${DESIGNER_SETTINGS_KEY}
+    `) as Array<{ value: unknown }>;
+    return parseDesignerSettings(rows[0]?.value);
+  } catch (err) {
+    if (!isMissingTable(err)) {
+      reportError(err, { route: "lib/admin-settings-store", phase: "getDesignerSettings" });
+    }
+    return { ...DEFAULT_DESIGNER_SETTINGS } as DesignerSettings;
+  }
+}
+
+export type SaveDesignerSettingsResult =
+  | { ok: true; settings: DesignerSettings }
+  | { ok: false; reason: "no_db" | "missing_table" | "failed" };
+
+/**
+ * Store the KI-Gestalter settings (UPSERT). The caller validated them
+ * (validateDesignerSettingsInput); the stored value is parsed back so what the
+ * page shows is what every run will use.
+ */
+export async function setDesignerSettings(
+  settings: DesignerSettings,
+  sql: Sql | null = getSql()
+): Promise<SaveDesignerSettingsResult> {
+  if (!sql) return { ok: false, reason: "no_db" };
+  const value = JSON.stringify({
+    model: settings.model,
+    effort: settings.effort,
+    freedom: settings.freedom,
+    proactive: settings.proactive,
+    houseStyle: settings.houseStyle,
+  });
+  try {
+    const rows = (await sql`
+      INSERT INTO admin_settings (key, value, updated_at)
+      VALUES (${DESIGNER_SETTINGS_KEY}, ${value}::jsonb, now())
+      ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()
+      RETURNING value
+    `) as Array<{ value: unknown }>;
+    return { ok: true, settings: parseDesignerSettings(rows[0]?.value ?? value) };
+  } catch (err) {
+    if (isMissingTable(err)) return { ok: false, reason: "missing_table" };
+    reportError(err, { route: "lib/admin-settings-store", phase: "setDesignerSettings" });
     return { ok: false, reason: "failed" };
   }
 }
