@@ -9,9 +9,13 @@
 //     a template with „Mos persönlicher Text“ it works as a design for Mo's
 //     personal mails, so its results keep Mo's blocks), „Rückgängig“ (several
 //     steps; taking back an AI result shows in the conversation), Speichern
-//     (version-checked), Duplizieren, Exportieren, Archivieren. Leaving (←
-//     Alle Vorlagen, Duplizieren) asks first while the AI works or with
-//     unsaved changes.
+//     (version-checked), Duplizieren, Exportieren, Änderungen verwerfen,
+//     Archivieren. Unsaved changes are kept as a draft on this device
+//     (use-editor-draft.tsx) — put back when the template opens again, the
+//     list marks the template —, so leaving (← Alle Vorlagen) asks first only
+//     while the AI works, Duplizieren also with unsaved changes (the copy is
+//     made from the saved version); closing or reloading the tab asks while
+//     changes are unsaved.
 // A template with „Mos persönlicher Text“ appears as a design in
 // Einstellungen (Kampagne / Marketing) and in the campaign editor; every
 // template can start a Rundmail. All writes go through /api/admin/vorlagen.
@@ -27,12 +31,14 @@ import {
   FileUp,
   LayoutTemplate,
   Plus,
+  RotateCcw,
   Save,
   Undo2,
 } from "lucide-react";
 import {
   MAIL_TEMPLATE_STARTERS,
   docSupportsPersonal,
+  normalizeMailTemplateDoc,
   templateExportFile,
   validateMailTemplateDoc,
 } from "@/lib/mail-template-doc.mjs";
@@ -67,6 +73,7 @@ import { DesignerPanel, DesignerToggle } from "./DesignerPanel";
 import { LivePreview } from "./LivePreview";
 import { useDesignerSession } from "./use-designer-session";
 import { useDocHistory } from "./use-doc-history";
+import { EditorDraftNotice, EditorDraftStatus, useEditorDraft, useStoredEditorDrafts } from "./use-editor-draft";
 
 export interface VorlageMeta {
   id: number;
@@ -223,55 +230,68 @@ export function VorlagenWorkspace({
           </CardContent>
         </Card>
       ) : (
-        <div className="grid gap-3 md:grid-cols-2 2xl:grid-cols-3">
-          {visible.map((t) => (
-            <Card key={t.id} className="flex flex-col">
-              <CardContent className="flex flex-1 flex-col gap-2 p-4 pt-4">
-                <div className="flex flex-wrap items-center gap-1.5">
-                  <button type="button" className="truncate text-left text-base font-semibold hover:underline" onClick={() => open(t.id)}>
-                    {t.name}
-                  </button>
-                  {t.supportsPersonal ? (
-                    <StatusBadge tone="accent" dot={false}>
-                      Persönliche Mails + Rundmail
-                    </StatusBadge>
-                  ) : (
-                    <StatusBadge tone="neutral" dot={false}>
-                      Rundmail
-                    </StatusBadge>
-                  )}
-                  {t.archivedAt && (
-                    <StatusBadge tone="neutral" dot={false}>
-                      Archiviert
-                    </StatusBadge>
-                  )}
-                </div>
-                {t.description && <p className="line-clamp-2 text-sm text-muted-foreground">{t.description}</p>}
-                {t.usedFor.length > 0 && (
-                  <div className="flex flex-wrap gap-1">
-                    {t.usedFor.map((k) => (
-                      <StatusBadge key={k} tone="success" dot={false}>
-                        Aktiv: {EMAIL_THEME_KIND_LABELS[k as keyof typeof EMAIL_THEME_KIND_LABELS] ?? k}
-                      </StatusBadge>
-                    ))}
-                  </div>
-                )}
-                <p className="mt-auto pt-1 text-2xs text-muted-foreground">
-                  {t.blockCount} Bausteine · Version {t.version}
-                  {t.updatedAt ? ` · geändert ${formatAdmin(t.updatedAt, ADMIN_DATE_TIME_SHORT)}` : ""}
-                </p>
-                <div className="flex gap-2 pt-1">
-                  <Button size="sm" variant="outline" onClick={() => open(t.id)}>
-                    Bearbeiten
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
-          ))}
-        </div>
+        <TemplateCards templates={visible} onOpen={open} />
       )}
 
       <NewTemplateDialog open={creating} onOpenChange={setCreating} onCreated={(id) => open(id)} />
+    </div>
+  );
+}
+
+/** The cards of the list — „Ungespeicherte Änderungen“ where this device keeps a draft of the template. */
+function TemplateCards({ templates, onOpen }: { templates: VorlageMeta[]; onOpen: (id: number) => void }) {
+  const drafts = useStoredEditorDrafts("vorlage");
+  return (
+    <div className="grid gap-3 md:grid-cols-2 2xl:grid-cols-3">
+      {templates.map((t) => (
+        <Card key={t.id} className="flex flex-col">
+          <CardContent className="flex flex-1 flex-col gap-2 p-4 pt-4">
+            <div className="flex flex-wrap items-center gap-1.5">
+              <button type="button" className="truncate text-left text-base font-semibold hover:underline" onClick={() => onOpen(t.id)}>
+                {t.name}
+              </button>
+              {t.supportsPersonal ? (
+                <StatusBadge tone="accent" dot={false}>
+                  Persönliche Mails + Rundmail
+                </StatusBadge>
+              ) : (
+                <StatusBadge tone="neutral" dot={false}>
+                  Rundmail
+                </StatusBadge>
+              )}
+              {t.archivedAt && (
+                <StatusBadge tone="neutral" dot={false}>
+                  Archiviert
+                </StatusBadge>
+              )}
+              {drafts.has(t.id) && (
+                <StatusBadge tone="warning" dot={false}>
+                  Ungespeicherte Änderungen
+                </StatusBadge>
+              )}
+            </div>
+            {t.description && <p className="line-clamp-2 text-sm text-muted-foreground">{t.description}</p>}
+            {t.usedFor.length > 0 && (
+              <div className="flex flex-wrap gap-1">
+                {t.usedFor.map((k) => (
+                  <StatusBadge key={k} tone="success" dot={false}>
+                    Aktiv: {EMAIL_THEME_KIND_LABELS[k as keyof typeof EMAIL_THEME_KIND_LABELS] ?? k}
+                  </StatusBadge>
+                ))}
+              </div>
+            )}
+            <p className="mt-auto pt-1 text-2xs text-muted-foreground">
+              {t.blockCount} Bausteine · Version {t.version}
+              {t.updatedAt ? ` · geändert ${formatAdmin(t.updatedAt, ADMIN_DATE_TIME_SHORT)}` : ""}
+            </p>
+            <div className="flex gap-2 pt-1">
+              <Button size="sm" variant="outline" onClick={() => onOpen(t.id)}>
+                Bearbeiten
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      ))}
     </div>
   );
 }
@@ -342,6 +362,15 @@ function NewTemplateDialog({
   );
 }
 
+/** What the editor edits — and keeps as a draft on this device until „Speichern“. */
+type VorlageContent = { name: string; description: string; doc: MailDoc };
+
+/** A stored draft's document goes through the normaliser, like every document the editor holds. */
+const normalizeVorlageDraft = (content: VorlageContent): VorlageContent => ({
+  ...content,
+  doc: normalizeMailTemplateDoc(content.doc),
+});
+
 function TemplateEditorView({
   id,
   uploadConfigured,
@@ -384,22 +413,42 @@ function TemplateEditorView({
   const [saving, setSaving] = React.useState(false);
   const [previewUse, setPreviewUse] = React.useState<"bulk" | "personal">("bulk");
 
+  // Unsaved changes: against the saved version (its document as JSON once, the current one per change)…
+  const savedDocJson = React.useMemo(() => (loaded ? JSON.stringify(loaded.doc) : null), [loaded]);
+  const docChanged = React.useMemo(
+    () => doc !== null && savedDocJson !== null && JSON.stringify(doc) !== savedDocJson,
+    [doc, savedDocJson]
+  );
+  const dirty =
+    loaded !== null && doc !== null && (name !== loaded.name || description !== (loaded.description ?? "") || docChanged);
+  // … kept as a draft on this device until „Speichern“ (use-editor-draft.tsx).
+  const current = React.useMemo<VorlageContent | null>(() => (doc ? { name, description, doc } : null), [name, description, doc]);
+  const draft = useEditorDraft<VorlageContent>({ kind: "vorlage", id, base: loaded?.version ?? null, current, dirty });
+  const { resume: resumeDraft } = draft;
+
   React.useEffect(() => {
     let alive = true;
     adminFetch<{ template: FullTemplate }>("/api/admin/vorlagen", { body: { action: "get", id } })
       .then((json) => {
         if (!alive) return;
-        setLoaded(json.template);
-        setName(json.template.name);
-        setDescription(json.template.description ?? "");
-        resetDoc(json.template.doc);
-        setPreviewUse(docSupportsPersonal(json.template.doc) ? "personal" : "bulk");
+        const t = json.template;
+        const show = (content: VorlageContent) => {
+          setName(content.name);
+          setDescription(content.description);
+          resetDoc(content.doc);
+          setPreviewUse(docSupportsPersonal(content.doc) ? "personal" : "bulk");
+        };
+        const saved: VorlageContent = { name: t.name, description: t.description ?? "", doc: t.doc };
+        setLoaded(t);
+        show(saved);
+        // Unsaved changes of an earlier visit on this device come back — or are offered when it was saved since.
+        resumeDraft({ saved, base: t.version, apply: show, normalize: normalizeVorlageDraft });
       })
       .catch((err) => alive && setLoadError(errorMessage(err)));
     return () => {
       alive = false;
     };
-  }, [id, resetDoc]);
+  }, [id, resetDoc, resumeDraft]);
 
   if (loadError) {
     return (
@@ -415,19 +464,22 @@ function TemplateEditorView({
     return <p className="text-sm text-muted-foreground">Vorlage wird geladen …</p>;
   }
 
-  const dirty =
-    name !== loaded.name || description !== (loaded.description ?? "") || JSON.stringify(doc) !== JSON.stringify(loaded.doc);
   const personal = docSupportsPersonal(doc);
   const issues = validateMailTemplateDoc(doc, personal ? "personal" : "bulk");
 
   const save = async () => {
     setSaving(true);
+    const sent = { name, description };
     try {
       const json = await adminFetch<{ template: FullTemplate }>("/api/admin/vorlagen", {
         body: { action: "save", id, name, description, doc, expectedVersion: loaded.version },
       });
       setLoaded(json.template);
       resetDoc(json.template.doc);
+      // The server tidies spaces — take its text unless it was typed over meanwhile.
+      setName((v) => (v === sent.name ? json.template.name : v));
+      setDescription((v) => (v === sent.description ? (json.template.description ?? "") : v));
+      draft.discard();
       toast({ variant: "success", title: "Vorlage gespeichert", description: `Version ${json.template.version}` });
     } catch (err) {
       toast({ variant: "error", title: "Nicht gespeichert", description: errorMessage(err) });
@@ -439,16 +491,70 @@ function TemplateEditorView({
   // „Rückgängig“ — when the step was an AI result, the KI-Gestalter's conversation says so.
   const undoStep = () => designer.noteUndo(undo());
 
+  // „Verwerfen“ (the notice after a restore, ⋯ Änderungen verwerfen) — back to the saved version, the draft goes too.
+  const discardChanges = async () => {
+    const ok = await confirm({
+      title: "Ungespeicherte Änderungen verwerfen?",
+      description: `Die Vorlage geht zurück auf den gespeicherten Stand (Version ${loaded.version}).`,
+      confirmLabel: "Verwerfen",
+      tone: "destructive",
+    });
+    if (!ok) return;
+    setName(loaded.name);
+    setDescription(loaded.description ?? "");
+    resetDoc(loaded.doc);
+    draft.discard();
+  };
+
+  // The offered draft (made before the template was saved again): take it — „Rückgängig“ brings the document back.
+  const restoreOffered = async () => {
+    const offered = draft.notice;
+    if (!offered) return;
+    if (
+      dirty &&
+      !(await confirm({
+        title: "Aktuelle Änderungen ersetzen?",
+        description: "Der Entwurf ersetzt, was du seit dem Öffnen geändert hast.",
+        confirmLabel: "Entwurf wiederherstellen",
+        tone: "destructive",
+      }))
+    ) {
+      return;
+    }
+    setName(offered.content.name);
+    setDescription(offered.content.description);
+    replaceDoc(offered.content.doc);
+    draft.dismiss();
+  };
+
+  const discardOffered = async () => {
+    const offered = draft.notice;
+    if (!offered) return;
+    const ok = await confirm({
+      title: "Entwurf verwerfen?",
+      description: `Die nicht gespeicherten Änderungen vom ${formatAdmin(offered.savedAt, ADMIN_DATE_TIME_SHORT)} gehen verloren.`,
+      confirmLabel: "Verwerfen",
+      tone: "destructive",
+    });
+    if (ok) draft.discardOffer();
+  };
+
   // Leaving the editor (← Alle Vorlagen) or opening the copy (Duplizieren)
   // unmounts it: a running KI-Gestalter request is cancelled, its
-  // conversation and attachments are gone — and unsaved changes, since the
-  // copy is made from the saved version. Asks first.
+  // conversation and attachments are gone — asks first. Unsaved changes stay
+  // as a draft on this device (asks only when this browser cannot keep it);
+  // the copy is made from the saved version, so Duplizieren says so.
   const confirmLeave = async (to: "list" | "copy") => {
+    const kept = !dirty || draft.flush();
     const unsaved = !dirty
       ? ""
-      : to === "copy"
-        ? " Die Kopie entsteht aus dem gespeicherten Stand — ungespeicherte Änderungen gehen verloren."
-        : " Ungespeicherte Änderungen gehen ebenfalls verloren.";
+      : kept
+        ? to === "copy"
+          ? " Die Kopie entsteht aus dem gespeicherten Stand; deine Änderungen bleiben als Entwurf auf diesem Gerät."
+          : " Ungespeicherte Änderungen bleiben als Entwurf auf diesem Gerät."
+        : to === "copy"
+          ? " Die Kopie entsteht aus dem gespeicherten Stand — ungespeicherte Änderungen gehen verloren."
+          : " Ungespeicherte Änderungen gehen ebenfalls verloren.";
     if (designer.running) {
       return confirm({
         title: to === "copy" ? "Die KI gestaltet gerade — abbrechen und die Kopie öffnen?" : "Die KI gestaltet gerade — abbrechen und verlassen?",
@@ -458,10 +564,18 @@ function TemplateEditorView({
         tone: "destructive",
       });
     }
-    if (!dirty) return true;
+    if (!dirty || (kept && to === "list")) return true;
+    if (kept) {
+      return confirm({
+        title: "Kopie aus dem gespeicherten Stand anlegen?",
+        description: "Deine ungespeicherten Änderungen kommen nicht mit — sie bleiben als Entwurf dieser Vorlage auf diesem Gerät.",
+        confirmLabel: "Kopie anlegen",
+      });
+    }
     return confirm({
       title: "Ungespeicherte Änderungen verwerfen?",
-      description: to === "copy" ? "Die Kopie entsteht aus dem gespeicherten Stand." : undefined,
+      description:
+        to === "copy" ? "Die Kopie entsteht aus dem gespeicherten Stand." : "Dieser Browser kann sie nicht als Entwurf sichern.",
       confirmLabel: "Verwerfen",
       tone: "destructive",
     });
@@ -520,6 +634,7 @@ function TemplateEditorView({
             aiConfigured={aiConfigured}
             running={designer.running}
           />
+          <EditorDraftStatus dirty={dirty} failed={draft.failed} />
           <Button size="sm" onClick={() => void save()} loading={saving} disabled={!dirty || name.trim().length < 3}>
             <Save /> Speichern
           </Button>
@@ -534,6 +649,16 @@ function TemplateEditorView({
                 icon: <Download />,
                 onSelect: () => downloadJson(name, templateExportFile({ name, description: description || null, doc })),
               },
+              {
+                key: "discard",
+                label: "Änderungen verwerfen",
+                icon: <RotateCcw />,
+                onSelect: () => void discardChanges(),
+                disabled: !dirty,
+                disabledReason: "Keine ungespeicherten Änderungen",
+                tone: "destructive",
+                separatorBefore: true,
+              },
               loaded.archivedAt
                 ? { key: "restore", label: "Wiederherstellen", icon: <ArchiveRestore />, onSelect: () => void archive(false), separatorBefore: true }
                 : { key: "archive", label: "Archivieren", icon: <Archive />, onSelect: () => void archive(true), separatorBefore: true },
@@ -541,6 +666,15 @@ function TemplateEditorView({
           />
         </div>
       </div>
+
+      <EditorDraftNotice
+        notice={draft.notice}
+        dirty={dirty}
+        what="die Vorlage"
+        onRestore={() => void restoreOffered()}
+        onDiscard={() => void (draft.notice?.mode === "offer" ? discardOffered() : discardChanges())}
+        onDismiss={draft.dismiss}
+      />
 
       <div className="grid gap-3 sm:grid-cols-2">
         <Field label="Name" required>

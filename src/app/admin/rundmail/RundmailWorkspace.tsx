@@ -10,7 +10,12 @@
 //                     in the Rundmail's language —, „Vorlage laden“,
 //                     „Rückgängig“ in several steps). Leaving through „←
 //                     Kampagnen“ or „Zielgruppe & Absender“ while the AI works
-//                     asks first (it would be cancelled).
+//                     asks first (it would be cancelled). Unsaved content is
+//                     kept as a draft on this device until „Speichern“ — put
+//                     back when the Rundmail opens again (offered when it was
+//                     saved since), removed at the release; closing or
+//                     reloading the tab asks while it is unsaved
+//                     (vorlagen/use-editor-draft.tsx).
 //   Prüfen & senden — every check (content, deliverability, sender, legal
 //                     gate, audience), the test mail (required for the current
 //                     version), pace, and „Jetzt senden“ / „Planen“.
@@ -74,8 +79,18 @@ import { DesignerPanel, DesignerToggle } from "../vorlagen/DesignerPanel";
 import { LivePreview } from "../vorlagen/LivePreview";
 import { useDesignerSession } from "../vorlagen/use-designer-session";
 import { useDocHistory } from "../vorlagen/use-doc-history";
+import { EditorDraftNotice, EditorDraftStatus, useEditorDraft } from "../vorlagen/use-editor-draft";
 
 type RateKey = keyof typeof MAILING_RATES;
+
+/** What „Inhalt“ edits — kept as a draft on this device until „Speichern“. */
+type RundmailContent = { subject: string; preheader: string; language: "de" | "en"; doc: MailDoc };
+
+/** A stored draft's document: normalised and without Mo blocks, like every document of a Rundmail. */
+const normalizeRundmailDraft = (content: RundmailContent): RundmailContent => ({
+  ...content,
+  doc: stripMoBlocks(content.doc),
+});
 
 export interface RundmailMailing {
   campaignId: number;
@@ -283,6 +298,37 @@ export function RundmailWorkspace({
       preheader !== (mailing.preheader ?? "") ||
       language !== mailing.language ||
       JSON.stringify(doc) !== JSON.stringify(mailing.doc));
+  // … kept as a draft on this device until „Speichern“; a released Rundmail keeps none (use-editor-draft.tsx).
+  const current = React.useMemo<RundmailContent>(() => ({ subject, preheader, language, doc }), [subject, preheader, language, doc]);
+  const draft = useEditorDraft<RundmailContent>({
+    kind: "rundmail",
+    id: campaign.id,
+    base: mailing.contentVersion,
+    current,
+    dirty,
+    enabled: !frozen,
+  });
+  const { resume: resumeDraft } = draft;
+  // Opening: unsaved content of an earlier visit on this device comes back — or is offered when it was saved since.
+  React.useEffect(() => {
+    if (initialMailing.frozenAt) return;
+    resumeDraft({
+      saved: {
+        subject: initialMailing.subject,
+        preheader: initialMailing.preheader ?? "",
+        language: initialMailing.language,
+        doc: initialMailing.doc,
+      },
+      base: initialMailing.contentVersion,
+      apply: (content) => {
+        setSubject(content.subject);
+        setPreheader(content.preheader);
+        setLanguage(content.language);
+        setDoc(content.doc);
+      },
+      normalize: normalizeRundmailDraft,
+    });
+  }, [initialMailing, resumeDraft, setDoc]);
   const tested = mailing.testVersion === mailing.contentVersion && !dirty;
   const issues = React.useMemo(() => validateMailTemplateDoc(doc, "bulk"), [doc]);
   const progress = mailingProgress(stats);
@@ -346,6 +392,7 @@ export function RundmailWorkspace({
   // ── actions ──
   const save = async (): Promise<RundmailMailing | null> => {
     setSaving(true);
+    const sent = { subject, preheader };
     try {
       const json = await adminFetch<{ mailing: RundmailMailing }>("/api/admin/rundmail", {
         body: {
@@ -362,6 +409,10 @@ export function RundmailWorkspace({
       });
       setMailing(json.mailing);
       resetDoc(json.mailing.doc);
+      // The server tidies spaces — take its text unless it was typed over meanwhile.
+      setSubject((v) => (v === sent.subject ? json.mailing.subject : v));
+      setPreheader((v) => (v === sent.preheader ? (json.mailing.preheader ?? "") : v));
+      draft.discard();
       setEvaluation(null);
       toast({ variant: "success", title: "Gespeichert", description: "Für den Versand bitte erneut eine Testmail schicken." });
       return json.mailing;
@@ -497,16 +548,68 @@ export function RundmailWorkspace({
   // „Rückgängig“ — when the step was an AI result, the KI-Gestalter's conversation says so.
   const undoStep = () => designer.noteUndo(undo());
 
+  // „Verwerfen“ of the notice after a restore — back to the saved content, the draft goes too.
+  const discardChanges = async () => {
+    const ok = await confirm({
+      title: "Ungespeicherte Änderungen verwerfen?",
+      description: `Der Inhalt geht zurück auf den gespeicherten Stand (Version ${mailing.contentVersion}).`,
+      confirmLabel: "Verwerfen",
+      tone: "destructive",
+    });
+    if (!ok) return;
+    setSubject(mailing.subject);
+    setPreheader(mailing.preheader ?? "");
+    setLanguage(mailing.language);
+    resetDoc(mailing.doc);
+    draft.discard();
+  };
+
+  // The offered draft (made before the content was saved again): take it — „Rückgängig“ brings the document back.
+  const restoreOffered = async () => {
+    const offered = draft.notice;
+    if (!offered || frozen) return;
+    if (
+      dirty &&
+      !(await confirm({
+        title: "Aktuelle Änderungen ersetzen?",
+        description: "Der Entwurf ersetzt, was du seit dem Öffnen geändert hast.",
+        confirmLabel: "Entwurf wiederherstellen",
+        tone: "destructive",
+      }))
+    ) {
+      return;
+    }
+    setSubject(offered.content.subject);
+    setPreheader(offered.content.preheader);
+    setLanguage(offered.content.language);
+    replaceDoc(offered.content.doc);
+    draft.dismiss();
+  };
+
+  const discardOffered = async () => {
+    const offered = draft.notice;
+    if (!offered) return;
+    const ok = await confirm({
+      title: "Entwurf verwerfen?",
+      description: `Die nicht gespeicherten Änderungen vom ${formatAdmin(offered.savedAt, ADMIN_DATE_TIME_SHORT)} gehen verloren.`,
+      confirmLabel: "Verwerfen",
+      tone: "destructive",
+    });
+    if (ok) draft.discardOffer();
+  };
+
   // The links that leave the Rundmail („← Kampagnen“, „Zielgruppe & Absender“)
   // unmount the workspace: a running KI-Gestalter request would be cancelled
-  // without a word — ask first. A click that opens a new tab leaves nothing.
+  // without a word — ask first (unsaved content stays as a draft on this
+  // device). A click that opens a new tab leaves nothing.
   const guardLeave = (href: string) => (e: React.MouseEvent<HTMLAnchorElement>) => {
     if (!designer.running || e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
     e.preventDefault();
+    const kept = !dirty || draft.flush();
     void confirm({
       title: "Die KI gestaltet gerade — abbrechen und verlassen?",
       description: `Ihr Ergebnis kommt dann nicht mehr an; das Gespräch und die Anhänge gehen verloren.${
-        dirty ? " Ungespeicherte Änderungen gehen ebenfalls verloren." : ""
+        !dirty ? "" : kept ? " Ungespeicherte Änderungen bleiben als Entwurf auf diesem Gerät." : " Ungespeicherte Änderungen gehen ebenfalls verloren."
       }`,
       confirmLabel: "Abbrechen und verlassen",
       cancelLabel: "Weiter gestalten",
@@ -643,11 +746,21 @@ export function RundmailWorkspace({
                     aiConfigured={aiConfigured}
                     running={designer.running}
                   />
+                  <EditorDraftStatus dirty={dirty} failed={draft.failed} />
                   <Button size="sm" onClick={() => void save()} loading={saving} disabled={!dirty}>
                     <Save /> Speichern
                   </Button>
                 </div>
               </div>
+              <EditorDraftNotice
+                notice={draft.notice}
+                dirty={dirty}
+                what="die Rundmail"
+                className="mb-3"
+                onRestore={() => void restoreOffered()}
+                onDiscard={() => void (draft.notice?.mode === "offer" ? discardOffered() : discardChanges())}
+                onDismiss={draft.dismiss}
+              />
             </>
           )}
 
