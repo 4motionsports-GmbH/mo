@@ -43,6 +43,7 @@ import { adminTabHref } from "@/lib/admin-tabs.mjs";
 import { CAMPAIGN_PHASE_LABELS } from "@/lib/campaign-def.mjs";
 import { MAILING_RATES, MAILING_RATE_LABELS, mailingProgress, minutesLeft } from "@/lib/mailing-core.mjs";
 import { stripMoBlocks, validateMailTemplateDoc } from "@/lib/mail-template-doc.mjs";
+import type { DesignerSettings } from "@/lib/mail-template-designer-settings.mjs";
 import {
   Button,
   Callout,
@@ -212,6 +213,7 @@ export function RundmailWorkspace({
   sender,
   uploadConfigured,
   aiConfigured,
+  designerSettings,
   templates,
   initialView,
 }: {
@@ -232,6 +234,8 @@ export function RundmailWorkspace({
   sender: { ok: true; from: string; replyTo: string | null } | { ok: false; message: string };
   uploadConfigured: boolean;
   aiConfigured: boolean;
+  /** Einstellungen → „KI-Gestalter“: the KI-Gestalter's first choice and its „Standard“. */
+  designerSettings: DesignerSettings;
   templates: Array<{ id: number; name: string }>;
   initialView?: string;
 }) {
@@ -263,6 +267,7 @@ export function RundmailWorkspace({
     doc,
     // the language too: an English Rundmail gets English texts, subject and preview line
     context: { subject, preheader, language },
+    designerSettings,
     // A result that arrives after the release is dropped: the content is fixed.
     onResult: (result) => {
       if (!frozen) replaceDoc(stripMoBlocks(result.doc), result.turnId);
@@ -652,6 +657,7 @@ export function RundmailWorkspace({
                 <DesignerPanel
                   session={designer}
                   use="bulk"
+                  designerSettings={designerSettings}
                   onClose={() => setDesignerOpen(false)}
                   fields={{
                     subject,

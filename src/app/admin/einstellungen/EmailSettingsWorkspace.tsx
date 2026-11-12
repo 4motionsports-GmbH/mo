@@ -11,6 +11,9 @@
 //   - Zuordnung: per e-mail type, which design is currently live ("version
 //     control" pointer — older designs stay selectable forever).
 //   - Versand-Konfiguration + Systemstatus: env-derived, read-only.
+//   - KI-Gestalter: how the AI designer of Vorlagen and Rundmail works for the
+//     whole team — quality (model + effort), freedom, Mo's capabilities, the
+//     house style (DesignerSettingsCard, admin_settings 0078; `#ki-gestalter`).
 //   - Kontakthäufigkeit: the soft warning threshold („Warnung ab n Werbe-Mails
 //     in N Tagen“, admin_settings 0078) — editable; next to it, read-only, the
 //     HARD cap MARKETING_MIN_SEND_INTERVAL_DAYS so the two never get mixed up.
@@ -39,6 +42,7 @@ import {
   sendIntervalLabel,
   validateContactFrequencyInput,
 } from "@/lib/contact-frequency.mjs";
+import type { DesignerSettings } from "@/lib/mail-template-designer-settings.mjs";
 import {
   Button,
   Callout,
@@ -62,6 +66,7 @@ import {
   DesignPreviewDialog,
   type DesignPreviewTarget,
 } from "./DesignPreviewDialog";
+import { DesignerSettingsCard } from "./DesignerSettingsCard";
 import { SystemStatusCard } from "./SystemStatusCard";
 import { ShopifySyncCard, type ShopifySyncCardProps } from "./ShopifySyncCard";
 import type {
@@ -83,6 +88,7 @@ export function EmailSettingsWorkspace({
   initialSelections,
   sendConfig,
   contactFrequency,
+  designerSettings,
   senders,
   systemStatus,
   shopifySync,
@@ -92,6 +98,8 @@ export function EmailSettingsWorkspace({
   initialSelections: Partial<Record<string, string>>;
   sendConfig: SendConfigProps;
   contactFrequency: ContactFrequencyCardProps;
+  /** Einstellungen → „KI-Gestalter“ (the stored settings; the defaults without a database). */
+  designerSettings: DesignerSettings;
   /** Einstellungen → Absender (0081). */
   senders: SendersCardProps;
   systemStatus: SystemStatus;
@@ -322,6 +330,8 @@ export function EmailSettingsWorkspace({
           })}
         </CardContent>
       </Card>
+
+      <DesignerSettingsCard dbReady={dbReady} designerSettings={designerSettings} />
 
       <Card>
         <CardHeader>

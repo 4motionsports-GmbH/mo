@@ -17,19 +17,30 @@
 //     anhängen“, drag & drop onto the card, pictures pasted into the text
 //     field — they stay for the whole conversation until removed;
 //   · while it runs: the latest progress text, the elapsed time and
-//     „Abbrechen“.
+//     „Abbrechen“;
+//   · „Einstellungen für diese Unterhaltung“ — a popover from the header
+//     („Einstellungen der KI“) and from the button next to „Gestalten“ that
+//     names the active choice („Gründlich · Opus 5.5“): Qualität, Gestaltungs-
+//     freiheit, Mo-Funktionen, and the link to the team's defaults and house
+//     style (Einstellungen → „KI-Gestalter“, in a new tab so unsaved work
+//     stays). Locked while the AI works;
+//   · under each reply (and a failure that says so) what the run used, how
+//     long it took and what it cost.
 //
 // The state lives in useDesignerSession (in the workspace); this file is
 // only the view. „Mit KI gestalten“ (DesignerToggle) opens and closes it.
 
 import * as React from "react";
+import Link from "next/link";
 import {
   Check,
+  ExternalLink,
   FileCode2,
   FileText,
   Mail,
   MessageSquarePlus,
   Paperclip,
+  SlidersHorizontal,
   Sparkles,
   TriangleAlert,
   X,
@@ -42,16 +53,41 @@ import {
   attachmentKindLabel,
   formatFileSize,
 } from "@/lib/mail-designer-attachments.mjs";
-import { DESIGNER_INSTRUCTION_CHARS, designerNotesText, elapsedLabel, type DesignerTurn } from "@/lib/mail-designer-client.mjs";
+import {
+  DESIGNER_INSTRUCTION_CHARS,
+  designerNotesText,
+  designerRunLine,
+  elapsedLabel,
+  type DesignerRun,
+  type DesignerTurn,
+} from "@/lib/mail-designer-client.mjs";
+import {
+  DESIGNER_SETTINGS_HREF,
+  DESIGNER_TEXTS,
+  designerChoiceShort,
+  designerChoiceWithQuality,
+  sameDesignerQuality,
+} from "@/lib/mail-designer-choice.mjs";
+import {
+  DESIGNER_FREEDOM,
+  DESIGNER_QUALITY,
+  designerQualityOf,
+  designerSettingsLabel,
+  type DesignerFreedom,
+  type DesignerSettings,
+} from "@/lib/mail-template-designer-settings.mjs";
 import {
   Button,
   Callout,
   Card,
+  Checkbox,
   EmptyState,
   IconButton,
   InfoTip,
   Kbd,
+  Popover,
   ProgressBar,
+  SegmentedControl,
   Spinner,
   Textarea,
   Tooltip,
@@ -122,6 +158,12 @@ const PLACEHOLDER_LATER = "Was soll sich ändern? z. B. „Überschrift größer
 
 const hasFiles = (dt: DataTransfer | null) => Array.from(dt?.types ?? []).includes("Files");
 
+const QUALITY_OPTIONS = DESIGNER_QUALITY.map((q) => ({ value: q.id, label: q.label }));
+const FREEDOM_OPTIONS = DESIGNER_FREEDOM.map((f) => ({ value: f.id as DesignerFreedom, label: f.label }));
+/** Wide enough for the three freedoms in one row (the primitive's own width is 22rem). */
+const SETTINGS_POPOVER = "min-w-[min(24rem,calc(100vw-1rem))]";
+const SETTINGS_TITLE = "Einstellungen für diese Unterhaltung";
+
 // The modifier key of the shortcut hint — read on the client only (the
 // server renders „Strg“), without an effect.
 const noSubscribe = () => () => undefined;
@@ -131,6 +173,8 @@ const serverModifierKey = () => "Strg";
 export interface DesignerPanelProps {
   session: DesignerSession;
   use: DesignerUse;
+  /** the team's stored settings (Einstellungen → „KI-Gestalter“) — „Standard“ in the settings popover */
+  designerSettings: DesignerSettings;
   onClose: () => void;
   /** Rundmail: subject and preview line — the AI's suggestions can be taken over. */
   fields?: {
@@ -143,7 +187,7 @@ export interface DesignerPanelProps {
   className?: string;
 }
 
-export function DesignerPanel({ session, use, onClose, fields = null, className }: DesignerPanelProps) {
+export function DesignerPanel({ session, use, designerSettings, onClose, fields = null, className }: DesignerPanelProps) {
   const titleId = React.useId();
   const textareaRef = React.useRef<HTMLTextAreaElement>(null);
   const fileRef = React.useRef<HTMLInputElement>(null);
@@ -152,6 +196,8 @@ export function DesignerPanel({ session, use, onClose, fields = null, className 
   const depth = React.useRef(0);
   const [dragging, setDragging] = React.useState(false);
   const [now, setNow] = React.useState(0);
+  // The settings popover opens at the button that was used (header or next to „Gestalten“).
+  const [settingsAt, setSettingsAt] = React.useState<"header" | "footer" | null>(null);
   const mod = React.useSyncExternalStore(noSubscribe, modifierKey, serverModifierKey);
   const L = DESIGNER_ATTACHMENT_LIMITS;
   const { turns, attachments, running } = session;
@@ -209,6 +255,8 @@ export function DesignerPanel({ session, use, onClose, fields = null, className 
   }, []);
 
   const elapsed = session.startedAt != null ? Math.max(0, now - session.startedAt) : 0;
+  const choiceShort = designerChoiceShort(session.choice);
+  const settingsPanel = <DesignerChoiceFields session={session} designerSettings={designerSettings} />;
 
   const pickFiles = () => fileRef.current?.click();
 
@@ -313,6 +361,10 @@ export function DesignerPanel({ session, use, onClose, fields = null, className 
             Jedes Ergebnis ist ungespeichert: „Rückgängig“ holt den Stand davor zurück — das Gespräch vermerkt es, und die KI
             erfährt es mit der nächsten Anweisung.
           </p>
+          <p>
+            Wie gründlich und wie frei sie gestaltet und ob sie Mos Funktionen von sich aus einbaut, stellst du für dieses Gespräch
+            in „Einstellungen der KI“ ein; den Standard und den Hausstil in Einstellungen.
+          </p>
         </InfoTip>
         <div className="ml-auto flex items-center gap-1">
           {(turns.length > 0 || attachments.length > 0) && (
@@ -320,6 +372,20 @@ export function DesignerPanel({ session, use, onClose, fields = null, className 
               <MessageSquarePlus aria-hidden /> Neues Gespräch
             </Button>
           )}
+          <Popover
+            open={settingsAt === "header"}
+            onOpenChange={(o) => setSettingsAt(o ? "header" : null)}
+            label={SETTINGS_TITLE}
+            align="end"
+            className={SETTINGS_POPOVER}
+            trigger={
+              <IconButton label="Einstellungen der KI" size="icon-sm">
+                <SlidersHorizontal />
+              </IconButton>
+            }
+          >
+            {settingsPanel}
+          </Popover>
           <IconButton
             label={running ? "Schließen geht erst, wenn die KI fertig ist" : "KI-Gestalter schließen"}
             size="icon-sm"
@@ -444,12 +510,35 @@ export function DesignerPanel({ session, use, onClose, fields = null, className 
               einfügen geht auch.
             </p>
           </InfoTip>
-          <span className="ml-auto hidden items-center gap-1 text-2xs text-muted-foreground sm:inline-flex" aria-hidden>
-            <Kbd>{mod}</Kbd>+<Kbd>Enter</Kbd>
-          </span>
-          <Button size="sm" onClick={send} disabled={!session.canSend} loading={running} className="max-sm:ml-auto">
-            {!running && <Sparkles aria-hidden />} {answered ? "Ändern" : "Gestalten"}
-          </Button>
+          {/* the send group — the active choice (opens the same settings as the header), the shortcut, „Gestalten“; it wraps as one */}
+          <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
+            <Popover
+              open={settingsAt === "footer"}
+              onOpenChange={(o) => setSettingsAt(o ? "footer" : null)}
+              label={SETTINGS_TITLE}
+              side="top"
+              align="end"
+              className={SETTINGS_POPOVER}
+              trigger={
+                <Button
+                  variant="ghost"
+                  size="xs"
+                  className="text-muted-foreground"
+                  aria-label={`Einstellungen der KI: ${choiceShort}`}
+                >
+                  <SlidersHorizontal aria-hidden /> {choiceShort}
+                </Button>
+              }
+            >
+              {settingsPanel}
+            </Popover>
+            <span className="hidden items-center gap-1 text-2xs text-muted-foreground sm:inline-flex" aria-hidden>
+              <Kbd>{mod}</Kbd>+<Kbd>Enter</Kbd>
+            </span>
+            <Button size="sm" onClick={send} disabled={!session.canSend} loading={running}>
+              {!running && <Sparkles aria-hidden />} {answered ? "Ändern" : "Gestalten"}
+            </Button>
+          </div>
         </div>
       </div>
     </Card>
@@ -524,15 +613,17 @@ function TurnView({
             />
           )}
         </div>
+        {turn.run && <RunLine run={turn.run} />}
       </li>
     );
   }
   if (turn.role === "error") {
     return (
-      <li ref={ref}>
+      <li ref={ref} className="flex flex-col gap-1">
         <Callout tone="destructive" compact>
           {turn.text}
         </Callout>
+        {turn.run && <RunLine run={turn.run} />}
       </li>
     );
   }
@@ -540,6 +631,115 @@ function TurnView({
     <li ref={ref} className="text-center text-2xs text-muted-foreground">
       {turn.text}
     </li>
+  );
+}
+
+/** What a run used, how long it took and what it cost — „Gründlich · Claude Opus 5.5 · Denktiefe Hoch · 1:42 min · ≈ 0,38 €“. */
+function RunLine({ run }: { run: DesignerRun }) {
+  return <p className="text-2xs tabular-nums text-muted-foreground">{designerRunLine(run)}</p>;
+}
+
+/** A label with its explanation (one paragraph per entry) for a control of the settings popover. */
+function ChoiceLabel({ title, info }: { title: string; info: readonly string[] }) {
+  return (
+    <div className="flex items-center gap-1.5 text-xs font-medium">
+      {title}
+      <InfoTip label={`Was „${title}“ bedeutet`} panelClassName="max-w-sm">
+        {info.map((p) => (
+          <p key={p}>{p}</p>
+        ))}
+      </InfoTip>
+    </div>
+  );
+}
+
+/**
+ * „Einstellungen für diese Unterhaltung“: Qualität (a level is a model and an
+ * effort — a stored default that is an own combination shows as no level,
+ * with „Standard: …“ and „Standard verwenden“), Gestaltungsfreiheit,
+ * „Mo-Funktionen von sich aus einbauen“ and the link to the team's defaults
+ * and house style. Every change applies to the next instruction; while the
+ * AI works the controls are locked.
+ */
+function DesignerChoiceFields({ session, designerSettings }: { session: DesignerSession; designerSettings: DesignerSettings }) {
+  const { choice, setChoice, running } = session;
+  const quality = designerQualityOf(choice);
+  const ownDefault = designerQualityOf(designerSettings) === null;
+  return (
+    <div className="flex flex-col gap-3">
+      {/* takes the focus when the popover opens (the levels are a radio group — Tab reaches the chosen one) */}
+      <p tabIndex={-1} data-autofocus className="text-sm font-semibold outline-none">
+        {SETTINGS_TITLE}
+      </p>
+      {running && (
+        <Callout tone="info" compact>
+          Die KI gestaltet gerade — die Einstellungen lassen sich ändern, sobald sie fertig ist.
+        </Callout>
+      )}
+      <div className="flex flex-col gap-1.5">
+        <ChoiceLabel title="Qualität" info={DESIGNER_TEXTS.quality} />
+        <SegmentedControl
+          label="Qualität"
+          value={quality ?? ""}
+          onChange={(q) => setChoice(designerChoiceWithQuality(choice, q))}
+          options={QUALITY_OPTIONS}
+          fullWidth
+          disabled={running}
+        />
+        {ownDefault && (
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-2xs text-muted-foreground">
+            <span>Standard: {designerSettingsLabel(designerSettings)}</span>
+            {!sameDesignerQuality(choice, designerSettings) && (
+              <Button
+                size="xs"
+                variant="outline"
+                disabled={running}
+                onClick={() => setChoice({ ...choice, model: designerSettings.model, effort: designerSettings.effort })}
+              >
+                Standard verwenden
+              </Button>
+            )}
+          </div>
+        )}
+      </div>
+      <div className="flex flex-col gap-1.5">
+        <ChoiceLabel title="Gestaltungsfreiheit" info={DESIGNER_TEXTS.freedom} />
+        <SegmentedControl
+          label="Gestaltungsfreiheit"
+          value={choice.freedom}
+          onChange={(freedom) => setChoice({ ...choice, freedom })}
+          options={FREEDOM_OPTIONS}
+          fullWidth
+          disabled={running}
+          className="flex-wrap"
+        />
+      </div>
+      <div className="flex items-center gap-1.5">
+        <label className="flex cursor-pointer items-center gap-2 text-xs font-medium">
+          <Checkbox
+            checked={choice.proactive}
+            disabled={running}
+            onChange={(e) => setChoice({ ...choice, proactive: e.target.checked })}
+          />
+          Mo-Funktionen von sich aus einbauen
+        </label>
+        <InfoTip label="Was „Mo-Funktionen von sich aus einbauen“ bedeutet" panelClassName="max-w-sm">
+          {DESIGNER_TEXTS.proactive.map((p) => (
+            <p key={p}>{p}</p>
+          ))}
+        </InfoTip>
+      </div>
+      <Link
+        href={DESIGNER_SETTINGS_HREF}
+        target="_blank"
+        rel="noopener noreferrer"
+        prefetch={false}
+        className="inline-flex items-center gap-1 self-start rounded-sm text-xs font-semibold text-accent underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      >
+        Standard und Hausstil ändern <ExternalLink className="size-3.5 shrink-0" aria-hidden />
+        <span className="sr-only"> (öffnet in einem neuen Tab)</span>
+      </Link>
+    </div>
   );
 }
 

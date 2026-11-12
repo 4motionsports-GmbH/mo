@@ -45,7 +45,7 @@ export function SegmentedControl<T extends string>({
     const index = enabled.findIndex((o) => o.value === value);
     let next = index;
     if (e.key === "ArrowRight" || e.key === "ArrowDown") next = (index + 1) % enabled.length;
-    else if (e.key === "ArrowLeft" || e.key === "ArrowUp") next = (index - 1 + enabled.length) % enabled.length;
+    else if (e.key === "ArrowLeft" || e.key === "ArrowUp") next = index < 0 ? enabled.length - 1 : (index - 1 + enabled.length) % enabled.length;
     else if (e.key === "Home") next = 0;
     else next = enabled.length - 1;
     e.preventDefault();
@@ -54,6 +54,9 @@ export function SegmentedControl<T extends string>({
     const el = e.currentTarget.querySelector<HTMLButtonElement>(`[data-value="${target.value}"]`);
     el?.focus();
   };
+
+  const hasSelection = options.some((o) => o.value === value);
+  const firstEnabled = options.find((o) => !o.disabled)?.value;
 
   return (
     <div
@@ -71,6 +74,10 @@ export function SegmentedControl<T extends string>({
       {options.map((option) => {
         const selected = option.value === value;
         const isDisabled = disabled || option.disabled;
+        // Roving tab stop: the selected option — or, when none is selected
+        // (e.g. an own model/effort pair), the first enabled one, so Tab still
+        // reaches the group.
+        const tabStop = selected || (!hasSelection && option.value === firstEnabled);
         return (
           <button
             key={option.value}
@@ -81,7 +88,7 @@ export function SegmentedControl<T extends string>({
             title={option.title}
             data-value={option.value}
             disabled={isDisabled}
-            tabIndex={selected ? 0 : -1}
+            tabIndex={tabStop ? 0 : -1}
             onClick={() => !selected && onChange(option.value)}
             className={cn(
               "inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded-[5px] font-medium transition-colors",

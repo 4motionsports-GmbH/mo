@@ -10,16 +10,22 @@
 // A request (POST /api/admin/vorlagen/assist, streamed NDJSON via
 // adminStream) carries the instruction, the CURRENT document (hand edits
 // included), the last 8 turns of the conversation, every attachment (they
-// stay for the whole conversation until removed — re-sent each turn) and,
-// in the Rundmail, subject, preview line and language. The result goes to
+// stay for the whole conversation until removed — re-sent each turn), in the
+// Rundmail subject, preview line and language, and the choice of this
+// conversation (`settings`: quality = model + effort, freedom, Mo's
+// capabilities). The choice starts as the team's stored settings
+// (Einstellungen → „KI-Gestalter“), lives as long as the workspace and is
+// locked while a request runs; the server merges it over the stored
+// settings — the house style always comes from those. The result goes to
 // `onResult` with the id of its answer (the workspace pushes the replaced
 // document onto its undo stack, tagged with that id); the AI's notes become
-// a reply in the conversation. When „Rückgängig“ takes such a step back, the
-// workspace calls `noteUndo(id)`: the reply is marked, a notice says so, and
-// the next request tells the AI. Files picked, dropped or pasted together
-// are sorted before any is read — one toast for the refused ones, and they
-// never take one of the 6 places. Pure rules: lib/mail-designer-client.mjs,
-// lib/mail-designer-attachments.mjs.
+// a reply in the conversation, with what the run used and cost (`run`, also
+// on a failure). When „Rückgängig“ takes such a step back, the workspace
+// calls `noteUndo(id)`: the reply is marked, a notice says so, and the next
+// request tells the AI. Files picked, dropped or pasted together are sorted
+// before any is read — one toast for the refused ones, and they never take
+// one of the 6 places. Pure rules: lib/mail-designer-client.mjs,
+// lib/mail-designer-attachments.mjs, lib/mail-designer-choice.mjs.
 
 import * as React from "react";
 import {
@@ -29,8 +35,11 @@ import {
   interpretDesignerEvent,
   undoDesignerTurn,
   type DesignerResultEvent,
+  type DesignerRun,
   type DesignerTurn,
 } from "@/lib/mail-designer-client.mjs";
+import { designerChoiceFrom, designerRequestSettings, type DesignerChoice } from "@/lib/mail-designer-choice.mjs";
+import type { DesignerSettings } from "@/lib/mail-template-designer-settings.mjs";
 import {
   DESIGNER_ATTACHMENT_LIMITS,
   pastedImageName,
@@ -82,6 +91,10 @@ export interface DesignerSession {
   /** the latest progress text of the running request */
   progress: string | null;
   canSend: boolean;
+  /** The choice of this conversation (sent with every request as `settings`). */
+  choice: DesignerChoice;
+  /** Change the choice — ignored while a request runs. */
+  setChoice: (next: DesignerChoice) => void;
   /** Attach files (picked, dropped or pasted). */
   addFiles: (files: Iterable<File>, origin?: "pick" | "drop" | "paste") => void;
   removeAttachment: (id: string) => void;
@@ -110,6 +123,7 @@ export function useDesignerSession({
   use,
   doc,
   context = null,
+  designerSettings,
   onResult,
 }: {
   use: DesignerUse;
@@ -117,6 +131,8 @@ export function useDesignerSession({
   doc: MailDoc | null;
   /** Rundmail: subject, preview line and language, so the AI can fit the mail to them and suggest better ones */
   context?: DesignerContext | null;
+  /** the team's stored settings (Einstellungen → „KI-Gestalter“) — the conversation's first choice */
+  designerSettings: DesignerSettings;
   onResult: (result: DesignerResult) => void;
 }): DesignerSession {
   const [turns, setTurns] = React.useState<DesignerTurn[]>([]);
@@ -124,6 +140,7 @@ export function useDesignerSession({
   const [draft, setDraft] = React.useState("");
   const [notice, setNotice] = React.useState<string | null>(null);
   const [run, setRun] = React.useState<{ startedAt: number; progress: string | null } | null>(null);
+  const [choice, setChoiceState] = React.useState<DesignerChoice>(() => designerChoiceFrom(designerSettings));
 
   // The workspace's latest callback and document for the async request —
   // read when the result arrives, not when it was sent (the operator may
@@ -160,6 +177,12 @@ export function useDesignerSession({
 
   const addTurn = React.useCallback((turn: DesignerTurn) => {
     if (alive.current) setTurns((prev) => [...prev, turn]);
+  }, []);
+
+  // The choice is fixed while a request runs — that request uses the one it was sent with.
+  const setChoice = React.useCallback((next: DesignerChoice) => {
+    if (runningRef.current) return;
+    setChoiceState(designerChoiceFrom(next));
   }, []);
 
   const addFiles = React.useCallback(
@@ -290,6 +313,7 @@ export function useDesignerSession({
       use,
       history: designerHistory(turns),
       attachments: ready.map((a) => ({ name: a.name, mediaType: a.mediaType, data: a.data })),
+      settings: designerRequestSettings(choice),
       ...(context
         ? { context: { subject: context.subject, preheader: context.preheader, ...(context.language ? { language: context.language } : {}) } }
         : {}),
@@ -312,9 +336,9 @@ export function useDesignerSession({
     setRun({ startedAt: Date.now(), progress: null });
 
     // On a failure the instruction comes back into the (empty) input, so
-    // „Gestalten“ is one click away.
-    const fail = (text: string, role: "error" | "notice" = "error") => {
-      addTurn({ id: nextId(), role, text });
+    // „Gestalten“ is one click away. A failed run may say what it cost (`run`).
+    const fail = (text: string, role: "error" | "notice" = "error", failedRun: DesignerRun | null = null) => {
+      addTurn({ id: nextId(), role, text, ...(failedRun ? { run: failedRun } : {}) });
       if (alive.current) setDraft((d) => (d.trim() ? d : instruction));
     };
 
@@ -334,7 +358,7 @@ export function useDesignerSession({
             }
             settled = true;
             if (event.kind === "error") {
-              fail(event.message);
+              fail(event.message, "error", event.run);
               return;
             }
             // The answer's id goes with the result: the workspace tags its undo step with it (noteUndo).
@@ -346,6 +370,7 @@ export function useDesignerSession({
               subject: event.subject,
               preheader: event.preheader,
               warnings: event.warnings,
+              run: event.run,
             };
             // Hand edits made while the AI worked are replaced by its result —
             // say so (they are one „Rückgängig“ away).
@@ -358,6 +383,7 @@ export function useDesignerSession({
               subject: result.subject,
               preheader: result.preheader,
               warnings: editedMeanwhile ? [EDITED_MEANWHILE, ...result.warnings] : result.warnings,
+              run: result.run,
             });
           },
         });
@@ -386,6 +412,8 @@ export function useDesignerSession({
     startedAt: run?.startedAt ?? null,
     progress: run?.progress ?? null,
     canSend: run === null && doc !== null && allPrepared && designerCanSend(draft, attachments.length),
+    choice,
+    setChoice,
     addFiles,
     removeAttachment,
     send,

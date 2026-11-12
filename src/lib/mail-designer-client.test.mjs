@@ -9,14 +9,18 @@ import {
   designerCanSend,
   designerHistory,
   designerNotesText,
+  designerRunLine,
   docHistoryReducer,
   elapsedLabel,
   interpretDesignerEvent,
   lastUndoTag,
+  parseDesignerRun,
+  runDurationLabel,
   sameDoc,
   undoDesignerTurn,
 } from "./mail-designer-client.mjs";
 import { normalizeMailTemplateDoc } from "./mail-template-doc.mjs";
+import { eur } from "./admin-format.mjs";
 
 const user = (id, text, attachments = []) => ({ id, role: "user", text, attachments });
 const ai = (id, text, extra = {}) => ({ id, role: "assistant", text, subject: null, preheader: null, warnings: [], ...extra });
@@ -196,13 +200,100 @@ test("events: a result carries the normalised document, notes, suggestions and w
 });
 
 test("events: a result without a document is an error; an error keeps its message", () => {
-  assert.deepEqual(interpretDesignerEvent({ type: "result", notes: "x" }), { kind: "error", message: DESIGNER_INCOMPLETE_MESSAGE });
-  assert.deepEqual(interpretDesignerEvent({ type: "result", doc: [] }), { kind: "error", message: DESIGNER_INCOMPLETE_MESSAGE });
+  assert.deepEqual(interpretDesignerEvent({ type: "result", notes: "x" }), { kind: "error", message: DESIGNER_INCOMPLETE_MESSAGE, run: null });
+  assert.deepEqual(interpretDesignerEvent({ type: "result", doc: [] }), { kind: "error", message: DESIGNER_INCOMPLETE_MESSAGE, run: null });
   assert.deepEqual(interpretDesignerEvent({ type: "error", message: "Das Kontingent ist erschöpft." }), {
     kind: "error",
     message: "Das Kontingent ist erschöpft.",
+    run: null,
   });
-  assert.deepEqual(interpretDesignerEvent({ type: "error" }), { kind: "error", message: DESIGNER_FAILED_MESSAGE });
+  assert.deepEqual(interpretDesignerEvent({ type: "error" }), { kind: "error", message: DESIGNER_FAILED_MESSAGE, run: null });
+});
+
+const RUN = {
+  model: "claude-opus-5-5",
+  effort: "high",
+  label: "Gründlich · Claude Opus 5.5 · Denktiefe Hoch",
+  freedom: "ausgewogen",
+  proactive: true,
+  seconds: 101.6,
+  costEur: 0.3812,
+  fallbackFrom: null,
+};
+
+test("events: the run of a result or an error line — what ran, how long, what it cost", () => {
+  const ev = interpretDesignerEvent({ type: "result", doc: { blocks: [] }, notes: "ok", run: RUN });
+  assert.deepEqual(ev?.kind === "result" ? ev.run : null, { ...RUN, seconds: 102 });
+  // a failed run carries its cost too; an incomplete result keeps its run
+  const failed = interpretDesignerEvent({ type: "error", message: "Zeit abgelaufen.", run: { ...RUN, costEur: 1.2, seconds: 285 } });
+  assert.deepEqual(failed, { kind: "error", message: "Zeit abgelaufen.", run: { ...RUN, costEur: 1.2, seconds: 285 } });
+  const incomplete = interpretDesignerEvent({ type: "result", run: RUN });
+  assert.equal(incomplete?.kind === "error" ? incomplete.run?.model : null, "claude-opus-5-5");
+  // the model that actually ran after a fallback, with the one that was unavailable
+  const fell = parseDesignerRun({ ...RUN, fallbackFrom: "  claude-fable-5-2 " });
+  assert.equal(fell?.fallbackFrom, "claude-fable-5-2");
+  assert.equal(fell?.model, "claude-opus-5-5");
+});
+
+test("events: a run is read leniently — no model or effort → no run; a broken duration or cost is left out", () => {
+  assert.equal(parseDesignerRun(null), null);
+  assert.equal(parseDesignerRun("run"), null);
+  assert.equal(parseDesignerRun([RUN]), null);
+  assert.equal(parseDesignerRun({ ...RUN, model: "" }), null);
+  assert.equal(parseDesignerRun({ ...RUN, effort: 3 }), null);
+  assert.deepEqual(parseDesignerRun({ model: "claude-fable-5-2", effort: "high" }), {
+    model: "claude-fable-5-2",
+    effort: "high",
+    label: "Maximal · Claude Fable 5.2 · Denktiefe Hoch", // built when the line has none
+    freedom: null,
+    proactive: null,
+    seconds: null,
+    costEur: null,
+    fallbackFrom: null,
+  });
+  const broken = parseDesignerRun({ ...RUN, seconds: -4, costEur: "0,38", proactive: "ja", label: "   " });
+  assert.deepEqual(
+    broken && [broken.seconds, broken.costEur, broken.proactive, broken.label],
+    [null, null, null, "Gründlich · Claude Opus 5.5 · Denktiefe Hoch"]
+  );
+  assert.equal(parseDesignerRun({ ...RUN, costEur: Number.POSITIVE_INFINITY })?.costEur, null);
+  assert.equal(parseDesignerRun({ ...RUN, costEur: 0 })?.costEur, 0);
+  assert.equal(parseDesignerRun({ ...RUN, label: "x".repeat(400) })?.label.length, 160);
+});
+
+test("run line: label · m:ss min · ≈ cost — cost or duration left out when unknown", () => {
+  const run = parseDesignerRun(RUN);
+  assert.equal(designerRunLine(run), `Gründlich · Claude Opus 5.5 · Denktiefe Hoch · 1:42 min · ≈ ${eur(0.3812)}`);
+  assert.equal(eur(0.3812), eur(0.38)); // two decimals
+  assert.equal(designerRunLine(parseDesignerRun({ ...RUN, costEur: null })), "Gründlich · Claude Opus 5.5 · Denktiefe Hoch · 1:42 min");
+  assert.equal(
+    designerRunLine(parseDesignerRun({ model: "claude-opus-5-5", effort: "xhigh", costEur: 2.5 })),
+    `Eigene Einstellung · Claude Opus 5.5 · Denktiefe Sehr hoch · ≈ ${eur(2.5)}`
+  );
+  assert.equal(designerRunLine(null), "");
+  assert.equal(designerRunLine(undefined), "");
+});
+
+test("a reply's run stays in the panel: never in the history sent to the AI, kept by „Rückgängig“", () => {
+  const run = parseDesignerRun(RUN);
+  const turns = [user(1, "Mach es blau"), ai(2, "Blau.", { run }), user(3, "Und größer"), { id: 4, role: "error", text: "Zeit abgelaufen.", run }];
+  assert.deepEqual(designerHistory(turns), [
+    { role: "user", text: "Mach es blau" },
+    { role: "assistant", text: "Blau." },
+  ]);
+  const undone = undoDesignerTurn(turns, 2, 5);
+  assert.deepEqual(undone[1].role === "assistant" ? [undone[1].undone, undone[1].run] : null, [true, run]);
+});
+
+test("run duration as m:ss", () => {
+  assert.equal(runDurationLabel(0), "0:00");
+  assert.equal(runDurationLabel(5), "0:05");
+  assert.equal(runDurationLabel(59.6), "1:00");
+  assert.equal(runDurationLabel(102), "1:42");
+  assert.equal(runDurationLabel(285), "4:45");
+  assert.equal(runDurationLabel(605), "10:05");
+  assert.equal(runDurationLabel(-3), "0:00");
+  assert.equal(runDurationLabel("x"), "0:00");
 });
 
 test("undo: AI results and „Vorlage laden“ push a step, hand edits do not, undo pops one", () => {

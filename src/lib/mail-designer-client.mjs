@@ -11,7 +11,11 @@
 //   * interpretDesignerEvent — one line of the NDJSON stream of POST
 //     /api/admin/vorlagen/assist → progress / result / error; heartbeats and
 //     unknown lines → null. The result document is normalised, so the
-//     editor never holds one the renderer would refuse.
+//     editor never holds one the renderer would refuse. A result or error
+//     line may carry `run` (parseDesignerRun): the settings the run used,
+//     its duration and cost.
+//   * designerRunLine — the line under a reply: „Gründlich · Claude Opus 5.5
+//     · Denktiefe Hoch · 1:42 min · ≈ 0,38 €“.
 //   * docHistoryReducer — the multi-step „Rückgängig“ of the template and
 //     Rundmail editors: every AI result and „Vorlage laden“ pushes the
 //     document it replaces (at most DESIGNER_UNDO_LIMIT steps), tagged with
@@ -24,7 +28,9 @@
 //     (never Markdown: model output must not become a link in the admin).
 //   * elapsedLabel — „42 s“, „2:05 Min.“ for the progress line.
 
+import { eur, num } from "./admin-format.mjs";
 import { normalizeMailTemplateDoc } from "./mail-template-doc.mjs";
+import { designerSettingsLabel } from "./mail-template-designer-settings.mjs";
 
 /** Turns of the conversation sent with a request (4 exchanges). */
 export const DESIGNER_HISTORY_TURNS = 8;
@@ -41,11 +47,32 @@ export const DESIGNER_INCOMPLETE_MESSAGE = "Die Antwort der KI war unvollständi
 export const DESIGNER_FAILED_MESSAGE = "Die KI-Gestaltung ist fehlgeschlagen — bitte erneut versuchen.";
 
 /**
+ * What one run of the KI-Gestalter used and cost (the `run` of a result or
+ * error line): the model that actually ran (after a fallback: Opus 5.5 —
+ * `fallbackFrom` names the one that was unavailable), its effort and the
+ * line of designerSettingsLabel, the freedom and capabilities switch of the
+ * run, the whole run's seconds and its cost in euros (all model calls; null
+ * when unknown). Freedom, capabilities and seconds are null when the line
+ * does not carry them.
+ * @typedef {{
+ *   model: string,
+ *   effort: string,
+ *   label: string,
+ *   freedom: string | null,
+ *   proactive: boolean | null,
+ *   seconds: number | null,
+ *   costEur: number | null,
+ *   fallbackFrom: string | null,
+ * }} DesignerRun
+ */
+
+/**
  * One turn of the conversation as the panel shows it. `undone`: „Rückgängig“
- * took this reply's result back; `undo`: the notice that says so.
+ * took this reply's result back; `undo`: the notice that says so; `run`: the
+ * line under a reply or a failure (designerRunLine).
  * @typedef {{ id: number, role: "user", text: string, attachments: string[] }} DesignerUserTurn
- * @typedef {{ id: number, role: "assistant", text: string, subject: string | null, preheader: string | null, warnings: string[], undone?: boolean }} DesignerAssistantTurn
- * @typedef {{ id: number, role: "error" | "notice", text: string, undo?: boolean }} DesignerNoticeTurn
+ * @typedef {{ id: number, role: "assistant", text: string, subject: string | null, preheader: string | null, warnings: string[], undone?: boolean, run?: DesignerRun | null }} DesignerAssistantTurn
+ * @typedef {{ id: number, role: "error" | "notice", text: string, undo?: boolean, run?: DesignerRun | null }} DesignerNoticeTurn
  * @typedef {DesignerUserTurn | DesignerAssistantTurn | DesignerNoticeTurn} DesignerTurn
  */
 
@@ -55,8 +82,8 @@ export const DESIGNER_UNDONE_MARK = "(Rückgängig gemacht: Die Person hat diese
 /**
  * @typedef {ReturnType<typeof normalizeMailTemplateDoc>} DesignerDoc
  * @typedef {{ kind: "progress", stage: string, text: string }} DesignerProgressEvent
- * @typedef {{ kind: "result", doc: DesignerDoc, notes: string, subject: string | null, preheader: string | null, warnings: string[] }} DesignerResultEvent
- * @typedef {{ kind: "error", message: string }} DesignerErrorEvent
+ * @typedef {{ kind: "result", doc: DesignerDoc, notes: string, subject: string | null, preheader: string | null, warnings: string[], run: DesignerRun | null }} DesignerResultEvent
+ * @typedef {{ kind: "error", message: string, run: DesignerRun | null }} DesignerErrorEvent
  * @typedef {DesignerProgressEvent | DesignerResultEvent | DesignerErrorEvent} DesignerEvent
  */
 
@@ -192,6 +219,38 @@ export function designerCanSend(instruction, attachmentCount) {
   return text.length >= 3 || attachmentCount > 0;
 }
 
+/** @param {unknown} v — a finite number ≥ 0, else null */
+function amount(v) {
+  return typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : null;
+}
+
+/**
+ * The `run` of a result or error line → what the panel shows under the
+ * reply; null without one, or without a model and effort. Lenient like the
+ * rest of the stream: a missing label is built from model and effort, a
+ * broken duration or cost is left out.
+ * @param {unknown} raw
+ * @returns {DesignerRun | null}
+ */
+export function parseDesignerRun(raw) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const r = /** @type {Record<string, unknown>} */ (raw);
+  const model = oneLine(r.model, 80);
+  const effort = oneLine(r.effort, 20);
+  if (!model || !effort) return null;
+  const seconds = amount(r.seconds);
+  return {
+    model,
+    effort,
+    label: oneLine(r.label, 160) || designerSettingsLabel({ model, effort }),
+    freedom: oneLine(r.freedom, 40) || null,
+    proactive: typeof r.proactive === "boolean" ? r.proactive : null,
+    seconds: seconds === null ? null : Math.round(seconds),
+    costEur: amount(r.costEur),
+    fallbackFrom: oneLine(r.fallbackFrom, 80) || null,
+  };
+}
+
 /**
  * One streamed line of POST /api/admin/vorlagen/assist → what the panel does
  * with it; null for a heartbeat or anything it does not know.
@@ -207,7 +266,8 @@ export function interpretDesignerEvent(raw) {
     return text ? { kind: "progress", stage: typeof r.stage === "string" ? r.stage : "", text } : null;
   }
   if (r.type === "result") {
-    if (!r.doc || typeof r.doc !== "object" || Array.isArray(r.doc)) return { kind: "error", message: DESIGNER_INCOMPLETE_MESSAGE };
+    const run = parseDesignerRun(r.run);
+    if (!r.doc || typeof r.doc !== "object" || Array.isArray(r.doc)) return { kind: "error", message: DESIGNER_INCOMPLETE_MESSAGE, run };
     const warnings = Array.isArray(r.warnings)
       ? r.warnings.filter((w) => typeof w === "string" && w.trim()).map((w) => oneLine(w, 400)).slice(0, 12)
       : [];
@@ -218,10 +278,34 @@ export function interpretDesignerEvent(raw) {
       subject: optionalLine(r.subject, 150),
       preheader: optionalLine(r.preheader, 150),
       warnings,
+      run,
     };
   }
-  if (r.type === "error") return { kind: "error", message: oneLine(r.message, 600) || DESIGNER_FAILED_MESSAGE };
+  if (r.type === "error") return { kind: "error", message: oneLine(r.message, 600) || DESIGNER_FAILED_MESSAGE, run: parseDesignerRun(r.run) };
   return null;
+}
+
+/**
+ * A run's duration as m:ss — „0:42“, „1:42“, „10:05“.
+ * @param {unknown} seconds
+ */
+export function runDurationLabel(seconds) {
+  const s = Math.max(0, Math.round(Number(seconds) || 0));
+  return `${num(Math.floor(s / 60))}:${String(s % 60).padStart(2, "0")}`;
+}
+
+/**
+ * The line under a reply (or a failure): what ran, how long, what it cost —
+ * „Gründlich · Claude Opus 5.5 · Denktiefe Hoch · 1:42 min · ≈ 0,38 €“; the
+ * duration or the cost is left out when unknown, "" without a run.
+ * @param {DesignerRun | null | undefined} run
+ */
+export function designerRunLine(run) {
+  if (!run) return "";
+  const parts = [run.label || designerSettingsLabel(run)];
+  if (run.seconds != null) parts.push(`${runDurationLabel(run.seconds)} min`);
+  if (run.costEur != null) parts.push(`≈ ${eur(run.costEur)}`);
+  return parts.join(" · ");
 }
 
 /** Same document? (the editors compare documents as JSON — the normaliser's key order is fixed) */

@@ -38,6 +38,7 @@ import {
 } from "@/lib/mail-template-doc.mjs";
 import { ADMIN_DATE_TIME_SHORT, formatAdmin } from "@/lib/admin-datetime.mjs";
 import { EMAIL_THEME_KIND_LABELS } from "@/lib/email-theme.mjs";
+import type { DesignerSettings } from "@/lib/mail-template-designer-settings.mjs";
 import {
   Button,
   Callout,
@@ -113,12 +114,15 @@ export function VorlagenWorkspace({
   initialId,
   uploadConfigured,
   aiConfigured,
+  designerSettings,
 }: {
   dbReady: boolean;
   templates: VorlageMeta[];
   initialId: number | null;
   uploadConfigured: boolean;
   aiConfigured: boolean;
+  /** Einstellungen → „KI-Gestalter“: the KI-Gestalter's first choice and its „Standard“. */
+  designerSettings: DesignerSettings;
 }) {
   const router = useRouter();
   const [editingId, setEditingId] = React.useState<number | null>(initialId);
@@ -155,6 +159,7 @@ export function VorlagenWorkspace({
         id={editingId}
         uploadConfigured={uploadConfigured}
         aiConfigured={aiConfigured}
+        designerSettings={designerSettings}
         onClose={() => open(null)}
         onOpen={(id) => open(id)}
         usedFor={initial.find((t) => t.id === editingId)?.usedFor ?? []}
@@ -341,6 +346,7 @@ function TemplateEditorView({
   id,
   uploadConfigured,
   aiConfigured,
+  designerSettings,
   usedFor,
   onClose,
   onOpen,
@@ -348,6 +354,7 @@ function TemplateEditorView({
   id: number;
   uploadConfigured: boolean;
   aiConfigured: boolean;
+  designerSettings: DesignerSettings;
   usedFor: string[];
   onClose: () => void;
   onOpen: (id: number) => void;
@@ -368,7 +375,12 @@ function TemplateEditorView({
   // A template with „Mos persönlicher Text“ is a design for Mo's personal mails: the AI must keep
   // Mo's blocks (and the server checks it) — read at send time, so it follows the current document.
   const designerUse = doc && docSupportsPersonal(doc) ? "personal" : "template";
-  const designer = useDesignerSession({ use: designerUse, doc, onResult: (result) => replaceDoc(result.doc, result.turnId) });
+  const designer = useDesignerSession({
+    use: designerUse,
+    doc,
+    designerSettings,
+    onResult: (result) => replaceDoc(result.doc, result.turnId),
+  });
   const [saving, setSaving] = React.useState(false);
   const [previewUse, setPreviewUse] = React.useState<"bulk" | "personal">("bulk");
 
@@ -542,7 +554,12 @@ function TemplateEditorView({
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)]">
         <div className="flex min-w-0 flex-col gap-3">
           {designerOpen && aiConfigured && (
-            <DesignerPanel session={designer} use={designerUse} onClose={() => setDesignerOpen(false)} />
+            <DesignerPanel
+              session={designer}
+              use={designerUse}
+              designerSettings={designerSettings}
+              onClose={() => setDesignerOpen(false)}
+            />
           )}
           <p className="flex items-center gap-1 text-sm font-semibold">
             Bausteine

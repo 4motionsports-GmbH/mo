@@ -1,19 +1,23 @@
 // Vorlagen screen (server-rendered): the operator's e-mail templates
 // (docs/EMAIL_TEMPLATES.md) with where each is in use, whether picture upload
-// and the AI are configured. The client workspace (vorlagen/) loads a
-// template's document on demand and writes through /api/admin/vorlagen.
+// and the AI are configured, and the KI-Gestalter's stored settings
+// (Einstellungen → „KI-Gestalter“ — its first choice per conversation). The
+// client workspace (vorlagen/) loads a template's document on demand and
+// writes through /api/admin/vorlagen.
 
 import { listMailTemplateMeta } from "@/lib/mail-template-store";
 import { listEmailDesignSelections } from "@/lib/email-design-store";
+import { getDesignerSettings, type DesignerSettings } from "@/lib/admin-settings-store";
+import { DEFAULT_DESIGNER_SETTINGS } from "@/lib/mail-template-designer-settings.mjs";
 import { parseTemplateDesignKey } from "@/lib/mail-template-doc.mjs";
 import { isTemplateImageUploadConfigured } from "@/lib/mail-template-image";
 import { VorlagenWorkspace } from "./lazy";
 import type { VorlageMeta } from "./vorlagen/VorlagenWorkspace";
 
 export async function VorlagenTab({ dbReady, initialId }: { dbReady: boolean; initialId: number | null }) {
-  const [templates, selections] = dbReady
-    ? await Promise.all([listMailTemplateMeta({ includeArchived: true }), listEmailDesignSelections()])
-    : [[], {}];
+  const [templates, selections, designerSettings] = dbReady
+    ? await Promise.all([listMailTemplateMeta({ includeArchived: true }), listEmailDesignSelections(), getDesignerSettings()])
+    : [[], {}, { ...DEFAULT_DESIGNER_SETTINGS } as DesignerSettings];
   const usedFor = (id: number) =>
     Object.entries(selections)
       .filter(([, key]) => parseTemplateDesignKey(key) === id)
@@ -26,6 +30,7 @@ export async function VorlagenTab({ dbReady, initialId }: { dbReady: boolean; in
       initialId={initialId && templates.some((t) => t.id === initialId) ? initialId : null}
       uploadConfigured={isTemplateImageUploadConfigured()}
       aiConfigured={Boolean(process.env.ANTHROPIC_API_KEY)}
+      designerSettings={designerSettings}
     />
   );
 }

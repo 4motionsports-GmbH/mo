@@ -1,8 +1,9 @@
 // "Einstellungen" tab body (server component): the Shopify-Abgleich (import,
 // sync health, write-back outbox) and everything e-mail — the
 // registered CODE designs (src/lib/email-designs/registry.ts) with live
-// previews, the per-email-type design selection, the read-only send
-// configuration, the editable contact-frequency warning (admin_settings,
+// previews, the per-email-type design selection, the KI-Gestalter's team
+// settings (admin_settings key mail_designer, migration 0078), the read-only
+// send configuration, the editable contact-frequency warning (admin_settings,
 // migration 0078) and the Systemstatus overview (decision D-5, env-derived
 // booleans only). Data is gathered here on the server and handed to the client
 // EmailSettingsWorkspace, which owns the selection state and calls the
@@ -22,8 +23,9 @@ import {
   isSingleOptInAllowed,
   marketingMinSendIntervalDays,
 } from "@/lib/campaign-flags.mjs";
-import { getContactFrequencySettings } from "@/lib/admin-settings-store";
+import { getContactFrequencySettings, getDesignerSettings, type DesignerSettings } from "@/lib/admin-settings-store";
 import { DEFAULT_CONTACT_FREQUENCY } from "@/lib/contact-frequency.mjs";
+import { DEFAULT_DESIGNER_SETTINGS } from "@/lib/mail-template-designer-settings.mjs";
 import {
   aiProfileScope,
   appProxySigninMaxAgeHours,
@@ -53,7 +55,7 @@ import { EmailSettingsWorkspace } from "./lazy";
 import type { SystemStatus } from "./einstellungen/types";
 
 export async function EinstellungenTab({ dbReady }: { dbReady: boolean }) {
-  const [selections, health, runs, outbox, alignment, contactFrequency, templates, senders] = dbReady
+  const [selections, health, runs, outbox, alignment, contactFrequency, templates, senders, designerSettings] = dbReady
     ? await Promise.all([
         listEmailDesignSelections(),
         getSyncHealth(),
@@ -63,8 +65,9 @@ export async function EinstellungenTab({ dbReady }: { dbReady: boolean }) {
         getContactFrequencySettings(),
         listMailTemplateMeta(),
         listSenderIdentities(),
+        getDesignerSettings(),
       ])
-    : [{}, null, [], null, null, { ...DEFAULT_CONTACT_FREQUENCY }, [], []];
+    : [{}, null, [], null, null, { ...DEFAULT_CONTACT_FREQUENCY }, [], [], { ...DEFAULT_DESIGNER_SETTINGS } as DesignerSettings];
   // Code designs, then the operator's templates („Vorlagen“, 0081) that carry
   // „Mos persönlicher Text“ — selectable for the marketing kinds.
   const designs = [
@@ -132,6 +135,7 @@ export async function EinstellungenTab({ dbReady }: { dbReady: boolean }) {
         logoOverride: process.env.EMAIL_LOGO_URL ?? null,
       }}
       contactFrequency={{ settings: contactFrequency, minSendIntervalDays: marketingMinSendIntervalDays() }}
+      designerSettings={designerSettings}
       senders={{
         defaultFrom: defaultSender.from,
         repliesTo: defaultSender.repliesTo,

@@ -1,6 +1,7 @@
 // The workspace of a Rundmail campaign (server-rendered) — kind 'rundmail'
 // has no review desk: one content for everyone, edited, tested, checked and
-// released here (docs/CAMPAIGNS.md §9). Loads the content and the figures;
+// released here (docs/CAMPAIGNS.md §9). Loads the content, the figures and
+// the KI-Gestalter's stored settings (its first choice per conversation);
 // the client workspace (rundmail/) drives everything through
 // /api/admin/rundmail.
 
@@ -12,6 +13,7 @@ import { isCampaignSendsApproved, isSingleOptInAllowed } from "@/lib/campaign-fl
 import { resolveCampaignSender } from "@/lib/sender-store";
 import { listMailTemplateMeta } from "@/lib/mail-template-store";
 import { isTemplateImageUploadConfigured } from "@/lib/mail-template-image";
+import { getDesignerSettings } from "@/lib/admin-settings-store";
 import { RundmailWorkspace } from "./lazy";
 import { Callout } from "./ui";
 
@@ -36,7 +38,12 @@ export async function RundmailTab({
   if (!mailing) {
     return <Callout tone="destructive">Der Inhalt dieser Rundmail kann nicht geladen werden (Migration 0081?).</Callout>;
   }
-  const [stats, templates] = await Promise.all([getMailingStats(campaign.id), listMailTemplateMeta()]);
+  // getDesignerSettings answers the defaults without a database or a stored row.
+  const [stats, templates, designerSettings] = await Promise.all([
+    getMailingStats(campaign.id),
+    listMailTemplateMeta(),
+    getDesignerSettings(),
+  ]);
   const sender = resolveCampaignSender(campaign.sender);
   return (
     <RundmailWorkspace
@@ -58,6 +65,7 @@ export async function RundmailTab({
       sender={sender.ok ? { ok: true, from: sender.from, replyTo: sender.replyTo ?? null } : { ok: false, message: sender.message }}
       uploadConfigured={isTemplateImageUploadConfigured()}
       aiConfigured={Boolean(process.env.ANTHROPIC_API_KEY)}
+      designerSettings={designerSettings}
       templates={templates.map((t) => ({ id: t.id, name: t.name }))}
       initialView={initialView}
     />
