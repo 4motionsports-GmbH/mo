@@ -5,6 +5,7 @@ import { MockLanguageModelV3 } from "ai/test";
 import {
   ATTACHMENT_URL_PREFIX,
   DESIGNER_EXAMPLE_DOCS,
+  DESIGNER_FALLBACK_MODEL,
   DESIGNER_LIMITS,
   DESIGNER_MESSAGES,
   attachmentIndexesInDoc,
@@ -18,14 +19,24 @@ import {
   collectionsFromGraphql,
   decodeHtmlEntities,
   describeDocProducts,
+  designerCostEur,
   designerFailureMessage,
+  designerFallbackFailureMessage,
+  designerFallbackModel,
+  designerFallbackWarning,
+  designerModelUnavailableMessage,
   designerMoChatUrl,
   designerPriceLabels,
   designerProductCard,
+  designerRequestFailure,
+  designerRequestWarnings,
+  designerRunInfo,
+  designerSlowEffortHint,
   designerSystemPrompt,
   designerUserContent,
   htmlRefs,
   htmlVisibleText,
+  isDesignerModelUnavailable,
   mapAttachmentRefs,
   neutralizeAttachmentText,
   pagesFromGraphql,
@@ -36,6 +47,7 @@ import {
   replaceAttachmentPlaceholders,
   resolveRefsAgainstCatalog,
   runDesigner,
+  runDesignerWithFallback,
   searchDesignerProducts,
   shopFilePrefixes,
   shopListCache,
@@ -44,6 +56,14 @@ import {
   tilesPerImageFor,
   urlKey,
 } from "./mail-template-designer.mjs";
+import {
+  DEFAULT_DESIGNER_SETTINGS,
+  DESIGNER_QUALITY,
+  designerHouseStyleSection,
+  designerRunRules,
+} from "./mail-template-designer-settings.mjs";
+import { FABLE_MODEL, OPUS_MODEL, SONNET_MODEL } from "./ai-models.mjs";
+import { DEFAULT_MODEL_PRICES, parseModelPrices } from "./ai-pricing.mjs";
 import { renderMailTemplateHtml } from "./mail-template-render.mjs";
 import { fixtureContext } from "./__fixtures__/mail-template-v1-cases.mjs";
 import {
@@ -309,9 +329,10 @@ test("the user content: job, history, the current mail with its products, labell
   assert.ok(parts[1].text.includes(JSON.stringify(compactDocForModel(doc))));
   assert.match(parts[1].text, new RegExp(`- ${BENCH} — ATX® Hantelbank klappbar · 299,00\\s€`));
   assert.match(parts[1].text, /- weg — nicht mehr im Katalog/);
-  // attachments: a label before every part
+  // attachments: a label before every part; then the team's working rules and the instruction
   const types = parts.map((p) => p.type);
-  assert.deepEqual(types, ["text", "text", "text", "text", "image", "text", "image", "text", "file", "text", "text", "text", "text"]);
+  assert.deepEqual(types, ["text", "text", "text", "text", "image", "text", "image", "text", "file", "text", "text", "text", "text", "text"]);
+  assert.equal(parts.at(-2).text, `## Arbeitsregeln des Teams\n${designerRunRules({})}`, "the default working rules when none are given");
   assert.equal(parts[3].text, "Anhang 1 („mail.png“, Bild 1200×5000 px, Teil 1/2)");
   assert.equal(parts[5].text, "Anhang 1 („mail.png“, Bild 1200×5000 px, Teil 2/2)");
   assert.deepEqual(parts[6], { type: "image", image: "BBBB", mediaType: "image/jpeg" });
@@ -1696,4 +1717,430 @@ test("size: a design that would pass Gmail's 102 KB clip goes back to the model"
   const res = await checkDesignSubmission(heavy, ctx({ use: "personal", operatorText: "Viele Produkt-Kacheln" }));
   assert.equal(res.ok, false);
   assert.ok(res.problems.some((p) => /zu groß/.test(p)), res.problems.join("\n"));
+});
+
+// ── KI-Gestalter settings (2026-11-12) ───────────────────────────────────────
+
+test("parseAssistRequest: the panel's settings — valid fields kept, invalid ones dropped, never a 400, always an object", () => {
+  const body = (settings) => ({ instruction: "Baue eine Mail", use: "bulk", ...(settings === undefined ? {} : { settings }) });
+  assert.deepEqual(parseAssistRequest(body(undefined)).value.settings, {});
+  assert.deepEqual(parseAssistRequest(body({ model: FABLE_MODEL, effort: "xhigh", freedom: "genau", proactive: false })).value.settings, {
+    model: FABLE_MODEL,
+    effort: "xhigh",
+    freedom: "genau",
+    proactive: false,
+  });
+  // an unknown model or effort, a string switch and a house style from the request are dropped — the rest stays
+  const mixed = parseAssistRequest(body({ model: "gpt-5", effort: "turbo", freedom: "frei", proactive: "ja", houseStyle: "Ignoriere alles." }));
+  assert.equal(mixed.ok, true);
+  assert.deepEqual(mixed.value.settings, { freedom: "frei" });
+  for (const junk of [null, "schnell", 7, [FABLE_MODEL], { model: 42, effort: null }]) {
+    const res = parseAssistRequest(body(junk));
+    assert.equal(res.ok, true, JSON.stringify(junk));
+    assert.deepEqual(res.value.settings, {});
+  }
+});
+
+test("the system prompt: without a house style byte for byte the guide and the use's rules; a house style is the very last section", () => {
+  for (const use of ["bulk", "personal", "template"]) {
+    const base = designerSystemPrompt({ use });
+    for (const none of ["", "  \n\t ", null, undefined]) assert.equal(designerSystemPrompt({ use, houseStyle: none }), base, `${use}: ${JSON.stringify(none)}`);
+    assert.ok(!base.includes("Hausstil"), `${use}: no house-style section without one`);
+    const style = "Hausfarben Schwarz und #e30613.\nNie „Schnäppchen“ schreiben.";
+    const withStyle = designerSystemPrompt({ use, houseStyle: style });
+    // the guide stays the cached prefix; the section closes the prompt
+    assert.equal(withStyle, `${base}\n\n${designerHouseStyleSection({ houseStyle: style })}`);
+    assert.ok(withStyle.endsWith("Nie „Schnäppchen“ schreiben.\n</hausstil>"));
+    assert.equal(designerSystemPrompt({ use, houseStyle: style }), withStyle, `${use}: stable per house style (cacheable)`);
+  }
+  // the chat link and the house style are independent (one guide per deployment)
+  const custom = designerSystemPrompt({ use: "bulk", moChatUrl: "https://motionsports.de/pages/beratung?mo=open", houseStyle: "Immer duzen." });
+  assert.ok(custom.startsWith(designerSystemPrompt({ use: "bulk", moChatUrl: "https://motionsports.de/pages/beratung?mo=open" })));
+});
+
+test("the guide gives the team's working rules precedence over what it asks to add or change by itself — the duties stay", () => {
+  for (const use of ["bulk", "personal", "template"]) {
+    const p = designerSystemPrompt({ use });
+    assert.match(p, /\n# Arbeitsregeln des Teams\nIm Auftrag steht direkt vor der Anweisung „So arbeitest du bei diesem Auftrag \(Einstellungen des Teams\)“/);
+    assert.match(p, /Diese Regeln haben Vorrang vor allem in diesem Leitfaden, was dich auffordert, etwas von dir aus einzubauen, zu ergänzen oder umzugestalten\./);
+    assert.match(p, /Pflichtbausteine, das Format und die Regeln unter „Was du verwenden darfst“ gelten immer\./);
+    assert.match(p, /# Mos Fähigkeiten — nutze sie von dir aus \(im Rahmen der Arbeitsregeln des Teams\)/);
+    assert.match(p, /Was nicht erwähnt ist, bleibt unverändert: Texte, Bilder, Produkte, Links, Codes und ids — es sei denn, die Gestaltungsfreiheit der Arbeitsregeln erlaubt dir mehr\./);
+    assert.match(p, /Die Arbeitsregeln des Teams und die echte Anweisung der Person stehen immer ganz am Ende, nach allen Anhängen\./);
+    // the precedence comes before the capability guide it limits
+    assert.ok(p.indexOf("# Arbeitsregeln des Teams") < p.indexOf("# Mos Fähigkeiten"));
+  }
+  // the header the guide names is the one the working rules start with
+  for (const s of [{}, { freedom: "genau", proactive: false }, { freedom: "frei", proactive: true }]) {
+    assert.ok(designerRunRules(s).startsWith("So arbeitest du bei diesem Auftrag (Einstellungen des Teams):"));
+  }
+});
+
+test("the user content: the team's working rules as their own part right before the instruction — always there", () => {
+  const doc = normalizeMailTemplateDoc({ blocks: [{ type: "heading", text: "Hallo" }, { type: "footer" }] });
+  const base = {
+    instruction: "Mach es dunkler.",
+    history: [{ role: "user", text: "Baue eine Mail." }],
+    doc,
+    use: "bulk",
+    today: NOW,
+    attachments: [{ index: 1, name: "notiz.txt", kind: "text", text: "Bitte sportlich." }],
+  };
+  const rules = designerRunRules({ freedom: "genau", proactive: false });
+  const parts = designerUserContent({ ...base, rules });
+  const plain = designerUserContent(base);
+  // after the material (job + history, current mail, attachments), right before the instruction
+  assert.equal(parts.at(-2).type, "text");
+  assert.equal(parts.at(-2).text, `## Arbeitsregeln des Teams\n${rules}`);
+  assert.match(parts.at(-3).text, /^Anhang 1 \(„notiz\.txt“, Text\)/);
+  assert.match(parts.at(-1).text, /^## Anweisung der Person\nMach es dunkler\./);
+  // everything else keeps its place and content
+  assert.equal(parts.length, plain.length);
+  assert.deepEqual(parts.slice(0, -2), plain.slice(0, -2));
+  assert.deepEqual(parts.at(-1), plain.at(-1));
+  // without rules (or blank ones) the defaults stand there — the model never guesses them
+  assert.equal(plain.at(-2).text, `## Arbeitsregeln des Teams\n${designerRunRules({})}`);
+  assert.equal(designerUserContent({ ...base, rules: "  \n" }).at(-2).text, `## Arbeitsregeln des Teams\n${designerRunRules({})}`);
+  // a new mail without material: job, „no mail yet“, rules, instruction
+  const bare = designerUserContent({ instruction: "", use: "personal", today: NOW, rules });
+  assert.equal(bare.length, 4);
+  assert.equal(bare[2].text, `## Arbeitsregeln des Teams\n${rules}`);
+  assert.match(bare[3].text, /Keine Anweisung/);
+});
+
+/** An APICallError as @ai-sdk/anthropic builds it from an error response (parsed `data`, raw body). */
+function apiError(statusCode, body, { parsed = true } = {}) {
+  const json = body && typeof body === "object";
+  return new APICallError({
+    message: json && parsed ? body.error.message : "Error",
+    url: "https://api.anthropic.com/v1/messages",
+    requestBodyValues: {},
+    statusCode,
+    responseHeaders: {},
+    responseBody: json ? JSON.stringify(body) : body,
+    ...(json && parsed ? { data: body } : {}),
+  });
+}
+/** The Messages API's error body. */
+const errorBody = (type, message) => ({ type: "error", error: { type, message } });
+const NOT_FOUND = () => apiError(404, errorBody("not_found_error", "model: claude-fable-5-2"));
+
+test("isDesignerModelUnavailable: the API's ways of saying „this model is not open to the account“ — also wrapped", () => {
+  const yes = [
+    ["404 not_found_error about the model", NOT_FOUND()],
+    ["404, body only (unparsed)", apiError(404, errorBody("not_found_error", "model: claude-fable-5-2"), { parsed: false })],
+    ["400 zero data retention", apiError(400, errorBody("invalid_request_error", "claude-fable-5-2 is not available for organizations with zero data retention. This model requires 30-day data retention."))],
+    ["400 data retention requirement", apiError(400, errorBody("invalid_request_error", "Your organization's data retention settings do not meet the requirements of this model."))],
+    ["400 model not available", apiError(400, errorBody("invalid_request_error", "The model claude-fable-5-2 is not available to your organization."))],
+    ["400 no access to the model", apiError(400, errorBody("invalid_request_error", "Your organization does not have access to the model claude-fable-5-2."))],
+    ["400 model not allowed", apiError(400, errorBody("invalid_request_error", "model claude-fable-5-2 is not allowed for this workspace"))],
+    ["403 permission_error", apiError(403, errorBody("permission_error", "Your API key does not have permission to use the specified resource."))],
+    ["RetryError: 529, then the model error", new RetryError({ message: "r", reason: "errorNotRetryable", errors: [apiError(529, errorBody("overloaded_error", "Overloaded")), NOT_FOUND()] })],
+    ["RetryError: errors only", Object.assign(new RetryError({ message: "r", reason: "errorNotRetryable", errors: [NOT_FOUND()] }), { lastError: undefined })],
+    ["cause chain", new Error("stream failed", { cause: new Error("step failed", { cause: NOT_FOUND() }) })],
+    ["Anthropic SDK shape", Object.assign(new Error("404 model: claude-fable-5-2"), { status: 404, error: errorBody("not_found_error", "model: claude-fable-5-2") })],
+    ["stream error event", { type: "invalid_request_error", message: "This model requires 30-day data retention; zero data retention is configured." }],
+  ];
+  for (const [name, err] of yes) assert.equal(isDesignerModelUnavailable(err), true, name);
+
+  const no = [
+    ["429 rate limit", apiError(429, errorBody("rate_limit_error", "Number of request tokens has exceeded your per-minute rate limit"))],
+    ["529 overloaded", apiError(529, errorBody("overloaded_error", "Overloaded"))],
+    ["500 api_error", apiError(500, errorBody("api_error", "Internal server error"))],
+    ["503 bare", apiError(503, "<html>Service Unavailable</html>")],
+    ["401 key", apiError(401, errorBody("authentication_error", "invalid x-api-key"))],
+    ["413 too large", apiError(413, errorBody("request_too_large", "Request exceeds the maximum allowed number of bytes."))],
+    ["400 prompt too long", apiError(400, errorBody("invalid_request_error", "prompt is too long: 1200000 tokens > 1000000 maximum"))],
+    ["400 a parameter the model rejects", apiError(400, errorBody("invalid_request_error", 'tool_choice: type "tool" and "any" are not supported for this model.'))],
+    ["400 max_tokens", apiError(400, errorBody("invalid_request_error", "max_tokens: 200000 > 128000, which is the maximum allowed number of output tokens for claude-opus-5-5"))],
+    ["400 history edit", apiError(400, errorBody("invalid_request_error", "messages.1.content.0: thinking blocks in the latest assistant message cannot be modified"))],
+    ["403 bare (a proxy)", apiError(403, "<html>Forbidden</html>")],
+    ["404 bare (wrong endpoint)", apiError(404, "Not Found")],
+    ["abort", Object.assign(new Error("Die Verbindung wurde getrennt."), { name: "AbortError" })],
+    ["timeout", Object.assign(new Error("Zeitlimit"), { name: "TimeoutError" })],
+    ["a timeout around a model error", Object.assign(new Error("Zeitlimit", { cause: NOT_FOUND() }), { name: "TimeoutError" })],
+    ["RetryError abort", new RetryError({ message: "r", reason: "abort", errors: [NOT_FOUND()] })],
+    ["RetryError busy", new RetryError({ message: "r", reason: "maxRetriesExceeded", errors: [apiError(529, errorBody("overloaded_error", "Overloaded"))] })],
+    ["refusal", { finishReason: "content-filter" }],
+    ["cut off", { finishReason: "length" }],
+    ["unsupported attachment", new UnsupportedFunctionalityError({ functionality: "media type: text/html" })],
+    ["a validation error", new Error("Type validation failed: model must be a string")],
+    ["nothing", null],
+    ["a string", "model: claude-fable-5-2 not available"],
+  ];
+  for (const [name, err] of no) assert.equal(isDesignerModelUnavailable(err), false, name);
+});
+
+test("the fallback rule: once more on Opus 5.5 only for an unavailable model, not cancelled, with a minute left", () => {
+  assert.equal(DESIGNER_FALLBACK_MODEL, OPUS_MODEL);
+  assert.equal(DESIGNER_LIMITS.fallbackMinMs, 60_000);
+  const rule = (over) => designerFallbackModel({ chosen: FABLE_MODEL, error: NOT_FOUND(), aborted: false, timeLeftMs: 280_000, ...over });
+  assert.equal(rule({}), OPUS_MODEL);
+  assert.equal(rule({ chosen: SONNET_MODEL }), OPUS_MODEL);
+  assert.equal(rule({ timeLeftMs: null }), OPUS_MODEL, "no deadline");
+  assert.equal(rule({ timeLeftMs: 60_000 }), OPUS_MODEL);
+  assert.equal(rule({ timeLeftMs: 59_999 }), null, "too little time left for a second run");
+  assert.equal(rule({ timeLeftMs: Number.NaN }), null);
+  assert.equal(rule({ chosen: OPUS_MODEL }), null, "Opus 5.5 is the fallback itself");
+  assert.equal(rule({ aborted: true }), null, "cancelled or timed out");
+  assert.equal(rule({ error: apiError(529, errorBody("overloaded_error", "Overloaded")) }), null, "busy — another model would not help");
+  assert.equal(rule({ error: Object.assign(new Error("Zeitlimit"), { name: "TimeoutError" }) }), null);
+  assert.equal(rule({ error: { finishReason: "content-filter" } }), null);
+  assert.equal(rule({ error: null }), null);
+});
+
+test("messages: the unavailable model named with the way to another one; the fallback warning; a second run that fails too; slow efforts", () => {
+  const forFable = "Claude Fable 5.2 ist für dieses Anthropic-Konto nicht verfügbar — bitte in Einstellungen → KI-Gestalter ein anderes Modell wählen.";
+  assert.equal(designerModelUnavailableMessage(FABLE_MODEL), forFable);
+  assert.equal(designerFailureMessage(NOT_FOUND(), { model: FABLE_MODEL }), forFable);
+  const retried = new RetryError({ message: "r", reason: "errorNotRetryable", errors: [apiError(529, errorBody("overloaded_error", "Overloaded")), NOT_FOUND()] });
+  assert.equal(designerFailureMessage(retried, { model: FABLE_MODEL }), forFable);
+  assert.equal(designerFailureMessage(NOT_FOUND()), "Das gewählte KI-Modell ist für dieses Anthropic-Konto nicht verfügbar — bitte in Einstellungen → KI-Gestalter ein anderes Modell wählen.");
+  const permission = apiError(403, errorBody("permission_error", "Your API key does not have permission to use the specified resource."));
+  assert.equal(designerFailureMessage(permission, { model: OPUS_MODEL }), designerModelUnavailableMessage(OPUS_MODEL));
+  // a 403 without the API's body and a 401 stay the key message
+  assert.equal(designerFailureMessage(apiError(403, "<html>Forbidden</html>")), DESIGNER_MESSAGES.key);
+  assert.equal(designerFailureMessage(apiError(401, errorBody("authentication_error", "invalid x-api-key"))), DESIGNER_MESSAGES.key);
+
+  assert.equal(
+    designerFallbackWarning(FABLE_MODEL),
+    "Claude Fable 5.2 ist für dieses Anthropic-Konto nicht verfügbar — diese Gestaltung kam von Claude Opus 5.5. In Einstellungen → KI-Gestalter lässt sich ein anderes Modell wählen."
+  );
+  assert.equal(
+    designerFallbackFailureMessage({ from: FABLE_MODEL, error: apiError(529, errorBody("overloaded_error", "Overloaded")), message: DESIGNER_MESSAGES.busy }),
+    `Claude Fable 5.2 ist für dieses Anthropic-Konto nicht verfügbar; Claude Opus 5.5 ist eingesprungen. ${DESIGNER_MESSAGES.busy}`
+  );
+  assert.equal(
+    designerFallbackFailureMessage({ from: SONNET_MODEL, error: permission, message: "egal" }),
+    "Weder Claude Sonnet 5.5 noch Claude Opus 5.5 ist für dieses Anthropic-Konto verfügbar — bitte den KI-Schlüssel (ANTHROPIC_API_KEY) und die Freigaben des Anthropic-Kontos prüfen."
+  );
+
+  for (const effort of ["low", "medium", "high", "nonsense"]) assert.equal(designerSlowEffortHint(effort), "", effort);
+  assert.equal(
+    designerSlowEffortHint("xhigh"),
+    "Mit der Denktiefe „Sehr hoch“ denkt die KI deutlich länger — im Panel eine Qualitätsstufe wählen (sie denken höchstens „Hoch“) oder in Einstellungen → KI-Gestalter eine niedrigere Denktiefe."
+  );
+  assert.match(designerSlowEffortHint("max"), /^Mit der Denktiefe „Maximal“ denkt die KI deutlich länger/);
+  // what the hint promises about the panel's levels holds
+  for (const q of DESIGNER_QUALITY) assert.ok(["low", "medium", "high"].includes(q.effort), q.id);
+});
+
+test("the loop: a model that is not open to the account fails at once — not retried, no step, nothing billed, the model named", async () => {
+  const unavailable = NOT_FOUND();
+  const model = new MockLanguageModelV3({
+    modelId: FABLE_MODEL,
+    doStream: async () => {
+      throw unavailable;
+    },
+  });
+  const res = await run(model, { maxRetries: 2 }).promise;
+  assert.equal(res.ok, false);
+  assert.equal(res.error, unavailable, "a 404 is not retried, so it arrives as it is");
+  assert.equal(res.steps, 0);
+  assert.equal(res.usageComplete, true);
+  assert.deepEqual(res.usage, { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 });
+  assert.equal(res.message, designerModelUnavailableMessage(FABLE_MODEL));
+  // … and the rule sends it to Opus 5.5
+  assert.equal(designerFallbackModel({ chosen: FABLE_MODEL, error: res.error, timeLeftMs: 280_000 }), OPUS_MODEL);
+});
+
+test("usageComplete: true when every step reported its tokens, false when the time limit cut a step off", async () => {
+  const done = await run(new MockLanguageModelV3({ doStream: [toolStep([["c1", "submit_design", design(BENCH)]])] })).promise;
+  assert.equal(done.ok, true);
+  assert.equal(done.usageComplete, true);
+  const controller = new AbortController();
+  const model = new MockLanguageModelV3({ doStream: stalling([{ type: "text-start", id: "t" }]) });
+  setTimeout(() => controller.abort(Object.assign(new Error("Zeitlimit"), { name: "TimeoutError" })), 30);
+  const cut = await run(model, { abortSignal: controller.signal, graceMs: 200 }).promise;
+  assert.equal(cut.ok, false);
+  assert.equal(cut.usageComplete, false);
+  assert.equal(designerCostEur([{ model: OPUS_MODEL, usage: cut.usage, usageComplete: cut.usageComplete }], DEFAULT_MODEL_PRICES, 0.92), null, "the cost is not known");
+});
+
+test("the run line: model and effort that ran, the label, the request's seconds, the cost of every model call", () => {
+  const u = (input, output, cacheRead = 0, cacheWrite = 0) => ({ inputTokens: input, outputTokens: output, cacheReadTokens: cacheRead, cacheWriteTokens: cacheWrite });
+  // Opus 5.5: 100k input (80k read from the cache at $0.20, 10k written at $5, 10k uncached at $4) and 20k output at $20
+  // = $0.506 → × 0.92 = 0.46552 €
+  const opus = { model: OPUS_MODEL, usage: u(100_000, 20_000, 80_000, 10_000), usageComplete: true };
+  assert.equal(designerCostEur([opus], DEFAULT_MODEL_PRICES, 0.92), 0.4655);
+  // Fable 5.2 prices its own cache: 50k read at $0.20, 50k uncached at $8, 10k output at $40 = $0.81
+  const fable = { model: FABLE_MODEL, usage: u(100_000, 10_000, 50_000), usageComplete: true };
+  assert.equal(designerCostEur([fable], DEFAULT_MODEL_PRICES, 1), 0.81);
+  // a call refused before the model ran costs nothing; calls add up
+  const refused = { model: FABLE_MODEL, usage: u(0, 0), usageComplete: true };
+  assert.equal(designerCostEur([refused, opus], DEFAULT_MODEL_PRICES, 0.92), 0.4655);
+  assert.equal(designerCostEur([fable, opus], DEFAULT_MODEL_PRICES, 1), 1.316);
+  assert.equal(designerCostEur([], DEFAULT_MODEL_PRICES, 0.92), 0);
+  // not known: a step cut off, a model without a price
+  assert.equal(designerCostEur([opus, { ...opus, usageComplete: false }], DEFAULT_MODEL_PRICES, 0.92), null);
+  assert.equal(designerCostEur([{ model: "claude-unknown", usage: u(10, 10) }], DEFAULT_MODEL_PRICES, 0.92), null);
+  // MODEL_PRICES_JSON applies (loadModelPrices → parseModelPrices); an `input` override drops the base cache
+  // prices, so the reads fall back to 0.1× and the writes to 1.25× input: 10k × 4 + 80k × 0.4 + 10k × 5 + 20k × 40 = $0.922
+  assert.equal(designerCostEur([opus], parseModelPrices('{"claude-opus-5-5":{"input":4,"output":40}}'), 1), 0.922);
+
+  // after a fallback: the model that produced the answer, the one that was not available, the chosen effort
+  const info = designerRunInfo({
+    settings: { model: FABLE_MODEL, effort: "xhigh", freedom: "genau", proactive: false, houseStyle: "Rot." },
+    model: OPUS_MODEL,
+    fallbackFrom: FABLE_MODEL,
+    ms: 84_600,
+    calls: [refused, opus],
+    prices: DEFAULT_MODEL_PRICES,
+    rate: 0.92,
+  });
+  assert.deepEqual(info, {
+    model: OPUS_MODEL,
+    effort: "xhigh",
+    label: "Eigene Einstellung · Claude Opus 5.5 · Denktiefe Sehr hoch",
+    freedom: "genau",
+    proactive: false,
+    seconds: 85,
+    costEur: 0.4655,
+    fallbackFrom: FABLE_MODEL,
+  });
+  // the defaults: „Gründlich“, no fallback
+  const plain = designerRunInfo({ settings: DEFAULT_DESIGNER_SETTINGS, model: OPUS_MODEL, ms: 400, calls: [opus], prices: DEFAULT_MODEL_PRICES, rate: 0.92 });
+  assert.equal(plain.label, "Gründlich · Claude Opus 5.5 · Denktiefe Hoch");
+  assert.equal(plain.seconds, 0);
+  assert.equal(plain.fallbackFrom, null);
+  assert.deepEqual(Object.keys(plain).sort(), ["costEur", "effort", "fallbackFrom", "freedom", "label", "model", "proactive", "seconds"]);
+});
+
+test("the house style counts as named (links, codes, numbers) — but a word „HTML“ in it never unlocks own HTML", async () => {
+  const houseStyle = "Kurs-Link immer https://partner-studio.de/kurse. Treue-Code TREUE10, 15 % für Stammkunden. Kein eigenes HTML.";
+  const operatorText = "Eine Mail über unsere Kurse.";
+  const sub = mail([
+    { type: "text", text: "Mit dem Code TREUE10 sparst du 15 %." },
+    { type: "button", label: "Zu den Kursen", href: "https://partner-studio.de/kurse" },
+  ]);
+  const without = await checkDesignSubmission(sub, ctx({ operatorText }));
+  assert.equal(without.ok, false);
+  assert.ok(without.problems.some((p) => /partner-studio\.de/.test(p)), without.problems.join("\n"));
+  assert.ok(without.problems.some((p) => /TREUE10/.test(p)), without.problems.join("\n"));
+  const withStyle = await checkDesignSubmission(sub, ctx({ operatorText, houseStyle }));
+  assert.equal(withStyle.ok, true, withStyle.ok ? "" : withStyle.problems.join("\n"));
+  // own HTML: only the operator's own words ask for it
+  const html = mail([{ type: "html", html: "<p>Hallo</p>" }, okButton]);
+  const res = await checkDesignSubmission(html, ctx({ operatorText, houseStyle }));
+  assert.equal(res.ok, false);
+  assert.ok(res.problems.some((p) => /Bitte Bausteine statt eigenem HTML verwenden/.test(p)), res.problems.join("\n"));
+});
+
+test("runDesignerWithFallback: an unavailable model runs once more on Opus 5.5 — same deadline, both calls collected, the reason reported", async () => {
+  const unavailable = NOT_FOUND();
+  const fable = new MockLanguageModelV3({
+    modelId: FABLE_MODEL,
+    doStream: async () => {
+      throw unavailable;
+    },
+  });
+  const opus = new MockLanguageModelV3({ modelId: OPUS_MODEL, doStream: [toolStep([["c1", "submit_design", design(BENCH)]], usage(5000, 900, 4000, 0))] });
+  const models = { [FABLE_MODEL]: fable, [OPUS_MODEL]: opus };
+  const deadlineAt = Date.now() + 280_000;
+  const ran = [];
+  const heard = [];
+  const lines = [];
+  const out = await runDesignerWithFallback({
+    model: FABLE_MODEL,
+    runOnce: (m) => {
+      ran.push(m);
+      return run(models[m], { deadlineAt }).promise;
+    },
+    deadlineAt,
+    onFallback: (from, to, error) => heard.push([from, to, error]),
+    onProgress: (p) => lines.push(p),
+  });
+  assert.equal(out.run.ok, true, out.run.message);
+  assert.equal(out.run.doc.blocks[1].ref, BENCH);
+  assert.equal(out.model, OPUS_MODEL, "the model that produced the answer");
+  assert.equal(out.fallbackFrom, FABLE_MODEL);
+  assert.deepEqual(ran, [FABLE_MODEL, OPUS_MODEL]);
+  assert.deepEqual(heard, [[FABLE_MODEL, OPUS_MODEL, unavailable]]);
+  assert.deepEqual(lines, [{ stage: "start", text: "Claude Fable 5.2 ist für dieses Anthropic-Konto nicht verfügbar — Claude Opus 5.5 übernimmt …" }]);
+  // both calls for the cost: the refused one without tokens, the second with its usage
+  assert.deepEqual(out.calls.map((c) => [c.model, c.usage.inputTokens, c.usageComplete]), [
+    [FABLE_MODEL, 0, true],
+    [OPUS_MODEL, 5000, true],
+  ]);
+  // the second run gets the same prompt and content
+  assert.deepEqual(opus.doStreamCalls[0].prompt[0], { role: "system", content: designerSystemPrompt({ use: "bulk" }), providerOptions: { anthropic: { cacheControl: { type: "ephemeral" } } } });
+});
+
+test("runDesignerWithFallback: no second run for Opus 5.5 itself, an error another model would not fix, a cancelled request or too little time", async () => {
+  const throwing = (modelId, err) =>
+    new MockLanguageModelV3({
+      modelId,
+      doStream: async () => {
+        throw err;
+      },
+    });
+  const attempt = async (chosen, err, over = {}) => {
+    const ran = [];
+    const out = await runDesignerWithFallback({
+      model: chosen,
+      runOnce: (m) => {
+        ran.push(m);
+        return run(throwing(m, err), { maxRetries: 0 }).promise;
+      },
+      ...over,
+    });
+    return { ran, out };
+  };
+  // Opus 5.5 unavailable: nothing to fall back to — the message names it
+  const opus = await attempt(OPUS_MODEL, NOT_FOUND());
+  assert.deepEqual(opus.ran, [OPUS_MODEL]);
+  assert.equal(opus.out.fallbackFrom, null);
+  assert.equal(opus.out.run.message, designerModelUnavailableMessage(OPUS_MODEL));
+  // busy: the same model again later, not another one
+  const busy = await attempt(FABLE_MODEL, apiError(529, errorBody("overloaded_error", "Overloaded")));
+  assert.deepEqual(busy.ran, [FABLE_MODEL]);
+  assert.equal(busy.out.run.message, DESIGNER_MESSAGES.busy);
+  // too little time left of the same deadline: the chosen model is named instead
+  const late = await attempt(FABLE_MODEL, NOT_FOUND(), { deadlineAt: Date.now() + 30_000 });
+  assert.deepEqual(late.ran, [FABLE_MODEL]);
+  assert.equal(late.out.run.message, designerModelUnavailableMessage(FABLE_MODEL));
+  // cancelled (or timed out): never a second run
+  const controller = new AbortController();
+  controller.abort(Object.assign(new Error("Die Verbindung wurde getrennt."), { name: "AbortError" }));
+  const gone = await attempt(FABLE_MODEL, NOT_FOUND(), { signal: controller.signal });
+  assert.deepEqual(gone.ran, [FABLE_MODEL]);
+  assert.equal(gone.out.model, FABLE_MODEL);
+  // a successful first run is simply returned
+  const fine = await runDesignerWithFallback({ model: SONNET_MODEL, runOnce: (m) => run(new MockLanguageModelV3({ modelId: m, doStream: [toolStep([["c1", "submit_design", design(BENCH)]])] })).promise });
+  assert.equal(fine.run.ok, true);
+  assert.equal(fine.model, SONNET_MODEL);
+  assert.equal(fine.calls.length, 1);
+  // a listener that throws never stops the second run
+  const noisy = await runDesignerWithFallback({
+    model: FABLE_MODEL,
+    runOnce: (m) => (m === FABLE_MODEL ? run(throwing(m, NOT_FOUND())).promise : run(new MockLanguageModelV3({ modelId: m, doStream: [toolStep([["c1", "submit_design", design(BENCH)]])] })).promise),
+    onFallback: () => {
+      throw new Error("listener broke");
+    },
+  });
+  assert.equal(noisy.run.ok, true);
+  assert.equal(noisy.model, OPUS_MODEL);
+});
+
+test("the request's outcome texts: failure behind the fallback reason and the slow-effort hint; warnings in order", () => {
+  assert.equal(designerRequestFailure({ message: DESIGNER_MESSAGES.busy }), DESIGNER_MESSAGES.busy);
+  assert.equal(
+    designerRequestFailure({ message: DESIGNER_MESSAGES.busy, error: apiError(529, errorBody("overloaded_error", "Overloaded")), fallbackFrom: FABLE_MODEL }),
+    `Claude Fable 5.2 ist für dieses Anthropic-Konto nicht verfügbar; Claude Opus 5.5 ist eingesprungen. ${DESIGNER_MESSAGES.busy}`
+  );
+  // the time limit at „Maximal“: why it took too long and what to choose instead
+  assert.equal(designerRequestFailure({ message: DESIGNER_MESSAGES.timeout, timedOut: true, effort: "max" }), `${DESIGNER_MESSAGES.timeout} ${designerSlowEffortHint("max")}`);
+  assert.equal(designerRequestFailure({ message: DESIGNER_MESSAGES.timeout, timedOut: true, effort: "high" }), DESIGNER_MESSAGES.timeout);
+  assert.equal(designerRequestFailure({ message: DESIGNER_MESSAGES.busy, timedOut: false, effort: "max" }), DESIGNER_MESSAGES.busy);
+
+  const cut = "Die KI wurde von der Zeitgrenze gestoppt, bevor sie alle Punkte korrigieren konnte — nicht überprüfbare Angaben sind entfernt, bitte die Hinweise prüfen.";
+  assert.deepEqual(
+    designerRequestWarnings({ warnings: [cut, "Bitte prüfen: Kontrast"], storedWarnings: ["Bild 1 nicht gespeichert"], runFallback: "timeout", fallbackFrom: FABLE_MODEL, timedOut: true, effort: "xhigh" }),
+    [designerFallbackWarning(FABLE_MODEL), cut, designerSlowEffortHint("xhigh"), "Bitte prüfen: Kontrast", "Bild 1 nicht gespeichert"]
+  );
+  assert.deepEqual(designerRequestWarnings({ warnings: ["a"], storedWarnings: ["b"] }), ["a", "b"]);
+  assert.deepEqual(designerRequestWarnings({ warnings: [], fallbackFrom: SONNET_MODEL }), [designerFallbackWarning(SONNET_MODEL)]);
+  // the hint only after a run the time limit cut short, only at a slow effort
+  assert.deepEqual(designerRequestWarnings({ warnings: [cut], runFallback: "steps", timedOut: true, effort: "max" }), [cut]);
+  assert.deepEqual(designerRequestWarnings({ warnings: [cut], runFallback: "timeout", timedOut: true, effort: "medium" }), [cut]);
 });

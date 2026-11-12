@@ -9,23 +9,35 @@
 //     attachments: [{ name, mediaType, data /* base64 */ }]  — ≤ 6: image/png|jpeg|webp|gif,
 //                  application/pdf, text/html, text/plain, message/rfc822 (text kinds: base64 of UTF-8;
 //                  HTML / TXT ≤ 500 KB, .eml ≤ 400 KB decoded — refused with 400 before decoding),
-//     context?: { subject?, preheader?, language?: "de" | "en" } }  — the Rundmail's subject, preview
+//     context?: { subject?, preheader?, language?: "de" | "en" },  — the Rundmail's subject, preview
 //                  line and „Sprache“ ("en": texts, subject and preview line in English)
+//     settings?: { model?, effort?, freedom?, proactive? } }  — the panel's choice for this
+//                  conversation, merged over the team's settings (Einstellungen → „KI-Gestalter“,
+//                  GET/POST /api/admin/settings/designer); invalid fields are dropped (never a 400);
+//                  the house style always comes from the stored settings
 //
 // Errors before the stream starts (guard, bad JSON, invalid body, 413 too
 // large, no ANTHROPIC_API_KEY) are the usual JSON envelope with their status.
 // Otherwise 200 with application/x-ndjson — one JSON object per line:
 //   {"type":"progress","stage":"start"|"attachments"|"search"|"collections"|"design"|"check"|"images"|"heartbeat","text":"…"}
 //   … then exactly one of
-//   {"type":"result","doc":{…},"notes":"…","subject":string|null,"preheader":string|null,"warnings":[…]}
-//   {"type":"error","message":"…"}
+//   {"type":"result","doc":{…},"notes":"…","subject":string|null,"preheader":string|null,"warnings":[…],"run":{…}}
+//   {"type":"error","message":"…","run"?:{…}}
+// `run` (DesignerRunInfo, mail-template-designer.mjs designerRunInfo):
+//   { model, effort — of the run that produced the answer; label — „Gründlich · Claude Opus 5.5 ·
+//     Denktiefe Hoch“; freedom; proactive; seconds — the whole request; costEur — every model call
+//     of the request in EUR, null when not known (a step cut off by the time limit); fallbackFrom —
+//     the chosen model when it was not open to the Anthropic account and Opus 5.5 ran instead, else
+//     null }; on an error line only once a model ran.
 // A heartbeat line (repeating the current status) every 15 s keeps proxies
 // from closing the idle connection while the model thinks. The model is
 // aborted at 285 s (a German timeout message, or the last checked draft) so
-// the answer always arrives inside maxDuration; a client that disconnects
-// („Abbrechen“) aborts it too, and then no picture is stored. Only PROPOSES:
-// nothing is stored except attachment pictures the accepted design uses.
-// Metered in ai_usage (template_assist), audit-logged (template.assist).
+// the answer always arrives inside maxDuration — whatever model and effort
+// the settings choose, and a second run on Opus 5.5 shares the same 285 s; a
+// client that disconnects („Abbrechen“) aborts it too, and then no picture is
+// stored. Only PROPOSES: nothing is stored except attachment pictures the
+// accepted design uses. Metered in ai_usage (template_assist, per run with the
+// model that ran), audit-logged (template.assist, with the panel's settings).
 
 import { guardAdminPost, adminJsonError } from "@/lib/admin-api";
 import { recordAdminAccess } from "@/lib/admin-access-log";
@@ -95,7 +107,12 @@ export async function POST(req: Request) {
   await recordAdminAccess(
     {
       action: "template.assist",
-      detail: { use: request.use, attachments: request.attachments.length, kinds: request.attachments.map((a) => a.kind) },
+      detail: {
+        use: request.use,
+        attachments: request.attachments.length,
+        kinds: request.attachments.map((a) => a.kind),
+        ...(Object.keys(request.settings).length > 0 ? { settings: request.settings } : {}),
+      },
     },
     req
   );
@@ -127,6 +144,7 @@ export async function POST(req: Request) {
         const result = await assistMailTemplate(request, {
           signal: controller.signal,
           deadlineAt,
+          startedAt,
           onProgress: (p: TemplateAssistProgress) => {
             status = p.text;
             write({ type: "progress", stage: p.stage, text: p.text });
@@ -140,9 +158,10 @@ export async function POST(req: Request) {
             subject: result.subject,
             preheader: result.preheader,
             warnings: result.warnings,
+            run: result.run,
           });
         } else {
-          write({ type: "error", message: result.message });
+          write({ type: "error", message: result.message, ...(result.run ? { run: result.run } : {}) });
         }
       } catch (err) {
         reportError(err, { route: "api/admin/vorlagen/assist", phase: "stream" });

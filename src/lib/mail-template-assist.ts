@@ -1,32 +1,49 @@
 // „KI-Gestalter“ — the AI designer of the template and Rundmail editor
-// (tier `designer`: Opus 5.5 at effort high, ai_usage call site
-// `template_assist`). docs/EMAIL_TEMPLATES.md §6, docs/AI_MODELS.md.
+// (tier `designer`, ai_usage call site `template_assist`).
+// docs/EMAIL_TEMPLATES.md §6, docs/AI_MODELS.md.
 //
 // The operator describes a mail or a change in everyday language and may
 // attach screenshots, pictures, PDFs, HTML or .eml files. The model runs a
 // tool loop (mail-template-designer.mjs runDesigner): it searches the catalog,
 // lists the shop's collections and hands in the whole block document, which
 // is normalised and checked against the catalog, the attachments, the
-// operator's words and the current mail before it is accepted. The editor
-// shows the result as an unsaved change — nothing is stored here except the
-// attachment pictures the accepted design uses (template pictures, Blob).
+// operator's words, the team's house style and the current mail before it is
+// accepted. The editor shows the result as an unsaved change — nothing is
+// stored here except the attachment pictures the accepted design uses
+// (template pictures, Blob).
 //
-// This file only wires: model and provider options from ai-models.mjs (plus
-// prompt caching — a system breakpoint and top-level automatic caching, so
-// every later step of the loop and every run of the same use within five
-// minutes reads the long prompt from the cache), the I/O of
-// mail-template-designer-io.ts, the usage meter (summed over all steps, also
-// for a run that fails late) and the error report. When the operator cancels
-// (the client disconnects) nothing more happens after the model: no picture
-// is stored for a result nobody receives — the usage is still recorded.
-// Never throws.
+// How it runs comes from the team's settings (Einstellungen → „KI-Gestalter“,
+// admin_settings `mail_designer`, getDesignerSettings) with the panel's
+// choice for this conversation on top (the request's `settings`,
+// mergeDesignerSettings): the model (Opus 5.5 by default, Sonnet 5.5 or Fable
+// 5.2), the effort („Denktiefe“, with an output cap that grows with it), the
+// freedom and the capabilities switch (working rules in the user content) and
+// the house style (the last section of the system prompt; its links, codes
+// and numbers count as named). When the chosen model is not open to this
+// Anthropic account (Fable 5.2 under zero data retention, a model the key may
+// not use), the request runs once more on Opus 5.5 — same effort, same
+// deadline, a leading warning — when enough time is left
+// (runDesignerWithFallback over the tested rule designerFallbackModel).
+//
+// This file only wires: settings, model and provider options (plus prompt
+// caching — a system breakpoint and top-level automatic caching, so every
+// later step of the loop and every run of the same use within five minutes
+// reads the long prompt from the cache), the I/O of
+// mail-template-designer-io.ts, the usage meter (per run with the model that
+// ran, summed over all steps, also for a run that fails late), the run line
+// (model, seconds, cost — designerRunInfo) and the error report. When the
+// operator cancels (the client disconnects) nothing more happens after the
+// model: no second run, no picture stored for a result nobody receives — the
+// usage is still recorded. Never throws.
 
 import { anthropic } from "@ai-sdk/anthropic";
-import { anthropicOptionsFor, maxOutputTokensFor, modelFor } from "./ai-models.mjs";
+import { anthropicOptionsWithEffort } from "./ai-models.mjs";
 import { recordAiUsage } from "./ai-usage-store";
+import { getDesignerSettings } from "./admin-settings-store";
 import { reportError } from "./observability";
 import { getBaseUrl } from "./base-url";
 import { docProductRefs, normalizeMailTemplateDoc, stripMoBlocks } from "./mail-template-doc.mjs";
+import { designerMaxOutputTokens, designerRunRules, mergeDesignerSettings } from "./mail-template-designer-settings.mjs";
 import {
   DESIGNER_LIMITS,
   checkDesignSubmission,
@@ -34,13 +51,18 @@ import {
   designerFailureMessage,
   designerMoChatUrl,
   designerProviderOptions,
+  designerRequestFailure,
+  designerRequestWarnings,
+  designerRunInfo,
   designerSystemPrompt,
   designerUserContent,
   resolveRefsAgainstCatalog,
   runDesigner,
+  runDesignerWithFallback,
   searchDesignerProducts,
   type DesignerProgress,
   type DesignerRequest,
+  type DesignerRunInfo,
 } from "./mail-template-designer.mjs";
 import {
   isKnownShopPage,
@@ -52,7 +74,8 @@ import {
 } from "./mail-template-designer-io";
 
 const TIER = "designer" as const;
-const MODEL = modelFor(TIER);
+
+export type { DesignerRunInfo };
 
 export type TemplateAssistResult =
   | {
@@ -62,8 +85,15 @@ export type TemplateAssistResult =
       subject: string | null;
       preheader: string | null;
       warnings: string[];
+      /** Model, effort, label, freedom, capabilities switch, seconds, cost, fallback — the NDJSON result's `run`. */
+      run: DesignerRunInfo;
     }
-  | { ok: false; message: string };
+  | {
+      ok: false;
+      message: string;
+      /** Present once a model ran (the cost of a failed run). */
+      run?: DesignerRunInfo;
+    };
 
 export type TemplateAssistProgress = DesignerProgress;
 
@@ -87,15 +117,24 @@ const CANCELLED: TemplateAssistResult = { ok: false, message: "Abgebrochen — d
 
 /**
  * Build or change a block document from the operator's instruction, the
- * session's earlier turns and the attachments. `onProgress` gets German status
+ * session's earlier turns and the attachments, with the team's settings and
+ * the panel's choice for this conversation. `onProgress` gets German status
  * lines; `signal` aborts the model (the route's time limit or a disconnect);
  * `deadlineAt` (epoch ms, when `signal` fires) lets the loop accept a draft
- * instead of starting a round it cannot finish. Never throws.
+ * instead of starting a round it cannot finish and decides whether a second
+ * run on Opus 5.5 still fits; `startedAt` (epoch ms, the request's start) is
+ * where the run line's seconds count from. Never throws.
  */
 export async function assistMailTemplate(
   input: DesignerRequest,
-  opts: { onProgress?: (p: TemplateAssistProgress) => void; signal?: AbortSignal; deadlineAt?: number | null } = {}
+  opts: {
+    onProgress?: (p: TemplateAssistProgress) => void;
+    signal?: AbortSignal;
+    deadlineAt?: number | null;
+    startedAt?: number;
+  } = {}
 ): Promise<TemplateAssistResult> {
+  const startedAt = opts.startedAt ?? Date.now();
   const progress = (stage: TemplateAssistProgress["stage"], text: string) => {
     try {
       opts.onProgress?.({ stage, text });
@@ -106,6 +145,8 @@ export async function assistMailTemplate(
   if (!process.env.ANTHROPIC_API_KEY) return { ok: false, message: "Kein KI-Schlüssel konfiguriert (ANTHROPIC_API_KEY)." };
   try {
     progress("start", "Der KI-Gestalter startet …");
+    // The team's settings (defaults without a database), the panel's choice on top; the house style always from the store.
+    const settings = mergeDesignerSettings(await getDesignerSettings(), input.settings);
 
     let attachments: PreparedDesignerAttachment[] = [];
     let originals = new Map<number, Buffer>();
@@ -130,6 +171,8 @@ export async function assistMailTemplate(
     const checkContext = {
       use: input.use,
       operatorText,
+      // the team's house style: its links, codes and numbers count as named (it never unlocks own HTML)
+      houseStyle: settings.houseStyle,
       currentDoc: current,
       // the text of HTML / EML / TXT attachments as the model reads it — a second source of named values
       attachments: attachments.map((a) => ({ index: a.index, kind: a.kind, name: a.name, text: a.text ?? null, subject: a.subject ?? null })),
@@ -140,50 +183,76 @@ export async function assistMailTemplate(
       ownOrigin: ownOrigin(),
       moChatUrl,
     };
-    const run = await runDesigner({
-      model: anthropic(MODEL),
-      system: designerSystemPrompt({ use: input.use, moChatUrl }),
-      userContent: designerUserContent({
-        instruction: input.instruction,
-        history: input.history,
-        doc: current,
-        use: input.use,
-        attachments,
-        context: input.context,
-        today: new Date(),
-        docProducts: current ? describeDocProducts(catalog, docProductRefs(current)) : [],
-      }),
-      providerOptions: designerProviderOptions(anthropicOptionsFor(TIER)),
-      maxOutputTokens: maxOutputTokensFor(TIER, DESIGNER_LIMITS.answerTokens),
-      searchProducts: (query: string, max?: number) => searchDesignerProducts(catalog, query, max),
-      listCollections: listShopCollections,
-      checkSubmission: (submission, round) => checkDesignSubmission(submission, { ...checkContext, now: new Date(), ...round }),
-      onProgress: (p) => progress(p.stage, p.text),
-      onError: (err) => reportError(err, { route: "lib/mail-template-assist", phase: "tool" }),
-      abortSignal: opts.signal,
-      deadlineAt: opts.deadlineAt ?? null,
+    // The same prompt, content, options and checks for a second run — only the model differs.
+    const system = designerSystemPrompt({ use: input.use, moChatUrl, houseStyle: settings.houseStyle });
+    const userContent = designerUserContent({
+      instruction: input.instruction,
+      history: input.history,
+      doc: current,
+      use: input.use,
+      attachments,
+      context: input.context,
+      today: new Date(),
+      docProducts: current ? describeDocProducts(catalog, docProductRefs(current)) : [],
+      rules: designerRunRules(settings),
     });
+    const providerOptions = designerProviderOptions(anthropicOptionsWithEffort(TIER, settings.effort));
+    const maxOutputTokens = designerMaxOutputTokens(settings.effort, DESIGNER_LIMITS.answerTokens);
 
-    await recordAiUsage({
-      callSite: "template_assist",
-      model: MODEL,
-      inputTokens: run.usage.inputTokens,
-      outputTokens: run.usage.outputTokens,
-      cacheReadTokens: run.usage.cacheReadTokens,
-      cacheWriteTokens: run.usage.cacheWriteTokens,
+    // The chosen model — and once more on Opus 5.5 when it is not open to this account (runDesignerWithFallback).
+    const { run, model, fallbackFrom, calls } = await runDesignerWithFallback({
+      model: settings.model,
+      runOnce: async (runModel: string) => {
+        const result = await runDesigner({
+          model: anthropic(runModel),
+          system,
+          userContent,
+          providerOptions,
+          maxOutputTokens,
+          searchProducts: (query: string, max?: number) => searchDesignerProducts(catalog, query, max),
+          listCollections: listShopCollections,
+          checkSubmission: (submission, round) => checkDesignSubmission(submission, { ...checkContext, now: new Date(), ...round }),
+          onProgress: (p) => progress(p.stage, p.text),
+          onError: (err) => reportError(err, { route: "lib/mail-template-assist", phase: "tool" }),
+          abortSignal: opts.signal,
+          deadlineAt: opts.deadlineAt ?? null,
+        });
+        // metered per run with the model that ran
+        await recordAiUsage({
+          callSite: "template_assist",
+          model: runModel,
+          inputTokens: result.usage.inputTokens,
+          outputTokens: result.usage.outputTokens,
+          cacheReadTokens: result.usage.cacheReadTokens,
+          cacheWriteTokens: result.usage.cacheWriteTokens,
+        });
+        return result;
+      },
+      signal: opts.signal,
+      deadlineAt: opts.deadlineAt ?? null,
+      // reported for the maintainer (e.g. Fable 5.2 under zero data retention), then the second run
+      onFallback: (from, _to, error) => reportError(error, { route: "lib/mail-template-assist", phase: "model_unavailable", model: from }),
+      onProgress: (p) => progress(p.stage, p.text),
     });
+    const runInfo = () => designerRunInfo({ settings, model, fallbackFrom, ms: Date.now() - startedAt, calls });
     // The operator cancelled: no picture is stored for a draft nobody receives (template files are never deleted).
     if (isDisconnect(opts.signal)) return CANCELLED;
+    // Aborted but not a disconnect: the route's time limit.
+    const timedOut = Boolean(opts.signal?.aborted);
 
     if (!run.ok) {
-      if (run.error && !isDisconnect(opts.signal)) {
-        reportError(run.error, { route: "lib/mail-template-assist", phase: "run", steps: run.steps, rounds: run.rounds });
+      if (run.error) {
+        reportError(run.error, { route: "lib/mail-template-assist", phase: "run", model, steps: run.steps, rounds: run.rounds });
       }
-      return { ok: false, message: run.message };
+      return {
+        ok: false,
+        message: designerRequestFailure({ message: run.message, error: run.error, fallbackFrom, timedOut, effort: settings.effort }),
+        run: runInfo(),
+      };
     }
     if (run.fallback === "error") {
       // The model failed while correcting a draft: the cleaned draft is returned, the error reported.
-      reportError(run.error ?? new Error("designer run ended early"), { route: "lib/mail-template-assist", phase: "fallback", steps: run.steps });
+      reportError(run.error ?? new Error("designer run ended early"), { route: "lib/mail-template-assist", phase: "fallback", model, steps: run.steps });
     }
 
     const stored = await storeDesignerImages(run.doc, run.usedAttachments, originals, {
@@ -197,7 +266,15 @@ export async function assistMailTemplate(
       notes: run.notes,
       subject: input.use === "bulk" ? run.subject : null,
       preheader: input.use === "bulk" ? run.preheader : null,
-      warnings: [...run.warnings, ...stored.warnings],
+      warnings: designerRequestWarnings({
+        warnings: run.warnings,
+        storedWarnings: stored.warnings,
+        runFallback: run.fallback,
+        fallbackFrom,
+        timedOut,
+        effort: settings.effort,
+      }),
+      run: runInfo(),
     };
   } catch (err) {
     reportError(err, { route: "lib/mail-template-assist", phase: "assist" });
