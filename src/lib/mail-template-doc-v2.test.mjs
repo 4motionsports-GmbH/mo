@@ -5,6 +5,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { V1_RENDER_CASES } from "./__fixtures__/mail-template-v1-cases.mjs";
 import {
+  COUNTDOWN_CAPTION_DEFAULT,
   DEFAULT_MAIL_STYLE,
   MAIL_BLOCK_CATALOG,
   MAIL_CHILD_BLOCK_TYPES,
@@ -15,11 +16,13 @@ import {
   MAIL_TOP_ONLY_TYPES,
   classicFontFor,
   contrastRatio,
+  countdownCaptionTemplate,
   countdownLook,
   docBlockCount,
   docFontKeys,
   docFormatVersion,
   docProductRefs,
+  fillCountdownCaption,
   mailFontGoogleFamily,
   mailFontMsoStack,
   mailFontStack,
@@ -573,4 +576,150 @@ test("contrast of the new colour pairs: own colours are judged on the card / til
   assert.deepEqual(of("d2"), [], "the automatic look always reads");
   assert.ok(of("p1").length === 1);
   assert.deepEqual(of("p2"), []);
+});
+
+// ── logo link, countdown texts, phone pictures (13.11.2026) ──────────────────
+
+test("logo link, countdown texts and phone pictures: kept when set and valid, omitted when unset or invalid", () => {
+  const doc = normalizeMailTemplateDoc({
+    blocks: [
+      { id: "l1", type: "logo", href: " https://motionsports.de/collections/black-week " },
+      { id: "l2", type: "logo", href: "https://partner-fitness.de/aktion" },
+      { id: "l3", type: "logo", href: "mailto:info@motionsports.de" },
+      { id: "l4", type: "logo", href: "javascript:alert(1)" },
+      { id: "l5", type: "logo", href: "http://motionsports.de/" },
+      { id: "i1", type: "image", src: "https://x.de/a.jpg", mobileSrc: "https://x.de/a-m.jpg", alt: "A" },
+      { id: "i2", type: "image", src: "https://x.de/a.jpg", mobileSrc: "http://x.de/a-m.jpg", alt: "A" },
+      { id: "i3", type: "image", src: "https://x.de/a.jpg", mobileSrc: "", alt: "A" },
+      { id: "c1", type: "countdown", until: "2099-01-01T00:00:00Z", label: "  Nur noch\nkurz!  ", showLabel: false, caption: "Gültig bis {datum}", showCaption: false },
+      { id: "c2", type: "countdown", until: "2099-01-01T00:00:00Z", label: "x".repeat(50), caption: "y".repeat(200), showLabel: true, showCaption: "nein" },
+      { id: "c3", type: "countdown", until: "2099-01-01T00:00:00Z", label: "", caption: "   " },
+      { id: "s1", type: "section", bgImage: "https://x.de/bg.jpg", bgImageMobile: "https://x.de/bg-m.jpg", columns: [{ blocks: [{ id: "i4", type: "image", src: "https://x.de/c.jpg", mobileSrc: "https://x.de/c-m.jpg", alt: "C" }] }] },
+      { id: "s2", type: "section", bgImageMobile: "data:image/png;base64,AAAA", columns: [{ blocks: [] }] },
+      { id: "f", type: "footer" },
+    ],
+  });
+  const by = (id) => walkMailBlocks(doc).find(({ block }) => block.id === id)?.block;
+  assert.equal(by("l1").href, "https://motionsports.de/collections/black-week");
+  assert.equal(by("l2").href, "https://partner-fitness.de/aktion");
+  assert.equal(by("l3").href, "mailto:info@motionsports.de");
+  for (const id of ["l4", "l5"]) assert.ok(!("href" in by(id)), id);
+  assert.equal(by("i1").mobileSrc, "https://x.de/a-m.jpg");
+  for (const id of ["i2", "i3"]) assert.ok(!("mobileSrc" in by(id)), id);
+  assert.equal(by("i4").mobileSrc, "https://x.de/c-m.jpg", "in a column too");
+  const c1 = by("c1");
+  assert.equal(c1.label, "Nur noch kurz!");
+  assert.equal(c1.showLabel, false);
+  assert.equal(c1.caption, "Gültig bis {datum}");
+  assert.equal(c1.showCaption, false);
+  const c2 = by("c2");
+  assert.equal(c2.label.length, MAIL_TEMPLATE_LIMITS.countdownLabelChars);
+  assert.equal(c2.caption.length, MAIL_TEMPLATE_LIMITS.captionChars);
+  for (const k of ["showLabel", "showCaption"]) assert.ok(!(k in c2), `${k}: only false is stored`);
+  for (const k of ["label", "caption", "showLabel", "showCaption"]) assert.ok(!(k in by("c3")), k);
+  assert.equal(by("s1").bgImageMobile, "https://x.de/bg-m.jpg");
+  assert.ok(!("bgImageMobile" in by("s2")));
+  // unset: the blocks keep exactly their JSON of before
+  const plain = normalizeMailTemplateDoc({
+    blocks: [
+      { id: "lg", type: "logo" },
+      { id: "im", type: "image", src: "https://x.de/a.jpg", alt: "A" },
+      { id: "he", type: "hero", src: "https://x.de/h.jpg", alt: "H" },
+      { id: "cd", type: "countdown", until: "2099-01-01T00:00:00Z", heading: "Endet in" },
+      { id: "se", type: "section", bgImage: "https://x.de/bg.jpg", columns: [{ id: "co", blocks: [] }] },
+      { id: "f", type: "footer" },
+    ],
+  });
+  assert.deepEqual(Object.keys(plain.blocks[0]), ["id", "type", "align", "width"]);
+  assert.deepEqual(Object.keys(plain.blocks[1]), ["id", "type", "src", "alt", "href", "width"]);
+  assert.deepEqual(Object.keys(plain.blocks[2]), ["id", "type", "src", "alt", "href", "showHeadline"]);
+  assert.deepEqual(Object.keys(plain.blocks[3]), ["id", "type", "until", "heading"]);
+  assert.ok(!("bgImageMobile" in plain.blocks[4]));
+  assert.deepEqual(normalizeMailTemplateDoc(doc), doc, "normalising twice changes nothing");
+});
+
+test("validation of the new fields: placeholders in addresses are errors, WebP and lone phone pictures warnings", () => {
+  const now = new Date("2026-11-13T00:00:00Z");
+  const doc = normalizeMailTemplateDoc({
+    blocks: [
+      { id: "lg", type: "logo", href: "https://motionsports.de/{{vorname}}" },
+      { id: "im", type: "image", src: "https://x.de/a.jpg", mobileSrc: "https://x.de/{{vorname}}.jpg", alt: "A" },
+      { id: "iw", type: "image", src: "https://x.de/a.jpg", mobileSrc: "https://x.de/a-m.webp", alt: "A" },
+      { id: "he", type: "hero", mobileSrc: "https://x.de/h-m.jpg", alt: "H" },
+      { id: "se", type: "section", background: "#111111", bgImage: "https://x.de/bg.jpg", bgImageMobile: "https://x.de/bg-%7B%7Bvorname%7D%7D.jpg", columns: [{ blocks: [{ type: "text", text: "x", color: "#ffffff" }] }] },
+      { id: "sl", type: "section", bgImageMobile: "https://x.de/bg-m.jpg", columns: [{ blocks: [{ type: "text", text: "x" }] }] },
+      { id: "f", type: "footer" },
+    ],
+  });
+  const { errors, warnings } = validateMailTemplateDoc(doc, "personal", { now });
+  const err = (id) => errors.filter((e) => e.blockId === id).map((e) => e.message);
+  const warn = (id) => warnings.filter((w) => w.blockId === id).map((w) => w.message);
+  assert.ok(err("lg").some((m) => /Logo: Platzhalter wie \{\{vorname\}\} werden in Links nicht ersetzt/.test(m)));
+  assert.ok(err("im").some((m) => /Adresse des Handy-Bilds nicht ersetzt/.test(m)));
+  assert.ok(warn("iw").some((m) => /Bild für Handy — WebP zeigen nicht alle Mailprogramme an/.test(m)));
+  assert.ok(warn("he").some((m) => /Bild für Handy gilt nur zusammen mit einem Ersatzbild/.test(m)));
+  assert.ok(err("se").some((m) => /Adresse des Handy-Hintergrundbilds nicht ersetzt/.test(m)));
+  assert.ok(warn("sl").some((m) => /Hintergrundbild für Handy erscheint nur zusammen mit einem Hintergrundbild/.test(m)));
+  // valid ones: nothing
+  const ok = normalizeMailTemplateDoc({
+    blocks: [
+      { id: "lg", type: "logo", href: "https://partner-fitness.de/aktion" },
+      { id: "im", type: "image", src: "https://x.de/a.jpg", mobileSrc: "https://x.de/a-m.jpg", alt: "A" },
+      { id: "se", type: "section", background: "#111111", bgImage: "https://x.de/bg.jpg", bgImageMobile: "https://x.de/bg-m.jpg", columns: [{ blocks: [{ type: "text", text: "x", color: "#ffffff" }] }] },
+      { id: "f", type: "footer" },
+    ],
+  });
+  const clean = validateMailTemplateDoc(ok, "bulk", { now });
+  assert.deepEqual(clean.errors, []);
+  assert.deepEqual(clean.warnings.filter((w) => w.blockId), []);
+});
+
+test("countdown texts: no placeholder in the picture, characters it cannot draw named, unknown merge fields in the caption", () => {
+  const now = new Date("2026-11-13T00:00:00Z");
+  const cd = (extra) => ({ id: "cd", type: "countdown", until: "2099-01-01T00:00:00Z", ...extra });
+  const issues = (extra) => validateMailTemplateDoc(normalizeMailTemplateDoc({ blocks: [cd(extra), { type: "footer" }] }), "bulk", { now });
+  assert.ok(issues({ label: "Hey {{vorname}}" }).errors.some((e) => /Im Text im Bild werden Platzhalter/.test(e.message)));
+  const dropped = issues({ label: "50 € + Gratis 😀" }).warnings.map((w) => w.message);
+  assert.ok(dropped.some((m) => /„€“, „\+“, „😀“ kann das Countdown-Bild nicht darstellen — die Zeichen entfallen/.test(m)), dropped.join("\n"));
+  assert.ok(issues({ label: "Nur noch #1" }).warnings.some((w) => /„#“ kann das Countdown-Bild nicht darstellen — das Zeichen entfällt/.test(w.message)));
+  // {datum} belongs in the caption: in the picture its braces are named (with a placeholder error they are not repeated)
+  assert.ok(issues({ label: "Bis {datum}" }).warnings.some((w) => /„\{“, „\}“ kann das Countdown-Bild nicht darstellen/.test(w.message)));
+  assert.ok(!issues({ label: "Hey {{vorname}}" }).warnings.some((w) => /Countdown-Bild nicht darstellen/.test(w.message)));
+  // what it can draw (umlauts, ß, typographic quotes, dashes) passes; a hidden label is not judged
+  const fine = issues({ label: "Schnäppchen „Große“ Woche – 50 % & mehr" });
+  assert.deepEqual(fine.errors, []);
+  assert.deepEqual(fine.warnings.filter((w) => !/^Tipp:/.test(w.message)), []);
+  assert.deepEqual(issues({ label: "{{x}} €", showLabel: false }).errors.filter((e) => /Text im Bild/.test(e.message)), []);
+  // the caption: {datum} is no merge field, {{vorname}} is fine, a typo is an error
+  assert.deepEqual(issues({ caption: "{{vorname|Hey}}, gültig bis {datum}" }).errors, []);
+  assert.ok(issues({ caption: "Bis {datum}, {{vornme}}" }).errors.some((e) => /Unbekannter Platzhalter \{\{vornme\}\}/.test(e.message)));
+});
+
+test("countdown caption: own text or the language's default, {datum} / {date} in any case filled in, switched off = empty", () => {
+  assert.deepEqual(COUNTDOWN_CAPTION_DEFAULT, { de: "Gültig bis {datum}", en: "Valid until {date}" });
+  assert.equal(countdownCaptionTemplate({}, "de"), "Gültig bis {datum}");
+  assert.equal(countdownCaptionTemplate({ caption: "  " }, "en"), "Valid until {date}");
+  assert.equal(countdownCaptionTemplate({ caption: "Nur bis {datum}" }, "en"), "Nur bis {datum}");
+  assert.equal(countdownCaptionTemplate({ caption: "x", showCaption: false }, "de"), "");
+  assert.equal(countdownCaptionTemplate(null), "Gültig bis {datum}");
+  assert.equal(
+    fillCountdownCaption("Bis {datum} — { Datum } / {DATE}!", "Sa., 15.11.2026, 23:59 Uhr"),
+    "Bis Sa., 15.11.2026, 23:59 Uhr — Sa., 15.11.2026, 23:59 Uhr / Sa., 15.11.2026, 23:59 Uhr!"
+  );
+  assert.equal(fillCountdownCaption("Ohne Datum", "x"), "Ohne Datum");
+  assert.equal(fillCountdownCaption("{datum} $& $1", "a$&b"), "a$&b $& $1", "the deadline is inserted literally");
+});
+
+test("the catalog documents the new fields for the editor and the KI-Gestalter", () => {
+  assert.match(MAIL_BLOCK_CATALOG.logo.fields.href, /leer \(= Startseite des Shops\)/);
+  assert.match(MAIL_BLOCK_CATALOG.image.fields.mobileSrc, /nur für Handys/);
+  assert.match(MAIL_BLOCK_CATALOG.hero.fields.mobileSrc, /nur für Handys/);
+  assert.match(MAIL_BLOCK_CATALOG.section.fields.bgImageMobile, /nur für Handys/);
+  const c = MAIL_BLOCK_CATALOG.countdown.fields;
+  assert.match(c.label, /max\. 32 Zeichen, erscheint in GROSSBUCHSTABEN/);
+  assert.match(c.label, /„Dein Angebot gilt noch“/);
+  assert.match(c.caption, /\{datum\} steht für das genaue Ende/);
+  assert.match(c.caption, /„Gültig bis \{datum\}“/);
+  assert.match(c.showLabel, /false/);
+  assert.match(c.showCaption, /false/);
 });

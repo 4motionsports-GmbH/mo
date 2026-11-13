@@ -64,7 +64,7 @@ import {
 } from "./mail-template-render.mjs";
 import { emptyProductBlocks, mailProductImageUrl, productHighlightSlot, productListText } from "./mail-template-slots.mjs";
 import { MAILING_HTML_HARD_LIMIT } from "./mailing-checks.mjs";
-import { countdownText } from "./offer-countdown.mjs";
+import { countdownDeadlineText, countdownText } from "./offer-countdown.mjs";
 import type { Product } from "./types";
 
 /**
@@ -235,7 +235,8 @@ export async function docProductAvailability(
  *     projection, a mail-safe picture; the rows' description and button
  *     label) + the text;
  *   * `countdown` — the live image URLs, signed and in the block's colours
- *     (countdownLook), and the line under it (until it has expired);
+ *     (countdownLook) with its text in the picture (`label` / `showLabel`),
+ *     and the deadline for the line under it (until it has expired);
  *   * `product` („Produkt-Highlight“) — the card DATA (the grid's price
  *     line, a mail-safe picture, the short description) + the text.
  * A block whose products are not available gets no slot (it is left out of a
@@ -280,7 +281,9 @@ export function renderDocSlots(
         }
       } else if (b.type === "countdown" && b.until) {
         const look = countdownLook(b, doc.style);
-        const data = offerCountdownInput({ expiresAt: b.until as string, language, colors: look });
+        // the text in the picture: the block's own, none, or (unset) the default words
+        const label = b.showLabel === false ? { hidden: true } : typeof b.label === "string" && b.label ? { text: b.label } : null;
+        const data = offerCountdownInput({ expiresAt: b.until as string, language, colors: look, label });
         if (data) slots[b.id] = { html: "", text: countdownText(b.until, language), countdown: templateCountdownSlot(data) };
       }
     } catch (err) {
@@ -292,21 +295,21 @@ export function renderDocSlots(
 
 /**
  * The countdown slot of a template block: the signed image URLs (in the
- * block's colours), their sizes and the line under the image — the classic
- * countdown's words („Dein Angebot gilt noch 3 Tage 4 Stunden“ — „bis …“).
+ * block's colours, with its text), their sizes, the alt text and the
+ * deadline („Sa., 15.11.2026, 23:59 Uhr“) for the line under the image (the
+ * block's `caption`, by default „Gültig bis {datum}“). Neither the alt text
+ * nor the line carries a remaining time: a Rundmail is rendered once and
+ * opened days later — the live picture shows the real one.
  */
 function templateCountdownSlot(data: OfferCountdownInput): MailSlotCountdown {
-  const { copy } = data;
-  const hours = data.hours > 0 || data.days === 0 ? ` ${data.hours} ${copy.hours}` : "";
   return {
     imageUrl: data.imageUrl,
     imageUrlMobile: data.imageUrlMobile,
-    imageAlt: data.imageAlt,
+    imageAlt: countdownDeadlineText(data.expiresAt, data.language),
     imageWidth: data.imageWidth,
     imageHeight: COUNTDOWN_HEIGHT,
     imageWidthMobile: data.imageWidthMobile,
-    lead: `${copy.heading} ${data.days} ${copy.days}${hours}`,
-    until: `${copy.until} ${data.deadlineLabel}`,
+    deadline: data.deadlineLabel,
   };
 }
 

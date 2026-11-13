@@ -35,6 +35,14 @@
 // colours, the code's font, link or button); unset, a format-2 document gives
 // them the look of its style (countdownLook here, the rest in the renderer).
 //
+// Links, texts and phone pictures (13.11.2026, owner: „the linked url behind
+// [the logo] … the timer and in particular the text should also be
+// modifiable … a different picture for the mobile version“): the logo takes
+// its own link (`href`), the countdown the text inside its picture (`label`,
+// `showLabel`) and the line under it (`caption` with {datum}, `showCaption`),
+// image and hero a phone picture (`mobileSrc`), a section a phone background
+// (`bgImageMobile`) — all optional and omitted while unset.
+//
 // This module is the single description of the format: the block catalog
 // (labels, fields, limits, which use allows which block), normalisation of
 // untrusted input (API bodies, imports, AI output), validation with German
@@ -42,6 +50,7 @@
 // The AI assistant gets MAIL_BLOCK_CATALOG verbatim as its "interface".
 
 import { EMAIL_FONT_CHOICES, EMAIL_FONT_KEYS, EMAIL_BUTTON_SHAPES, msoFontStackFor, parseHexColor } from "./email-theme.mjs";
+import { COUNTDOWN_LABEL_MAX, countdownLabelDropped } from "./countdown-label.mjs";
 import { customHtmlReport } from "./mail-template-html.mjs";
 import { formatProductRef, parseProductRef } from "./product-ref.mjs";
 
@@ -82,6 +91,10 @@ export const MAIL_TEMPLATE_LIMITS = Object.freeze({
   htmlChars: 20_000,
   nameChars: 80,
   descriptionChars: 300,
+  /** the text inside the countdown picture (countdown-label.mjs) */
+  countdownLabelChars: COUNTDOWN_LABEL_MAX,
+  /** the line under the countdown */
+  captionChars: 160,
 });
 
 // ── fonts ────────────────────────────────────────────────────────────────────
@@ -238,6 +251,8 @@ export const MAIL_BLOCK_CATALOG = Object.freeze({
         "1–4 Spalten: { width: Breite in % (5–95, Summe 100), valign: top | middle | bottom, background: #rrggbb oder leer, padding: Innenabstand 0–48 px, blocks: [Bausteine, max. 12] }",
       background: "Hintergrundfarbe #rrggbb des Abschnitts oder leer (= Kartenfarbe)",
       bgImage: "Hintergrundbild https://… (Text darüber; Farbe als Ersatz setzen) oder leer",
+      bgImageMobile:
+        "Hintergrundbild nur für Handys https://… (z. B. hochkant, damit Motiv und Platz für den Text passen) oder leer (= auf dem Handy das Hintergrundbild) — nur zusammen mit bgImage; Outlook für Windows und Mailprogramme ohne Handy-Ansicht zeigen bgImage",
       minHeight: "Mindesthöhe in px mit Hintergrundbild, 0–800",
       padTop: "Abstand oben in px, 0–120 (Standard 24)",
       padBottom: "Abstand unten in px, 0–120 (Standard 24)",
@@ -255,8 +270,13 @@ export const MAIL_BLOCK_CATALOG = Object.freeze({
   logo: {
     label: "Logo",
     group: "rahmen",
-    description: "Das Logo von motion sports, verlinkt auf den Shop.",
-    fields: { align: "left | center | right", width: "Breite in px, 60–300 (Standard 144)", ...BOX_FIELD_DOCS },
+    description: "Das Logo von motion sports, verlinkt auf den Shop — oder auf einen eigenen Link.",
+    fields: {
+      align: "left | center | right",
+      width: "Breite in px, 60–300 (Standard 144)",
+      href: "Link beim Klick aufs Logo: https://… (jede Seite, z. B. https://motionsports.de/collections/black-week), mailto: oder tel: — oder leer (= Startseite des Shops)",
+      ...BOX_FIELD_DOCS,
+    },
     personal: true,
     bulk: true,
     inColumns: true,
@@ -306,6 +326,8 @@ export const MAIL_BLOCK_CATALOG = Object.freeze({
     description: "Ein Bild (Banner, Foto, animiertes GIF), optional verlinkt. Bilder hochladen oder eine https-Adresse angeben.",
     fields: {
       src: "Bildadresse https://… (JPG, PNG oder GIF)",
+      mobileSrc:
+        "Bild nur für Handys https://… (z. B. hochkant oder quadratisch, wenn Text im breiten Bild auf dem Handy zu klein wird) oder leer (= überall src) — gleicher Alternativtext und Link; Outlook für Windows und Mailprogramme ohne Handy-Ansicht zeigen src",
       alt: "Alternativtext — Pflicht, wird gezeigt, wenn Bilder blockiert sind",
       href: "Link beim Klick (https://…) oder leer",
       width: "full (ganze Breite: 600 px bzw. Spaltenbreite) | content (mit Seitenrand) | Zahl in px (40–600)",
@@ -402,10 +424,15 @@ export const MAIL_BLOCK_CATALOG = Object.freeze({
     label: "Countdown",
     group: "angebot",
     description:
-      "Ein Live-Countdown bis zu einem festen Zeitpunkt — die Zahlen stimmen bei jedem Öffnen. Ohne eigene Farben passt er sich dem Stil der Mail an (Hintergrund, Akzentfarbe, Schrift).",
+      "Ein Live-Countdown bis zu einem festen Zeitpunkt — die Zahlen stimmen bei jedem Öffnen. Ohne eigene Farben passt er sich dem Stil der Mail an (Hintergrund, Akzentfarbe, Schrift). Texte: eine Überschrift darüber, ein kurzer Text im Bild über den Zahlen und eine Zeile darunter.",
     fields: {
       until: "Ende als Datum/Uhrzeit (ISO)",
       heading: "Text darüber oder leer",
+      label: `Text im Bild über den Zahlen, max. ${COUNTDOWN_LABEL_MAX} Zeichen, erscheint in GROSSBUCHSTABEN (z. B. „Nur noch kurz“) — möglich sind A–Z, Ä Ö Ü, Ziffern, Leerzeichen und . , ! ? - : % & / ' « » „ “ (andere Zeichen entfallen, keine Platzhalter); leer = „Dein Angebot gilt noch“ (englisch „Your offer ends in“)`,
+      showLabel: "false = kein Text im Bild (nur die Zahlen) · Standard true",
+      caption:
+        "Zeile unter dem Countdown, max. 160 Zeichen; {datum} steht für das genaue Ende („Sa., 15.11.2026, 23:59 Uhr“, in einer englischen Mail englisch), {{vorname}} erlaubt; leer = „Gültig bis {datum}“ (englisch „Valid until {date}“) — keine Restzeit hineinschreiben, die zeigt das Live-Bild",
+      showCaption: "false = keine Zeile unter dem Countdown · Standard true",
       tileColor: "Farbe #rrggbb der Zahlen-Kacheln oder leer (= automatisch ein Ton heller bzw. dunkler als der Hintergrund)",
       digitColor: "Farbe #rrggbb der Ziffern oder leer (= Akzentfarbe, wenn sie auf den Kacheln gut lesbar ist, sonst Überschriftenfarbe)",
       labelColor:
@@ -507,6 +534,7 @@ export const MAIL_BLOCK_CATALOG = Object.freeze({
       "Das Titelbild persönlicher Mails: das individuelle KI-Bild bzw. das Kampagnenbild, sonst das hier hinterlegte Bild. KI-Bilder tragen automatisch das EU-Kennzeichen.",
     fields: {
       src: "Ersatzbild https://… oder leer",
+      mobileSrc: "Ersatzbild nur für Handys https://… oder leer (gilt nur, solange die Mail kein eigenes Titelbild hat)",
       alt: "Alternativtext",
       href: "Link oder leer",
       showHeadline: "true = die Hero-Überschrift unter dem Bild zeigen",
@@ -686,6 +714,13 @@ function colorsInto(out, r, keys) {
   return out;
 }
 
+/** Copy the optional phone picture of an image / hero block (https like `src`; omitted while unset). */
+function mobileSrcInto(out, r) {
+  const mobileSrc = cleanUrl(r.mobileSrc);
+  if (mobileSrc) out.mobileSrc = mobileSrc;
+  return out;
+}
+
 /** The corner radius of a coupon card (px) while its `radius` is unset. */
 export const COUPON_RADIUS = 8;
 
@@ -844,8 +879,13 @@ export function normalizeMailBlock(raw, takenIds = new Set(), opts = {}) {
   const id = takeId(r.id, takenIds);
   const L = MAIL_TEMPLATE_LIMITS;
   switch (type) {
-    case "logo":
-      return boxInto({ id, type, align: oneOf(r.align, ALIGNS, "center"), width: int(r.width, 60, 300, 144) }, r);
+    case "logo": {
+      const out = boxInto({ id, type, align: oneOf(r.align, ALIGNS, "center"), width: int(r.width, 60, 300, 144) }, r);
+      // own link target; unset = the shop's start page (the renderer's assets)
+      const href = cleanHref(r.href);
+      if (href) out.href = href;
+      return out;
+    }
     case "heading":
       return textStyleInto(
         boxInto(
@@ -894,6 +934,7 @@ export function normalizeMailBlock(raw, takenIds = new Set(), opts = {}) {
       if (r.align === "left" || r.align === "right") out.align = r.align;
       const radius = nint(r.radius, 0, 40);
       if (radius) out.radius = radius;
+      mobileSrcInto(out, r);
       return boxInto(out, r);
     }
     case "button": {
@@ -965,6 +1006,13 @@ export function normalizeMailBlock(raw, takenIds = new Set(), opts = {}) {
     case "countdown": {
       const out = { id, type, until: isoDate(r.until), heading: line(r.heading, L.headingChars) };
       colorsInto(out, r, ["tileColor", "digitColor", "labelColor"]);
+      // the text inside the picture (stored as typed — drawn in capitals, countdown-label.mjs) and the line under it
+      const label = line(r.label, L.countdownLabelChars);
+      if (label) out.label = label;
+      if (r.showLabel === false) out.showLabel = false;
+      const caption = line(r.caption, L.captionChars);
+      if (caption) out.caption = caption;
+      if (r.showCaption === false) out.showCaption = false;
       return boxInto(out, r);
     }
     case "menu": {
@@ -1033,14 +1081,17 @@ export function normalizeMailBlock(raw, takenIds = new Set(), opts = {}) {
       return textStyleInto(boxInto(out, r), r);
     }
     case "hero":
-      return {
-        id,
-        type,
-        src: cleanUrl(r.src),
-        alt: line(r.alt, L.altChars),
-        href: cleanHref(r.href),
-        showHeadline: bool(r.showHeadline, true),
-      };
+      return mobileSrcInto(
+        {
+          id,
+          type,
+          src: cleanUrl(r.src),
+          alt: line(r.alt, L.altChars),
+          href: cleanHref(r.href),
+          showHeadline: bool(r.showHeadline, true),
+        },
+        r
+      );
     case "mo_content":
       return { id, type, showHeading: bool(r.showHeading, true) };
     case "mo_offer":
@@ -1095,7 +1146,8 @@ function normalizeSection(id, r, takenIds, budget) {
   columns.forEach((c, i) => {
     c.width = widths[i];
   });
-  return {
+  /** @type {Record<string, any>} */
+  const out = {
     id,
     type: /** @type {MailBlockType} */ ("section"),
     columns,
@@ -1111,6 +1163,10 @@ function normalizeSection(id, r, takenIds, budget) {
     radius: int(r.radius, 0, 32, 0),
     borderColor: color(r.borderColor),
   };
+  // the phone background (optional, omitted while unset — a section without it keeps its JSON)
+  const bgImageMobile = cleanUrl(r.bgImageMobile);
+  if (bgImageMobile) out.bgImageMobile = bgImageMobile;
+  return out;
 }
 
 /**
@@ -1368,6 +1424,40 @@ export function countdownLook(block, style) {
   return { bg, tile, digit, label };
 }
 
+/**
+ * The line under a countdown while its `caption` is unset (format 2): the
+ * deadline — never a remaining time, which a Rundmail rendered once would
+ * still claim when it is opened days later (the live picture shows the real
+ * one).
+ */
+export const COUNTDOWN_CAPTION_DEFAULT = Object.freeze({ de: "Gültig bis {datum}", en: "Valid until {date}" });
+
+/** {datum} / {date} (any case) in a countdown caption — the exact deadline. Global: use with split / replace only. */
+export const COUNTDOWN_DATE_RE = /\{\s*(?:datum|date)\s*\}/gi;
+
+/**
+ * The caption of a countdown block as written, its {datum} not yet filled in:
+ * its own `caption`, else the default of the mail's language; "" when it is
+ * switched off (`showCaption: false`).
+ * @param {Record<string, any> | null | undefined} block
+ * @param {"de" | "en"} [locale]
+ */
+export function countdownCaptionTemplate(block, locale = "de") {
+  if (block?.showCaption === false) return "";
+  const own = typeof block?.caption === "string" ? block.caption.trim() : "";
+  return own || COUNTDOWN_CAPTION_DEFAULT[locale === "en" ? "en" : "de"];
+}
+
+/**
+ * A caption with its deadline filled in — `deadline` in place of every
+ * {datum} / {date} (plain text; merge fields of the caption still as written).
+ * @param {string} template
+ * @param {string} deadline  „Sa., 15.11.2026, 23:59 Uhr“
+ */
+export function fillCountdownCaption(template, deadline) {
+  return String(template ?? "").replace(COUNTDOWN_DATE_RE, () => String(deadline ?? ""));
+}
+
 // ── format version ───────────────────────────────────────────────────────────
 
 /**
@@ -1532,10 +1622,20 @@ export function validateMailTemplateDoc(doc, use, opts = {}) {
     }
   };
 
+  /** The phone picture of an image / hero block, or a section's phone background: like its desktop twin. */
+  const phonePicture = (b, url, what) => {
+    if (!url) return;
+    if (/\.webp(\?|$)/i.test(url)) warn(b, `${nameOf(b)}: ${what} — WebP zeigen nicht alle Mailprogramme an, besser JPG oder PNG.`);
+    if (urlHasPlaceholder(url)) err(b, `${nameOf(b)}: Platzhalter wie {{vorname}} werden in der Adresse ${what === "Bild für Handy" ? "des Handy-Bilds" : "des Handy-Hintergrundbilds"} nicht ersetzt.`);
+  };
+
   for (const { block: b, sectionId, columnIndex } of all) {
     const label = nameOf(b);
     const bg = backgroundOf(b, sectionId, columnIndex);
     switch (b.type) {
+      case "logo":
+        noLinkPlaceholder(b, b.href);
+        break;
       case "heading":
         if (!b.text) err(b, `${label}: Text fehlt.`);
         contrast(b, b.color ?? style.headingColor, bg, 3);
@@ -1558,6 +1658,7 @@ export function validateMailTemplateDoc(doc, use, opts = {}) {
         if (b.src && /\.webp(\?|$)/i.test(b.src)) warn(b, `${label}: WebP zeigt Outlook nicht an — besser JPG, PNG oder GIF.`);
         noImagePlaceholder(b, b.src);
         noLinkPlaceholder(b, b.href);
+        phonePicture(b, b.mobileSrc, "Bild für Handy");
         break;
       case "button":
         if (!b.label) err(b, `${label}: Beschriftung fehlt.`);
@@ -1595,6 +1696,19 @@ export function validateMailTemplateDoc(doc, use, opts = {}) {
       case "countdown": {
         if (!b.until) err(b, `${label}: Ende fehlt.`);
         else if (Date.parse(b.until) <= now) err(b, `${label}: Das Ende liegt in der Vergangenheit.`);
+        if (b.label && b.showLabel !== false) {
+          // the picture is the same for everyone — and it can only draw its alphabet (countdown-label.mjs)
+          const placeholder = /\{\{/.test(b.label);
+          if (placeholder) err(b, `${label}: Im Text im Bild werden Platzhalter wie {{vorname}} nicht ersetzt — das Bild ist für alle gleich.`);
+          // (the braces of a placeholder are named by the error already)
+          const dropped = countdownLabelDropped(b.label).filter((c) => !placeholder || (c !== "{" && c !== "}"));
+          if (dropped.length) {
+            warn(
+              b,
+              `${label}: ${dropped.map((c) => `„${c}“`).join(", ")} kann das Countdown-Bild nicht darstellen — ${dropped.length === 1 ? "das Zeichen entfällt" : "die Zeichen entfallen"} (möglich: Buchstaben, Ziffern, Leerzeichen und . , ! ? - : % & / ' « » „ “).`
+            );
+          }
+        }
         const look = countdownLook(b, style);
         if (b.digitColor) contrast(b, b.digitColor, look.tile, 3, "Ziffern auf den Kacheln");
         if (b.labelColor) {
@@ -1628,6 +1742,8 @@ export function validateMailTemplateDoc(doc, use, opts = {}) {
         if (b.src && !b.alt) warn(b, `${label}: Alternativtext fehlt.`);
         noImagePlaceholder(b, b.src);
         noLinkPlaceholder(b, b.href);
+        phonePicture(b, b.mobileSrc, "Bild für Handy");
+        if (b.mobileSrc && !b.src) warn(b, `${label}: Das Bild für Handy gilt nur zusammen mit einem Ersatzbild — bitte auch das Ersatzbild setzen.`);
         break;
       case "section": {
         const filled = (b.columns ?? []).filter((c) => c.blocks?.length > 0).length;
@@ -1636,6 +1752,8 @@ export function validateMailTemplateDoc(doc, use, opts = {}) {
         if (b.bgImage && /\.webp(\?|$)/i.test(b.bgImage)) warn(b, `${label}: WebP zeigt Outlook nicht an — besser JPG oder PNG.`);
         if (b.bgImage && !b.background) warn(b, `${label}: Zum Hintergrundbild eine passende Hintergrundfarbe setzen — sie erscheint, wenn Bilder blockiert sind.`);
         if (urlHasPlaceholder(b.bgImage)) err(b, `${label}: Platzhalter wie {{vorname}} werden in der Adresse des Hintergrundbilds nicht ersetzt.`);
+        phonePicture(b, b.bgImageMobile, "Hintergrundbild für Handy");
+        if (b.bgImageMobile && !b.bgImage) warn(b, `${label}: Das Hintergrundbild für Handy erscheint nur zusammen mit einem Hintergrundbild — bitte auch das Hintergrundbild setzen.`);
         break;
       }
       case "footer":
@@ -1644,7 +1762,7 @@ export function validateMailTemplateDoc(doc, use, opts = {}) {
       default:
         break;
     }
-    const texts = [b.text, b.fallback, b.label, b.headline, b.terms, b.title, b.heading, b.buttonLabel, ...(b.items ?? []).map((it) => it.label)];
+    const texts = [b.text, b.fallback, b.label, b.headline, b.terms, b.title, b.heading, b.buttonLabel, b.caption, ...(b.items ?? []).map((it) => it.label)];
     for (const t of texts) {
       for (const bad of unknownMergeFields(t ?? "")) err(b, `${label}: Unbekannter Platzhalter ${bad} — erlaubt ist {{vorname}} bzw. {{vorname|Ersatz}}.`);
     }

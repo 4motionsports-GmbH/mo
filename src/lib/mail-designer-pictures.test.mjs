@@ -356,6 +356,10 @@ test("the studio answers at once with a placeholder while the picture renders in
   assert.match(studio.request({ purpose: "icon", prompt: "A dumbbell icon, flat, #e30613" }).answer.note, /width in px \(z\. B\. 56 für ein Icon\)/);
   await studio.settle();
   assert.ok(lines.includes("Bild 2 von 3 fertig") || lines.includes("Bild 3 von 3 fertig"));
+  // only a tall or square picture is offered as the phone version of a wide one
+  assert.doesNotMatch(res.answer.note, /mobileSrc/);
+  const phone = createPictureStudio({ render: okRender() }).request({ ...HERO, aspect: "tall" }).answer;
+  assert.match(phone.note, /oder als Handy-Fassung eines breiten Bildes: mobileSrc des image-Bausteins bzw\. bgImageMobile des Abschnitts/);
 });
 
 test("the studio: at most three pictures, invalid input does not count, a failed one frees its place, no picture without time or with unknown refs", async () => {

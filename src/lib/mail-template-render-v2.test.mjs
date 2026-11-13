@@ -802,6 +802,113 @@ test("logo: right alignment, never wider than its column", () => {
   assert.match(narrow, new RegExp(`alt="motion sports" width="${widths[0]}" border="0" style="width: ${widths[0]}px;`));
 });
 
+test("logo: its own link (any domain, mailto:, tel:) — unset the shop's start page, as before", () => {
+  const link = (html) => /<a href="([^"]*)" target="_blank" style="text-decoration: none !important;">\s*<img [^>]*alt="motion sports"/.exec(html)?.[1];
+  assert.equal(link(renderMailTemplateHtml(docOf([{ type: "logo" }]), ctx())), "https://www.motionsports.de");
+  assert.equal(link(renderMailTemplateHtml(docOf([{ type: "logo", href: "https://motionsports.de/collections/black-week?x=1&y=2" }]), ctx())), "https://motionsports.de/collections/black-week?x=1&amp;y=2");
+  assert.equal(link(renderMailTemplateHtml(docOf([{ type: "logo", href: "https://partner-fitness.de/aktion" }]), ctx())), "https://partner-fitness.de/aktion");
+  assert.equal(link(renderMailTemplateHtml(docOf([{ type: "logo", href: "mailto:info@motionsports.de" }]), ctx())), "mailto:info@motionsports.de");
+  // in a column too; never a script URL (the normaliser drops it — the shop again)
+  const column = renderMailTemplateHtml(docOf([{ type: "section", columns: [{ blocks: [{ type: "logo", href: "https://motionsports.de/pages/black-week" }] }, { blocks: [{ type: "text", text: "x" }] }] }]), ctx());
+  assert.equal(link(column), "https://motionsports.de/pages/black-week");
+  assert.equal(link(renderMailTemplateHtml(docOf([{ type: "logo", href: "javascript:alert(1)" }]), ctx())), "https://www.motionsports.de");
+  assert.deepEqual(lint(column), []);
+});
+
+// ── a different picture on phones ────────────────────────────────────────────
+
+/** The head's phone rules (the media block after the shell CSS), or "". */
+const phoneCss = (html) => /\n {6}@media only screen and \(max-width:480px\) \{\n((?: {8}\.[^\n]*\n)+) {6}\}\n {4}<\/style>/.exec(html)?.[1] ?? "";
+
+test("image with a phone picture: the desktop picture as before, the phone one hidden from Outlook and swapped in by the head's rule", () => {
+  const desktop = "https://cdn.example.com/banner-wide.jpg";
+  const phone = "https://cdn.example.com/banner-tall.jpg";
+  const plain = renderMailTemplateHtml(docOf([{ type: "image", src: desktop, alt: "Black Week", href: "https://motionsports.de/" }]), ctx());
+  const html = renderMailTemplateHtml(docOf([{ type: "image", src: desktop, mobileSrc: phone, alt: "Black Week", href: "https://motionsports.de/" }]), ctx());
+  // the desktop picture: the same tag plus its class
+  const deskTag = '<img src="https://cdn.example.com/banner-wide.jpg" width="600" alt="Black Week" border="0" class="ph-desk" style="width: 100%; max-width: 600px; height: auto; display: block; Margin: 0 auto;">';
+  assert.ok(html.includes(`<a href="https://motionsports.de/" target="_blank" style="text-decoration: none;">${deskTag}</a>`));
+  assert.ok(plain.includes(deskTag.replace(' class="ph-desk"', "")));
+  // the phone picture: the same size, alt text and link — in a wrapper closed every way, inside hideFromOutlook
+  assert.ok(
+    html.includes(
+      `${deskTag}</a><!--[if !mso]><!--><div class="ph-phone" style="display: none; max-height: 0; overflow: hidden; mso-hide: all;"><a href="https://motionsports.de/" target="_blank" style="text-decoration: none;"><img src="https://cdn.example.com/banner-tall.jpg" width="600" alt="Black Week" border="0" style="width: 100%; max-width: 600px; height: auto; display: block; Margin: 0 auto;"></a></div><!--<![endif]-->`
+    )
+  );
+  assert.equal(phoneCss(html), "        .ph-desk { display: none !important; }\n        .ph-phone { display: block !important; max-height: none !important; overflow: visible !important; }\n");
+  // no phone picture, no rule — and a phone picture equal to the desktop one is none
+  assert.equal(phoneCss(plain), "");
+  assert.equal(renderMailTemplateHtml(docOf([{ type: "image", src: desktop, mobileSrc: desktop, alt: "x" }]), ctx()), renderMailTemplateHtml(docOf([{ type: "image", src: desktop, alt: "x" }]), ctx()));
+  assert.deepEqual(lint(html), []);
+  // the text part names the picture once
+  assert.equal(renderMailTemplateText(docOf([{ type: "image", src: desktop, mobileSrc: phone, alt: "Black Week", href: "https://motionsports.de/" }]), ctx()).split("Black Week: ").length - 1, 1);
+});
+
+test("phone pictures in columns, unlinked, with corners — and with a countdown in the same mail one media rule holds both", () => {
+  const doc = docOf([
+    { type: "section", columns: [{ blocks: [{ type: "image", src: "https://x.de/a.jpg", mobileSrc: "https://x.de/a-m.jpg", alt: "a", width: "full", radius: 8 }] }, { blocks: [{ type: "text", text: "x" }] }] },
+    { id: "cd", type: "countdown", until: "2030-01-01T00:00:00Z" },
+  ]);
+  const html = renderMailTemplateHtml(doc, ctx({ slots: { cd: countdownSlot() } }));
+  assert.match(html, /<img src="https:\/\/x\.de\/a\.jpg" width="230" alt="a" border="0" class="col-img ph-desk" style="[^"]*border-radius: 8px;">/);
+  assert.match(html, /<div class="ph-phone" style="display: none; max-height: 0; overflow: hidden; mso-hide: all;"><img src="https:\/\/x\.de\/a-m\.jpg" width="230" alt="a" border="0" class="col-img" style="[^"]*border-radius: 8px;"><\/div>/);
+  assert.equal(
+    phoneCss(html),
+    "        .cd-desk { display: none !important; }\n        .cd-phone { display: block !important; }\n        .ph-desk { display: none !important; }\n        .ph-phone { display: block !important; max-height: none !important; overflow: visible !important; }\n"
+  );
+  assert.equal((html.match(/@media only screen and \(max-width:480px\)/g) ?? []).length, 2, "the shell's rule and the phone swaps");
+  assert.deepEqual(lint(html), []);
+});
+
+test("hero: its phone picture belongs to the fallback picture — a mail's own hero shows as before", () => {
+  const doc = docOf([{ type: "hero", src: "https://cdn.example.com/fallback.jpg", mobileSrc: "https://cdn.example.com/fallback-m.jpg", alt: "Szene" }, { type: "mo_content" }]);
+  const mo = { heading: "", bodyHtml: "<p>Mo</p>", moAvatarUrl: null, offerRowsHtml: null, promoRowsHtml: null, ctaRowsHtml: "", footnoteRowHtml: "", postCtaRowsHtml: "", preCtaRowsHtml: "" };
+  const fallback = renderMailTemplateHtml(doc, ctx({ mo, hero: null }));
+  assert.match(fallback, /<img src="https:\/\/cdn\.example\.com\/fallback\.jpg" width="600" alt="Szene" border="0" class="ph-desk"/);
+  assert.match(fallback, /<div class="ph-phone" [^>]*><img src="https:\/\/cdn\.example\.com\/fallback-m\.jpg" width="600" alt="Szene"/);
+  assert.deepEqual(lint(fallback), []);
+  const hero = { imageUrl: "https://cdn.example.com/ki.jpg", mobileUrl: "https://cdn.example.com/ki-m.jpg", headline: null, isAi: false };
+  const own = renderMailTemplateHtml(doc, ctx({ mo, hero }));
+  assert.equal(own, renderMailTemplateHtml(docOf([{ type: "hero", src: "https://cdn.example.com/fallback.jpg", alt: "Szene" }, { type: "mo_content" }]), ctx({ mo, hero })));
+  assert.doesNotMatch(own, /fallback-m|ph-phone|ph-desk/);
+});
+
+test("section with a phone background: the head's rule swaps the picture cell's background — the VML stays desktop", () => {
+  const content = [{ type: "heading", text: "Über dem Bild", color: "#ffffff" }];
+  for (const frame of [{}, { radius: 12 }]) {
+    const where = JSON.stringify(frame);
+    const doc = docOf([
+      { type: "section", background: "#222222", bgImage: "https://cdn.example.com/bg.jpg", bgImageMobile: "https://cdn.example.com/bg tall (2).jpg?a=1&b=2", minHeight: 300, ...frame, columns: [{ blocks: content }] },
+      { type: "section", background: "#333333", bgImage: "https://cdn.example.com/bg2.jpg", bgImageMobile: "https://cdn.example.com/bg2-m.jpg", ...frame, columns: [{ blocks: content }] },
+    ]);
+    const html = renderMailTemplateHtml(doc, ctx());
+    assert.deepEqual(lint(html), [], where);
+    // the picture cells carry their class; desktop picture, VML and fallback colour as before
+    assert.match(html, /<td class="ph-bg1" align="left" valign="top" bgcolor="#222222" background="https:\/\/cdn\.example\.com\/bg\.jpg"/, where);
+    assert.match(html, /<td class="ph-bg2" align="left" valign="top" bgcolor="#333333" background="https:\/\/cdn\.example\.com\/bg2\.jpg"/, where);
+    assert.doesNotMatch(html.slice(html.indexOf("<v:fill")), /<v:fill [^>]*src="[^"]*-m\.jpg/, where);
+    // one rule per section; the address safe inside the style sheet (quotes, brackets, spaces encoded; & raw — no entities there)
+    assert.equal(
+      phoneCss(html),
+      "        .ph-bg1 { background-image: url('https://cdn.example.com/bg%20tall%20%282%29.jpg?a=1&b=2') !important; }\n        .ph-bg2 { background-image: url('https://cdn.example.com/bg2-m.jpg') !important; }\n",
+      where
+    );
+    // without a phone background: the cell and the head exactly as before
+    const plainDoc = docOf([{ type: "section", background: "#222222", bgImage: "https://cdn.example.com/bg.jpg", minHeight: 300, ...frame, columns: [{ blocks: content }] }]);
+    const withPhone = docOf([{ type: "section", background: "#222222", bgImage: "https://cdn.example.com/bg.jpg", bgImageMobile: "https://cdn.example.com/bg-m.jpg", minHeight: 300, ...frame, columns: [{ blocks: content }] }]);
+    const plain = renderMailTemplateHtml(plainDoc, ctx());
+    assert.equal(phoneCss(plain), "", where);
+    assert.equal(
+      renderMailTemplateHtml(withPhone, ctx()).replace(' class="ph-bg1"', "").replace(/\n {6}@media only screen and \(max-width:480px\) \{\n {8}\.ph-bg1[^\n]*\n {6}\}/, ""),
+      plain,
+      where
+    );
+  }
+  // a phone background without a background picture draws nothing
+  const lone = renderMailTemplateHtml(docOf([{ type: "section", bgImageMobile: "https://cdn.example.com/bg-m.jpg", columns: [{ blocks: content }] }]), ctx());
+  assert.doesNotMatch(lone, /bg-m\.jpg|ph-bg/);
+});
+
 // ── Mo's pieces on any card ──────────────────────────────────────────────────
 
 /** A card row of the composer the way templateSectionRow hands it over on a dark card: on the white panel. */
@@ -1154,12 +1261,11 @@ const countdownSlot = (extra = {}) => ({
   countdown: {
     imageUrl: "https://mo.example.com/api/email-countdown/tok?bg=111111&tile=292929&digit=ffd400&label=a1a1a1&cs=sig",
     imageUrlMobile: "https://mo.example.com/api/email-countdown/tok?w=m&bg=111111&tile=292929&digit=ffd400&label=a1a1a1&cs=sig",
-    imageAlt: "Dein Angebot gilt noch 3 Tage und 4 Stunden",
+    imageAlt: "Countdown bis Sa., 12.12.2026, 23:59 Uhr",
     imageWidth: 564,
     imageHeight: 116,
     imageWidthMobile: 350,
-    lead: "Dein Angebot gilt noch 3 Tage 4 Stunden",
-    until: "bis Sa., 12.12.2026, 23:59 Uhr",
+    deadline: "Sa., 12.12.2026, 23:59 Uhr",
     ...extra,
   },
 });
@@ -1244,18 +1350,55 @@ test("countdown (format 2): image in the block's colours, the phone variant hidd
   // the heading in the heading font, a readable heading colour, on the card
   assert.match(html, /bgcolor="#111111" style="mso-line-height-rule: exactly; padding: 24px 60px 8px;" valign="top">\s*<p style="[^"]*'Oswald'[^"]*color: #ffffff;[^"]*" align="center">Endet in<\/p>/);
   // desktop image: Word sizes it by the content width; browsers by the CSS
-  assert.match(html, /<img src="https:\/\/mo\.example\.com\/api\/email-countdown\/tok\?bg=111111&amp;tile=292929&amp;digit=ffd400&amp;label=a1a1a1&amp;cs=sig" width="480" height="99" alt="Dein Angebot gilt noch 3 Tage und 4 Stunden" border="0" class="cd-desk" style="width: 100%; max-width: 564px; height: auto; display: block; Margin: 0 auto;">/);
+  assert.match(html, /<img src="https:\/\/mo\.example\.com\/api\/email-countdown\/tok\?bg=111111&amp;tile=292929&amp;digit=ffd400&amp;label=a1a1a1&amp;cs=sig" width="480" height="99" alt="Countdown bis Sa\., 12\.12\.2026, 23:59 Uhr" border="0" class="cd-desk" style="width: 100%; max-width: 564px; height: auto; display: block; Margin: 0 auto;">/);
   assert.match(html, /<!--\[if !mso\]><!--><img src="https:\/\/mo\.example\.com\/api\/email-countdown\/tok\?w=m&amp;[^"]*" width="350" [^>]*class="cd-phone" style="[^"]*display: none;[^"]*"><!--<!\[endif\]-->/);
-  // the swap rule only in a mail that has the phone image
-  assert.match(html, /\.cd-desk \{ display: none !important; \}\s*\.cd-phone \{ display: block !important; \}/);
+  // the swap rule only in a mail that has the phone image — exactly the rule of before
+  assert.ok(html.includes("\n      @media only screen and (max-width:480px) {\n        .cd-desk { display: none !important; }\n        .cd-phone { display: block !important; }\n      }\n    </style>"));
   assert.doesNotMatch(renderMailTemplateHtml(docOf([{ type: "text", text: "x" }]), ctx()), /cd-phone/);
-  // the exact deadline under the image in the label colour (countdownLook)
-  assert.match(html, /color: #a1a1a1; Margin: 8px 0 0;" align="center"><strong>Dein Angebot gilt noch 3 Tage 4 Stunden<\/strong> &#8212; bis Sa\., 12\.12\.2026, 23:59 Uhr<\/p>/);
+  // under the image (label colour, countdownLook) the deadline, never a remaining time: „Gültig bis {datum}“
+  assert.match(html, /color: #a1a1a1; Margin: 8px 0 0;" align="center">Gültig bis <strong>Sa\., 12\.12\.2026, 23:59 Uhr<\/strong><\/p>/);
+  assert.doesNotMatch(html, /gilt noch|3 Tage/);
   assert.deepEqual(lint(html), []);
   // without a signing secret: no image, only the line
   const bare = renderMailTemplateHtml(doc, ctx({ slots: { cd: countdownSlot({ imageUrl: null, imageUrlMobile: null }) } }));
   assert.doesNotMatch(bare, /<img [^>]*cd-desk|cd-phone/);
-  assert.match(bare, /Margin: 0;" align="center"><strong>Dein Angebot gilt noch/);
+  assert.match(bare, /Margin: 0;" align="center">Gültig bis <strong>Sa\., 12\.12\.2026/);
+});
+
+test("countdown caption: own text with {datum} and {{vorname}}, English default, switched off — the text part follows", () => {
+  const cd = (extra, style = {}) => docOf([{ id: "cd", type: "countdown", until: "2030-01-01T00:00:00Z", heading: "Endet in", ...extra }], style);
+  const slots = { cd: countdownSlot() };
+  const own = renderMailTemplateHtml(cd({ caption: "Nur bis {Datum}, {{vorname|du}} — dann ist <Schluss>" }), ctx({ slots }));
+  assert.match(own, /align="center">Nur bis <strong>Sa\., 12\.12\.2026, 23:59 Uhr<\/strong>, Anna — dann ist &lt;Schluss&gt;<\/p>/);
+  // a caption without {datum} stands as written
+  assert.match(renderMailTemplateHtml(cd({ caption: "Solange der Vorrat reicht" }), ctx({ slots })), /align="center">Solange der Vorrat reicht<\/p>/);
+  // English mails: „Valid until {date}“ ({datum} works there too)
+  const en = renderMailTemplateHtml(cd({}), ctx({ slots: { cd: countdownSlot({ deadline: "Sat, 12 Dec 2026, 23:59" }) }, locale: "en" }));
+  assert.match(en, /align="center">Valid until <strong>Sat, 12 Dec 2026, 23:59<\/strong><\/p>/);
+  // switched off: the image alone (the row keeps its spacing); without image and caption no row at all
+  const off = renderMailTemplateHtml(cd({ caption: "Egal", showCaption: false }), ctx({ slots }));
+  assert.doesNotMatch(off, /Egal|Gültig bis/);
+  assert.match(off, /class="cd-desk"/);
+  const nothing = renderMailTemplateHtml(cd({ showCaption: false }), ctx({ slots: { cd: countdownSlot({ imageUrl: null, imageUrlMobile: null }) } }));
+  assert.doesNotMatch(body(nothing), /Gültig bis|cd-desk/);
+  assert.match(body(nothing), /Endet in/);
+  // a line about an unknown deadline is left out
+  assert.doesNotMatch(renderMailTemplateHtml(cd({}), ctx({ slots: { cd: countdownSlot({ deadline: "" }) } })), /Gültig bis/);
+  for (const html of [own, en, off, nothing]) assert.deepEqual(lint(html), []);
+  // the text part: heading, the own text in the picture, the caption with its deadline — no remaining time
+  const text = renderMailTemplateText(cd({ label: "Nur noch kurz", caption: "Bis {datum}, {{vorname|du}}" }), ctx({ slots }));
+  assert.match(text, /Endet in\nNur noch kurz\nBis Sa\., 12\.12\.2026, 23:59 Uhr, Anna/);
+  assert.doesNotMatch(text, /gilt noch 3 Tage/);
+  assert.match(renderMailTemplateText(cd({}), ctx({ slots })), /Endet in\nGültig bis Sa\., 12\.12\.2026, 23:59 Uhr/);
+  assert.match(renderMailTemplateText(cd({ label: "Versteckt", showLabel: false, showCaption: false }), ctx({ slots })), /Endet in(?!\nVersteckt)/);
+  // a frozen Rundmail: the caption's merge field becomes a per-recipient placeholder
+  const frozen = renderMailTemplateHtml(cd({ caption: "{{vorname|Hey}}, bis {datum}" }), ctx({ slots, merge: (t) => applyMergeFields(t, {}, (i, fb) => `{{mo:fn:${i}|${fb}}}`) }));
+  assert.match(frozen, /align="center">\{\{mo:fn:0\|Hey\}\}, bis <strong>Sa\., 12\.12\.2026, 23:59 Uhr<\/strong><\/p>/);
+});
+
+test("countdown of a version-1 document: the text part keeps the slot's line", () => {
+  const v1 = { ...docOf([{ id: "cd", type: "countdown", until: "2030-01-01T00:00:00Z", heading: "Endet in" }]), v: 1 };
+  assert.match(renderMailTemplateText(v1, ctx({ slots: { cd: { ...countdownSlot(), html: "\n<tr><td>X</td></tr>" } } })), /Endet in\nDein Angebot gilt noch 3 Tage/);
 });
 
 test("countdown band: its background carries heading and image (the image's ground), spacing as set", () => {

@@ -39,6 +39,15 @@
 // colour), a phone variant swapped in on small screens; the products' names
 // in the heading font and colour, the button in the mail's button look.
 //
+// Links, texts and phone pictures (13.11.2026): the logo links to its own
+// `href` (else the shop); the countdown's line under the picture is the
+// block's `caption` with {datum} (by default „Gültig bis {datum}“ — format 2
+// never prints a remaining time a frozen Rundmail would carry past its
+// moment; the text in the picture rides in the slot's signed URL); a picture
+// with a phone version (image / hero `mobileSrc`, section `bgImageMobile`) is
+// swapped on phones by the head's media rule (phoneSwapCss — only when a mail
+// uses it), Outlook for Windows always keeps the desktop picture.
+//
 // What needs I/O or the active design context comes in through the context —
 // the TypeScript layer (mail-template-design.ts, mailing-render.ts) builds it:
 //   * `slots[blockId]`: DATA laid out here in the template's own look — the
@@ -64,13 +73,16 @@ import { buttonRadiusFor } from "./email-theme.mjs";
 import { emailProseToText, renderEmailProseHtml } from "./email-prose.mjs";
 import { couponCodeType, discountRedeemUrl } from "./discount-coupon.mjs";
 import {
+  COUNTDOWN_DATE_RE,
   COUPON_RADIUS,
   MO_BLOCK_TYPES,
   PROSE_URL_RE,
   contrastRatio,
+  countdownCaptionTemplate,
   countdownLook,
   docFontKeys,
   docFormatVersion,
+  fillCountdownCaption,
   mailFontGoogleFamily,
   mailFontMsoStack,
   mailFontStack,
@@ -150,12 +162,13 @@ const CLASSIC_LINK_COLOR = "#008ccb";
 
 /**
  * The live countdown of a `countdown` block (format 2): the signed image URLs
- * — already carrying the block's colours (countdownLook), desktop and phone
- * variant (?w=m) — their sizes at 1×, the alt text and the line under the
- * image („Dein Angebot gilt noch 3 Tage 4 Stunden“ — „bis Sa., …“). No image
- * URL without a signing secret: then only the line.
+ * — already carrying the block's colours (countdownLook) and its text in the
+ * picture, desktop and phone variant (?w=m) — their sizes at 1×, the alt text
+ * and the deadline („Sa., 15.11.2026, 23:59 Uhr“) the line under the image
+ * puts in place of {datum} (the block's `caption`, by default „Gültig bis
+ * {datum}“). No image URL without a signing secret: then only the line.
  * @typedef {{ imageUrl: string | null, imageUrlMobile: string | null, imageAlt: string, imageWidth: number,
- *   imageHeight: number, imageWidthMobile: number, lead: string, until: string }} MailSlotCountdown
+ *   imageHeight: number, imageWidthMobile: number, deadline: string }} MailSlotCountdown
  */
 
 /**
@@ -262,6 +275,53 @@ function padCss(t, x, b) {
 /** A URL inside CSS url('…'): quotes, brackets, backslashes and spaces percent-encoded. */
 function cssUrl(url) {
   return String(url).replace(/['()\\\s"]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase().padStart(2, "0")}`);
+}
+
+// ── phone versions ───────────────────────────────────────────────────────────
+//
+// A picture may have a phone version (image / hero `mobileSrc`, a section's
+// `bgImageMobile`). The desktop picture stays as it is; the phone picture of
+// an image follows it in a wrapper hidden every way a client may honour
+// (display:none, max-height:0, overflow:hidden, mso-hide:all — and inside
+// hideFromOutlook, so Outlook for Windows never sees it), and the head's
+// 480-px media rule swaps the two; a section's phone background is a rule of
+// its own that swaps the background-image of the section's picture cell (the
+// VML of Outlook keeps the desktop picture). A client without media queries
+// shows the desktop picture. The head carries the rules only when a mail uses
+// them (phoneSwapCss), so a mail without phone versions keeps its head.
+
+/** The class of a desktop picture with a phone version: hidden on phones. */
+const PHONE_HIDE_CLASS = "ph-desk";
+/** The class of the wrapper of a phone picture: opened on phones. */
+const PHONE_SHOW_CLASS = "ph-phone";
+/** The wrapper of a phone picture, closed everywhere until the phone rule opens it. */
+const PHONE_WRAPPER_CSS = "display: none; max-height: 0; overflow: hidden; mso-hide: all;";
+
+/** A URL inside url('…') of the head's <style> — raw text, no entities: cssUrl plus < and > percent-encoded. */
+function styleSheetUrl(url) {
+  return cssUrl(url).replace(/[<>]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
+}
+
+/**
+ * The phone swaps of the head's <style> — only what the mail uses: the
+ * 350-px countdown (.cd-desk / .cd-phone, exactly as before, so a mail with
+ * only a countdown keeps its head byte for byte), the phone pictures (the
+ * desktop picture hidden, its wrapper opened) and one background rule per
+ * section with a phone background. "" when the mail has none.
+ * @param {{ phoneCountdown: boolean, phonePictures: boolean, phoneBackgrounds: Array<{ className: string, url: string }> }} R
+ */
+function phoneSwapCss(R) {
+  const rules = [];
+  if (R.phoneCountdown) rules.push(".cd-desk { display: none !important; }", ".cd-phone { display: block !important; }");
+  if (R.phonePictures) {
+    rules.push(`.${PHONE_HIDE_CLASS} { display: none !important; }`, `.${PHONE_SHOW_CLASS} { display: block !important; max-height: none !important; overflow: visible !important; }`);
+  }
+  for (const bg of R.phoneBackgrounds) rules.push(`.${bg.className} { background-image: url('${bg.url}') !important; }`);
+  if (!rules.length) return "";
+  return `
+      @media only screen and (max-width:480px) {
+${rules.map((r) => `        ${r}`).join("\n")}
+      }`;
 }
 
 /**
@@ -411,6 +471,13 @@ function environment(doc, ctx, auto = true) {
     auto,
     /** Set once a countdown with a phone variant is rendered: the head then carries the swap rule. */
     phoneCountdown: false,
+    /** Set once a picture with a phone version (image, hero) is rendered: the head then carries its swap rules. */
+    phonePictures: false,
+    /**
+     * The phone backgrounds of sections: one rule per section cell — its class and the picture's URL for the head's CSS.
+     * @type {Array<{ className: string, url: string }>}
+     */
+    phoneBackgrounds: [],
     merge: ctx.merge ?? ((t) => t),
     bodyFont: mailFontStack(style.fontFamily),
     headingFontKey: style.headingFont ?? style.fontFamily,
@@ -510,6 +577,7 @@ function placeholderRow(R, text, { padding, bgcolor = null, pad = true }) {
   );
 }
 
+/** The logo, linked to its own `href` (any https page, mailto:, tel:) or — unset — the shop's start page. */
 function logoRows(R, b, box) {
   const x = sidePad(b, box);
   const [t, bt] = vpad(b, box, 30, 20);
@@ -519,7 +587,7 @@ function logoRows(R, b, box) {
   return `
                 <tr>
                   <td${box.top ? ' class="content-pad"' : ""} align="${b.align}"${bg ? ` bgcolor="${bg}"` : ""} style="mso-line-height-rule: exactly; padding: ${padCss(t, x, bt)};">
-                    <a href="${escapeAttr(R.ctx.assets.shopUrl)}" target="_blank" style="text-decoration: none !important;">
+                    <a href="${escapeAttr(b.href || R.ctx.assets.shopUrl)}" target="_blank" style="text-decoration: none !important;">
                       <img src="${escapeAttr(R.style.logoUrl ?? R.ctx.assets.logoUrl)}" alt="motion sports" width="${w}" border="0" style="width: ${w}px; height: auto !important; max-width: 100%; display: block;${margin}">
                     </a>
                   </td>
@@ -635,9 +703,12 @@ function greetingRows(R, b, box) {
  * column) without side padding, "content" = inside the side padding, a
  * number = that many px (never wider than the room it has). Inside a column
  * an image as wide as the column fills the stacked column on phones
- * (col-img).
+ * (col-img). A phone picture (`mobileSrc`) follows the desktop one in a
+ * hidden wrapper that only the head's phone rule opens (phoneSwapCss) — the
+ * same size attributes, alt text and link; hidden from Outlook for Windows,
+ * which ignores media queries; clients without them show the desktop picture.
  * @param {any} R
- * @param {{ src: string, alt: string, href: string, width: "full" | "content" | number, align?: string,
+ * @param {{ src: string, mobileSrc?: string, alt: string, href: string, width: "full" | "content" | number, align?: string,
  *   radius?: number, padTop?: number, padBottom?: number, background?: string | null, placeholder: string }} img
  * @param {MailBox} box
  */
@@ -660,8 +731,17 @@ function imageRows(R, img, box) {
     );
   }
   const fills = !box.top && w >= room;
-  const tag = `<img src="${escapeAttr(img.src)}" width="${w}" alt="${escapeAttr(img.alt)}" border="0"${fills ? ' class="col-img"' : ""} style="width: 100%; max-width: ${w}px; height: auto; display: block; ${blockMargin(align)}${img.radius ? ` border-radius: ${img.radius}px;` : ""}">`;
-  const linked = img.href ? `<a href="${escapeAttr(img.href)}" target="_blank" style="text-decoration: none;">${tag}</a>` : tag;
+  const phone = img.mobileSrc && img.mobileSrc !== img.src ? img.mobileSrc : "";
+  const tagOf = (/** @type {string} */ src, /** @type {string | null} */ swap) => {
+    const classes = [fills ? "col-img" : null, swap].filter(Boolean).join(" ");
+    return `<img src="${escapeAttr(src)}" width="${w}" alt="${escapeAttr(img.alt)}" border="0"${classes ? ` class="${classes}"` : ""} style="width: 100%; max-width: ${w}px; height: auto; display: block; ${blockMargin(align)}${img.radius ? ` border-radius: ${img.radius}px;` : ""}">`;
+  };
+  const link = (/** @type {string} */ tag) => (img.href ? `<a href="${escapeAttr(img.href)}" target="_blank" style="text-decoration: none;">${tag}</a>` : tag);
+  let linked = link(tagOf(img.src, phone ? PHONE_HIDE_CLASS : null));
+  if (phone) {
+    R.phonePictures = true;
+    linked += hideFromOutlook(`<div class="${PHONE_SHOW_CLASS}" style="${PHONE_WRAPPER_CSS}">${link(tagOf(phone, null))}</div>`);
+  }
   return row(
     `
                     ${linked}`,
@@ -815,22 +895,32 @@ function couponRows(R, b, box) {
   return row(inner, { padding: padCss(tp, sidePad(b, box), bp), align: "center", bgcolor: rowBg(b, box), pad: box.top });
 }
 
-/** The swap of the phone countdown (format 2): on small screens the 350-px image replaces the desktop one. */
-const PHONE_COUNTDOWN_CSS = `
-      @media only screen and (max-width:480px) {
-        .cd-desk { display: none !important; }
-        .cd-phone { display: block !important; }
-      }`;
+/**
+ * The caption of a countdown as HTML — the block's `caption` (else „Gültig
+ * bis {datum}“ / „Valid until {date}“), its merge fields resolved, the
+ * deadline in bold in place of {datum}; "" when it is switched off.
+ * @param {any} R
+ * @param {any} b
+ * @param {string} deadline
+ */
+function countdownCaptionHtml(R, b, deadline) {
+  const runs = countdownCaptionTemplate(b, R.locale).split(COUNTDOWN_DATE_RE);
+  // nothing to say: switched off, or a line about a deadline that is not known
+  if (!runs.join("") || (runs.length > 1 && !deadline)) return "";
+  return runs.map((run) => escapeHtml(R.merge(run))).join(`<strong>${escapeHtml(deadline)}</strong>`);
+}
 
 /**
  * The live countdown of a format-2 document (top level only) in the mail's
  * look: its heading in the heading font and a readable heading colour, the
  * image drawn in the block's colours (countdownLook — its ground is the
- * row's colour, so it blends into the row; the signed URLs carry the colours,
- * mail-template-design.ts), the phone variant swapped in on small screens
- * (hidden from Outlook, which keeps the desktop image at the content width),
- * and the exact deadline in the label colour under it. With its own
- * background the block is one band (heading and image on it).
+ * row's colour, so it blends into the row; the signed URLs carry the colours
+ * and the text in the picture, mail-template-design.ts), the phone variant
+ * swapped in on small screens (hidden from Outlook, which keeps the desktop
+ * image at the content width), and the caption in the label colour under it
+ * — by default the exact deadline („Gültig bis …“), never a remaining time a
+ * Rundmail opened later would still claim. With its own background the
+ * block is one band (heading and image on it).
  * @param {any} R
  * @param {any} b
  * @param {MailSlotCountdown} cd
@@ -860,11 +950,14 @@ function countdownRows(R, b, cd) {
                     ${hideFromOutlook(`<img src="${escapeAttr(cd.imageUrlMobile)}" width="${cd.imageWidthMobile}" alt="${alt}" border="0" class="cd-phone" style="width: 100%; max-width: ${cd.imageWidthMobile}px; height: auto; display: none; Margin: 0 auto;">`)}`;
     }
   }
-  const caption = `
-                    <p style="${typeCss({ font: R.bodyFont, size: 13, lineHeight: "1.5", weight: 400, color: look.label, margin: media ? "8px 0 0" : "0" })}" align="center"><strong>${escapeHtml(cd.lead)}</strong>${cd.until ? ` &#8212; ${escapeHtml(cd.until)}` : ""}</p>`;
+  const captionHtml = countdownCaptionHtml(R, b, cd.deadline ?? "");
+  const caption = captionHtml
+    ? `
+                    <p style="${typeCss({ font: R.bodyFont, size: 13, lineHeight: "1.5", weight: 400, color: look.label, margin: media ? "8px 0 0" : "0" })}" align="center">${captionHtml}</p>`
+    : "";
   const t = heading ? 4 : b.padTop ?? (band ? 12 : 4);
   const bt = b.padBottom ?? (band ? 22 : 14);
-  out.push(row(`${media}${caption}`, { padding: padCss(t, top.padX, bt), align: "center", bgcolor: rowBg(b, top) }));
+  if (media || caption) out.push(row(`${media}${caption}`, { padding: padCss(t, top.padX, bt), align: "center", bgcolor: rowBg(b, top) }));
   return out.join("");
 }
 
@@ -1340,6 +1433,14 @@ function sectionRows(R, s) {
   const valign = s.minHeight > 0 && valigns.size === 1 ? [...valigns][0] : "top";
   const src = escapeAttr(image);
   const pictureCss = `background-color: ${fallback}; background-image: url('${escapeAttr(cssUrl(image))}'); background-size: cover; background-position: center; background-repeat: no-repeat;`;
+  // A phone background: the head's phone rule swaps the picture cell's background-image (phoneSwapCss); the VML stays desktop.
+  const phone = s.bgImageMobile && s.bgImageMobile !== image ? s.bgImageMobile : "";
+  let phoneClass = "";
+  if (phone) {
+    const className = `ph-bg${R.phoneBackgrounds.length + 1}`;
+    R.phoneBackgrounds.push({ className, url: styleSheetUrl(phone) });
+    phoneClass = ` class="${className}"`;
+  }
   if (boxed) {
     // A box with a picture: the picture carries the frame. The framed table
     // holds ONE cell with the picture (CSS, background attribute and the
@@ -1354,7 +1455,7 @@ function sectionRows(R, s) {
                   <td${pad} align="left" valign="top" bgcolor="${cardBg}" style="mso-line-height-rule: exactly; padding: ${padding}; background-color: ${cardBg};">
                     <table cellspacing="0" cellpadding="0" border="0" width="100%" role="presentation" style="direction: ltr;${frame}">
                       <tr>
-                        <td align="left" valign="${valign}" bgcolor="${fallback}" background="${src}"${h ? ` height="${h}"` : ""} style="mso-line-height-rule: exactly; padding: 0;${h ? ` height: ${h}px;` : ""} ${pictureCss}${cellRadius ? ` border-radius: ${cellRadius}px;` : ""}">
+                        <td${phoneClass} align="left" valign="${valign}" bgcolor="${fallback}" background="${src}"${h ? ` height="${h}"` : ""} style="mso-line-height-rule: exactly; padding: 0;${h ? ` height: ${h}px;` : ""} ${pictureCss}${cellRadius ? ` border-radius: ${cellRadius}px;` : ""}">
                           <!--[if gte mso 9]><v:rect xmlns:v="urn:schemas-microsoft-com:vml" fill="true" stroke="false" style="width:${inner}px;${h ? `height:${h}px;` : ""}"><v:fill type="frame" src="${src}" color="${fallback}" size="1,1" aspect="atleast" origin="0.5,0.5" position="0.5,0.5" /><v:textbox style="mso-fit-shape-to-text:true" inset="0,0,0,0"><table role="presentation" width="${inner}" cellpadding="0" cellspacing="0" border="0"><tr><td${h ? ` height="${h}"` : ""} valign="${valign}"${h ? ` style="height:${h}px;"` : ""}><![endif]-->${columnsTable("", null)}
                           <!--[if gte mso 9]></td></tr></table></v:textbox></v:rect><![endif]-->
                         </td>
@@ -1367,7 +1468,7 @@ function sectionRows(R, s) {
   const innerHeight = s.minHeight > 0 ? Math.max(0, s.minHeight - s.padTop - s.padBottom) : 0;
   return `
                 <tr>
-                  <td align="left" valign="top" bgcolor="${fallback}" background="${src}" style="mso-line-height-rule: exactly; padding: 0; ${pictureCss}">
+                  <td${phoneClass} align="left" valign="top" bgcolor="${fallback}" background="${src}" style="mso-line-height-rule: exactly; padding: 0; ${pictureCss}">
                     <!--[if gte mso 9]><v:rect xmlns:v="urn:schemas-microsoft-com:vml" fill="true" stroke="false" style="width:${MAIL_CARD_WIDTH}px;${s.minHeight > 0 ? `height:${s.minHeight}px;` : ""}"><v:fill type="frame" src="${src}" color="${fallback}" size="1,1" aspect="atleast" origin="0.5,0.5" position="0.5,0.5" /><v:textbox style="mso-fit-shape-to-text:true" inset="0,0,0,0"><table role="presentation" width="${MAIL_CARD_WIDTH}" cellpadding="0" cellspacing="0" border="0"><tr><td${s.minHeight > 0 ? ` height="${s.minHeight}"` : ""} valign="${valign}"${s.minHeight > 0 ? ` style="height:${s.minHeight}px;"` : ""}><![endif]-->
                     <table cellspacing="0" cellpadding="0" border="0" width="100%" role="presentation" style="direction: ltr;">
                       <tr>
@@ -1474,7 +1575,9 @@ export function renderMailTemplateHtml(rawDoc, ctx) {
         const h = ctx.hero ?? null;
         const src = h?.mobileUrl || h?.imageUrl || b.src;
         const fromMail = Boolean(h?.mobileUrl || h?.imageUrl);
-        parts.push(imageRows(R, { src, alt: b.alt, href: b.href, width: "full", placeholder: en ? "Title image" : "Titelbild" }, top));
+        // the block's phone picture belongs to its fallback picture — a mail's own hero shows as before
+        const mobileSrc = fromMail ? "" : b.mobileSrc ?? "";
+        parts.push(imageRows(R, { src, mobileSrc, alt: b.alt, href: b.href, width: "full", placeholder: en ? "Title image" : "Titelbild" }, top));
         if (src && fromMail && h?.isAi && ctx.assets.aiLabelIconUrl) {
           const alt = en ? "AI-generated image" : "KI-generiertes Bild";
           parts.push(
@@ -1542,7 +1645,7 @@ export function renderMailTemplateHtml(rawDoc, ctx) {
     <meta name="supported-color-schemes" content="light only">
     <title>${escapeHtml(merge(ctx.subject))}</title>${msoHeadHtml(mailFontMsoStack(style.fontFamily))}${webFontHead}
     <style type="text/css">
-${EMAIL_SHELL_CSS}${R.phoneCountdown ? PHONE_COUNTDOWN_CSS : ""}
+${EMAIL_SHELL_CSS}${phoneSwapCss(R)}
     </style>
   </head>
   <body id="body" bgcolor="${outerBg}" style="-webkit-text-size-adjust: none; -ms-text-size-adjust: none; background-color: ${outerBg}; Margin: 0; padding: 0;">${preheaderHtml}
@@ -1708,6 +1811,8 @@ export function renderMailTemplateText(rawDoc, ctx) {
   const doc = normalizeMailTemplateDoc(rawDoc);
   const merge = ctx.merge ?? ((t) => t);
   const en = ctx.locale === "en";
+  // format 2 writes the countdown from its block (its texts and the slot's deadline), version 1 the slot's line
+  const auto = docFormatVersion(rawDoc) >= 2;
   const out = [];
   for (const { block: b } of walkMailBlocks(doc)) {
     switch (b.type) {
@@ -1742,6 +1847,19 @@ export function renderMailTemplateText(rawDoc, ctx) {
       case "countdown": {
         const slot = ctx.slots?.[b.id];
         const title = b.type === "products" ? b.title : b.heading;
+        if (auto && b.type === "countdown" && slot?.countdown) {
+          // what the HTML shows: the heading, the block's own text in the picture, the caption with its deadline
+          const caption = countdownCaptionTemplate(b, en ? "en" : "de");
+          const deadline = slot.countdown.deadline ?? "";
+          const shown = caption && (deadline || caption.split(COUNTDOWN_DATE_RE).length === 1);
+          const lines = [
+            title ? merge(title) : null,
+            b.label && b.showLabel !== false ? b.label : null,
+            shown ? merge(fillCountdownCaption(caption, deadline)) : null,
+          ];
+          out.push(lines.filter(Boolean).join("\n"));
+          break;
+        }
         if (slot?.text) out.push([title ? merge(title) : null, slot.text].filter(Boolean).join("\n"));
         break;
       }

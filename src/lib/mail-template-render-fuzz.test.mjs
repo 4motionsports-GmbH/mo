@@ -73,7 +73,7 @@ function generator(rand) {
   const block = (type) => {
     switch (type) {
       case "logo":
-        return { type, align: pick(["left", "center", "right"]), width: int(60, 300), ...box() };
+        return { type, align: pick(["left", "center", "right"]), width: int(60, 300), href: maybe(0.3, () => pick([url(), "https://partner-fitness.de/aktion?a=1&b=2", "tel:+49 8142 448666", "javascript:alert(1)"])), ...box() };
       case "heading":
         return { type, text: words(int(1, 6)), size: pick(["s", "m", "l", "xl"]), align: pick(["left", "center", "right"]), color: maybe(0.3, color), ...box(), ...textStyle() };
       case "text":
@@ -81,7 +81,17 @@ function generator(rand) {
       case "greeting":
         return { type, text: "Hallo {{vorname}},", fallback: "Hallo,", ...box(), ...textStyle() };
       case "image":
-        return { type, src: img(), alt: words(2), href: maybe(0.5, url), width: pick(["full", "content", int(40, 600)]), align: pick(["left", "center", "right"]), radius: maybe(0.3, () => int(0, 40)), ...box() };
+        return {
+          type,
+          src: img(),
+          mobileSrc: maybe(0.35, () => pick([img(), "https://cdn.shopify.com/s/files/banner tall (2).jpg?v=1&w=2", "http://x.de/insecure.jpg"])),
+          alt: words(2),
+          href: maybe(0.5, url),
+          width: pick(["full", "content", int(40, 600)]),
+          align: pick(["left", "center", "right"]),
+          radius: maybe(0.3, () => int(0, 40)),
+          ...box(),
+        };
       case "button":
         return { type, label: words(int(1, 4)).slice(0, 60), href: url(), align: pick(["left", "center", "right"]), color: maybe(0.3, color), textColor: maybe(0.3, color), fullWidth: rand() < 0.2, size: maybe(0.5, () => pick(["s", "m", "l"])), shape: maybe(0.3, () => pick(["pill", "rounded", "square"])), outline: rand() < 0.15, borderColor: maybe(0.1, color), ...box() };
       case "menu":
@@ -112,6 +122,10 @@ function generator(rand) {
           tileColor: maybe(0.3, color),
           digitColor: maybe(0.3, color),
           labelColor: maybe(0.3, color),
+          label: maybe(0.4, () => pick(["Nur noch kurz!", "Black Week endet in", "Schnäppchen „jetzt“ — 50 % & mehr €", "<b>{{vorname}}</b>"])),
+          showLabel: maybe(0.15, () => false),
+          caption: maybe(0.4, () => pick(["Gültig bis {datum}", "{{vorname|Hey}}, nur bis {Datum} — <danach> nie wieder", "Solange der Vorrat reicht", words(4)])),
+          showCaption: maybe(0.15, () => false),
           ...box(),
         };
       case "products":
@@ -141,6 +155,7 @@ function generator(rand) {
       })),
       background: maybe(0.4, color),
       bgImage: maybe(0.2, img),
+      bgImageMobile: maybe(0.25, () => pick([img(), "https://cdn.shopify.com/s/files/bg tall (1).jpg?v=1&w=2"])),
       minHeight: maybe(0.2, () => int(0, 800)),
       padTop: maybe(0.4, () => int(0, 120)),
       padBottom: maybe(0.4, () => int(0, 120)),
@@ -210,12 +225,11 @@ function slotsFor(doc) {
         countdown: {
           imageUrl: signed ? "https://mo.example.com/api/email-countdown/t?bg=111111&tile=292929&digit=ffd400&label=a1a1a1&cs=s" : null,
           imageUrlMobile: signed ? "https://mo.example.com/api/email-countdown/t?w=m&bg=111111&tile=292929&digit=ffd400&label=a1a1a1&cs=s" : null,
-          imageAlt: "Dein Angebot gilt noch 3 Tage",
+          imageAlt: "Countdown bis Sa., 30.11.2030, 23:59 Uhr",
           imageWidth: 564,
           imageHeight: 116,
           imageWidthMobile: 350,
-          lead: "Dein Angebot gilt noch 3 Tage 4 Stunden",
-          until: "bis Sa., 30.11.2030, 23:59 Uhr",
+          deadline: "Sa., 30.11.2030, 23:59 Uhr",
         },
       };
     }
@@ -248,9 +262,17 @@ test(`random documents render lint-clean with one footer (${RUNS} runs, seed ${S
         assert.match(m[1], /^(?:\d+%?)$/, `width="${m[1]}" — ${where}`);
         assert.ok(Number.parseInt(m[1], 10) > 0, `width="${m[1]}" — ${where}`);
       }
+      // a phone version only with its swap rule in the head — and the other way round; the style sheet's
+      // addresses are raw text (no entities), quoted and unable to end the sheet
+      const head = html.slice(0, html.indexOf("</head>"));
+      assert.equal(/class="ph-phone"/.test(html), /\.ph-phone \{ display: block !important;/.test(head), `phone pictures — ${where}`);
+      assert.equal((html.match(/<td class="ph-bg\d+"/g) ?? []).length, (head.match(/\.ph-bg\d+ \{ background-image: url\('https:\/\/[^'<>\s"()]+'\) !important; \}/g) ?? []).length, `phone backgrounds — ${where}`);
+      assert.doesNotMatch(head, /url\('[^']*&amp;/, where);
+      // the countdown's {datum} is always filled in
+      assert.doesNotMatch(html, /\{\s*(?:datum|date)\s*\}/i, where);
       const text = renderMailTemplateText(doc, ctx);
       assert.equal(typeof text, "string");
-      assert.doesNotMatch(text, /\bundefined\b|\bNaN\b|\[object Object\]/, where);
+      assert.doesNotMatch(text, /\bundefined\b|\bNaN\b|\[object Object\]|\{\s*(?:datum|date)\s*\}/i, where);
     }
   }
 });

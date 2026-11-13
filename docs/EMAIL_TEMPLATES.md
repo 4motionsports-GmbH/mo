@@ -85,21 +85,21 @@ total, 12 per column (`MAIL_TEMPLATE_LIMITS`).
 
 | Block (`type`) | Label | Main fields | In columns | Rundmail | Personal |
 | --- | --- | --- | --- | --- | --- |
-| `section` | Abschnitt mit Spalten | `columns`, `background`, `bgImage`, `minHeight`, `padTop/Bottom/X`, `gap`, `stack`, `reverse`, `radius`, `borderColor` | – | ✓ | ✓ |
-| `logo` | Logo | `align`, `width` (60–300 px) | ✓ | ✓ | ✓ |
+| `section` | Abschnitt mit Spalten | `columns`, `background`, `bgImage`, `bgImageMobile`, `minHeight`, `padTop/Bottom/X`, `gap`, `stack`, `reverse`, `radius`, `borderColor` | – | ✓ | ✓ |
+| `logo` | Logo | `align`, `width` (60–300 px), `href` (empty = the shop's start page) | ✓ | ✓ | ✓ |
 | `heading` | Überschrift | `text` (≤ 200, merge fields), `size` s–xl, `align`, `color`, `background` | ✓ | ✓ | ✓ |
 | `text` | Text | `text` (≤ 5,000, merge fields; `**fett**`, links, lists), `size`, `bullet` (✓ → – ★ 1.), `accentBar` | ✓ | ✓ | ✓ |
 | `greeting` | Anrede | `text` („Hallo {{vorname}},“), `fallback` („Hallo,“), `align` | ✓ | ✓ | ✓ |
-| `image` | Bild | `src` (https), `alt` (required), `href`, `width` `full` \| `content` \| px, `align`, `radius` | ✓ | ✓ | ✓ |
+| `image` | Bild | `src` (https), `mobileSrc` (https, phones only), `alt` (required), `href`, `width` `full` \| `content` \| px, `align`, `radius` | ✓ | ✓ | ✓ |
 | `button` | Button | `label` (≤ 60), `href`, `align`, `color`, `textColor`, `fullWidth`, `size` s–l, `shape`, `outline`, `borderColor` | ✓ | ✓ | ✓ |
 | `menu` | Navigation | `items` (1–8 × label + link), `separator` (\| · / none), `uppercase`, `bold`, `color`, `fontSize` | ✓ | ✓ | ✓ |
 | `product` | Produkt-Highlight | `ref` (one catalog ref), `layout` stacked \| side, `showImage/Price/Description`, `buttonLabel`, `nameSize` — drawn in the template's look | ✓ | ✓ | ✓ |
 | `products` | Produkte | `title`, `refs` (1–8 catalog refs `handle` or `handle~variantId` — the shop's handles, symbols included: `atx®-hantelbank-…`; `product-ref.mjs`), `layout` `rows` \| `grid`, `cardColor`, `textColor` | – | ✓ | ✓ |
 | `coupon` | Gutschein-Code | `code` (exactly as in Shopify), `headline`, `terms`, `accent`, `cardColor`, `borderStyle`, `radius`, `textColor`, `codeColor`, `codeFont`, `cta` — card with „Code einlösen“ (`/discount/<code>`) | ✓ | ✓ | ✓ |
-| `countdown` | Countdown | `until` (ISO), `heading`, `tileColor`, `digitColor`, `labelColor`, `padTop/Bottom`, `background` — the live countdown picture | – | ✓ | ✓ |
+| `countdown` | Countdown | `until` (ISO), `heading`, `label` (≤ 32, the text in the picture), `showLabel`, `caption` (≤ 160, `{datum}`), `showCaption`, `tileColor`, `digitColor`, `labelColor`, `padTop/Bottom`, `background` — the live countdown picture | – | ✓ | ✓ |
 | `divider`, `spacer`, `social` | Trennlinie, Abstand, Social-Media | colour, thickness (1–8 px), length (%), solid/dashed/dotted, alignment / height (4–200 px) / alignment | ✓ | ✓ | ✓ |
 | `html` | Eigenes HTML | `html` (≤ 20,000; sanitised by [`mail-template-html.mjs`](../src/lib/mail-template-html.mjs): no script/style/forms/media, no event handlers or script URLs — also entity-hidden —, no srcset/poster/ping or unsafe styles, https only; must be balanced, see validation) | ✓ | ✓ | ✓ |
-| `hero` | Titelbild (KI-Hero) | `src` (fallback picture), `alt`, `href`, `showHeadline` — the campaign's hero (AI, Kampagnenbild) | – | – | ✓ |
+| `hero` | Titelbild (KI-Hero) | `src` (fallback picture), `mobileSrc` (its phone version), `alt`, `href`, `showHeadline` — the campaign's hero (AI, Kampagnenbild) | – | – | ✓ |
 | `mo_content` | Mos persönlicher Text | `showHeading` — Mo's text for this person (the AI prose, greeting included) | – | – | ✓ (required) |
 | `mo_offer` | Mos Angebot | — the products Mo picked (or the set card) with the personal code and countdown | – | – | ✓ |
 | `mo_promo` | Mo-Hinweis & Button | — „Frag Mo, deinen persönlichen Berater“ with the tracked chat link | – | – | ✓ |
@@ -123,9 +123,9 @@ single colours. Every field is optional and omitted while unset (defaults are ne
   the card's ground the frame colour fills it), plus `padTop/padBottom/background`. Unset: texts in
   the text colour, the kicker and the terms a muted shade of it, the code in the heading colour and
   the heading font — each a readable ink on the card's ground.
-- `countdown` — `tileColor`, `digitColor`, `labelColor` (units, the line in the picture and the line
-  under it), `padTop/padBottom` and `background` — the row's colour AND the picture's own ground,
-  so the picture blends into the row. Unset (`countdownLook`): ground = the block's background,
+- `countdown` — `tileColor`, `digitColor`, `labelColor` (units, the text in the picture and the
+  line under it), `padTop/padBottom` and `background` — the row's colour AND the picture's own
+  ground, so the picture blends into the row. Unset (`countdownLook`): ground = the block's background,
   else the card colour; tiles a visibly different shade of it (`shadeOf`: lighter on dark grounds,
   slightly darker on light ones — `#ffffff` → the classic `#f5f5f5`); digits in the accent colour
   when it reads on the tiles (≥ 3 : 1), else the heading colour or the stronger ink; labels a muted
@@ -134,6 +134,39 @@ single colours. Every field is optional and omitted while unset (defaults are ne
 - `products` — `cardColor` (a card behind each product, 12 px apart) and `textColor` (name, price
   and description). Unset: names in the heading font and colour, prices and descriptions in the
   text colour, „Zum Produkt“ in the mail's button look.
+
+**Links, texts and phone pictures** (2026-11-13, owner: „for the motion sports logo … it should be
+possible to change the linked url behind it … the timer and in particular the text should also be
+modifiable … a different picture for the mobile version of the email then the desktop version“).
+Every field is optional and omitted while unset — a template without them renders exactly as
+before:
+
+- `logo.href` — where a click on the logo leads: any `https://` address (also another domain),
+  `mailto:` or `tel:`, cleaned like every link (`cleanHref`); empty = the shop's start page. In a
+  Rundmail it is a tracked link like every other (`freezeLinks`).
+- `countdown.label` — the small line **inside** the live picture, above the tiles (≤ 32
+  characters, drawn in capitals; empty = „Dein Angebot gilt noch“ / „Your offer ends in“). The
+  picture is composed from pre-rendered glyphs, so it can draw A–Z, Ä Ö Ü, 0–9, the space and
+  `. , ! ? - : % & / ' « » „ “` — look-alikes are mapped (’ → ', – → -, É → E, ß → SS), anything
+  else is dropped and named in a warning ([`countdown-label.mjs`](../src/lib/countdown-label.mjs)).
+  The text rides in the picture's URL under the same signature as its colours
+  ([`EMAIL_DESIGNS.md`](./EMAIL_DESIGNS.md) „Offer countdown, set card and coupon“), so nobody can
+  make the public route write a text of their own. `showLabel: false` leaves the line out (the
+  tiles move to the middle of the picture, which keeps its size).
+- `countdown.caption` — the line **under** the picture (≤ 160 characters, merge fields allowed):
+  `{datum}` (also `{date}`, any case) stands for the exact deadline — „Sa., 15.11.2026, 23:59 Uhr“,
+  English in an English mail — and is set in bold. Empty = „Gültig bis {datum}“ („Valid until
+  {date}“); `showCaption: false` leaves the line out. The line never states a remaining time: a
+  Rundmail is rendered once and opened days later, the live picture shows the real time left
+  (until 2026-11-13 the line read „Dein Angebot gilt noch 3 Tage 13 Stunden — bis …“, frozen at the
+  send; the picture's alt text is now „Countdown bis …“ for the same reason).
+- `image.mobileSrc`, `hero.mobileSrc`, `section.bgImageMobile` — a different picture on phones
+  (https, the same upload rules as `src` / `bgImage`; same alt text, link and sizes as the desktop
+  picture). Phones show it through the mail's 480-px media rule (§4); **Outlook for Windows and
+  every client without media queries (e.g. the Gmail app with a non-Google account) show the
+  desktop picture**. The hero's phone picture belongs to its fallback picture — a mail with its own
+  hero (KI-Bild, Kampagnenbild) shows that one as before; a section's phone background needs its
+  `bgImage`.
 
 The live blocks reuse the production data: `products` draws the classic rows / grid from the
 catalog data (prices, PAngV, variants — the grid's price projection; a mail-safe picture), `product`
@@ -147,7 +180,8 @@ signed `/api/email-countdown/<token>` picture, drawn in the block's colours (URL
 
 **Merge fields.** `{{vorname}}` → the first name or nothing; `{{vorname|Ersatz}}` → the first
 name or the fallback. Allowed in headings, texts, the greeting, buttons, menu labels, the product
-button, coupon terms and the Rundmail's subject — never in custom HTML, alt texts or links (inside
+button, coupon terms, the countdown's caption and the Rundmail's subject — never in custom HTML,
+alt texts, the countdown's text in the picture or links (inside
 a text block the link targets are left unmerged, only the text around them is merged); any
 other `{{…}}` is a validation error. The first name is cleaned by `normalizeFirstName` (letters
 only, title-cased when typed in one case). In a personal mail the greeting comes from Mo's text;
@@ -157,12 +191,16 @@ the template's `greeting` block is for Rundmails.
 nested blocks included): `bulk` refuses Mo blocks, `personal` requires `mo_content`. Errors — a text
 or heading without text, a picture without `src`, a button without label or link, a product block
 without a product, a menu without links, a section without content, a coupon without a valid code
-(letters, digits, `-`, `_`), a countdown without a future end, empty HTML, `{{` in HTML or alt
-texts, a placeholder (`{{` or `%7B%7B`) in any address — links and pictures of every block, menu
-links, the section picture, the logo, link targets in texts and in HTML —, custom HTML that closes
+(letters, digits, `-`, `_`), a countdown without a future end, a placeholder in the countdown's
+text in the picture (it is the same for everyone), empty HTML, `{{` in HTML or alt
+texts, a placeholder (`{{` or `%7B%7B`) in any address — links and pictures of every block, phone
+pictures, menu links, the section picture and its phone version, the logo and its link, link
+targets in texts and in HTML —, custom HTML that closes
 or leaves open table or `div` parts or holds a whole page (it would break the mail below it, footer
 included), an unknown merge field — block a send and the selection as a design. Warnings — a picture
-without `alt`, a WebP picture (Outlook), a background picture without a fallback colour, text
+without `alt`, a WebP picture (Outlook; on a phone picture: not every mail app), a phone picture without its desktop
+picture (hero fallback, section background), characters the countdown picture cannot draw, a
+background picture without a fallback colour, text
 below 4.5 : 1 contrast on its background (3 : 1 for large headings and button labels) — also an
 own colour of the fixed blocks: the coupon's text (4.5) and code (3) on its card colour, its
 headline in the frame colour on a card colour (3), the button label on the accent with `cta:
@@ -249,21 +287,40 @@ normalised document to HTML and plain text: a 600-px card (content width = 600 �
   the frame `dashed`/`solid`/none, its corners, the `cta: "button"` through the button block's
   Outlook-safe cell pattern); the countdown (the heading row, the desktop picture sized for Word by
   its attributes, the 350-px phone picture hidden from Outlook and swapped in by a media rule the
-  head carries only then — `.cd-desk` / `.cd-phone` —, the exact deadline in the label colour; the
-  slot's signed URLs already carry the colours); the products as the classic rows (picture third,
+  head carries only then — `.cd-desk` / `.cd-phone` —, the caption in the label colour: the block's
+  `caption` with the deadline in bold for `{datum}`, by default „Gültig bis {datum}“, left out with
+  `showCaption: false` or when the deadline is unknown; the slot's signed URLs already carry the
+  colours and the text in the picture, and the slot hands over the deadline label); the products as the classic rows (picture third,
   hairline between rows) or 2-up grid (inline-block tiles, the Outlook ghost table), or with a card
   colour each product on a rounded card. On a dark card the products stand on the dark ground when
   their colours read there; otherwise they keep the white panel (inks that read on white). A raw
   version-1 document (`"v": 1`, `docFormatVersion`) keeps the classic coupon and the pre-rendered
   rows byte for byte; normalising writes format 2, so every stored template and Rundmail — they are
   normalised on their way out of the store — gets the automatic look.
+- **The logo** links to its `href`, else to the shop's start page (`assets.shopUrl`).
+- **Phone pictures** (`mobileSrc`, `bgImageMobile`, §2): the desktop picture stays exactly as
+  without one (plus the class `ph-desk`); the phone picture follows it — same `width` attribute,
+  alt text, link, corners and `col-img` — in a wrapper closed every way a client may honour
+  (`display:none; max-height:0; overflow:hidden; mso-hide:all`, inside `hideFromOutlook()`, so
+  Outlook for Windows never sees it), and the head's 480-px media rule hides `.ph-desk` and opens
+  `.ph-phone`. A section's phone background is one rule per section (`.ph-bg1 { background-image:
+  url('…') !important; }` — the URL percent-encoded for the style sheet, no entities) on the class of
+  its picture cell; the VML rectangle keeps the desktop picture. The head carries these rules (with
+  the countdown's `.cd-desk` / `.cd-phone` in the same block) only when the mail uses them
+  (`phoneSwapCss`) — a mail without phone versions keeps its head byte for byte. Clients without
+  media queries show the desktop picture. The Rundmail check „Viele Bilder, wenig Text“ counts a
+  picture with its phone version once.
 - **Text part** follows the reading order (sections column by column, the original order even with
-  `reverse`); a menu gives „Label: URL“ lines, a product card „Name — Preis“ plus its link.
+  `reverse`); a menu gives „Label: URL“ lines, a product card „Name — Preis“ plus its link; a
+  format-2 countdown its heading, its own text in the picture and the caption with the deadline (a
+  version-1 document keeps the slot's line).
 
 The tests run the Outlook lint over every starter (also in a dark variant), a showcase using every
 feature (send and preview, under the 90-KB budget), a dark showcase of every look field of the
 fixed blocks and every child block in a narrow 4-column section; the fuzz test's random documents
-carry the look fields, countdowns and product lists too. v1 rendering is pinned by snapshot
+carry the look fields, countdowns and product lists too — since 2026-11-13 also logo links,
+countdown texts and phone pictures (a phone version only with its head rule, the style sheet's
+addresses without entities, every `{datum}` filled in). v1 rendering is pinned by snapshot
 fixtures (`src/lib/__fixtures__/mail-template-v1*`):
 every v1 case renders byte for byte as before format v2, except two intended changes (the shell
 CSS gained the three column rules; a coupon card shows its declared corner radius). After an
@@ -438,8 +495,23 @@ each; the server refuses a text file above 500 KB, an `.eml` above 400 KB, befor
 ([`mail-designer-attachments.mjs`](../src/lib/mail-designer-attachments.mjs): WebP and large
 pictures re-encoded as JPEG, Office, SVG and Outlook files (`.msg`, `.oft`: a screenshot or „Speichern
 unter → HTML“) refused with a hint — several files at once are sorted first, so a refused file never
-takes one of the six places —, the whole request ≤ about 4 MB). A picture the accepted design uses (`"src": "anhang:N"`, also `bgImage` and `logoUrl`) is
+takes one of the six places —, the whole request ≤ about 4 MB). A picture the accepted design uses (`"src": "anhang:N"`, also `mobileSrc`, `bgImage`, `bgImageMobile` and `logoUrl`) is
 stored as a template picture (§7); without `BLOB_READ_WRITE_TOKEN` it is cleared with a note.
+
+**Logo link, countdown texts, phone pictures** (2026-11-13). The block reference names `logo.href`,
+the countdown's `label` / `showLabel` / `caption` (with `{datum}`) / `showCaption` and the phone
+pictures `mobileSrc` / `bgImageMobile` (they are fields of the catalog, §2), and the guide says how to
+use them: „das Logo soll auf motionsports.de/black-week verlinken“ becomes the logo's `href` — the
+link check accepts an address the operator named (also written without `https://`, also another
+domain) like every link, one nobody named is refused (and cleared in the last round: the logo
+links to the shop again); „ändere den Countdown-Text auf ‚Nur noch kurz‘“ means `label`; no
+remaining time in heading or caption. The countdown's texts are checked like every text (invented
+codes, prices and percentages are caught; a placeholder in the picture's text is an error). Phone
+pictures come from the same sources as every picture (`anhang:N`, `bild:N` / `https://bild.invalid/N`
+of this run, the current mail, the catalog, the operator's words) and are named in the problems as
+„(Bild für Handy)“ / „(Hintergrundbild für Handy)“; the hero's phone picture never takes a generated
+picture (like its fallback); text in a generated phone picture belongs in the block's alt text; the
+last round clears a bad phone picture alone (the desktop picture stays).
 
 **Own HTML — when the blocks cannot express a design** (2026-11-12, owner: „the ai email template
 editor should really have full capabilities and should be able to change any code for the template
@@ -469,7 +541,11 @@ headline in the hero picture … a nice looking barrier tape“). Core
   picture, a mood or background picture for a section (`bgImage`, live text over it), a decorative
   element (barrier tape, torn-paper edge, badge, sticker — transparent PNG on request), consistent
   icons for a benefit bar, a seasonal banner; in a screenshot rebuild, the effects that are made of
-  pictures. Never invented product photos: products only with `productRefs`, whose catalogue
+  pictures. **A phone version** (2026-11-13, an option the guide names): text in a wide picture
+  (`wide`, `banner`) is about 350 px wide on a phone and often too small — the model may have a second
+  version made in `tall` or `square` with the same text and motif and put it into `mobileSrc` (image)
+  or `bgImageMobile` (section); it counts against the limit, and the tool's answer for a tall or
+  square picture names both fields. Never invented product photos: products only with `productRefs`, whose catalogue
   photos go along as references (`images.edit`, as in the hero pipeline). Never prices,
   percentages, codes, dates, legal text or links in a picture (`forbiddenPictureText` refuses such
   a `textInImage`); the text in a picture also goes into the alt text, and what matters stays live
@@ -499,7 +575,8 @@ headline in the hero picture … a nice looking barrier tape“). Core
   `template-ki-…`, with the AI marking of `email-hero-marking.mjs`; an icon at most 320 px wide) and
   swapped in (`finishDesignerPictures`). A picture that failed, did not finish or could not be stored
   is removed cleanly — its image block dropped, a section's background picture cleared with its
-  colour kept, an `<img>` in html removed — and a warning names it with the reason. Under a
+  colour kept, a phone picture cleared alone (phones then show the desktop picture), an `<img>` in
+  html removed — and a warning names it with the reason. Under a
   photo-like picture Mo puts the EU label „AI GENERATED“ (the icon of Mo's AI heroes, 73 px, right;
   EU AI Act Art. 50 — [`EMAIL_DESIGNS.md`](./EMAIL_DESIGNS.md) „Labelling“), once, and says so.
 - **Costs** — every render and text check is recorded in `ai_usage` (call site `template_image`,
@@ -520,7 +597,8 @@ always arrives. Contract: [`ADMIN_DASHBOARD.md`](./ADMIN_DASHBOARD.md) §11.
 
 ## 7. Pictures
 
-„Bild hochladen“ in the blocks Bild, Logo, Titelbild, the section background picture and the own
+„Bild hochladen“ in the blocks Bild, Logo, Titelbild, the section background picture, the phone
+pictures („Bild für Handy (optional)“ of Bild, Titelbild and the section background) and the own
 logo in „Farben & Schrift“ — and the attachment pictures the KI-Gestalter uses:
 [`mail-template-image.ts`](../src/lib/mail-template-image.ts) (`POST /api/admin/vorlagen/image`,
 raw bytes ≤ 4 MB, JPEG/PNG/WebP/GIF). The picture is EXIF-oriented, scaled to at most 1,200 px
@@ -539,8 +617,9 @@ no metadata at all.
 | File | Role |
 | --- | --- |
 | `src/lib/mail-template-doc.mjs` (+ tests incl. `-v2`) | Format: catalog, fonts, normalise, validate, merge fields, starters, file format, prompt catalog |
+| `src/lib/countdown-label.mjs` (+ test) | The countdown's text in the picture: the drawable alphabet, the canonical (upper-case) spelling the URL carries, what is dropped |
 | `src/lib/mail-template-tree.mjs` (+ test) | Tree operations on a document (sections and columns) |
-| `src/lib/mail-template-render.mjs` (+ tests incl. `-v2`, `__fixtures__/`) | Renderer: HTML + text, columns, VML backgrounds, web fonts, Outlook-safe, footer marker |
+| `src/lib/mail-template-render.mjs` (+ tests incl. `-v2`, `__fixtures__/`) | Renderer: HTML + text, columns, VML backgrounds, web fonts, phone pictures, Outlook-safe, footer marker |
 | `src/lib/email-shell-css.mjs` | The classic shell's CSS (+ column rules), shared with `email-template.ts` |
 | `src/lib/mail-template-html.mjs` (+ test) | The „Eigenes HTML“ block: quote-aware sanitizer, structure report (balance, whole page), its URLs, entity decoding |
 | `src/lib/mail-template-slots.mjs` (+ test) | Live data of product blocks: product card data, text lines, empty blocks, raw block limits |

@@ -2,9 +2,11 @@
 // (/api/email-countdown/<token>): it carries only the deadline and the
 // language, signed with the same secret the unsubscribe links use, so the
 // route cannot be turned into a free image service for arbitrary content and
-// the URL reveals nothing about the recipient. A template's colours ride along
-// in the query, bound to the token by a signature of their own
-// (signCountdownColors).
+// the URL reveals nothing about the recipient. A template's colours — and its
+// label, the free text in the picture (2026-11-13) — ride along in the query,
+// bound to the token by a signature of their own (signCountdownColors over the
+// canonical look query, email-countdown-image.mjs countdownLookQuery), so
+// nobody can make our domain render a text of their own.
 
 import { createHmac, timingSafeEqual } from "node:crypto";
 
@@ -63,13 +65,15 @@ export function verifyCountdownToken(token, secret) {
 const COLOR_SIG_CHARS = 22;
 
 /**
- * The signature (`cs`) of a countdown image's colours: binds the canonical
- * colour query (email-countdown-image.mjs countdownColorQuery — "bg=…&tile=…")
- * to the token. Without it anyone could make the public route draw the image
- * in colours no mail carries, and every distinct URL is a fresh render
- * (~0.7 s of CPU) that neither the per-minute memo nor the CDN shares.
+ * The signature (`cs`) of a countdown image's look: binds the canonical look
+ * query (email-countdown-image.mjs countdownLookQuery — the colours
+ * "bg=…&tile=…", then the label "text=…" or "notext=1") to the token. Without
+ * it anyone could make the public route draw the image in colours no mail
+ * carries — or write any text of their choosing on our domain —, and every
+ * distinct URL is a fresh render (~0.7 s of CPU) that neither the per-minute
+ * memo nor the CDN shares. The colours alone sign exactly as before.
  * @param {string} token  the signed countdown token of the URL
- * @param {string} query  the canonical colour query
+ * @param {string} query  the canonical look query
  * @param {string | undefined} secret
  * @returns {string | null} null without a secret, token or colours
  */
@@ -79,9 +83,9 @@ export function signCountdownColors(token, query, secret) {
 }
 
 /**
- * Is `sig` the signature of these colours for this token?
+ * Is `sig` the signature of this look (colours, label) for this token?
  * @param {string} token
- * @param {string} query  the canonical colour query of the request
+ * @param {string} query  the canonical look query of the request
  * @param {unknown} sig  the request's `cs`
  * @param {string | undefined} secret
  */

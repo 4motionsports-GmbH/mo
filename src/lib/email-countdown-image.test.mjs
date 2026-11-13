@@ -1,10 +1,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import {
   COUNTDOWN_COLOR_PARAMS,
   COUNTDOWN_FRAMES,
   COUNTDOWN_FRAME_MS,
   COUNTDOWN_HEIGHT,
+  COUNTDOWN_LABEL_MARGIN,
+  COUNTDOWN_LABEL_PARAMS,
   COUNTDOWN_MOBILE_WIDTH,
   COUNTDOWN_WIDTH,
   COUNTDOWN_CACHE_WINDOW_MS,
@@ -13,12 +16,16 @@ import {
   countdownColorQuery,
   countdownEdgeColor,
   countdownFrameTimes,
+  countdownLabelLayout,
+  countdownLabelQuery,
   countdownLayout,
+  countdownLookQuery,
   countdownRemaining,
   parseCountdownColors,
+  parseCountdownLabel,
   renderCountdownImage,
 } from "./email-countdown-image.mjs";
-import { GLYPHS, SPRITE_SCALE } from "./generated/countdown-sprite.mjs";
+import { GLYPHS, LABEL_CAP_HEIGHT, SPRITE_SCALE } from "./generated/countdown-sprite.mjs";
 
 const now = new Date("2026-09-08T10:00:00Z");
 
@@ -208,4 +215,181 @@ test("without colours the image is the light look, byte for byte; signed colours
   const expired = await renderCountdownImage({ expiresAt: "2026-09-01T00:00:00Z", language: "en", now, frames: 1, colors });
   const e = await sharp(expired).raw().toBuffer({ resolveWithObject: true });
   assert.ok(near([e.data[0], e.data[1], e.data[2]], [0x11, 0x11, 0x11]), "expired: the same ground");
+});
+
+// ── the label: a free text in the picture, or none (2026-11-13) ──────────────
+
+const sha256 = (buf) => createHash("sha256").update(buf).digest("hex");
+
+/**
+ * GIFs captured right before the label existed (sharp 0.34.5, the sprite of
+ * 2026-11-12): without a label — and with every way of saying „no label“ —
+ * the image stays byte for byte what every mail already carries. After an
+ * intended change of the glyphs or of the encoder, capture them again.
+ */
+const BEFORE_LABEL = [
+  ["light, de, desktop", { expiresAt: "2026-09-11T23:59:00Z", language: "de", now, frames: 2 }, "62990b3f8fb3c796cbd90647c4e72f64d2868c99ed4f0cc091e15a17348b61b6"],
+  ["light, en, phone", { expiresAt: "2026-09-11T23:59:00Z", language: "en", now, frames: 2, width: COUNTDOWN_MOBILE_WIDTH }, "ab54c0a48ab957b63e36177f977b729c66081e8827cf9c0be58907d278728eb6"],
+  [
+    "colours, de, desktop",
+    { expiresAt: "2026-09-11T23:59:00Z", language: "de", now, frames: 3, colors: { bg: "#111111", tile: "#292929", digit: "#ffd400", label: "#a1a1a1" } },
+    "ab09d310bfc511a9e7c1910b749262017c5dd8498e232e261b3df94eb52735cd",
+  ],
+  [
+    "colours, de, phone, 100+ days",
+    { expiresAt: "2026-12-31T23:59:00Z", language: "de", now, frames: 1, width: COUNTDOWN_MOBILE_WIDTH, colors: { bg: "#111111", tile: "#292929", digit: "#ffd400", label: "#a1a1a1" } },
+    "78f0087cdae00f7834b99bc9cc8df95e62ff289a5668ef9293ef9e4befec5b58",
+  ],
+  [
+    "expired, en, colours",
+    { expiresAt: "2026-09-01T00:00:00Z", language: "en", now, frames: 1, colors: { bg: "#111111", tile: "#292929", digit: "#ffd400", label: "#a1a1a1" } },
+    "976d33bc2630594f9a17289e15ca31b9b570929c787cbefe555ae7c0efe3ebab",
+  ],
+  ["ends within the hour, en", { expiresAt: "2026-09-08T10:02:30Z", language: "en", now }, "17e3cda7ddfb659eb934fb2ce7ba01c9dc3bc3006d71d345d5dbb2f5c5374a50"],
+];
+
+test("without a label the GIF is byte for byte the one of before (also with an empty, undrawable or default label)", async () => {
+  for (const [name, input, hash] of BEFORE_LABEL) {
+    assert.equal(sha256(await renderCountdownImage(input)), hash, name);
+    for (const label of [null, {}, { text: null }, { text: "" }, { text: "€€€ 😀" }, { hidden: false }]) {
+      assert.equal(sha256(await renderCountdownImage({ ...input, label })), hash, `${name} — ${JSON.stringify(label)}`);
+    }
+  }
+});
+
+test("label parameters: `text` in the canonical spelling (strictly encoded) or `notext=1` — after the colours, under one signature", () => {
+  assert.deepEqual(COUNTDOWN_LABEL_PARAMS, ["text", "notext"]);
+  assert.equal(countdownLabelQuery({ text: "Nur noch kurz!" }), "text=NUR%20NOCH%20KURZ%21");
+  assert.equal(countdownLabelQuery({ text: "It’s „Schnäppchen“-Zeit (50 %)" }), "text=IT%27S%20%E2%80%9ESCHN%C3%84PPCHEN%E2%80%9C-ZEIT%2050%20%25");
+  assert.equal(countdownLabelQuery({ text: "x", hidden: true }), "notext=1", "hidden wins");
+  assert.equal(countdownLabelQuery({ text: "€" }), "");
+  assert.equal(countdownLabelQuery(null), "");
+  // the colours keep their query (and so their URLs and signatures); the label follows them
+  const colors = { bg: "#111111", tile: "#292929", digit: "#ffd400", label: "#a1a1a1" };
+  assert.equal(countdownLookQuery(colors), countdownColorQuery(colors));
+  assert.equal(countdownLookQuery(colors, { text: "Black Week" }), "bg=111111&tile=292929&digit=ffd400&label=a1a1a1&text=BLACK%20WEEK");
+  assert.equal(countdownLookQuery(colors, { hidden: true }), "bg=111111&tile=292929&digit=ffd400&label=a1a1a1&notext=1");
+  assert.equal(countdownLookQuery(null, { text: "ok" }), "text=OK");
+  assert.equal(countdownLookQuery(null, null), "");
+  // parse: read in the canonical form; parse ∘ query is stable
+  assert.deepEqual(parseCountdownLabel(new URLSearchParams("text=nur+noch%20kurz%21&w=m")), { text: "NUR NOCH KURZ!", hidden: false });
+  assert.deepEqual(parseCountdownLabel(new URLSearchParams("text=abc&notext=1")), { text: null, hidden: true });
+  assert.deepEqual(parseCountdownLabel(new URLSearchParams("notext=yes")), { text: null, hidden: false });
+  assert.deepEqual(parseCountdownLabel(new URLSearchParams("text=%E2%82%AC")), { text: null, hidden: false });
+  assert.deepEqual(parseCountdownLabel({ text: "Ä" }), { text: "Ä", hidden: false });
+  assert.deepEqual(parseCountdownLabel(null), { text: null, hidden: false });
+  for (const q of ["text=NUR%20NOCH%20KURZ%21", "notext=1", "text=%E2%80%9EBLACK%20WEEK%E2%80%9C"]) {
+    assert.equal(countdownLabelQuery(parseCountdownLabel(new URLSearchParams(q))), q);
+  }
+  const full = `${countdownColorQuery(colors)}&text=BLACK%20WEEK`;
+  const params = new URLSearchParams(`${full}&w=m&cs=x`);
+  assert.equal(countdownLookQuery(parseCountdownColors(params), parseCountdownLabel(params)), full);
+});
+
+test("countdownLabelLayout: the glyphs of the sprite at their advances, centred by its caller, scaled down only when too wide", () => {
+  const L = countdownLabelLayout("NUR NOCH KURZ!");
+  assert.ok(L);
+  assert.equal(L.glyphs.length, 12, "the spaces have no ink");
+  assert.deepEqual(L.glyphs.map((g) => g.char).join(""), "NURNOCHKURZ!");
+  assert.equal(L.glyphs[0].x, 0, "the ink starts at 0");
+  for (let i = 1; i < L.glyphs.length; i++) assert.ok(L.glyphs[i].x > L.glyphs[i - 1].x, "left to right");
+  assert.equal(L.scale, 1);
+  assert.equal(L.top, 0, "capitals only: the ink starts at the cap height");
+  const umlaut = countdownLabelLayout("ÄRGER");
+  assert.ok(umlaut.top < 0, "the umlaut's dots reach above the cap height");
+  assert.equal(umlaut.glyphs[0].y, 0, "they are the top of the ink");
+  assert.ok(umlaut.glyphs[1].y > 0, "the R starts at the cap height below them");
+  // composed like the pre-rendered words: the same width within a pixel or two
+  const words = countdownLabelLayout("DEIN ANGEBOT GILT NOCH");
+  assert.ok(Math.abs(words.width - GLYPHS.de_heading.width) <= 3, `${words.width} vs ${GLYPHS.de_heading.width}`);
+  // too wide for the phone variant: scaled to fit the width minus the margins
+  const long = countdownLabelLayout("W".repeat(32), COUNTDOWN_MOBILE_WIDTH);
+  const room = (COUNTDOWN_MOBILE_WIDTH - 2 * COUNTDOWN_LABEL_MARGIN) * SPRITE_SCALE;
+  assert.ok(long.scale < 1 && Math.round(long.width * long.scale) <= room);
+  assert.equal(countdownLabelLayout("W".repeat(32)).scale, 1, "the desktop has room");
+  assert.equal(countdownLabelLayout(""), null);
+  assert.equal(countdownLabelLayout("€{}"), null, "nothing drawable");
+});
+
+test("countdownLayout with a label: a free text replaces the words, the tiles stay; none moves the tiles to the middle", () => {
+  const r = { days: 3, hours: 13, minutes: 59 };
+  const plain = countdownLayout(r, "de");
+  assert.deepEqual(countdownLayout(r, "de", COUNTDOWN_WIDTH, null), plain);
+  assert.deepEqual(countdownLayout(r, "de", COUNTDOWN_WIDTH, { text: null, hidden: false }), plain);
+  assert.ok(plain.heading && plain.label === null);
+  const free = countdownLayout(r, "de", COUNTDOWN_WIDTH, { text: "Nur noch kurz!" });
+  assert.equal(free.heading, null);
+  assert.deepEqual(free.tiles, plain.tiles, "the tiles stay where they are");
+  assert.ok(free.label);
+  assert.ok(Math.abs(free.label.x - (free.width - free.label.width - free.label.x)) <= 1, "centred");
+  assert.equal(free.label.y, plain.headingY, "capitals start where the words start");
+  assert.ok(free.label.y + free.label.height < plain.tiles[0].y, "above the tiles");
+  // umlauts reach above the cap height; a scaled line keeps its cap height centred on the words'
+  const umlaut = countdownLayout(r, "de", COUNTDOWN_WIDTH, { text: "ÄRGER" });
+  assert.ok(umlaut.label.y < plain.headingY);
+  const scaled = countdownLayout(r, "de", COUNTDOWN_MOBILE_WIDTH, { text: "W".repeat(32) });
+  assert.ok(scaled.label.scale < 1);
+  assert.ok(scaled.label.x >= COUNTDOWN_LABEL_MARGIN * SPRITE_SCALE - 1 && scaled.label.x + scaled.label.width <= scaled.width - COUNTDOWN_LABEL_MARGIN * SPRITE_SCALE + 1);
+  const capMiddle = plain.headingY + LABEL_CAP_HEIGHT / 2;
+  assert.ok(Math.abs(scaled.label.y + (LABEL_CAP_HEIGHT * scaled.label.scale) / 2 - capMiddle) <= 1, "cap height centred on the words' line");
+  // none: no words, no label, the tiles in the middle of the unchanged image
+  const none = countdownLayout(r, "de", COUNTDOWN_WIDTH, { text: "egal", hidden: true });
+  assert.equal(none.heading, null);
+  assert.equal(none.label, null);
+  assert.equal(none.height, plain.height);
+  const t = none.tiles[0];
+  assert.ok(Math.abs(t.y - (none.height - t.y - t.height)) <= 1, "vertically centred");
+  assert.deepEqual(
+    none.tiles.map((x) => [x.x, x.width, x.value]),
+    plain.tiles.map((x) => [x.x, x.width, x.value])
+  );
+});
+
+test("a free label is drawn in the picture (in the label colour), centred; none leaves the band above the tiles empty", async () => {
+  const { default: sharp } = await import("sharp");
+  const base = { expiresAt: "2026-09-11T23:59:00Z", language: "de", now, frames: 1 };
+  const raw = async (input) => sharp(await renderCountdownImage(input)).raw().toBuffer({ resolveWithObject: true });
+  const ink = (img, y0, y1, isInk) => {
+    let n = 0;
+    let left = Infinity;
+    let right = -1;
+    for (let y = y0; y < y1; y++) {
+      for (let x = 0; x < img.info.width; x++) {
+        const i = (y * img.info.width + x) * img.info.channels;
+        if (isInk([img.data[i], img.data[i + 1], img.data[i + 2]])) {
+          n++;
+          left = Math.min(left, x);
+          right = Math.max(right, x);
+        }
+      }
+    }
+    return { n, left, right };
+  };
+  const plainLayout = countdownLayout({ days: 3, hours: 13, minutes: 59 }, "de");
+  const band = [plainLayout.headingY - 8, plainLayout.tiles[0].y - 4];
+  const dark = (c) => c[0] < 90 && c[1] < 90 && c[2] < 90;
+  const words = ink(await raw(base), ...band, dark);
+  const free = ink(await raw({ ...base, label: { text: "Nur noch kurz!" } }), ...band, dark);
+  assert.ok(free.n > 50 && free.n < words.n, `ink of the free label (${free.n} vs ${words.n})`);
+  assert.ok(Math.abs(free.left - (COUNTDOWN_WIDTH * 2 - 1 - free.right)) <= 2, "centred");
+  const same = await raw({ ...base, label: { text: "Dein Angebot gilt noch" } });
+  const sameInk = ink(same, ...band, dark);
+  assert.ok(Math.abs(sameInk.left - words.left) <= 2 && Math.abs(sameInk.right - words.right) <= 2, "composed like the pre-rendered words");
+  // none: nothing above the tiles; the digits keep their colour
+  const none = await raw({ ...base, label: { hidden: true } });
+  assert.equal(ink(none, 0, 30, dark).n, 0, "no words at the top");
+  // in a template's colours the label takes the label colour
+  const colors = { bg: "#111111", tile: "#292929", digit: "#ffd400", label: "#a1a1a1" };
+  const tinted = ink(await raw({ ...base, colors, label: { text: "Black Week" } }), ...band, (c) => Math.abs(c[0] - 0xa1) <= 10 && Math.abs(c[1] - 0xa1) <= 10);
+  assert.ok(tinted.n > 50, `label colour (${tinted.n})`);
+  // the phone variant: a long label stays inside the image
+  const phone = await raw({ ...base, width: COUNTDOWN_MOBILE_WIDTH, label: { text: "W".repeat(32) } });
+  assert.equal(phone.info.width, COUNTDOWN_MOBILE_WIDTH * 2);
+  const wide = ink(phone, ...band, dark);
+  assert.ok(wide.left >= COUNTDOWN_LABEL_MARGIN * 2 - 2 && wide.right <= COUNTDOWN_MOBILE_WIDTH * 2 - COUNTDOWN_LABEL_MARGIN * 2 + 2, `${wide.left}–${wide.right}`);
+  // an hour of frames with a label stays small, and expired frames ignore it
+  const hour = await renderCountdownImage({ ...base, frames: undefined, colors, label: { text: "Nur noch kurz!" } });
+  assert.ok(hour.length < 120_000, `${hour.length} bytes`);
+  const expired = { expiresAt: "2026-09-01T00:00:00Z", language: "en", now, frames: 1 };
+  assert.ok((await renderCountdownImage(expired)).equals(await renderCountdownImage({ ...expired, label: { text: "Nur noch kurz!" } })));
 });

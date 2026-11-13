@@ -168,9 +168,10 @@ deliberate change visible everywhere is the coupon code size, below). The shared
   not width attributes), no table spacing, and one web-safe font for everything (Word takes the
   first family literally: a web font or „Helvetica Neue“ falls back to Times;
   `msoFontStackFor(theme.fontFamily)` in `email-theme.mjs`).
-- **Phone-only content** (the hero picture row, the 350-px countdown) is wrapped in
-  `hideFromOutlook()` — Word ignores `display:none` on images and every `@media` query. Preheaders
-  stay in the DOM with `mso-hide:all`.
+- **Phone-only content** (the hero picture row, the 350-px countdown, a template's phone pictures
+  — [`EMAIL_TEMPLATES.md`](./EMAIL_TEMPLATES.md) §4) is wrapped in `hideFromOutlook()` — Word
+  ignores `display:none` on images and every `@media` query, so Outlook for Windows always shows the
+  desktop picture. Preheaders stay in the DOM with `mso-hide:all`.
 - **Buttons:** Word applies padding, background and border only to table cells. A button whose
   `<a>` sits alone in a `bgcolor` cell gets `mso-padding-alt` on the cell (`msoPaddingAlt(padding,
   border)`); any other button gets an Outlook twin: `forOutlook(msoButton({...}), originalAnchor)`
@@ -250,7 +251,11 @@ blended into a raw buffer in plain JS, only the GIF encode needs sharp). The ima
 white ground, dark heading, red digits on light-grey tiles with a fine border, grey units — so it
 sits without a break in the white card of the Performance design and on the white card of the
 classic design. After changing wording or colours, run the script again and commit the generated
-module.
+module. Since 2026-11-13 the sprite also holds the **label alphabet** — A–Z, Ä Ö Ü, 0–9, the space
+and `. , ! ? - : % & / ' « » „ “`, one glyph each in the heading's type (11 px bold), with its ink
+offsets and its advance width (fractional, measured over 20 copies between two H, because the text
+engine places glyphs at sub-pixel positions); the fixed glyphs above stay byte for byte (the script
+reproduces them exactly with the locked sharp version and Liberation Sans Bold installed).
 
 **Template colours** (2026-11-12). A template's countdown block ([`EMAIL_TEMPLATES.md`](./EMAIL_TEMPLATES.md)
 §2) draws the image in the template's look: the URL carries
@@ -268,8 +273,28 @@ ground matches that row (within one step of the 64-colour palette, ~30–40 KB f
 colour parameters the image is byte for byte the light one — the classic and Performance
 countdowns never send any.
 
+**Template label** (2026-11-13, owner: „the timer and in particular the text should also be
+modifiable“). The line above the tiles — „DEIN ANGEBOT GILT NOCH“ — may be a template's own text
+(the countdown block's `label`, [`EMAIL_TEMPLATES.md`](./EMAIL_TEMPLATES.md) §2) or none
+(`showLabel: false`). The URL then carries `&text=NUR%20NOCH%20KURZ%21` — the canonical spelling of
+[`countdown-label.mjs`](../src/lib/countdown-label.mjs): capitals, look-alikes mapped, characters
+outside the label alphabet dropped, ≤ 32 characters, strictly percent-encoded — or `&notext=1`,
+after the colours and covered by the **same** signature `cs` (the canonical look query
+`countdownLookQuery`: colours, then label; tested). An unsigned or altered text gives the default
+words, so nobody can make the public route write a text of their own on our domain. The image sets
+the text glyph by glyph from the sprite (`countdownLabelLayout`: the advance widths, the 1-px letter
+spacing, centred, its cap height where the words' is; scaled down when it is wider than the image
+minus 16 px on each side — 32 average capitals fit unscaled even on the 350-px phone variant), tinted
+in the label colour like every glyph; without a label the tiles move to the middle and the image
+keeps its size. The label is part of the per-minute memo key and of the URL the CDN keys by. Without
+`text` / `notext` the image is byte for byte the one of before (pinned by SHA-256 in
+`email-countdown-image.test.mjs`).
+
 Fallbacks: the `alt` text „Dein Angebot gilt noch …“ for blocked images, the exact deadline always
-as an HTML line under the image, the same line as a snapshot in the text part; without a signing
+as an HTML line under the image, the same line as a snapshot in the text part — a template's
+countdown says „Countdown bis …“ in its alt text and its own caption (by default „Gültig bis
+{datum}“) under the image and in the text part, never a remaining time a Rundmail opened later
+would still claim ([`EMAIL_TEMPLATES.md`](./EMAIL_TEMPLATES.md) §2); without a signing
 secret (only conceivable locally) the designs show render-time tiles in days and hours. Renderer
 hook `offerCountdown` (`renderOfferCountdown` in `email-template.ts`): classic shows the image + a
 muted line; the Performance design a white card with the `#e5e5e5` border of the product cards
@@ -659,7 +684,8 @@ documented in `.env.example`. The prompt once given for the default image is in
 | `src/lib/email-hero-references.mjs` | Product reference photos: selection, prompt block, load/scale, tested |
 | `src/lib/email-hero-qa.mjs` | Automatic picture check (vision model), verdict and re-render choice, tested |
 | `src/lib/email-hero-marking.mjs` | Machine-readable AI marking (IPTC/XMP + EXIF) in every hero file, tested |
-| `src/lib/email-countdown-image.mjs` + `api/email-countdown` | Live countdown GIF (ticks every minute for an hour) from pre-rendered glyphs, signed token and signed template colours (`email-countdown-token.mjs`), tested |
+| `src/lib/email-countdown-image.mjs` + `api/email-countdown` | Live countdown GIF (ticks every minute for an hour) from pre-rendered glyphs, signed token and signed template colours and label (`email-countdown-token.mjs`), tested |
+| `src/lib/countdown-label.mjs` | The label alphabet of the countdown picture and the label's canonical spelling, tested |
 | `src/lib/offer-countdown.mjs` | The earlier deadline and the countdown line, tested |
 | `src/lib/discount-coupon.mjs` | Coupon wording and the `/discount/<code>` link, tested |
 | `src/lib/email-hero-blob.mjs` + `api/email-hero-image` | Private Blob write and public delivery of the hero pictures (with path validation); `erasableHeroPathnames` — what the erasure may delete (never a `campaign-default-…` file), tested |

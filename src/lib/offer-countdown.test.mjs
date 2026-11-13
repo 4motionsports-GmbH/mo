@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { countdownText, deadlineLabel, earliestDeadline, remainingParts } from "./offer-countdown.mjs";
+import { countdownDeadlineText, countdownText, deadlineLabel, earliestDeadline, remainingParts } from "./offer-countdown.mjs";
 
 const now = new Date("2026-09-08T10:00:00Z");
 
@@ -33,4 +33,10 @@ test("countdownText reads naturally in both languages and is empty once expired"
   assert.equal(countdownText("2026-09-08T11:30:00Z", "de", now), "Dein Angebot gilt noch 1 Stunde – bis Di., 08.09.2026, 13:30 Uhr");
   assert.equal(countdownText("2026-09-08T10:20:00Z", "de", now), "Dein Angebot gilt noch 0 Stunden – bis Di., 08.09.2026, 12:20 Uhr");
   assert.equal(countdownText("2026-09-01T00:00:00Z", "de", now), "");
+});
+
+test("countdownDeadlineText: the deadline without a remaining time — true whenever the mail is opened", () => {
+  assert.equal(countdownDeadlineText("2026-09-12T21:59:00Z", "de"), "Countdown bis Sa., 12.09.2026, 23:59 Uhr");
+  assert.equal(countdownDeadlineText("2026-09-12T21:59:00Z", "en"), "Countdown until Sat, 12 Sept 2026, 23:59");
+  assert.equal(countdownDeadlineText("garbage", "de"), "");
 });

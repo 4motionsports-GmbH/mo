@@ -55,6 +55,7 @@ function ImageFields({
   const r = block as Record<string, unknown>;
   const width = r.width;
   const mode = typeof width === "number" ? "px" : width === "content" ? "content" : "full";
+  const hero = block.type === "hero";
   return (
     <>
       <ImageUrlField
@@ -68,6 +69,20 @@ function ImageFields({
       {String(r.src ?? "") && (
         // eslint-disable-next-line @next/next/no-img-element
         <img src={String(r.src)} alt="" className="max-h-28 w-auto max-w-full rounded border border-border object-contain" />
+      )}
+      <ImageUrlField
+        label="Bild für Handy (optional)"
+        info={`Ein eigenes Bild nur für Handys — z. B. hochkant oder quadratisch, wenn Text in einem breiten Bild auf dem Handy zu klein wird. Gleicher Alternativtext und Link wie das Bild oben.${
+          hero ? " Gilt nur für das Ersatzbild — hat die Mail ein eigenes Titelbild (KI-Bild, Kampagnenbild), zeigt sie dieses." : ""
+        } Outlook für Windows und Mailprogramme ohne Handy-Ansicht zeigen immer das Bild oben. Leer = überall das Bild oben.`}
+        value={String(r.mobileSrc ?? "")}
+        onCommit={(mobileSrc) => patch({ mobileSrc })}
+        uploadConfigured={uploadConfigured}
+        disabled={disabled}
+      />
+      {String(r.mobileSrc ?? "") && (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={String(r.mobileSrc)} alt="" className="max-h-28 w-auto max-w-full rounded border border-border object-contain" />
       )}
       <div className="grid gap-3 sm:grid-cols-2">
         <Field label="Alternativtext" info="Wird gezeigt, wenn Bilder blockiert sind, und vorgelesen — kurz beschreiben, was zu sehen ist.">
@@ -305,12 +320,20 @@ export function BlockSettings({
   switch (block.type) {
     case "logo":
       main = (
-        <div className="grid gap-3 sm:grid-cols-2">
-          {align()}
-          <Field label="Breite (px)" info="60–300 px. Das Logo selbst: „Eigenes Logo“ unter „Farben & Schrift“.">
-            <DraftInput type="number" min={60} max={300} value={String(r.width ?? 144)} onCommit={(v) => onPatch({ width: v })} disabled={disabled} />
+        <>
+          <div className="grid gap-3 sm:grid-cols-2">
+            {align()}
+            <Field label="Breite (px)" info="60–300 px. Das Logo selbst: „Eigenes Logo“ unter „Farben & Schrift“.">
+              <DraftInput type="number" min={60} max={300} value={String(r.width ?? 144)} onCommit={(v) => onPatch({ width: v })} disabled={disabled} />
+            </Field>
+          </div>
+          <Field
+            label="Link beim Klick aufs Logo"
+            info="Wohin ein Klick aufs Logo führt: jede https-Adresse — auch eine Aktionsseite oder eine andere Domain —, mailto: oder tel:. Leer = die Startseite des Shops. In Rundmails wird jeder Klick gezählt."
+          >
+            <DraftInput value={String(r.href ?? "")} placeholder="https://www.motionsports.de" onCommit={(href) => onPatch({ href })} disabled={disabled} />
           </Field>
-        </div>
+        </>
       );
       break;
     case "heading":
@@ -543,19 +566,51 @@ export function BlockSettings({
       break;
     case "countdown":
       main = (
-        <div className="grid gap-3 sm:grid-cols-2">
-          <Field label="Ende" info="Der Countdown zählt bis hierhin — bei jedem Öffnen der Mail neu berechnet.">
-            <Input
-              type="datetime-local"
-              value={toLocalInput((r.until as string | null) ?? null)}
-              onChange={(e) => onPatch({ until: e.target.value ? new Date(e.target.value).toISOString() : null })}
-              disabled={disabled}
-            />
-          </Field>
-          <Field label="Text darüber">
-            <DraftInput value={String(r.heading ?? "")} onCommit={(v) => onPatch({ heading: v })} disabled={disabled} />
-          </Field>
-        </div>
+        <>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field label="Ende" info="Der Countdown zählt bis hierhin — bei jedem Öffnen der Mail neu berechnet.">
+              <Input
+                type="datetime-local"
+                value={toLocalInput((r.until as string | null) ?? null)}
+                onChange={(e) => onPatch({ until: e.target.value ? new Date(e.target.value).toISOString() : null })}
+                disabled={disabled}
+              />
+            </Field>
+            <Field label="Text darüber" info="Eine Überschrift über dem Countdown-Bild, z. B. „Die Black Week endet in“. Leer = keine.">
+              <DraftInput value={String(r.heading ?? "")} onCommit={(v) => onPatch({ heading: v })} disabled={disabled} />
+            </Field>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field
+              label="Text im Bild"
+              info={`Die kleine Zeile IM Countdown-Bild über den Zahlen — höchstens ${MAIL_TEMPLATE_LIMITS.countdownLabelChars} Zeichen, immer in GROSSBUCHSTABEN. Möglich sind Buchstaben (auch Ä, Ö, Ü), Ziffern, Leerzeichen und . , ! ? - : % & / ' « » „ “ — andere Zeichen entfallen. Leer = „Dein Angebot gilt noch“ (in englischen Mails „Your offer ends in“).`}
+            >
+              <DraftInput
+                value={String(r.label ?? "")}
+                placeholder="Dein Angebot gilt noch"
+                maxLength={MAIL_TEMPLATE_LIMITS.countdownLabelChars}
+                onCommit={(label) => onPatch({ label })}
+                disabled={disabled || r.showLabel === false}
+              />
+            </Field>
+            <Field
+              label="Zeile unter dem Countdown"
+              info="Die Zeile unter dem Bild. {datum} steht für das genaue Ende, z. B. „Sa., 15.11.2026, 23:59 Uhr“ (in englischen Mails englisch), und erscheint fett. Leer = „Gültig bis {datum}“. Keine Restzeit hineinschreiben — die Mail wird oft erst später geöffnet; die Restzeit zeigt das Live-Bild. {{vorname}} ist möglich."
+            >
+              <DraftInput
+                value={String(r.caption ?? "")}
+                placeholder="Gültig bis {datum}"
+                maxLength={MAIL_TEMPLATE_LIMITS.captionChars}
+                onCommit={(caption) => onPatch({ caption })}
+                disabled={disabled || r.showCaption === false}
+              />
+            </Field>
+          </div>
+          <div className="flex flex-wrap gap-x-5 gap-y-2">
+            {check("Text im Bild zeigen", r.showLabel !== false, (showLabel) => onPatch({ showLabel }), disabled, "Aus = nur die Zahlen im Bild, ohne Zeile darüber.")}
+            {check("Zeile zeigen", r.showCaption !== false, (showCaption) => onPatch({ showCaption }), disabled, "Aus = keine Zeile unter dem Countdown.")}
+          </div>
+        </>
       );
       break;
     case "divider":

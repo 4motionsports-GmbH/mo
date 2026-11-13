@@ -290,6 +290,10 @@ test("blockSummary: section, menu labels, product name or ref, and the v1 blocks
   assert.equal(blockSummary({ type: "html", html: "x".repeat(1234) }), "1.234 Zeichen HTML");
   assert.equal(blockSummary({ type: "spacer", height: 24 }), "24 px");
   assert.equal(blockSummary({ type: "social" }), MAIL_BLOCK_CATALOG.social.description);
+  // the logo: its own link at a glance, else what it is
+  assert.equal(blockSummary({ type: "logo" }), MAIL_BLOCK_CATALOG.logo.description);
+  assert.equal(blockSummary({ type: "logo", href: "https://www.motionsports.de/collections/black-week/" }), "Link: motionsports.de/collections/black-week");
+  assert.equal(blockSummary({ type: "logo", href: "mailto:info@motionsports.de" }), "Link: mailto:info@motionsports.de");
 });
 
 // ── sections ─────────────────────────────────────────────────────────────────

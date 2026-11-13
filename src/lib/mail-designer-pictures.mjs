@@ -15,7 +15,9 @@
 //      (3 per run), the time left and the product refs, starts the render in
 //      the background and answers AT ONCE with a placeholder address
 //      https://bild.invalid/N (RFC 2606 — never resolves) plus width and
-//      height. The model puts it into an image src or a section bgImage.
+//      height. The model puts it into an image src or a section bgImage —
+//      or, as the phone version of a wide picture (tall or square, when its
+//      text would be too small on phones), into mobileSrc / bgImageMobile.
 //   2. The render (injected; the I/O layer: gpt-image-2 like the hero
 //      pipeline — designerPictureAttempts, the catalogue photos of
 //      productRefs as references, designerPicturePrompt) runs while the loop
@@ -192,7 +194,7 @@ export const PICTURE_INPUT_SCHEMA = Object.freeze({
       type: "string",
       enum: Object.keys(PICTURE_ASPECTS),
       description:
-        "Format: wide = 1536×1024 (3:2 — Titelbild, Szene, Hintergrund) · banner = 1536×512 (3:1 — ganzbreites Band, Absperrband) · square = 1024×1024 (Icon, Badge, Sticker) · tall = 1024×1536 (2:3 — Bild in einer Spalte).",
+        "Format: wide = 1536×1024 (3:2 — Titelbild, Szene, Hintergrund) · banner = 1536×512 (3:1 — ganzbreites Band, Absperrband) · square = 1024×1024 (Icon, Badge, Sticker) · tall = 1024×1536 (2:3 — Bild in einer Spalte). tall oder square auch als Handy-Fassung eines breiten Bildes mit Text (mobileSrc / bgImageMobile).",
     },
     textInImage: {
       type: "string",
@@ -789,7 +791,9 @@ export function createPictureStudio(opts) {
       const use =
         req.purpose === "icon"
           ? `als src eines image-Bausteins mit width in px (z. B. 56 für ein Icon)`
-          : `als src eines image-Bausteins (width "full" = ganze Breite) oder als bgImage eines Abschnitts (mit background-Farbe als Ersatz und Live-Text darüber)`;
+          : `als src eines image-Bausteins (width "full" = ganze Breite) oder als bgImage eines Abschnitts (mit background-Farbe als Ersatz und Live-Text darüber)${
+              req.aspect === "tall" || req.aspect === "square" ? " — oder als Handy-Fassung eines breiten Bildes: mobileSrc des image-Bausteins bzw. bgImageMobile des Abschnitts" : ""
+            }`;
       return {
         answer: {
           ok: true,

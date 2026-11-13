@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { countdownSecret, signCountdownColors, signCountdownToken, verifyCountdownColors, verifyCountdownToken } from "./email-countdown-token.mjs";
+import { countdownLookQuery, parseCountdownColors, parseCountdownLabel } from "./email-countdown-image.mjs";
 
 test("round trip keeps deadline (to the second) and language", () => {
   const token = signCountdownToken({ expiresAt: "2026-09-12T21:59:30.500Z", language: "en" }, "s3cret");
@@ -44,4 +45,21 @@ test("colour signature: binds the canonical colour query to the token", () => {
   assert.equal(signCountdownColors(token, "", "s3cret"), null);
   assert.equal(signCountdownColors("", query, "s3cret"), null);
   assert.equal(signCountdownColors(token, query, undefined), null);
+});
+
+test("the label rides under the same signature: nobody can write a text of their own on the picture", () => {
+  const token = signCountdownToken({ expiresAt: "2026-11-30T22:59:00Z", language: "de" }, "s3cret");
+  const colors = { bg: "#111111", tile: "#292929", digit: "#ffd400", label: "#a1a1a1" };
+  const signed = countdownLookQuery(colors, { text: "Nur noch kurz" });
+  const sig = signCountdownColors(token, signed, "s3cret");
+  assert.equal(verifyCountdownColors(token, signed, sig, "s3cret"), true);
+  // another text, no text, the label hidden — each needs its own signature
+  for (const label of [{ text: "Gratis für alle" }, null, { hidden: true }]) {
+    assert.equal(verifyCountdownColors(token, countdownLookQuery(colors, label), sig, "s3cret"), false, JSON.stringify(label));
+  }
+  // the colours alone sign exactly as before the label existed
+  assert.equal(signCountdownColors(token, countdownLookQuery(colors), "s3cret"), signCountdownColors(token, "bg=111111&tile=292929&digit=ffd400&label=a1a1a1", "s3cret"));
+  // what the route recomputes from a request equals what the mail signed
+  const params = new URLSearchParams(`w=m&${signed}&cs=${sig}`);
+  assert.equal(verifyCountdownColors(token, countdownLookQuery(parseCountdownColors(params), parseCountdownLabel(params)), params.get("cs"), "s3cret"), true);
 });

@@ -312,6 +312,9 @@ export function blockSummary(b, opts = {}) {
       return `${num(String(b.html ?? "").length)} Zeichen HTML`;
     case "spacer":
       return `${num(b.height)} px`;
+    case "logo":
+      // its own link at a glance (without the scheme); the shop's start page needs no mention
+      return b.href ? `Link: ${String(b.href).replace(/^https?:\/\/(?:www\.)?/i, "").replace(/\/$/, "")}` : MAIL_BLOCK_CATALOG.logo.description;
     default:
       return MAIL_BLOCK_CATALOG[/** @type {keyof typeof MAIL_BLOCK_CATALOG} */ (b?.type)]?.description ?? "";
   }

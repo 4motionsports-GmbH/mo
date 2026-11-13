@@ -191,8 +191,10 @@ export function mailingChecks(input) {
   // The operator's content only — the legal footer alone has ~480 visible
   // characters and its own icons, so counting it hid every image-only mail.
   // The countdown's phone twin (class "cd-phone", mail-template-render.mjs)
-  // is the same picture at another width: one image, not two.
-  const imgCount = (contentHtml.match(/<img\b(?![^>]*\bclass="cd-phone")/gi) ?? []).length;
+  // is the same picture at another width, and so is a picture's phone
+  // version (in its hidden "ph-phone" wrapper): one image, not two.
+  const countable = contentHtml.replace(/<div class="ph-phone"[^>]*>[\s\S]*?<\/div>/g, "");
+  const imgCount = (countable.match(/<img\b(?![^>]*\bclass="cd-phone")/gi) ?? []).length;
   const textChars = visibleText(contentHtml).length;
   if (imgCount >= 2 && textChars < 400) {
     warnings.push({ key: "image_heavy", level: "warning", message: "Viele Bilder, wenig Text — Spamfilter mögen reine Bild-Mails nicht, und bei blockierten Bildern sieht man kaum etwas. Etwas Text ergänzen." });

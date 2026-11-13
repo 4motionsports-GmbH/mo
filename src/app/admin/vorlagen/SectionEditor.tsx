@@ -91,6 +91,16 @@ export function SectionSettings({
         uploadConfigured={uploadConfigured}
         disabled={disabled}
       />
+      {(Boolean(r.bgImage) || Boolean(r.bgImageMobile)) && (
+        <ImageUrlField
+          label="Bild für Handy (optional)"
+          info="Ein eigenes Hintergrundbild nur für Handys — z. B. hochkant, damit Motiv und Text auf dem schmalen Bildschirm passen. Outlook für Windows und Mailprogramme ohne Handy-Ansicht zeigen immer das Hintergrundbild oben. Leer = auch auf dem Handy das Hintergrundbild oben."
+          value={String(r.bgImageMobile ?? "")}
+          onCommit={(bgImageMobile) => onPatch({ bgImageMobile })}
+          uploadConfigured={uploadConfigured}
+          disabled={disabled}
+        />
+      )}
       {(Boolean(r.bgImage) || Number(r.minHeight) > 0) && (
         <div className="grid gap-3 sm:grid-cols-3">
           <NumberField

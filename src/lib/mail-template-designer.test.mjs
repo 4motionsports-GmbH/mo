@@ -2509,3 +2509,138 @@ test("the guide: the fixed blocks take the mail's look automatically — also on
   assert.ok(!/products, countdown und Mos Bausteine stehen auf einer dunklen Karte auf einer weißen Fläche/.test(p));
   assert.match(p, /Countdown, Gutschein und Produkte stehen auch dort auf dem dunklen Grund in Schriften und Farben der Mail, solange diese darauf lesbar sind — nur sonst legt Mo sie auf eine weiße Fläche/);
 });
+
+// ── logo link, countdown texts, phone pictures (2026-11-13) ──────────────────
+
+test("the guide and the block reference: the logo's link, the countdown's texts, the phone pictures and the phone version of a picture", () => {
+  const p = designerSystemPrompt({ use: "bulk" });
+  for (const field of ["href:", "label:", "showLabel:", "caption:", "showCaption:", "mobileSrc:", "bgImageMobile:"]) assert.ok(p.includes(`    - ${field}`), field);
+  assert.match(p, /10\. Logo-Link: .*„das Logo soll auf motionsports\.de\/black-week verlinken“.*href des logo-Bausteins/);
+  assert.match(p, /label = die Zeile IM Bild über den Zahlen \(höchstens 32 Zeichen, erscheint in GROSSBUCHSTABEN/);
+  assert.match(p, /„ändere den Countdown-Text auf ‚Nur noch kurz‘“\), meint sie meist label/);
+  assert.match(p, /caption = die Zeile darunter, \{datum\} steht für das genaue Ende \(leer = „Gültig bis \{datum\}“/);
+  assert.match(p, /Nie eine Restzeit/);
+  assert.match(p, /Eigenes Bild fürs Handy: image \(und hero\) mit mobileSrc, section mit bgImageMobile/);
+  assert.match(p, /Handy-Fassung \(Option\): Ein breites Bild \(wide, banner\) mit eingebautem Text .* tall oder square .* mobileSrc/);
+  assert.match(p, /Bilder \(src, mobileSrc, bgImage, bgImageMobile, logoUrl\): Anhänge \(anhang:N\)/);
+});
+
+test("logo link: an address the operator named passes — any domain, also written without https:// — one nobody named is refused", async () => {
+  const logo = (href) => ({ doc: { style: { accentColor: "#111111" }, blocks: [{ type: "logo", href }, { type: "heading", text: "Black Week" }, okButton, { type: "footer" }] }, notes: "" });
+  const named = ctx({ operatorText: "Das Logo soll auf motionsports.de/black-week verlinken." });
+  for (const href of ["https://motionsports.de/black-week", "https://www.motionsports.de/black-week/"]) {
+    const res = await checkDesignSubmission(logo(href), named);
+    assert.equal(res.ok, true, `${href}: ${JSON.stringify(res.problems)}`);
+    assert.equal(res.doc.blocks[0].href, href);
+  }
+  const other = await checkDesignSubmission(logo("https://black-week-aktion.de/start"), ctx({ operatorText: "Logo bitte auf https://black-week-aktion.de/start verlinken" }));
+  assert.equal(other.ok, true, JSON.stringify(other.problems));
+  // the shop's start page and a mail address of the shop pass anyway
+  assert.equal((await checkDesignSubmission(logo("https://www.motionsports.de/"), ctx())).ok, true);
+  assert.equal((await checkDesignSubmission(logo("mailto:info@motionsports.de"), ctx())).ok, true);
+  // nobody named it: refused like any foreign link — and cleared in the last round (the logo links to the shop again)
+  const unnamed = await checkDesignSubmission(logo("https://fremd.example/x"), ctx());
+  assert.equal(unnamed.ok, false);
+  assert.match(unnamed.problems.join("\n"), /„Logo“ \(Baustein 1, id [^)]+\): Der Link auf „fremd\.example“ steht weder in der Anweisung/);
+  const last = await checkDesignSubmission(logo("https://fremd.example/x"), ctx({ lastRound: true }));
+  assert.equal(last.ok, true);
+  assert.ok(!("href" in last.doc.blocks[0]));
+  // the current mail's own logo link stays (the operator set it by hand)
+  const currentDoc = normalizeMailTemplateDoc({ blocks: [{ type: "logo", href: "https://partner-shop.example/aktion" }, { type: "footer" }] });
+  assert.equal((await checkDesignSubmission(logo("https://partner-shop.example/aktion"), ctx({ currentDoc }))).ok, true);
+});
+
+test("countdown texts are checked like every text: invented percentages in the caption are caught, {datum} and the label pass", async () => {
+  const cd = (extra) => ({ type: "countdown", until: "2026-11-30T22:59:00Z", heading: "Die Black Week endet in", ...extra });
+  assert.deepEqual(await problemsOf([cd({ label: "Nur noch kurz", caption: "Gültig bis {datum}" }), okButton]), []);
+  assert.deepEqual(await problemsOf([cd({ label: "25 % auf alles", showCaption: false }), okButton]), [], "named in the instruction");
+  const invented = await problemsOf([cd({ caption: "Bis {datum} — 40 % auf alles" }), okButton]);
+  assert.ok(invented.some((m) => /„40 %“ steht nicht in der Anweisung/.test(m)), invented.join("\n"));
+  const code = await problemsOf([cd({ label: "Code SOMMER10" }), okButton]);
+  assert.ok(code.some((m) => /Code „SOMMER10“/.test(m)), code.join("\n"));
+  // a placeholder in the picture is a validation error the model fixes
+  const placeholder = await problemsOf([cd({ label: "Hey {{vorname}}" }), okButton]);
+  assert.ok(placeholder.some((m) => /Im Text im Bild werden Platzhalter/.test(m)), placeholder.join("\n"));
+});
+
+test("phone pictures: bild:N and anhang:N in mobileSrc / bgImageMobile are mapped and checked like every picture", async () => {
+  const mapped = mapAttachmentRefs({
+    blocks: [
+      { type: "image", src: "anhang:1", mobileSrc: "Anhang: 2" },
+      { type: "section", bgImage: "bild:1", bgImageMobile: "bild:2", columns: [] },
+    ],
+  });
+  assert.equal(mapped.blocks[0].mobileSrc, `${ATTACHMENT_URL_PREFIX}2`);
+  assert.equal(mapped.blocks[1].bgImageMobile, "https://bild.invalid/2");
+  const pictures = pics([1, "ready"], [2, "ready", { aspect: "tall", label: "Handy-Fassung" }], [3, "failed", { reason: "Fehler beim Bilddienst" }]);
+  const heading = { type: "heading", text: "Winter", color: "#ffffff" };
+  const res = await checkDesignSubmission(
+    mail([
+      { type: "image", src: "bild:1", mobileSrc: "bild:2", alt: "Winter" },
+      { type: "section", background: "#111111", bgImage: "anhang:1", bgImageMobile: "anhang:1", columns: [{ blocks: [heading] }] },
+      okButton,
+    ]),
+    ctx({ pictures })
+  );
+  assert.equal(res.ok, true, JSON.stringify(res.problems));
+  assert.equal(res.doc.blocks[2].mobileSrc, "https://bild.invalid/2");
+  assert.equal(res.doc.blocks[3].bgImageMobile, `${ATTACHMENT_URL_PREFIX}1`);
+  assert.deepEqual(res.usedAttachments, [1]);
+  assert.deepEqual(pictureIndexesInDoc(res.doc), [1, 2]);
+  // stored like any attachment picture — or cleared alone when it could not be stored
+  const stored = replaceAttachmentPlaceholders(res.doc, { 1: "https://mo.example.com/api/email-hero-image/template-1.jpg" });
+  assert.equal(stored.blocks[3].bgImageMobile, "https://mo.example.com/api/email-hero-image/template-1.jpg");
+  assert.ok(!("bgImageMobile" in replaceAttachmentPlaceholders(res.doc, {}).blocks[3]));
+  // a failed generated or a foreign phone picture is a problem like any picture — named as the phone picture
+  const failed = await problemsOf([{ type: "image", src: "bild:1", mobileSrc: "bild:3", alt: "Winter" }, okButton], { pictures });
+  assert.match(failed[0], /\(Bild für Handy\): Bild 3 \(„Bild 3“\) konnte nicht erzeugt werden/);
+  const foreign = await problemsOf([{ type: "section", background: "#111111", bgImage: "anhang:1", bgImageMobile: "https://fremd.example/bg.jpg", columns: [{ blocks: [heading] }] }, okButton]);
+  assert.match(foreign[0], /\(Hintergrundbild für Handy\): Die Bildquelle „https:\/\/fremd\.example\/bg\.jpg“ ist nicht erlaubt/);
+  // the last round clears a foreign phone picture alone — the desktop picture stays
+  const last = await checkDesignSubmission(mail([{ type: "image", src: "anhang:1", mobileSrc: "https://fremd.example/m.jpg", alt: "Banner" }, okButton]), ctx({ lastRound: true }));
+  assert.equal(last.ok, true);
+  assert.equal(last.doc.blocks[2].src, `${ATTACHMENT_URL_PREFIX}1`);
+  assert.ok(!("mobileSrc" in last.doc.blocks[2]));
+  // text in a generated phone picture belongs in the block's alt text too
+  const texts = pics([1, "ready"], [2, "ready", { text: "Winter-Power", aspect: "tall" }]);
+  const alt = await problemsOf([{ type: "image", src: "bild:1", mobileSrc: "bild:2", alt: "Ein Home-Gym" }, okButton], { pictures: texts });
+  assert.match(alt[0], /Der Text im Bild \(„Winter-Power“\) gehört auch in den alt-Text/);
+  // the hero's phone picture is no place for a generated picture either
+  const hero = await checkDesignSubmission(
+    { doc: { blocks: [{ type: "hero", src: "", mobileSrc: "bild:1", alt: "x" }, { type: "mo_content" }, { type: "footer" }] }, notes: "" },
+    ctx({ use: "personal", pictures })
+  );
+  assert.ok(hero.problems.some((m) => /\(Bild für Handy\): Der Titelbild-Baustein \(hero\) zeigt in jeder Mail Mos KI-Bild/.test(m)), hero.problems.join("\n"));
+});
+
+test("finishDesignerPictures: a phone picture that could not be made is cleared alone — the desktop picture and its block stay", () => {
+  const url = (n) => `https://mo.example.com/api/email-hero-image/template-ki-${n}.jpg`;
+  const doc = normalizeMailTemplateDoc({
+    blocks: [
+      { id: "i1", type: "image", src: "https://bild.invalid/1", mobileSrc: "https://bild.invalid/2", alt: "Winter-Power", width: "full" },
+      { id: "s1", type: "section", background: "#111111", bgImage: "https://bild.invalid/1", bgImageMobile: "https://bild.invalid/2", columns: [{ blocks: [{ type: "heading", text: "Winter", color: "#ffffff" }] }] },
+      { id: "f", type: "footer" },
+    ],
+  });
+  const failed = pics([1, "ready", { realistic: false }], [2, "failed", { reason: "Fehler beim Bilddienst", label: "Handy-Fassung", realistic: false }]);
+  const { doc: out, warnings } = finishDesignerPictures(doc, { urls: new Map([[1, url(1)]]), pictures: failed });
+  assert.deepEqual(out.blocks.map((b) => b.id), ["i1", "s1", "f"]);
+  assert.equal(out.blocks[0].src, url(1));
+  assert.ok(!("mobileSrc" in out.blocks[0]));
+  assert.equal(out.blocks[1].bgImage, url(1));
+  assert.ok(!("bgImageMobile" in out.blocks[1]));
+  assert.deepEqual(warnings, ["Bild 2 („Handy-Fassung“) konnte nicht erzeugt werden (Fehler beim Bilddienst) — das Bild für Handy ist entfernt, Handys zeigen das Bild für den PC."]);
+  // both made: both swapped in, no placeholder left
+  const both = finishDesignerPictures(doc, { urls: new Map([[1, url(1)], [2, url(2)]]), pictures: pics([1, "ready", { realistic: false }], [2, "ready", { realistic: false }]) });
+  assert.equal(both.doc.blocks[0].mobileSrc, url(2));
+  assert.equal(both.doc.blocks[1].bgImageMobile, url(2));
+  assert.deepEqual(both.warnings, []);
+  assert.deepEqual(pictureIndexesInDoc(both.doc), []);
+  // a photo-like phone picture is labelled once under its block
+  const labelled = finishDesignerPictures(doc, {
+    urls: new Map([[1, url(1)], [2, url(2)]]),
+    pictures: pics([1, "ready", { realistic: false }], [2, "ready", { realistic: true }]),
+    labelIconUrl: "https://mo.example.com/eu-ai-icon-email.png",
+  });
+  assert.equal(labelled.doc.blocks.filter((b) => b.type === "image" && b.src === "https://mo.example.com/eu-ai-icon-email.png").length, 2, "under the image and under the section");
+});

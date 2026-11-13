@@ -94,6 +94,15 @@ test("image-heavy counts the content only — the legal footer's text and icons 
     base({ html: html(`<img src="https://x.de/cd.gif" alt="Countdown" class="cd-desk"><!--[if !mso]><!--><img src="https://x.de/cd.gif?w=m" alt="Countdown" class="cd-phone"><!--<![endif]--><a href="https://motionsports.de">Zum Shop</a>${footer}`) })
   );
   assert.ok(!keys(countdownOnly.warnings).includes("image_heavy"));
+  // So is a picture's phone version (mail-template-render.mjs: the hidden „ph-phone“ wrapper).
+  const phoneVersion = mailingChecks(
+    base({
+      html: html(
+        `<a href="https://motionsports.de"><img src="https://x.de/banner.jpg" alt="Black Week" class="ph-desk"></a><!--[if !mso]><!--><div class="ph-phone" style="display: none; max-height: 0; overflow: hidden; mso-hide: all;"><a href="https://motionsports.de"><img src="https://x.de/banner-m.jpg" alt="Black Week"></a></div><!--<![endif]-->${footer}`
+      ),
+    })
+  );
+  assert.ok(!keys(phoneVersion.warnings).includes("image_heavy"));
 });
 
 test("visibleText drops markup, comments, styles and the hidden preheader filler", () => {

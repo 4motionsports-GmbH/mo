@@ -50,6 +50,21 @@ export function deadlineLabel(expiresAt, language = "de") {
   return `${d.toLocaleDateString("de-DE", { timeZone: STORE_TIME_ZONE, weekday: "short", day: "2-digit", month: "2-digit", year: "numeric" })}, ${d.toLocaleTimeString("de-DE", { timeZone: STORE_TIME_ZONE, hour: "2-digit", minute: "2-digit" })} Uhr`;
 }
 
+/**
+ * The alt text of a template's live countdown picture: the deadline, never a
+ * remaining time — a Rundmail is rendered once and opened days later, while
+ * the live picture shows the real time left („Countdown bis Sa., 15.11.2026,
+ * 23:59 Uhr“ / „Countdown until Sat, 15 Nov 2026, 23:59“); "" for an
+ * invalid date.
+ * @param {string | Date} expiresAt
+ * @param {"de" | "en"} [language]
+ */
+export function countdownDeadlineText(expiresAt, language = "de") {
+  const label = deadlineLabel(expiresAt, language);
+  if (!label) return "";
+  return language === "en" ? `Countdown until ${label}` : `Countdown bis ${label}`;
+}
+
 /** Fixed wording per language. */
 export function countdownCopy(language = "de") {
   return language === "en"

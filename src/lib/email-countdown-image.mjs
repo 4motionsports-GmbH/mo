@@ -29,8 +29,18 @@
 // "expired"). The glyphs are tinted by their alpha; every colour left out
 // keeps the light look, and without any the image is byte for byte the one
 // above.
+//
+// The label (2026-11-13, „Text im Bild“ of a template's countdown): the line
+// above the tiles may be the template's own text — `text` in the URL, the
+// canonical upper-case spelling of countdown-label.mjs, set glyph by glyph
+// from the sprite's label alphabet (advance widths from the sprite, centred,
+// scaled down to fit the width) — or none at all (`notext=1`: the tiles move
+// to the middle, the image keeps its size). Both ride with the colours under
+// the same signature `cs` (countdownLookQuery); without them the image is the
+// one above, byte for byte.
 
-import { DIGIT_CELL, GLYPHS, SPRITE_SCALE } from "./generated/countdown-sprite.mjs";
+import { DIGIT_CELL, GLYPHS, LABEL_CAP_HEIGHT, LABEL_GLYPHS, LABEL_SPACING, SPRITE_SCALE } from "./generated/countdown-sprite.mjs";
+import { countdownLabelText } from "./countdown-label.mjs";
 
 /** Image width at 1× (the card's inner width in the 640px mail); height follows. */
 export const COUNTDOWN_WIDTH = 564;
@@ -95,6 +105,59 @@ export function countdownColorQuery(colors) {
     .join("&");
 }
 
+/**
+ * The label of an image: `text` — the canonical label (countdownLabelText) or
+ * null for the sprite's own words („DEIN ANGEBOT GILT NOCH“ / „YOUR OFFER ENDS
+ * IN“); `hidden` — no label at all (the tiles stand in the middle).
+ * @typedef {{ text: string | null, hidden: boolean }} CountdownLabel
+ */
+
+/** The label parameters of the image URL, in the order countdownLabelQuery writes them (`text` or `notext`). */
+export const COUNTDOWN_LABEL_PARAMS = Object.freeze(/** @type {const} */ (["text", "notext"]));
+
+/** A query value, strictly percent-encoded (also ! ' ( ) *, which encodeURIComponent leaves). @param {string} s */
+const encodeValue = (s) => encodeURIComponent(s).replace(/[!'()*]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
+
+/**
+ * The label of a request: `notext=1` hides it, `text` is read in its
+ * canonical form (countdownLabelText — anything the alphabet cannot draw
+ * dropped); without either, or with nothing drawable left, the sprite's words.
+ * @param {URLSearchParams | Record<string, unknown> | null | undefined} params
+ * @returns {CountdownLabel}
+ */
+export function parseCountdownLabel(params) {
+  const get = (/** @type {string} */ k) =>
+    params == null ? null : typeof (/** @type {any} */ (params).get) === "function" ? /** @type {URLSearchParams} */ (params).get(k) : /** @type {any} */ (params)[k];
+  if (get("notext") === "1") return { text: null, hidden: true };
+  const raw = get("text");
+  const text = typeof raw === "string" ? countdownLabelText(raw) : "";
+  return { text: text || null, hidden: false };
+}
+
+/**
+ * The query of a label — "notext=1", "text=NUR%20NOCH%20KURZ" (canonical,
+ * strictly encoded) or "" for the sprite's words.
+ * @param {Partial<CountdownLabel> | null | undefined} label
+ */
+export function countdownLabelQuery(label) {
+  if (!label || typeof label !== "object") return "";
+  if (label.hidden === true) return "notext=1";
+  const text = countdownLabelText(label.text);
+  return text ? `text=${encodeValue(text)}` : "";
+}
+
+/**
+ * The canonical query of an image's look — its colours (countdownColorQuery),
+ * then its label (countdownLabelQuery): what the signature `cs` covers
+ * (email-countdown-token.mjs). Without a label it is the colour query, so the
+ * URLs and signatures of the colours alone stay as they were.
+ * @param {Partial<Record<"bg" | "tile" | "digit" | "label", unknown>> | null | undefined} colors
+ * @param {Partial<CountdownLabel> | null | undefined} [label]
+ */
+export function countdownLookQuery(colors, label) {
+  return [countdownColorQuery(colors), countdownLabelQuery(label)].filter(Boolean).join("&");
+}
+
 /** [r, g, b] of "#rrggbb". */
 const rgbOf = (/** @type {string} */ hex) => [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
 
@@ -153,14 +216,69 @@ export function countdownRemaining(expiresAt, now = new Date()) {
   };
 }
 
+/** A free label keeps at least this much room to the image's left and right edge (1×); a longer one is scaled down. */
+export const COUNTDOWN_LABEL_MARGIN = 16;
+
+/**
+ * A free label set as one line from the sprite's label alphabet, in 2×
+ * pixels: each glyph at its pen position (advance widths and the letter
+ * spacing of the sprite, rounded to whole pixels) plus its own bearing, `y`
+ * from the label's ink top; `top` = where that ink top lies from the cap top
+ * (negative above: Ä Ö Ü), `scale` ≤ 1 = how far the line shrinks to fit the
+ * image's width minus COUNTDOWN_LABEL_MARGIN on each side. Characters outside
+ * the alphabet are skipped (countdownLabelText drops them before); null when
+ * nothing is left to draw.
+ * @param {string} text  the canonical label
+ * @param {number} [width]  the image width at 1×
+ * @returns {{ glyphs: Array<{ char: string, x: number, y: number }>, width: number, height: number, top: number, scale: number } | null}
+ */
+export function countdownLabelLayout(text, width = COUNTDOWN_WIDTH) {
+  /** @type {Array<{ char: string, x: number, y: number }>} */
+  const glyphs = [];
+  let pen = 0;
+  let started = false;
+  let left = Infinity;
+  let right = -Infinity;
+  let top = Infinity;
+  let bottom = -Infinity;
+  for (const ch of String(text ?? "")) {
+    const g = /** @type {Record<string, any>} */ (LABEL_GLYPHS)[ch];
+    if (!g) continue;
+    if (started) pen += LABEL_SPACING;
+    started = true;
+    if (g.png) {
+      const x = Math.round(pen) + g.x;
+      glyphs.push({ char: ch, x, y: g.y });
+      left = Math.min(left, x);
+      right = Math.max(right, x + g.width);
+      top = Math.min(top, g.y);
+      bottom = Math.max(bottom, g.y + g.height);
+    }
+    pen += g.advance;
+  }
+  if (glyphs.length === 0) return null;
+  for (const g of glyphs) {
+    g.x -= left;
+    g.y -= top;
+  }
+  const inkWidth = right - left;
+  const room = width * S - 2 * COUNTDOWN_LABEL_MARGIN * S;
+  return { glyphs, width: inkWidth, height: bottom - top, top, scale: inkWidth > room ? room / inkWidth : 1 };
+}
+
 /**
  * Where everything goes, in 2× pixels. Three tiles of equal width centred
  * under the heading; each tile shows two (or three, for ≥100 days) digits
- * and its unit label.
+ * and its unit label. `label`: the sprite's words (unset, or without a
+ * text), a free text (`placed`: its line, centred, its cap height where the
+ * words' is — the tiles stay where they are), or none (`hidden`: the tiles
+ * in the middle of the image, which keeps its size).
  * @param {{ days: number, hours: number, minutes: number }} r
  * @param {"de" | "en"} language
+ * @param {number} [width]
+ * @param {Partial<CountdownLabel> | null} [label]
  */
-export function countdownLayout(r, language, width = COUNTDOWN_WIDTH) {
+export function countdownLayout(r, language, width = COUNTDOWN_WIDTH, label = null) {
   const W = width * S;
   const H = COUNTDOWN_HEIGHT * S;
   const lang = language === "en" ? "en" : "de";
@@ -174,7 +292,18 @@ export function countdownLayout(r, language, width = COUNTDOWN_WIDTH) {
   const gap = 12 * S;
   const totalW = tileW * 3 + gap * 2;
   const headingY = 20 * S;
-  const tilesY = headingY + heading.height + 14 * S;
+  const hidden = label?.hidden === true;
+  const tilesY = hidden ? Math.round((H - tileH) / 2) : headingY + heading.height + 14 * S;
+  const free = hidden ? null : countdownLabelLayout(countdownLabelText(label?.text), width);
+  /** @type {{ x: number, y: number, width: number, height: number } | null} */
+  let placed = null;
+  if (free) {
+    // drawn size, centred; the cap height of the line centred where the words' cap height is
+    const w = Math.max(1, Math.round(free.width * free.scale));
+    const h = Math.max(1, Math.round(free.height * free.scale));
+    const capTop = headingY + (LABEL_CAP_HEIGHT * (1 - free.scale)) / 2;
+    placed = { x: Math.round((W - w) / 2), y: Math.round(capTop + free.top * free.scale), width: w, height: h };
+  }
   const left = Math.round((W - totalW) / 2);
   const tiles = values.map((value, i) => {
     const x = left + i * (tileW + gap);
@@ -193,7 +322,20 @@ export function countdownLayout(r, language, width = COUNTDOWN_WIDTH) {
       unitY: tilesY + 12 * S + DIGIT_CELL.height + 6 * S,
     };
   });
-  return { width: W, height: H, heading, headingX: Math.round((W - heading.width) / 2), headingY, tiles };
+  return {
+    width: W,
+    height: H,
+    /** the sprite's words — null when a free label (`label`) or none is drawn */
+    heading: hidden || free ? null : heading,
+    headingX: Math.round((W - heading.width) / 2),
+    headingY,
+    /** a free label: its glyphs at full size (lineWidth × lineHeight, countdownLabelLayout), scaled by `scale` to width × height at (x, y) */
+    label:
+      free && placed
+        ? { glyphs: free.glyphs, scale: free.scale, lineWidth: free.width, lineHeight: free.height, x: placed.x, y: placed.y, width: placed.width, height: placed.height }
+        : null,
+    tiles,
+  };
 }
 
 /** Frames in the animation (one per minute) and the delay between them. */
@@ -313,6 +455,69 @@ function paint(frame, frameWidth, frameHeight, g, left, top, tint = null) {
   }
 }
 
+/** Decoded glyphs of the label alphabet, decoded once per process. */
+const labelGlyphCache = new Map();
+
+async function decodedLabelGlyph(sharp, ch) {
+  let g = labelGlyphCache.get(ch);
+  if (!g) {
+    const { data, info } = await sharp(Buffer.from(/** @type {Record<string, any>} */ (LABEL_GLYPHS)[ch].png, "base64"))
+      .ensureAlpha()
+      .raw()
+      .toBuffer({ resolveWithObject: true });
+    g = { data, width: info.width, height: info.height };
+    labelGlyphCache.set(ch, g);
+  }
+  return g;
+}
+
+/** Composed label lines per text and width (bounded — a label is the same in every frame and every minute). */
+const LABEL_BITMAPS_MAX = 50;
+const labelBitmaps = new Map();
+
+/**
+ * The free label of a layout as ONE glyph-like RGBA bitmap (countdownLayout's
+ * `label`): its glyphs set on a transparent line in the sprite's ink, then —
+ * when the line is too wide — scaled down to its drawn size. Painted like any
+ * glyph (tinted by its alpha in a template's label colour).
+ * @param {any} sharp
+ * @param {string} key  text and width — the cache key
+ * @param {NonNullable<ReturnType<typeof countdownLayout>["label"]>} label
+ */
+async function labelBitmap(sharp, key, label) {
+  let b = labelBitmaps.get(key);
+  if (b) return b;
+  const w = label.lineWidth;
+  const h = label.lineHeight;
+  const data = Buffer.alloc(w * h * 4);
+  for (const pos of label.glyphs) {
+    const g = await decodedLabelGlyph(sharp, pos.char);
+    for (let y = 0; y < g.height; y++) {
+      const dy = pos.y + y;
+      if (dy < 0 || dy >= h) continue;
+      for (let x = 0; x < g.width; x++) {
+        const dx = pos.x + x;
+        if (dx < 0 || dx >= w) continue;
+        const si = (y * g.width + x) * 4;
+        const di = (dy * w + dx) * 4;
+        // neighbouring glyphs never overlap much (letter spacing): the stronger ink wins
+        if (g.data[si + 3] > data[di + 3]) g.data.copy(data, di, si, si + 4);
+      }
+    }
+  }
+  b = { data, width: w, height: h };
+  if (label.width !== w || label.height !== h) {
+    const r = await sharp(data, { raw: { width: w, height: h, channels: 4 } })
+      .resize(label.width, label.height, { fit: "fill" })
+      .raw()
+      .toBuffer({ resolveWithObject: true });
+    b = { data: r.data, width: r.info.width, height: r.info.height };
+  }
+  labelBitmaps.set(key, b);
+  if (labelBitmaps.size > LABEL_BITMAPS_MAX) labelBitmaps.delete(labelBitmaps.keys().next().value);
+  return b;
+}
+
 /** Alpha-blend one RGBA glyph onto the RGB frame at (left, top). */
 function blit(frame, frameWidth, frameHeight, g, left, top) {
   for (let y = 0; y < g.height; y++) {
@@ -367,9 +572,11 @@ async function baseRaster(sharp, W, H, tiles, cache, palette) {
  * Render the animated countdown GIF (2×) for a deadline: one frame per
  * minute from `now` on (see the header), `frames` at most. `colors` (the
  * URL's, already checked) draws it in a template's colours; without them —
- * or with none valid — it is the light look, byte for byte.
+ * or with none valid — it is the light look, byte for byte. `label` (the
+ * URL's, already checked): a free text over the tiles or none; without one
+ * the sprite's words, byte for byte.
  * @param {{ expiresAt: string | Date, language?: "de" | "en", now?: Date, width?: number, frames?: number,
- *   colors?: Partial<CountdownColors> | null }} input
+ *   colors?: Partial<CountdownColors> | null, label?: Partial<CountdownLabel> | null }} input
  * @returns {Promise<Buffer>}
  */
 export async function renderCountdownImage(input) {
@@ -380,6 +587,8 @@ export async function renderCountdownImage(input) {
   const W = width * S;
   const H = COUNTDOWN_HEIGHT * S;
   const palette = paletteOf(input.colors);
+  // the canonical label (what the URL carries), or none: the sprite's words
+  const label = input.label?.hidden === true ? { text: null, hidden: true } : { text: countdownLabelText(input.label?.text) || null, hidden: false };
   const times = countdownFrameTimes(input.expiresAt, now, input.frames ?? COUNTDOWN_FRAMES);
   const bases = new Map();
   const frames = [];
@@ -392,9 +601,10 @@ export async function renderCountdownImage(input) {
       frames.push(frame);
       continue;
     }
-    const L = countdownLayout(r, lang, width);
+    const L = countdownLayout(r, lang, width, label);
     const frame = Buffer.from(await baseRaster(sharp, W, H, L.tiles, bases, palette));
-    paint(frame, W, H, await decodedGlyph(sharp, `${lang}_heading`), L.headingX, L.headingY, palette.label);
+    if (L.heading) paint(frame, W, H, await decodedGlyph(sharp, `${lang}_heading`), L.headingX, L.headingY, palette.label);
+    if (L.label) paint(frame, W, H, await labelBitmap(sharp, `${width}|${label.text}`, L.label), L.label.x, L.label.y, palette.label);
     for (const t of L.tiles) {
       for (let i = 0; i < t.value.length; i++) {
         const g = await decodedGlyph(sharp, `d${t.value[i]}`);

@@ -133,8 +133,9 @@ import {
   COUNTDOWN_HEIGHT,
   COUNTDOWN_MOBILE_WIDTH,
   COUNTDOWN_WIDTH,
-  countdownColorQuery,
+  countdownLookQuery,
   type CountdownColors,
+  type CountdownLabel,
 } from "./email-countdown-image.mjs";
 import { buttonRadiusFor, fontNeedsWebFont, fontStackFor, msoFontStackFor } from "./email-theme.mjs";
 import { MSO_HTML_ATTRS, msoHeadHtml, msoPaddingAlt } from "./email-outlook.mjs";
@@ -360,14 +361,16 @@ export function renderMoPromoBlock(input: MoPromoBlockInput): string {
 /**
  * Everything a countdown shows for a deadline (the input of the
  * offerCountdown hook), or null once the deadline has passed. `colors` draws
- * the live image in a template's colours (email-countdown-image.mjs — the
- * URL carries them, signed); without them it is the light look.
+ * the live image in a template's colours, `label` writes a template's own
+ * text in it — or none (email-countdown-image.mjs — the URL carries both,
+ * signed); without them it is the light look with the default words.
  */
 export function offerCountdownInput(input: {
   expiresAt: string;
   language: "de" | "en";
   now?: Date;
   colors?: Partial<CountdownColors> | null;
+  label?: Partial<CountdownLabel> | null;
 }): OfferCountdownInput | null {
   const r = remainingParts(input.expiresAt, input.now);
   if (r.expired) return null;
@@ -379,10 +382,10 @@ export function offerCountdownInput(input: {
     hours: r.hours,
     deadlineLabel: deadlineLabel(input.expiresAt, input.language),
     copy: { heading: c.heading, days: c.days(r.days), hours: c.hours(r.hours), until: c.until },
-    imageUrl: countdownImageUrl(input.expiresAt, input.language, undefined, input.colors),
+    imageUrl: countdownImageUrl(input.expiresAt, input.language, undefined, input.colors, input.label),
     imageAlt: countdownText(input.expiresAt, input.language, input.now),
     imageWidth: COUNTDOWN_WIDTH,
-    imageUrlMobile: countdownImageUrl(input.expiresAt, input.language, "m", input.colors),
+    imageUrlMobile: countdownImageUrl(input.expiresAt, input.language, "m", input.colors, input.label),
     imageWidthMobile: COUNTDOWN_MOBILE_WIDTH,
   };
 }
@@ -474,20 +477,23 @@ export function renderDiscountCoupon(input: {
  * The live countdown image URL for a deadline, or null without a signing
  * secret (UNSUBSCRIBE_SECRET / CHAT_SHARED_SECRET — the unsubscribe links
  * need the same one, so a production deployment always has it). `colors`
- * (a template's look) add `bg`, `tile`, `digit`, `label` and their signature
- * `cs`; without them the URL is the light look's, as it always was.
+ * (a template's look) add `bg`, `tile`, `digit`, `label`, a template's own
+ * label `text` (or `notext=1`), and their signature `cs` over all of them
+ * (countdownLookQuery); without them the URL is the light look's, as it
+ * always was.
  */
 function countdownImageUrl(
   expiresAt: string,
   language: "de" | "en",
   variant?: "m",
-  colors?: Partial<CountdownColors> | null
+  colors?: Partial<CountdownColors> | null,
+  label?: Partial<CountdownLabel> | null
 ): string | null {
   const secret = countdownSecret();
   const token = signCountdownToken({ expiresAt, language }, secret);
   if (!token) return null;
   const params: string[] = variant ? [`w=${variant}`] : [];
-  const query = countdownColorQuery(colors);
+  const query = countdownLookQuery(colors, label);
   const sig = query ? signCountdownColors(token, query, secret) : null;
   if (query && sig) params.push(query, `cs=${sig}`);
   return `${getBaseUrl()}/api/email-countdown/${encodeURIComponent(token)}${params.length ? `?${params.join("&")}` : ""}`;
