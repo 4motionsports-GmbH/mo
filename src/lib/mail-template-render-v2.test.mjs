@@ -9,8 +9,18 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, writeFileSync } from "node:fs";
 import { EMAIL_SHELL_CSS } from "./email-shell-css.mjs";
-import { lintOutlookHtml, MAIL_SIZE_BUDGET_BYTES } from "./email-outlook.mjs";
-import { MAIL_TEMPLATE_STARTERS, applyMergeFields, contrastRatio, countdownLook, normalizeMailTemplateDoc } from "./mail-template-doc.mjs";
+import { firstFontFamily, lintOutlookHtml, MAIL_SIZE_BUDGET_BYTES, msoTextWidth, windowsFontOf } from "./email-outlook.mjs";
+import {
+  MAIL_FONT_KEYS,
+  MAIL_TEMPLATE_STARTERS,
+  applyMergeFields,
+  contrastRatio,
+  countdownLook,
+  mailFontMsoStack,
+  mailFontStack,
+  normalizeMailTemplateDoc,
+} from "./mail-template-doc.mjs";
+import { freezeLinks } from "./mailing-core.mjs";
 import {
   MAIL_CARD_WIDTH,
   MAIL_FOOTER_MARKER,
@@ -25,6 +35,8 @@ import {
 import { FIXTURE_ASSETS, FIXTURE_FOOTER, V1_RENDER_CASES, fixtureContext } from "./__fixtures__/mail-template-v1-cases.mjs";
 
 const lint = (html) => lintOutlookHtml(html, { maxImageWidth: MAIL_CARD_WIDTH });
+/** The lint with the rules the template renderer meets on its own (Word's fonts and line heights) — not for the composers' pieces. */
+const strictLint = (html) => lintOutlookHtml(html, { maxImageWidth: MAIL_CARD_WIDTH, strict: true });
 const bytes = (html) => new TextEncoder().encode(html).length;
 const anna = (t) => applyMergeFields(t, { firstName: "anna" });
 const ctx = (extra = {}) => fixtureContext({ merge: anna, ...extra });
@@ -255,7 +267,7 @@ const SHOWCASE_SLOTS = {
 test("showcase: every version-2 feature renders Outlook-safe and under the size budget", () => {
   for (const previewPlaceholders of [false, true]) {
     const html = renderMailTemplateHtml(showcase(), ctx({ slots: SHOWCASE_SLOTS, previewPlaceholders }));
-    assert.deepEqual(lint(html), [], `preview=${previewPlaceholders}`);
+    assert.deepEqual(strictLint(html), [], `preview=${previewPlaceholders}`);
     assert.ok(bytes(html) < MAIL_SIZE_BUDGET_BYTES, `${bytes(html)} bytes`);
   }
 });
@@ -338,7 +350,7 @@ test("every starter in a version-2 style (dark card, radius, web fonts, narrow p
     const d = s.build();
     for (const previewPlaceholders of [true, false]) {
       const html = renderMailTemplateHtml({ ...d, style: { ...d.style, ...style } }, ctx({ previewPlaceholders }));
-      assert.deepEqual(lint(html), [], s.key);
+      assert.deepEqual(strictLint(html), [], s.key);
     }
   }
 });
@@ -364,7 +376,7 @@ test("every child block type in every column of a narrow 4-column section stays 
   ]);
   for (const previewPlaceholders of [true, false]) {
     const html = renderMailTemplateHtml(doc, ctx({ previewPlaceholders, slots: {} }));
-    assert.deepEqual(lint(html), []);
+    assert.deepEqual(strictLint(html), []);
     const { widths } = sectionColumnWidths(normalizeMailTemplateDoc(doc).blocks[0], 60);
     for (const tag of imgs(body(html))) {
       const w = Number(/width="(\d+)"/.exec(tag)?.[1]);
@@ -524,7 +536,8 @@ test("inside a column: no phone padding class, no row colour of its own, the out
   assert.match(section, /<td align="center" style="mso-line-height-rule: exactly; padding: 0 0 8px;" valign="top">\s*<p [^>]*>Oben/);
   assert.match(section, /<td align="left" style="mso-line-height-rule: exactly; padding: 10px 0;" valign="top">\s*<p [^>]*>Mitte/);
   assert.match(section, /padding: 7px 0 10px;" valign="top">\s*<p [^>]*>Eigener Abstand/);
-  assert.match(section, /<td align="center" style="mso-line-height-rule: exactly; padding: 12px 0 0;" valign="top">\s*<table[^>]*>\s*<tr>\s*<td align="center" bgcolor="#008ccb"/);
+  // (the pill button: its VML twin for Outlook, then the cell pattern)
+  assert.match(section, /<td align="center" style="mso-line-height-rule: exactly; padding: 12px 0 0;" valign="top">\s*<!--\[if mso\]><v:roundrect [^>]*><w:anchorlock\/><center [^>]*>Unten<\/center><\/v:roundrect><!\[endif\]--><!--\[if !mso\]><!-->\s*<table[^>]*>\s*<tr>\s*<td align="center" bgcolor="#008ccb"/);
   // a block with its own colour keeps its spacing (inside the colour) and gets side room
   const band = body(renderMailTemplateHtml(docOf([{ type: "section", columns: [{ blocks: [{ type: "heading", text: "Band", background: "#111111", color: "#ffffff" }] }] }]), ctx()));
   assert.match(band, /<td align="center" bgcolor="#111111" style="mso-line-height-rule: exactly; padding: 26px 16px;" valign="top">/);
@@ -567,7 +580,14 @@ test("text styles: size, weight, italic, uppercase, letter spacing, line height 
   // the heading font of the style, the version-1 declarations
   assert.match(html, /style="mso-line-height-rule: exactly; direction: ltr; font-family: 'Playfair Display', Georgia, 'Times New Roman', serif; font-size: 26px; line-height: 33px; font-weight: 700; color: #111111; Margin: 0;" align="center">Standard</);
   assert.match(html, /font-family: Georgia, 'Times New Roman', serif; font-size: 18px; line-height: 36px; font-weight: 700; letter-spacing: -1px; color: #111111; Margin: 0;" align="left">Fließtext/);
-  assert.match(html, /font-family: Arial, Helvetica, sans-serif; font-size: 20px; line-height: 1\.5; font-weight: 400; font-style: italic; color: #aa0000; Margin: 0;" align="left">Hallo Anna/);
+  assert.match(html, /font-family: Arial, Helvetica, sans-serif; font-size: 20px; line-height: 1\.5; mso-line-height-alt: 30px; font-weight: 400; font-style: italic; color: #aa0000; Margin: 0;" align="left">Hallo Anna/);
+  // Outlook: each own font as Word's Windows equivalent (a class after the body's `*` rule)
+  assert.match(html, /<p class="mso-font-bebas" style="direction: ltr; font-family: 'Bebas Neue'/, "120 % is tighter than the font: a minimum for Word, no exact rule");
+  assert.match(html, /<p class="mso-font-playfair" style="mso-line-height-rule: exactly; direction: ltr; font-family: 'Playfair Display'/);
+  assert.match(html, /<p class="mso-font-georgia" style="mso-line-height-rule: exactly; [^"]*" align="left">Fließtext/);
+  assert.doesNotMatch(html, /<p class="[^"]*" [^>]*>Hallo Anna/, "the body font needs no class");
+  assert.match(html, /\* \{ font-family: Arial, Helvetica, sans-serif !important; \}\n {6}\.mso-font-bebas \{ font-family: Impact, 'Arial Narrow', Arial, sans-serif !important; \}\n {6}\.mso-font-playfair \{ font-family: Georgia, 'Times New Roman', serif !important; \}\n {6}\.mso-font-georgia \{ font-family: Georgia, 'Times New Roman', serif !important; \}/);
+  assert.deepEqual(lintOutlookHtml(html, { maxImageWidth: MAIL_CARD_WIDTH, strict: true }), []);
 });
 
 test("spacing: padTop / padBottom replace the default vertical spacing, the side padding follows the style", () => {
@@ -671,7 +691,9 @@ test("buttons: sizes, shapes, outline and border keep the Outlook-safe cell patt
 
 test("dividers: thickness, line style, shorter lines aligned by cells (no floating table)", () => {
   const divider = (extra) => body(renderMailTemplateHtml(docOf([{ type: "divider", color: "#333333", ...extra }]), ctx()));
-  assert.match(divider({ thickness: 4, lineStyle: "dotted" }), /width="100%" role="presentation" style="border-top: 4px dotted #333333; border-spacing: 0 !important;/);
+  // the line is the top border of the cell — Word draws cell borders (a version-1 document keeps its table border)
+  assert.match(divider({ thickness: 4, lineStyle: "dotted" }), /width="100%" role="presentation" style="border-spacing: 0 !important; border-collapse: collapse !important;"><tr><td style="border-top: 4px dotted #333333; font-size: 0; line-height: 0; mso-line-height-rule: exactly; mso-line-height-alt: 1px;">&nbsp;<\/td><\/tr><\/table>/);
+  assert.match(body(renderMailTemplateHtml({ ...docOf([{ type: "divider", color: "#333333" }]), v: 1 }, ctx())), /role="presentation" style="border-top: 1px solid #333333; border-spacing: 0 !important;/);
   assert.match(divider({ widthPct: 40 }), /<tr><td width="30%" [^>]*>&nbsp;<\/td><td width="40%" style="border-top: 1px solid #333333; [^"]*">&nbsp;<\/td><td width="30%"/);
   assert.match(divider({ widthPct: 30, align: "left", lineStyle: "dashed" }), /<tr><td width="30%" style="border-top: 1px dashed #333333; [^"]*">&nbsp;<\/td><td width="70%"/);
   assert.match(divider({ widthPct: 25, align: "right" }), /<tr><td width="75%" [^>]*>&nbsp;<\/td><td width="25%" style="border-top/);
@@ -908,7 +930,7 @@ test("footer: own background and text colour — the legal notice recoloured, ne
   const html = renderMailTemplateHtml(docOf([{ type: "text", text: "x" }, { type: "footer", background: "#111111", textColor: "#dddddd" }]), ctx());
   const footer = html.slice(html.indexOf(MAIL_FOOTER_MARKER));
   assert.match(footer, /<td class="content-pad" align="center" bgcolor="#111111" style="mso-line-height-rule: exactly; padding: 24px 60px;">/);
-  assert.match(footer, /font-size: 11px; line-height: 1\.5; font-weight: 400; color: #dddddd; Margin: 0;" align="center">4motionsports GmbH/);
+  assert.match(footer, /font-size: 11px; line-height: 1\.5; mso-line-height-alt: 16\.5px; font-weight: 400; color: #dddddd; Margin: 0;" align="center">4motionsports GmbH/);
   assert.match(footer, /<a href="mailto:info@motionsports\.de" style="color: #dddddd;/);
   assert.match(footer, /Impressum<\/a>/);
   assert.doesNotMatch(footer, /#000000/); // the unsubscribe notice follows the footer colour
@@ -965,14 +987,16 @@ test("menu: one paragraph of double-quoted links with the separator, type settin
     },
   ]);
   const html = renderMailTemplateHtml(doc, ctx());
-  const p = /<p style="([^"]*)" align="left">(.*)<\/p>/.exec(html);
+  // Lato on a Montserrat mail: Word's Arial (not the body's Verdana) on the paragraph, each link and separator
+  const p = /<p class="mso-font-lato" style="([^"]*)" align="left">(.*)<\/p>/.exec(html);
   assert.ok(p);
   assert.equal(p[1], "mso-line-height-rule: exactly; direction: ltr; font-family: 'Lato', Arial, Helvetica, sans-serif; font-size: 15px; line-height: 24px; font-weight: 700; text-transform: uppercase; letter-spacing: 2px; color: #222222; Margin: 0;");
   assert.equal(
     p[2],
-    '<a href="https://motionsports.de/collections/home-gym" target="_blank" style="color: #222222; text-decoration: none;">Home&nbsp;Gym</a> <span style="color: #222222;">&nbsp;/&nbsp;</span> ' +
-      '<a href="https://motionsports.de/?a=1&amp;b=2" target="_blank" style="color: #222222; text-decoration: none;">Für&nbsp;Anna</a> <span style="color: #222222;">&nbsp;/&nbsp;</span> &lt;b&gt;Ohne&nbsp;Link&lt;/b&gt;'
+    '<a class="mso-font-lato" href="https://motionsports.de/collections/home-gym" target="_blank" style="color: #222222; text-decoration: none;">Home&nbsp;Gym</a> <span class="mso-font-lato" style="color: #222222;">&nbsp;/&nbsp;</span> ' +
+      '<a class="mso-font-lato" href="https://motionsports.de/?a=1&amp;b=2" target="_blank" style="color: #222222; text-decoration: none;">Für&nbsp;Anna</a> <span class="mso-font-lato" style="color: #222222;">&nbsp;/&nbsp;</span> &lt;b&gt;Ohne&nbsp;Link&lt;/b&gt;'
   );
+  assert.match(html, /\.mso-font-lato \{ font-family: Arial, Helvetica, sans-serif !important; \}/);
   const plain = renderMailTemplateHtml(docOf([{ type: "menu", separator: "none", uppercase: false, bold: false, items: [{ label: "A", href: "https://a.de" }, { label: "B", href: "https://b.de" }] }]), ctx());
   assert.match(plain, /font-weight: 400; color: #111111; Margin: 0;" align="center"><a href="https:\/\/a\.de\/"[^>]*>A<\/a> <span style="color: #111111;">&nbsp;&nbsp;<\/span> <a/);
   assert.match(renderMailTemplateHtml(docOf([{ type: "menu", items: [{ label: "A", href: "https://a.de" }, { label: "B", href: "https://b.de" }] }]), ctx()), /&nbsp;\|&nbsp;/);
@@ -989,11 +1013,15 @@ test("product (stacked): picture as wide as its room, name, struck price, descri
   const doc = docOf([{ type: "product", id: "p", ref: "rack", showDescription: true, buttonLabel: "Für {{vorname|dich}}" }], { headingFont: "oswald" });
   const html = renderMailTemplateHtml(doc, ctx({ slots: { p: slot(product(1, { compareAtLabel: "499,00 €", description: "Stabil & <sicher>" })) } }));
   assert.match(html, /<img src="https:\/\/cdn\.shopify\.com\/p1\.jpg" width="480" alt="Produkt 1" border="0" class="col-img" style="width: 100%; max-width: 480px; height: auto; display: block; Margin: 0 auto;">/);
-  assert.match(html, /font-family: 'Oswald', 'Arial Narrow', Arial, sans-serif; font-size: 20px; line-height: 26px; font-weight: 700; color: #111111; Margin: 0;" align="center"><a href="https:\/\/motionsports\.de\/products\/p1" target="_blank" style="color: #111111; text-decoration: none;">Produkt 1<\/a>/);
+  // the name in the heading font — for Word its Windows equivalent, Arial Narrow (class on the paragraph and the link)
+  assert.match(html, /<p class="mso-font-oswald" style="[^"]*font-family: 'Oswald', 'Arial Narrow', Arial, sans-serif; font-size: 20px; line-height: 26px; font-weight: 700; color: #111111; Margin: 0;" align="center"><a class="mso-font-oswald" href="https:\/\/motionsports\.de\/products\/p1" target="_blank" style="color: #111111; text-decoration: none;">Produkt 1<\/a>/);
+  assert.match(html, /@font-face \{ font-family: 'Arial Narrow'; mso-font-alt: Arial; mso-generic-font-family: swiss; \}/);
   assert.match(html, /<span style="text-decoration: line-through; font-weight: 400; color: #c61724;">499,00 €<\/span>&nbsp; 399,00 €<\/p>/);
   assert.match(html, />Stabil &amp; &lt;sicher&gt;<\/p>/);
   assert.match(html, /<td align="center" bgcolor="#008ccb" style="mso-line-height-rule: exactly; mso-padding-alt: 16px 30px 16px 30px;/);
   assert.match(html, /<span style="color: #ffffff;">Für Anna<\/span>/);
+  assert.match(html, /<v:roundrect [^>]*href="https:\/\/motionsports\.de\/products\/p1"[^>]*>[\s\S]*?>Für&nbsp;Anna<\/center>/, "the pill's Outlook twin");
+  assert.deepEqual(lintOutlookHtml(html, { maxImageWidth: MAIL_CARD_WIDTH, strict: true }), []);
   assert.match(html, /<td class="content-pad" align="center" bgcolor="#ffffff" style="mso-line-height-rule: exactly; padding: 14px 60px;" valign="top">/);
   assert.deepEqual(lint(html), []);
   // switches: no price, no description, no button
@@ -1207,7 +1235,10 @@ test("coupon look (format 2): the code in the heading font and colour, texts in 
   const style = { headingFont: "playfair", headingColor: "#c61724", textColor: "#333333", fontFamily: "lato" };
   const html = renderMailTemplateHtml(docOf([{ type: "coupon", code: "TREUE15", headline: "15 %", terms: "Einmalig" }], style), ctx());
   assert.match(html, /font-family: 'Playfair Display', Georgia, 'Times New Roman', serif; font-size: 24px; line-height: 30px; font-weight: 700; letter-spacing: 2px; color: #c61724;/);
-  assert.match(html, /font-family: 'Lato', Arial, Helvetica, sans-serif; font-size: 14px; line-height: 1\.5; font-weight: 400; color: #333333; Margin: 0; font-weight: 700;" align="center">15 %/);
+  assert.match(html, /font-family: 'Lato', Arial, Helvetica, sans-serif; font-size: 14px; line-height: 1\.5; mso-line-height-alt: 21px; font-weight: 400; color: #333333; Margin: 0; font-weight: 700;" align="center">15 %/);
+  // Word: the code in Georgia (Playfair's Windows equivalent), the texts in the body's Arial (Lato's)
+  assert.match(html, /<p class="mso-font-playfair" style="mso-line-height-rule: exactly; font-family: 'Playfair Display'[^"]*" align="center">TREUE15<\/p>/);
+  assert.deepEqual(lintOutlookHtml(html, { maxImageWidth: MAIL_CARD_WIDTH, strict: true }), []);
   // version 1 keeps the classic coupon: the body font and the dark ink for the code
   const v1 = renderMailTemplateHtml({ ...docOf([{ type: "coupon", code: "TREUE15", headline: "15 %" }], style), v: 1 }, ctx());
   assert.match(v1, /font-family: 'Lato', Arial, Helvetica, sans-serif; font-size: 24px; line-height: 30px; font-weight: 700; letter-spacing: 2px; color: #111111;/);
@@ -1242,7 +1273,7 @@ test("countdown (format 2): image in the block's colours, the phone variant hidd
   const doc = docOf([{ id: "cd", type: "countdown", until: "2030-01-01T00:00:00Z", heading: "Endet in" }], DARK_STYLE);
   const html = renderMailTemplateHtml(doc, ctx({ slots: { cd: countdownSlot() } }));
   // the heading in the heading font, a readable heading colour, on the card
-  assert.match(html, /bgcolor="#111111" style="mso-line-height-rule: exactly; padding: 24px 60px 8px;" valign="top">\s*<p style="[^"]*'Oswald'[^"]*color: #ffffff;[^"]*" align="center">Endet in<\/p>/);
+  assert.match(html, /bgcolor="#111111" style="mso-line-height-rule: exactly; padding: 24px 60px 8px;" valign="top">\s*<p class="mso-font-oswald" style="[^"]*'Oswald'[^"]*color: #ffffff;[^"]*" align="center">Endet in<\/p>/);
   // desktop image: Word sizes it by the content width; browsers by the CSS
   assert.match(html, /<img src="https:\/\/mo\.example\.com\/api\/email-countdown\/tok\?bg=111111&amp;tile=292929&amp;digit=ffd400&amp;label=a1a1a1&amp;cs=sig" width="480" height="99" alt="Dein Angebot gilt noch 3 Tage und 4 Stunden" border="0" class="cd-desk" style="width: 100%; max-width: 564px; height: auto; display: block; Margin: 0 auto;">/);
   assert.match(html, /<!--\[if !mso\]><!--><img src="https:\/\/mo\.example\.com\/api\/email-countdown\/tok\?w=m&amp;[^"]*" width="350" [^>]*class="cd-phone" style="[^"]*display: none;[^"]*"><!--<!\[endif\]-->/);
@@ -1286,7 +1317,7 @@ test("products (format 2) rows: names in the heading font and colour, texts in t
   const style = { headingFont: "oswald", headingColor: "#1f4e3d", textColor: "#333333", accentColor: "#1f4e3d", buttonTextColor: "#ffffff", buttonShape: "rounded" };
   const html = renderMailTemplateHtml(docOf([{ id: "pr", type: "products", refs: ["p1", "p2"], title: "Für dich" }], style), ctx({ slots: { pr: productsSlot("rows") } }));
   const list = body(html);
-  assert.match(list, /<p style="[^"]*'Oswald'[^"]*font-size: 14px;[^"]*color: #1f4e3d; Margin: 0 0 4px;" align="left"><a href="https:\/\/motionsports\.de\/products\/p1" target="_blank" style="text-decoration: none; color: #1f4e3d;">Produkt 1<\/a><\/p>/);
+  assert.match(list, /<p class="mso-font-oswald" style="[^"]*'Oswald'[^"]*font-size: 14px; line-height: 1\.35; mso-line-height-alt: 18\.9px;[^"]*color: #1f4e3d; Margin: 0 0 4px;" align="left"><a class="mso-font-oswald" href="https:\/\/motionsports\.de\/products\/p1" target="_blank" style="text-decoration: none; color: #1f4e3d;">Produkt 1<\/a><\/p>/);
   assert.match(list, /color: #333333; Margin: 0 0 8px;" align="left"><span style="text-decoration: line-through; color: #c61724;">499,00 €<\/span> <strong style="color: #333333;">399,00 €<\/strong><\/p>/);
   assert.match(list, /color: #333333; Margin: 0;" align="left">Beschreibung 1<\/p>/);
   assert.match(list, /bgcolor="#1f4e3d" style="mso-line-height-rule: exactly; mso-padding-alt: 12px 22px 12px 22px; border-radius: 8px;"/);
@@ -1342,8 +1373,202 @@ test("a dark showcase of every new look field renders Outlook-safe and under the
   const slots = { cd: countdownSlot(), pg: productsSlot("grid", 4), pr: productsSlot("rows") };
   for (const previewPlaceholders of [false, true]) {
     const html = renderMailTemplateHtml(doc, ctx({ slots, previewPlaceholders }));
-    assert.deepEqual(lint(html), [], `preview=${previewPlaceholders}`);
+    assert.deepEqual(strictLint(html), [], `preview=${previewPlaceholders}`);
     assert.ok(bytes(html) < MAIL_SIZE_BUDGET_BYTES, `${bytes(html)} bytes`);
     assert.doesNotMatch(html, /undefined|NaN|null/);
   }
+});
+
+// ── Outlook for Windows (Word): what format 2 adds for it ────────────────────
+// Everything below lives in conditional comments, mso-* properties, class
+// attributes Word alone styles, or moves a space / line onto a cell — browsers
+// render it pixel for pixel as before (checked with Chromium, 13.11.2026).
+
+/** A Rundmail freeze: every first name becomes a per-recipient placeholder. */
+const freezeNames = (t) => applyMergeFields(t, {}, (i, fb) => `{{mo:fn:${i}|${fb}}}`);
+/** The Outlook twin of each button: the roundrect tag, the label's style and the label. */
+const vmlButtons = (html) =>
+  [...html.matchAll(/<!--\[if mso\]>(<v:roundrect [^>]*>)<w:anchorlock\/><center style="([^"]*)">([^<]*)<\/center><\/v:roundrect><!\[endif\]--><!--\[if !mso\]><!-->/g)].map((m) => ({ tag: m[1], style: m[2], label: m[3] }));
+
+test("Outlook fonts: every font key shows in Word the Windows font its stack shows everywhere else", () => {
+  for (const key of MAIL_FONT_KEYS) assert.equal(firstFontFamily(mailFontMsoStack(key)), windowsFontOf(mailFontStack(key)), key);
+  // the condensed display fonts stay condensed (they were Arial before)
+  assert.equal(firstFontFamily(mailFontMsoStack("oswald")), "Arial Narrow");
+  assert.equal(firstFontFamily(mailFontMsoStack("bebas")), "Impact");
+});
+
+test("Outlook fonts: headings, own fonts, the coupon code, menus and product names get Word's equivalent — the body stays on the `*` rule", () => {
+  const doc = docOf(
+    [
+      { type: "heading", text: "Black Week" },
+      { type: "heading", text: "Wie der Text", font: "poppins" },
+      { type: "text", text: "Spare **jetzt** auf [Racks](https://motionsports.de/collections/racks).", font: "georgia" },
+      { type: "text", text: "- Eins\n- [Zwei](https://motionsports.de/a)", font: "playfair" },
+      { type: "greeting", text: "Hallo {{vorname}},", fallback: "Hallo,", font: "bebas" },
+      { type: "text", text: "Fließtext im Körper." },
+      { type: "coupon", code: "BLACKWEEK25", headline: "25 %" },
+      { type: "menu", font: "inter", items: [{ label: "Kraft", href: "https://motionsports.de/k" }] },
+      { id: "pr", type: "products", refs: ["p1"] },
+    ],
+    { fontFamily: "montserrat", headingFont: "oswald" }
+  );
+  const html = renderMailTemplateHtml(doc, ctx({ slots: { pr: productsSlot("rows", 1) } }));
+  assert.match(html, /<p class="mso-font-oswald" style="[^"]*" align="center">Black Week<\/p>/);
+  assert.match(html, /<p style="[^"]*'Poppins'[^"]*" align="center">Wie der Text<\/p>/, "Poppins is Verdana in Word, like the body: no class");
+  assert.match(html, /<p class="mso-font-georgia" style="[^"]*" align="left">Spare <strong class="mso-font-georgia">jetzt<\/strong> auf <a class="mso-font-georgia" href="https:\/\/motionsports\.de\/collections\/racks"/);
+  assert.match(html, /<td class="mso-font-playfair" valign="top" width="18" [^>]*>&#8226;<\/td>\s*<td class="mso-font-playfair" valign="top" [^>]*><a class="mso-font-playfair" href="https:\/\/motionsports\.de\/a"/);
+  assert.match(html, /<p class="mso-font-bebas" style="[^"]*" align="left">Hallo Anna,<\/p>/);
+  assert.match(html, /<p style="mso-line-height-rule: exactly; direction: ltr; font-family: 'Montserrat'[^"]*" align="left">Fließtext im Körper\.<\/p>/);
+  assert.match(html, /<p class="mso-font-oswald" style="[^"]*" align="center">BLACKWEEK25<\/p>/, "the code in the heading font");
+  assert.match(html, /<p class="mso-font-inter" style="[^"]*" align="center"><a class="mso-font-inter" href="https:\/\/motionsports\.de\/k"/);
+  assert.match(html, /<p class="mso-font-oswald" style="[^"]*" align="left"><a class="mso-font-oswald" href="https:\/\/motionsports\.de\/products\/p1"/);
+  // the head declares exactly the classes in use, Arial Narrow with its fallback
+  const used = [...new Set([...body(html).matchAll(/class="(mso-font-[a-z0-9-]+)"/g)].map((m) => m[1]))].sort();
+  const declared = [...html.matchAll(/^ {6}\.(mso-font-[a-z0-9-]+) \{ font-family: ([^}]*) !important; \}$/gm)].map((m) => m[1]).sort();
+  assert.deepEqual(used, ["mso-font-bebas", "mso-font-georgia", "mso-font-inter", "mso-font-oswald", "mso-font-playfair"]);
+  assert.deepEqual(declared, used);
+  assert.match(html, /@font-face \{ font-family: 'Arial Narrow'; mso-font-alt: Arial; mso-generic-font-family: swiss; \}/);
+  assert.match(html, /\* \{ font-family: Verdana, Geneva, sans-serif !important; \}/);
+  assert.deepEqual(strictLint(html), []);
+  // without the classes Word would set all of it in the body's Verdana — the strict lint names each
+  const collapsed = strictLint(html.replace(/ class="mso-font-[a-z0-9-]+"/g, ""));
+  assert.ok(collapsed.filter((f) => f.rule === "font-word").length >= 8, JSON.stringify(collapsed.map((f) => f.rule)));
+  // a version-1 document keeps its output: no classes, the classic head
+  const v1 = renderMailTemplateHtml({ ...doc, v: 1 }, ctx({ slots: { pr: productsSlot("rows", 1) } }));
+  assert.doesNotMatch(v1, /mso-font-|@font-face/);
+});
+
+test("Outlook buttons: a rounded or pill button gets a VML twin of its size, colours and link; a square one keeps the cell", () => {
+  const button = (extra = {}, style = {}) => renderMailTemplateHtml(docOf([{ type: "button", label: "Jetzt sparen", href: "https://motionsports.de/sale", ...extra }], style), ctx());
+  const verdana = "Verdana, Geneva, sans-serif";
+  const width = (fontSize, label = "Jetzt sparen") => msoTextWidth(label, { fontSize, fontStack: verdana, letterSpacing: 0.5 });
+  // pill (default): 2 × 14 px padding + 18 px line + 2 × 2 px border = 50 px high; the label + 2 × 28 px + 4 px wide
+  const pill = button();
+  const [p] = vmlButtons(pill);
+  assert.equal(p.tag, `<v:roundrect xmlns:v="urn:schemas-microsoft-com:vml" xmlns:w="urn:schemas-microsoft-com:office:word" href="https://motionsports.de/sale" style="height:50px;v-text-anchor:middle;width:${width(14) + 60}px;" arcsize="50%" stroke="f" fillcolor="#008ccb">`);
+  assert.equal(p.style, `color:#ffffff;font-family:${verdana};font-size:14px;font-weight:bold;letter-spacing:0.5px;`);
+  assert.equal(p.label, "Jetzt&nbsp;sparen");
+  assert.ok(width(14) + 60 >= 140 && width(14) + 60 <= 180, String(width(14) + 60));
+  // the original stays for every other client, right after the twin
+  assert.match(pill, /<!--\[if !mso\]><!-->\s*<table [^>]*>\s*<tr>\s*<td align="center" bgcolor="#008ccb" style="mso-line-height-rule: exactly; mso-padding-alt: 16px 30px 16px 30px; border-radius: 200px;"/);
+  // rounded, small: 41 px high, 8 px of it the corner (20 %)
+  const [r] = vmlButtons(button({ shape: "rounded", size: "s" }));
+  assert.match(r.tag, new RegExp(`style="height:41px;v-text-anchor:middle;width:${width(13) + 44}px;" arcsize="20%" stroke="f" fillcolor="#008ccb">`));
+  // outline: the border as the stroke (on the edge: 2 px smaller), no fill — the colour behind it, should Word fill anyway
+  const [o] = vmlButtons(button({ outline: true, color: "#111111" }));
+  assert.match(o.tag, new RegExp(`style="height:48px;v-text-anchor:middle;width:${width(14) + 58}px;" arcsize="50%" strokecolor="#111111" strokeweight="2px" fill="f" fillcolor="#ffffff">`));
+  assert.match(o.style, /^color:#111111;/);
+  // filled with an own border
+  const [bd] = vmlButtons(button({ borderColor: "#000000", color: "#ffd400", textColor: "#111111", shape: "rounded" }));
+  assert.match(bd.tag, /arcsize="17%" strokecolor="#000000" strokeweight="2px" fillcolor="#ffd400">/);
+  // full width: the whole room — the card's 480 px, a column's own width
+  assert.match(vmlButtons(button({ fullWidth: true }))[0].tag, /width:480px;/);
+  const column = renderMailTemplateHtml(docOf([{ type: "section", columns: [{ blocks: [{ type: "button", label: "Los", href: "https://a.de", fullWidth: true }] }, { blocks: [{ type: "text", text: "x" }] }] }]), ctx());
+  assert.match(vmlButtons(column)[0].tag, /width:230px;/);
+  // square: the cell is the shape already
+  assert.equal(vmlButtons(button({ shape: "square" })).length, 0);
+  assert.equal(vmlButtons(button({}, { buttonShape: "square" })).length, 0);
+  for (const html of [pill, column, button({ outline: true }), button({ size: "l", shape: "rounded" })]) assert.deepEqual(strictLint(html), []);
+});
+
+test("Outlook buttons: no twin where its width is unknown or too small — the square cell grows with its label", () => {
+  // a Rundmail's per-recipient name: its length is unknown when the mail is frozen
+  const named = docOf([{ type: "button", label: "{{vorname|Du}}, spar jetzt", href: "https://motionsports.de/sale" }]);
+  assert.equal(vmlButtons(renderMailTemplateHtml(named, ctx({ merge: freezeNames }))).length, 0);
+  assert.equal(vmlButtons(renderMailTemplateHtml(named, ctx())).length, 1, "the test mail and the preview know the name");
+  // a long label in a narrow column would wrap
+  const narrow = docOf([{ type: "section", columns: [0, 1, 2, 3].map(() => ({ blocks: [{ type: "button", label: "Alle Angebote der Black Week ansehen", href: "https://a.de" }, { type: "button", label: "Los", href: "https://b.de" }] })) }]);
+  const html = renderMailTemplateHtml(narrow, ctx());
+  assert.deepEqual(vmlButtons(html).map((b) => b.label), ["Los", "Los", "Los", "Los"]);
+  assert.deepEqual(strictLint(html), []);
+  // a version-1 document keeps its output
+  assert.equal(vmlButtons(renderMailTemplateHtml({ ...docOf([{ type: "button", label: "Los", href: "https://a.de" }]), v: 1 }, ctx())).length, 0);
+});
+
+test("Outlook buttons: the coupon's button and the product rows' buttons get their twins; a frozen Rundmail tracks twin and original as one link", () => {
+  const doc = docOf([{ type: "coupon", code: "X10", cta: "button" }, { id: "pr", type: "products", refs: ["p1", "p2"] }], { buttonShape: "rounded" });
+  const html = renderMailTemplateHtml(doc, ctx({ slots: { pr: productsSlot("rows", 2) } }));
+  const twins = vmlButtons(html);
+  assert.deepEqual(twins.map((t) => /href="([^"]*)"/.exec(t.tag)?.[1]), ["https://motionsports.de/discount/X10", "https://motionsports.de/products/p1", "https://motionsports.de/products/p2"]);
+  assert.deepEqual(twins.map((t) => t.label), ["Code&nbsp;einlösen", "Zum&nbsp;Produkt", "Zum&nbsp;Produkt"]);
+  assert.deepEqual(strictLint(html), []);
+  const frozen = freezeLinks({ html, text: "" }, { campaign: "bw" });
+  const discount = frozen.links.findIndex((l) => l.url.includes("/discount/X10"));
+  assert.ok(discount >= 0);
+  assert.equal(frozen.html.split(`href="{{mo:link:${discount}}}"`).length - 1, 2, "the twin and the original share one index");
+  assert.doesNotMatch(frozen.html, /href="https:\/\/motionsports\.de\/(discount|products)/);
+});
+
+test("Outlook line heights: a relative one carries its px value for Word; a line set tighter than its font is a minimum there", () => {
+  const doc = docOf([
+    { type: "text", text: "Vierzehn" },
+    { type: "text", text: "Zwölf", size: "s" },
+    { type: "heading", text: "Px" },
+    { type: "heading", text: "Eng", fontSize: 48, lineHeight: 105, font: "bebas" },
+    { type: "text", text: "- Eng\n- Liste", lineHeight: 110 },
+    { type: "heading", text: "Weit", lineHeight: 150 },
+  ]);
+  const html = renderMailTemplateHtml(doc, ctx());
+  assert.match(html, /font-size: 14px; line-height: 1\.5; mso-line-height-alt: 21px; font-weight: 400; color: #111111; Margin: 0;" align="left">Vierzehn/);
+  assert.match(html, /font-size: 12px; line-height: 1\.5; mso-line-height-alt: 18px; [^"]*" align="left">Zwölf/);
+  assert.match(html, /font-size: 26px; line-height: 33px; font-weight: 700; [^"]*" align="center">Px</, "px line heights need nothing");
+  // 105 % / 110 %: Word takes the height as a minimum (an exact one would cut the tops of the letters)
+  assert.match(html, /<p class="mso-font-bebas" style="direction: ltr; [^"]*font-size: 48px; line-height: 50px;[^"]*" align="center">Eng<\/p>/);
+  assert.match(html, /<td valign="top" width="18" style="direction: ltr; [^"]*line-height: 15px;[^"]*">&#8226;<\/td>/);
+  assert.match(html, /style="mso-line-height-rule: exactly; direction: ltr; [^"]*font-size: 26px; line-height: 39px;[^"]*" align="center">Weit/);
+  assert.match(html.slice(html.indexOf(MAIL_FOOTER_MARKER)), /font-size: 11px; line-height: 1\.5; mso-line-height-alt: 16\.5px;/);
+  assert.deepEqual(strictLint(html), []);
+  // a version-1 document keeps its output
+  const v1 = renderMailTemplateHtml({ ...doc, v: 1 }, ctx());
+  assert.doesNotMatch(v1, /mso-line-height-alt: (?!1px)/);
+  assert.match(v1, /style="mso-line-height-rule: exactly; direction: ltr; [^"]*font-size: 48px; line-height: 50px;/);
+});
+
+test("Outlook refinements never move a mail into a higher size zone (80 KB warning, 90 KB budget); `outlook: false` is the output before them", () => {
+  const lists = 5;
+  const doc = (n) =>
+    docOf(
+      [
+        { type: "heading", text: "Black Week" },
+        { type: "button", label: "Jetzt sparen", href: "https://motionsports.de/sale" },
+        ...Array.from({ length: lists }, (_, k) => ({ id: `l${k}`, type: "products", refs: Array.from({ length: n }, (_, i) => `p${i}`), title: `Liste ${k}` })),
+      ],
+      { ...DARK_STYLE, buttonShape: "pill", fontFamily: "lato" }
+    );
+  const rows = (n) => ({
+    ...productsSlot("rows", n),
+    products: { layout: "rows", items: productsSlot("rows", n).products.items.map((it) => ({ ...it, name: `${it.name} — Hantelbank klappbar, schwarz-silber`, description: "Stabil, klappbar und platzsparend — die Bank für jedes Home-Gym, bis 300 kg belastbar." })) },
+  });
+  const twins = (html) => (html.match(/<v:roundrect /g) ?? []).length;
+  const seen = new Set();
+  for (let n = 1; n <= 8; n++) {
+    const c = ctx({ slots: Object.fromEntries(Array.from({ length: lists }, (_, k) => [`l${k}`, rows(n)])) });
+    const html = renderMailTemplateHtml(doc(n), c);
+    const plain = renderMailTemplateHtml(doc(n), { ...c, outlook: false });
+    assert.doesNotMatch(plain, /<v:roundrect|mso-font-|mso-line-height-alt: (?!1px)/, "no refinement at all");
+    const zone = [80 * 1024, MAIL_SIZE_BUDGET_BYTES].find((z) => bytes(plain) <= z);
+    if (zone === undefined) assert.equal(html, plain, `${n} per list: above the budget without them — exactly as before`);
+    else assert.ok(bytes(html) <= zone, `${n} per list: ${bytes(html)} bytes over the zone of ${zone}`);
+    assert.deepEqual(strictLint(html).filter((f) => f.rule !== "size" && !(html === plain && /^(font-word|line-height-word)$/.test(f.rule))), [], `${n} per list`);
+    seen.add(html === plain ? "plain" : twins(html) === 1 + lists * n ? "all" : twins(html) === 1 ? "primary" : twins(html) === 0 ? "none" : `?${twins(html)}`);
+  }
+  assert.ok(seen.has("all") && seen.has("plain"), [...seen].join(", "));
+  assert.ok(![...seen].some((s) => s.startsWith("?")), [...seen].join(", "));
+});
+
+test("Outlook lists: the space after a list sits in its last row's cells — Word drops a table's margin", () => {
+  const doc = docOf([{ type: "text", text: "- Eins\n- Zwei\n\nDanach." }]);
+  const html = renderMailTemplateHtml(doc, ctx());
+  assert.match(
+    html,
+    /<table cellspacing="0" cellpadding="0" border="0" width="100%" role="presentation" style="direction: ltr;">\s*<tr>\s*<td valign="top" width="18" style="[^"]*Margin: 0;">&#8226;<\/td>\s*<td valign="top" style="[^"]*Margin: 0;">Eins<\/td>\s*<\/tr>\s*<tr>\s*<td valign="top" width="18" style="[^"]*Margin: 0; padding-bottom: 12px;">&#8226;<\/td>\s*<td valign="top" style="[^"]*Margin: 0; padding-bottom: 12px;">Zwei<\/td>/
+  );
+  assert.deepEqual(strictLint(html), []);
+  // version 1 keeps the table's margin (its snapshots) — the lint names the trap
+  const v1 = renderMailTemplateHtml({ ...doc, v: 1 }, ctx());
+  assert.match(v1, /role="presentation" style="direction: ltr; Margin: 0 0 12px;"/);
+  assert.deepEqual(lint(v1).map((f) => f.rule), ["table-margin"]);
+  // the last list of a block needs no space after it
+  const last = body(renderMailTemplateHtml(docOf([{ type: "text", text: "Davor.\n\n- Eins\n- Zwei" }]), ctx()));
+  assert.doesNotMatch(last, /padding-bottom: 12px|role="presentation" style="direction: ltr; Margin: 0 0 12px;"/);
 });

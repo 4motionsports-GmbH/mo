@@ -167,14 +167,16 @@ deliberate change visible everywhere is the coupon code size, below). The shared
   Office namespaces, 96 DPI (without it Outlook at 125/150 % Windows scaling stretches CSS px but
   not width attributes), no table spacing, and one web-safe font for everything (Word takes the
   first family literally: a web font or „Helvetica Neue“ falls back to Times;
-  `msoFontStackFor(theme.fontFamily)` in `email-theme.mjs`).
+  `msoFontStackFor(theme.fontFamily)` in `email-theme.mjs`). Templates add a class per font of their
+  own (`msoHeadHtml(stack, { fonts })`, [`EMAIL_TEMPLATES.md`](./EMAIL_TEMPLATES.md) §4 „Outlook“).
 - **Phone-only content** (the hero picture row, the 350-px countdown) is wrapped in
   `hideFromOutlook()` — Word ignores `display:none` on images and every `@media` query. Preheaders
   stay in the DOM with `mso-hide:all`.
 - **Buttons:** Word applies padding, background and border only to table cells. A button whose
   `<a>` sits alone in a `bgcolor` cell gets `mso-padding-alt` on the cell (`msoPaddingAlt(padding,
   border)`); any other button gets an Outlook twin: `forOutlook(msoButton({...}), originalAnchor)`
-  — same URL, same label, square corners. No VML buttons (labels are dynamic).
+  — same URL, same label, square corners. No VML buttons in the designs (labels are dynamic); a
+  template's rounded button with a known label gets one (`msoRoundButton`, EMAIL_TEMPLATES.md §4).
 - **Text:** no padding on `<p>` or `<span>` (use `Margin`), no raw newlines under
   `white-space:pre-wrap` (`renderEmailProseHtml` / `plainTextEmailHtml` emit `<br>`),
   `mso-line-height-rule:exactly` where a line height is tighter than the font. Small coloured

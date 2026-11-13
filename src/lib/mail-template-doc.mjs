@@ -89,23 +89,27 @@ export const MAIL_TEMPLATE_LIMITS = Object.freeze({
 /**
  * Template-only web fonts (Google Fonts) on top of the theme fonts of
  * email-theme.mjs. Apple Mail, iOS and Outlook for Mac show them; Gmail,
- * Outlook for Windows and others fall back to the stack (Word gets one
- * Windows-safe font for the whole mail — msoHeadHtml). `classic` is the
- * theme font the classic block renderers (product rows, countdown) use.
+ * Outlook for Windows and others fall back to the stack. `mso` is the font
+ * Word shows instead (msoHeadHtml: for the body, and through an mso font
+ * class for a heading or a block in this font) — the first family of the
+ * stack Windows has, so classic Outlook looks like Gmail on Windows (a
+ * condensed display font stays condensed: Oswald → Arial Narrow, Bebas Neue
+ * → Impact). `classic` is the theme font the classic block renderers
+ * (product rows, countdown) use.
  */
 export const MAIL_TEMPLATE_FONTS = Object.freeze({
   oswald: {
     label: "Oswald (schmal, sportlich)",
     stack: "'Oswald', 'Arial Narrow', Arial, sans-serif",
     google: "Oswald:wght@400;600;700",
-    mso: "Arial, Helvetica, sans-serif",
+    mso: "'Arial Narrow', Arial, sans-serif",
     classic: "arial",
   },
   bebas: {
     label: "Bebas Neue (Plakatschrift, nur Großbuchstaben)",
     stack: "'Bebas Neue', Impact, 'Arial Narrow', Arial, sans-serif",
     google: "Bebas+Neue",
-    mso: "Arial, Helvetica, sans-serif",
+    mso: "Impact, 'Arial Narrow', Arial, sans-serif",
     classic: "arial",
   },
   poppins: {
@@ -168,7 +172,7 @@ export function mailFontStack(key) {
   return (theme ?? EMAIL_FONT_CHOICES.montserrat).stack;
 }
 
-/** The Windows-safe stack Outlook (Word) uses for the whole mail. */
+/** The Windows-safe stack Outlook (Word) shows for a font key: its first family is one every Windows machine with Office has. */
 export function mailFontMsoStack(key) {
   const extra = MAIL_TEMPLATE_FONTS[/** @type {keyof typeof MAIL_TEMPLATE_FONTS} */ (key)];
   return extra ? extra.mso : msoFontStackFor(String(key));

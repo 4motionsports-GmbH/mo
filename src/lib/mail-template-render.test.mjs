@@ -84,7 +84,7 @@ test("a full document renders every block, the footer with the unsubscribe link,
 test("every starter renders lint-clean (with preview placeholders for empty images/slots)", () => {
   for (const s of MAIL_TEMPLATE_STARTERS) {
     const html = renderMailTemplateHtml(s.build(), base({ previewPlaceholders: true }));
-    assert.deepEqual(lintOutlookHtml(html, { maxImageWidth: MAIL_CARD_WIDTH }), [], s.key);
+    assert.deepEqual(lintOutlookHtml(html, { maxImageWidth: MAIL_CARD_WIDTH, strict: true }), [], s.key);
   }
 });
 

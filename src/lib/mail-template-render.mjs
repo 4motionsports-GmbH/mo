@@ -7,7 +7,11 @@
 // card, role="presentation" + bgcolor attributes, every style inline, images
 // with numeric width attributes, buttons with their padding on the cell
 // (mso-padding-alt), the Outlook head block, the shared shell CSS. The tests
-// run lintOutlookHtml (email-outlook.mjs) over real renders.
+// run lintOutlookHtml (email-outlook.mjs, strict) over real renders. For
+// classic Outlook (Word) format 2 adds what browsers never see (13.11.2026,
+// docs/EMAIL_TEMPLATES.md §4 „Outlook“): each element's font as its Windows
+// equivalent (fontClass), relative line heights in px (typeCss), a VML twin
+// of every rounded button (roundButtonTwin), list spacing and lines on cells.
 //
 // Version 2 (11.11.2026, free layouts): every content block renders into a
 // BOX — at the top level the 600 px card with the side padding of the style
@@ -59,7 +63,19 @@
 // footer when the template lacks Mo's text altogether.
 
 import { EMAIL_SHELL_CSS } from "./email-shell-css.mjs";
-import { MSO_HTML_ATTRS, hideFromOutlook, msoHeadHtml, msoPaddingAlt, nbsp } from "./email-outlook.mjs";
+import {
+  MAIL_SIZE_BUDGET_BYTES,
+  MSO_HTML_ATTRS,
+  firstFontFamily,
+  forOutlook,
+  hideFromOutlook,
+  msoFontClassName,
+  msoHeadHtml,
+  msoPaddingAlt,
+  msoRoundButton,
+  msoTextWidth,
+  nbsp,
+} from "./email-outlook.mjs";
 import { buttonRadiusFor } from "./email-theme.mjs";
 import { emailProseToText, renderEmailProseHtml } from "./email-prose.mjs";
 import { couponCodeType, discountRedeemUrl } from "./discount-coupon.mjs";
@@ -190,7 +206,10 @@ const CLASSIC_LINK_COLOR = "#008ccb";
  *   year?: number,
  *   previewPlaceholders?: boolean,
  *   companyLines?: ReadonlyArray<string>,
+ *   outlook?: boolean,
  * }} MailRenderContext
+ * `outlook: false` leaves out the Outlook refinements of format 2 (the output
+ * as before 13.11.2026 — renderMailTemplateHtml).
  */
 
 /**
@@ -295,27 +314,64 @@ const ink = readableInk;
 /**
  * The inline type of a text element. Optional settings only add declarations
  * when set, so a version-1 block keeps its exact style string.
+ *
+ * Outlook for Windows (Word, format 2 — `word`): a relative line height
+ * („1.5“) means nothing to Word under mso-line-height-rule:exactly, so its
+ * px value follows as mso-line-height-alt (every other client ignores mso-*
+ * properties). `exact: false` leaves the rule out — Word then takes the line
+ * height as a minimum: a line set tighter than the font (an own line height
+ * under 125 %) would cut the tops of its letters and the dots of „Ä Ö Ü“.
  * @param {{ font: string, size: number, lineHeight: string, weight: number, color: string,
- *   italic?: boolean, uppercase?: boolean, letterSpacing?: number | null, margin?: string }} t
+ *   italic?: boolean, uppercase?: boolean, letterSpacing?: number | null, margin?: string, word?: boolean, exact?: boolean }} t
  */
-function typeCss({ font, size, lineHeight, weight, color, italic = false, uppercase = false, letterSpacing = null, margin = "0" }) {
-  return `mso-line-height-rule: exactly; direction: ltr; font-family: ${font}; font-size: ${size}px; line-height: ${lineHeight}; font-weight: ${weight};${italic ? " font-style: italic;" : ""}${uppercase ? " text-transform: uppercase;" : ""}${letterSpacing ? ` letter-spacing: ${letterSpacing}px;` : ""} color: ${color}; Margin: ${margin};`;
+function typeCss({ font, size, lineHeight, weight, color, italic = false, uppercase = false, letterSpacing = null, margin = "0", word = true, exact = true }) {
+  const factor = /^\d+(?:\.\d+)?$/.test(lineHeight) ? Number(lineHeight) : null;
+  const alt = word && factor ? ` mso-line-height-alt: ${Math.round(size * factor * 10) / 10}px;` : "";
+  return `${exact ? "mso-line-height-rule: exactly; " : ""}direction: ltr; font-family: ${font}; font-size: ${size}px; line-height: ${lineHeight};${alt} font-weight: ${weight};${italic ? " font-style: italic;" : ""}${uppercase ? " text-transform: uppercase;" : ""}${letterSpacing ? ` letter-spacing: ${letterSpacing}px;` : ""} color: ${color}; Margin: ${margin};`;
+}
+
+/**
+ * The class an element in font `key` carries so Word shows that font's
+ * Windows equivalent instead of the body's (msoHeadHtml: its rule follows
+ * the `*` rule) — ` class="mso-font-…"`, or "" when Word shows the same font
+ * anyway or the document is version 1 (whose output stays as it was).
+ * @param {any} R
+ * @param {string | null | undefined} key  a font key
+ */
+function fontClass(R, key) {
+  if (!R.word || !key) return "";
+  const stack = mailFontMsoStack(key);
+  if (firstFontFamily(stack) === firstFontFamily(R.bodyMso)) return "";
+  const name = msoFontClassName(key);
+  R.msoFonts.set(name, stack);
+  return ` class="${name}"`;
+}
+
+/** The class of `fontClass` on the links and bold runs of prose too — Word's `*` rule would hit them directly. */
+function classifyProse(html, cls) {
+  return cls ? html.replace(/<a href="/g, `<a${cls} href="`).replace(/<strong>/g, `<strong${cls}>`) : html;
 }
 
 /**
  * The type of a heading / text / greeting block: its own settings (fontSize,
  * weight, italic, uppercase, letterSpacing, lineHeight %, font) over the
- * block type's defaults. `css(margin)` is the inline style.
+ * block type's defaults. `css(margin)` is the inline style, `cls` the
+ * element's class for Word (fontClass).
  */
-function blockType(b, { size, lineHeight, weight, color, fontKey }) {
+function blockType(R, b, { size, lineHeight, weight, color, fontKey }) {
   const fs = b.fontSize ?? size;
   const lh = b.lineHeight != null ? `${Math.round((fs * b.lineHeight) / 100)}px` : lineHeight(fs);
   const fw = b.weight === "bold" ? 700 : b.weight === "normal" ? 400 : weight;
-  const font = mailFontStack(b.font ?? fontKey);
+  const key = b.font ?? fontKey;
+  const font = mailFontStack(key);
+  // A line height under 125 % of the font is a minimum for Word (no cut-off letters).
+  const exact = !(R.word && b.lineHeight != null && b.lineHeight < 125);
   return {
     size: fs,
+    exact,
+    cls: fontClass(R, key),
     css: (margin = "0") =>
-      typeCss({ font, size: fs, lineHeight: lh, weight: fw, color, italic: b.italic, uppercase: b.uppercase, letterSpacing: b.letterSpacing, margin }),
+      typeCss({ font, size: fs, lineHeight: lh, weight: fw, color, italic: b.italic, uppercase: b.uppercase, letterSpacing: b.letterSpacing, margin, word: R.word, exact }),
   };
 }
 
@@ -399,8 +455,9 @@ export function sectionColumnWidths(section, contentPadding = 60) {
  * @param {ReturnType<typeof normalizeMailTemplateDoc>} doc
  * @param {MailRenderContext} ctx
  * @param {boolean} [auto]
+ * @param {{ twins: "all" | "primary" | "none" } | null} [word]  the Outlook refinements (WORD_STEPS)
  */
-function environment(doc, ctx, auto = true) {
+function environment(doc, ctx, auto = true, word = WORD_STEPS[0]) {
   const style = doc.style;
   const locale = ctx.locale === "en" ? "en" : "de";
   return {
@@ -409,10 +466,23 @@ function environment(doc, ctx, auto = true) {
     locale,
     en: locale === "en",
     auto,
+    /**
+     * Outlook for Windows refinements (format 2; a version-1 document keeps
+     * its output byte for byte): every element in its own font gets Word's
+     * equivalent (fontClass), relative line heights their px value for Word,
+     * rounded buttons a VML twin, list and divider spacing on cells.
+     */
+    word: auto && Boolean(word),
+    /** Which rounded buttons get their VML twin (WORD_STEPS — fewer when the mail would get too big). */
+    twins: auto && word ? word.twins : "none",
+    /** The mso font classes in use (class → Word stack): the head declares them. */
+    msoFonts: new Map(),
     /** Set once a countdown with a phone variant is rendered: the head then carries the swap rule. */
     phoneCountdown: false,
     merge: ctx.merge ?? ((t) => t),
     bodyFont: mailFontStack(style.fontFamily),
+    /** The font Word shows for the body (the `*` rule of msoHeadHtml). */
+    bodyMso: mailFontMsoStack(style.fontFamily),
     headingFontKey: style.headingFont ?? style.fontFamily,
     linkStyle: `color: ${style.linkColor ?? style.accentColor}; text-decoration: underline; word-wrap: break-word;`,
     /** @type {MailBox} */
@@ -465,7 +535,8 @@ function renderBlock(R, b, box) {
       return imageRows(R, { ...b, placeholder: R.en ? "Image missing" : "Bild fehlt" }, box);
     case "button": {
       const [t, bt] = vpad(b, box, 12, 12);
-      return row(buttonTable(R, b, R.merge(b.label)), { padding: padCss(t, sidePad(b, box), bt), align: b.align, bgcolor: rowBg(b, box), pad: box.top });
+      const x = sidePad(b, box);
+      return row(buttonTable(R, { ...b, room: box.width - 2 * x, backdrop: envBg(b, box) }, R.merge(b.label)), { padding: padCss(t, x, bt), align: b.align, bgcolor: rowBg(b, box), pad: box.top });
     }
     case "coupon":
       return couponRows(R, b, box);
@@ -505,7 +576,7 @@ function renderChildren(R, blocks, box) {
 function placeholderRow(R, text, { padding, bgcolor = null, pad = true }) {
   return row(
     `
-                    <p style="${typeCss({ font: R.bodyFont, size: TEXT_PX.s, lineHeight: "1.5", weight: 400, color: "#777777" })}" align="center">${escapeHtml(text)}</p>`,
+                    <p style="${typeCss({ font: R.bodyFont, size: TEXT_PX.s, lineHeight: "1.5", weight: 400, color: "#777777", word: R.word })}" align="center">${escapeHtml(text)}</p>`,
     { padding, align: "center", bgcolor, pad }
   );
 }
@@ -528,7 +599,7 @@ function logoRows(R, b, box) {
 
 /** A heading (also the titles of slots, the hero headline and Mo's heading). `text` is merged already. */
 function headingRows(R, b, box, text) {
-  const type = blockType(b, {
+  const type = blockType(R, b, {
     size: HEADING_PX[b.size] ?? HEADING_PX.l,
     lineHeight: (fs) => `${Math.round(fs * 1.25)}px`,
     weight: 700,
@@ -536,7 +607,7 @@ function headingRows(R, b, box, text) {
     fontKey: R.headingFontKey,
   });
   const inner = `
-                    <p style="${type.css()}" align="${b.align}">${escapeHtml(text).replace(/\n/g, "<br>")}</p>`;
+                    <p${type.cls} style="${type.css()}" align="${b.align}">${escapeHtml(text).replace(/\n/g, "<br>")}</p>`;
   const band = Boolean(b.background);
   const [t, bt] = vpad(b, box, band ? 26 : 24, band ? 26 : 8);
   return row(inner, { padding: padCss(t, sidePad(b, box), bt), align: b.align, bgcolor: rowBg(b, box), pad: box.top });
@@ -547,7 +618,7 @@ const plainHeading = (size, align) => ({ size, align, color: null, background: n
 
 function textRows(R, b, box) {
   const color = b.color ?? R.style.textColor;
-  const type = blockType(b, { size: TEXT_PX[b.size] ?? TEXT_PX.m, lineHeight: () => "1.5", weight: 400, color, fontKey: R.style.fontFamily });
+  const type = blockType(R, b, { size: TEXT_PX[b.size] ?? TEXT_PX.m, lineHeight: () => "1.5", weight: 400, color, fontKey: R.style.fontFamily });
   let inner = paragraphs(R, b, type);
   if (b.accentBar) {
     // The bar is the left border of a cell (Word draws cell borders), the text indented beside it.
@@ -583,6 +654,8 @@ function mergeProse(merge, text) {
 /**
  * The prose of a text block: blank line = new paragraph, a chunk whose every
  * line starts with "- " / "• " = a list (the block's bullet, "1." numbered).
+ * The space after a list sits in its last row's cells for Word (format 2),
+ * which drops a table's margin.
  */
 function paragraphs(R, b, type) {
   const chunks = mergeProse(R.merge, b.text)
@@ -590,42 +663,46 @@ function paragraphs(R, b, type) {
     .map((c) => c.trim())
     .filter(Boolean);
   const numbered = b.bullet === "1.";
+  const prose = (/** @type {string} */ text) => classifyProse(renderEmailProseHtml(text, { linkStyle: R.linkStyle }), type.cls);
   return chunks
     .map((chunk, i) => {
       const last = i === chunks.length - 1;
       const lines = chunk.split("\n");
       if (lines.every((l) => /^\s*[-•]\s+/.test(l))) {
         const cell = type.css();
+        const rule = type.exact ? "mso-line-height-rule: exactly; " : "";
         const markWidth = numbered
           ? Math.max(22, Math.round(type.size * (lines.length >= 10 ? 2 : 1.5)))
           : b.fontSize
             ? Math.max(18, Math.round(type.size * 1.3))
             : 18;
+        const gapInCells = R.word && !last;
         const items = lines
-          .map(
-            (l, n) => `
+          .map((l, n) => {
+            const after = gapInCells && n === lines.length - 1 ? " padding-bottom: 12px;" : "";
+            return `
                       <tr>
-                        <td valign="top" width="${markWidth}" style="mso-line-height-rule: exactly; ${cell}">${numbered ? `${n + 1}.` : BULLET_GLYPHS[b.bullet] ?? "&#8226;"}</td>
-                        <td valign="top" style="mso-line-height-rule: exactly; ${cell}">${renderEmailProseHtml(l.replace(/^\s*[-•]\s+/, ""), { linkStyle: R.linkStyle })}</td>
-                      </tr>`
-          )
+                        <td${type.cls} valign="top" width="${markWidth}" style="${rule}${cell}${after}">${numbered ? `${n + 1}.` : BULLET_GLYPHS[b.bullet] ?? "&#8226;"}</td>
+                        <td${type.cls} valign="top" style="${rule}${cell}${after}">${prose(l.replace(/^\s*[-•]\s+/, ""))}</td>
+                      </tr>`;
+          })
           .join("");
         return `
-                    <table cellspacing="0" cellpadding="0" border="0" width="100%" role="presentation" style="direction: ltr;${last ? "" : " Margin: 0 0 12px;"}">${items}
+                    <table cellspacing="0" cellpadding="0" border="0" width="100%" role="presentation" style="direction: ltr;${last || gapInCells ? "" : " Margin: 0 0 12px;"}">${items}
                     </table>`;
       }
       return `
-                    <p style="${type.css(last ? "0" : "0 0 12px")}" align="${b.align}">${renderEmailProseHtml(chunk, { linkStyle: R.linkStyle })}</p>`;
+                    <p${type.cls} style="${type.css(last ? "0" : "0 0 12px")}" align="${b.align}">${prose(chunk)}</p>`;
     })
     .join("");
 }
 
 function greetingRows(R, b, box) {
-  const type = blockType(b, { size: TEXT_PX.m, lineHeight: () => "1.5", weight: 400, color: b.color ?? R.style.textColor, fontKey: R.style.fontFamily });
+  const type = blockType(R, b, { size: TEXT_PX.m, lineHeight: () => "1.5", weight: 400, color: b.color ?? R.style.textColor, fontKey: R.style.fontFamily });
   const [t, bt] = vpad(b, box, 20, 4);
   return row(
     `
-                    <p style="${type.css()}" align="${b.align}">${escapeHtml(greetingText(b, R.ctx, R.merge))}</p>`,
+                    <p${type.cls} style="${type.css()}" align="${b.align}">${escapeHtml(greetingText(b, R.ctx, R.merge))}</p>`,
     { padding: padCss(t, sidePad(b, box), bt), align: b.align, bgcolor: rowBg(b, box), pad: box.top }
   );
 }
@@ -669,14 +746,27 @@ function imageRows(R, img, box) {
   );
 }
 
+/** The tracking of a button label (px, every client). */
+const BUTTON_LETTER_SPACING = 0.5;
+/** The border every button draws: its own colour, the fill's or the outline's. */
+const BUTTON_BORDER = 2;
+
 /**
  * The button table: the cell carries the colour and Word's padding
  * (mso-padding-alt), the anchor the padding of every other client. A border
  * (outline, borderColor) is drawn by the cell — Word draws cell borders, the
  * separate border model lets browsers round it.
+ *
+ * Word draws that cell square. A rounded or pill button of a format-2
+ * document therefore gets an Outlook twin (roundButtonTwin): a VML roundrect
+ * of the browser button's size, colours and label. `room` is the width the
+ * button may take (a full-width button takes all of it), `backdrop` the
+ * colour behind an outline button, `list` marks the repeated button of a
+ * product list (the first twins to go when the mail gets too big).
  * @param {any} R
  * @param {{ href: string, align: string, color?: string | null, textColor?: string | null, fullWidth?: boolean,
- *   size?: string, shape?: string, outline?: boolean, borderColor?: string | null }} b
+ *   size?: string, shape?: string, outline?: boolean, borderColor?: string | null, room?: number, backdrop?: string | null,
+ *   list?: boolean }} b
  * @param {string} label  merged already
  */
 function buttonTable(R, b, label) {
@@ -686,27 +776,64 @@ function buttonTable(R, b, label) {
   const tableAttrs = b.fullWidth ? ' width="100%"' : b.align === "center" ? ' align="center"' : ` align="${b.align}"`;
   const border = b.outline ? b.borderColor ?? color : b.borderColor ?? null;
   const type = `font-size: ${size.fontSize}px; line-height: ${size.lineHeight}px;`;
-  if (!border) {
-    const fg = b.textColor ?? R.style.buttonTextColor;
-    return `
-                    <table cellspacing="0" cellpadding="0" border="0"${tableAttrs} role="presentation" style="direction: ltr; border-spacing: 0 !important; border-collapse: collapse !important;">
-                      <tr>
-                        <td align="center" bgcolor="${color}" style="mso-line-height-rule: exactly; mso-padding-alt: ${msoPaddingAlt(size.padding, 2)}; border-radius: ${radius};" valign="top">
-                          <a href="${escapeAttr(b.href)}" target="_blank" style="${type} color: ${fg}; text-decoration: none; border-radius: ${radius}; background-color: ${color}; display: block; font-family: ${R.bodyFont}; font-weight: 700; text-align: center; letter-spacing: 0.5px; word-break: break-word; padding: ${size.padding}; border: 2px solid ${color}; mso-padding-alt: 0;"><span style="color: ${fg};">${escapeHtml(label)}</span></a>
-                        </td>
-                      </tr>
-                    </table>`;
-  }
-  const fill = b.outline ? null : color;
-  const fg = b.outline ? color : b.textColor ?? R.style.buttonTextColor;
-  return `
+  const fill = border && b.outline ? null : color;
+  const fg = border && b.outline ? color : b.textColor ?? R.style.buttonTextColor;
+  const twin = roundButtonTwin(R, b, label, { size, radius, fill, border, fg });
+  const table = border
+    ? `
                     <table cellspacing="0" cellpadding="0" border="0"${tableAttrs} role="presentation" style="direction: ltr; border-spacing: 0 !important; border-collapse: separate !important;">
                       <tr>
-                        <td align="center"${fill ? ` bgcolor="${fill}"` : ""} style="mso-line-height-rule: exactly; mso-padding-alt: ${msoPaddingAlt(size.padding)}; border: 2px solid ${border}; border-radius: ${radius};${fill ? ` background-color: ${fill};` : ""}" valign="top">
-                          <a href="${escapeAttr(b.href)}" target="_blank" style="${type} color: ${fg}; text-decoration: none; border-radius: ${radius}; display: block; font-family: ${R.bodyFont}; font-weight: 700; text-align: center; letter-spacing: 0.5px; word-break: break-word; padding: ${size.padding}; mso-padding-alt: 0;"><span style="color: ${fg};">${escapeHtml(label)}</span></a>
+                        <td align="center"${fill ? ` bgcolor="${fill}"` : ""} style="mso-line-height-rule: exactly; mso-padding-alt: ${msoPaddingAlt(size.padding)}; border: ${BUTTON_BORDER}px solid ${border}; border-radius: ${radius};${fill ? ` background-color: ${fill};` : ""}" valign="top">
+                          <a href="${escapeAttr(b.href)}" target="_blank" style="${type} color: ${fg}; text-decoration: none; border-radius: ${radius}; display: block; font-family: ${R.bodyFont}; font-weight: 700; text-align: center; letter-spacing: ${BUTTON_LETTER_SPACING}px; word-break: break-word; padding: ${size.padding}; mso-padding-alt: 0;"><span style="color: ${fg};">${escapeHtml(label)}</span></a>
+                        </td>
+                      </tr>
+                    </table>`
+    : `
+                    <table cellspacing="0" cellpadding="0" border="0"${tableAttrs} role="presentation" style="direction: ltr; border-spacing: 0 !important; border-collapse: collapse !important;">
+                      <tr>
+                        <td align="center" bgcolor="${color}" style="mso-line-height-rule: exactly; mso-padding-alt: ${msoPaddingAlt(size.padding, BUTTON_BORDER)}; border-radius: ${radius};" valign="top">
+                          <a href="${escapeAttr(b.href)}" target="_blank" style="${type} color: ${fg}; text-decoration: none; border-radius: ${radius}; background-color: ${color}; display: block; font-family: ${R.bodyFont}; font-weight: 700; text-align: center; letter-spacing: ${BUTTON_LETTER_SPACING}px; word-break: break-word; padding: ${size.padding}; border: ${BUTTON_BORDER}px solid ${color}; mso-padding-alt: 0;"><span style="color: ${fg};">${escapeHtml(label)}</span></a>
                         </td>
                       </tr>
                     </table>`;
+  return twin ? `\n                    ${forOutlook(twin, `${table}\n                    `)}` : table;
+}
+
+/**
+ * The Outlook twin of a rounded button (format 2): a VML roundrect as large
+ * as the button in a browser — its padding, line and border; as wide as the
+ * room for a full-width one — with the same fill, border, label and link
+ * (msoRoundButton). Only when the label is known now (a Rundmail's
+ * per-recipient placeholder is not) and fits its room on one line in the
+ * font Word shows (msoTextWidth, generous): otherwise the square cell stays,
+ * which grows with its label. Square buttons need no twin.
+ * @returns {string | null}
+ */
+function roundButtonTwin(R, b, label, { size, radius, fill, border, fg }) {
+  const r = Number.parseFloat(radius) || 0;
+  if (!R.word || R.twins === "none" || (R.twins === "primary" && b.list)) return null;
+  if (r <= 0 || !(b.room > 0) || /\{\{|\}\}/.test(label)) return null;
+  const [padY, padX] = String(size.padding)
+    .split(/\s+/)
+    .map((p) => Number.parseFloat(p));
+  const text = msoTextWidth(label, { fontSize: size.fontSize, fontStack: R.bodyMso, letterSpacing: BUTTON_LETTER_SPACING });
+  const natural = text + 2 * padX + 2 * BUTTON_BORDER;
+  if (natural > b.room) return null;
+  return msoRoundButton({
+    hrefAttr: escapeAttr(b.href),
+    labelHtml: escapeHtml(label),
+    color: fg,
+    fill,
+    border,
+    borderPx: BUTTON_BORDER,
+    width: b.fullWidth ? Math.floor(b.room) : natural,
+    height: 2 * padY + size.lineHeight + 2 * BUTTON_BORDER,
+    radius: r,
+    fontFamily: R.bodyMso,
+    fontSize: size.fontSize,
+    letterSpacing: `${BUTTON_LETTER_SPACING}px`,
+    backdrop: fill ? null : b.backdrop ?? null,
+  });
 }
 
 /**
@@ -744,13 +871,15 @@ function couponRows(R, b, box) {
   let codeColor;
   let termsColor;
   let codeFont;
+  let codeKey;
   if (R.auto) {
     textColor = b.textColor ?? ink(R.style.textColor, ground);
     linkStyle = `color: ${ink(R.style.linkColor ?? accent, ground, 3, ink(accent, ground, 3))}; text-decoration: underline; word-wrap: break-word;`;
     // bold from ~18.7 px on is large text (3 : 1); a code shrunk for a narrow column needs 4.5 : 1
     codeColor = b.codeColor ?? ink(R.style.headingColor, ground, code.fontSize >= 19 ? 3 : 4.5);
     termsColor = b.textColor ?? mutedInk(textColor, ground);
-    codeFont = mailFontStack(b.codeFont ?? R.headingFontKey);
+    codeKey = b.codeFont ?? R.headingFontKey;
+    codeFont = mailFontStack(codeKey);
   } else {
     // Version 1: on a colour other than the card's (its own background, a
     // coloured column) the template's text and link colours give way to
@@ -762,11 +891,14 @@ function couponRows(R, b, box) {
       : R.linkStyle;
     codeColor = b.codeColor ?? ink("#111111", ground);
     termsColor = b.textColor ?? ink("#555555", ground, 4.5, textColor);
+    codeKey = b.codeFont ?? null;
     codeFont = b.codeFont ? mailFontStack(b.codeFont) : R.bodyFont;
   }
   // the kicker is small print: muted like the terms from format 2 on
   const kickerColor = R.auto ? termsColor : textColor;
-  const t = (size, color) => typeCss({ font: R.bodyFont, size, lineHeight: "1.5", weight: 400, color });
+  const t = (size, color) => typeCss({ font: R.bodyFont, size, lineHeight: "1.5", weight: 400, color, word: R.word });
+  // The room of the card's content: the box minus the frame and the cell padding (a button never grows the card past it).
+  const cardRoom = box.width - 2 * sidePad(b, box) - 2 * borderPx - 2 * cellPadX;
   const redeem = discountRedeemUrl(b.code) ?? R.ctx.assets.shopUrl;
   const ctaLabel = en ? "Redeem code" : "Code einlösen";
   const terms = b.terms ? R.merge(b.terms) : "";
@@ -786,7 +918,7 @@ function couponRows(R, b, box) {
       ? `
                           <table cellspacing="0" cellpadding="0" border="0" width="100%" role="presentation" style="direction: ltr;">
                             <tr>
-                              <td align="center" style="mso-line-height-rule: exactly; padding: 12px 0 0;">${buttonTable(R, { href: redeem, align: "center", size: narrow ? "s" : undefined, fullWidth: narrow, color: buttonFill, textColor: buttonText }, ctaLabel)}
+                              <td align="center" style="mso-line-height-rule: exactly; padding: 12px 0 0;">${buttonTable(R, { href: redeem, align: "center", size: narrow ? "s" : undefined, fullWidth: narrow, color: buttonFill, textColor: buttonText, room: cardRoom, backdrop: ground }, ctaLabel)}
                               </td>
                             </tr>
                           </table>`
@@ -797,7 +929,7 @@ function couponRows(R, b, box) {
                       <tr>
                         <td align="center"${fill}>
                           <p style="${t(TEXT_PX.s, kickerColor)} text-transform: uppercase; letter-spacing: 1px;" align="center">${en ? "Your code" : "Dein Code"}</p>
-                          <p style="mso-line-height-rule: exactly; font-family: ${codeFont}; font-size: ${code.fontSize}px; line-height: ${code.lineHeight}px; font-weight: 700; letter-spacing: ${code.letterSpacing}px; color: ${codeColor}; Margin: 4px 0 6px;${narrow ? " word-break: break-all;" : ""}" align="center">${escapeHtml(b.code)}</p>${
+                          <p${fontClass(R, codeKey)} style="mso-line-height-rule: exactly; font-family: ${codeFont}; font-size: ${code.fontSize}px; line-height: ${code.lineHeight}px; font-weight: 700; letter-spacing: ${code.letterSpacing}px; color: ${codeColor}; Margin: 4px 0 6px;${narrow ? " word-break: break-all;" : ""}" align="center">${escapeHtml(b.code)}</p>${
                             b.headline
                               ? `
                           <p style="${t(TEXT_PX.m, b.accent ?? textColor)} font-weight: 700;" align="center">${escapeHtml(R.merge(b.headline))}</p>`
@@ -911,6 +1043,10 @@ function productListRows(R, b, data) {
     name,
     text,
     card,
+    /** What the texts and buttons stand on: the card, else the white panel or the card colour of the mail. */
+    ground: card ?? textGround,
+    /** Word's class for the names in the heading font (fontClass). */
+    nameCls: fontClass(R, R.headingFontKey),
     strike: ink(SALE_STRIKE_COLOR, textGround, 3, text),
     line: mixColor(textGround, strongInk(textGround), 0.12),
   };
@@ -925,9 +1061,9 @@ function productListRows(R, b, data) {
   return parts.join("");
 }
 
-/** A product's link around `html` (name, picture), or the html itself without a link. */
-function productLink(it, html, style) {
-  return it.url ? `<a href="${escapeAttr(it.url)}" target="_blank" style="${style}">${html}</a>` : html;
+/** A product's link around `html` (name, picture), or the html itself without a link; `cls`: Word's font class (fontClass). */
+function productLink(it, html, style, cls = "") {
+  return it.url ? `<a${cls} href="${escapeAttr(it.url)}" target="_blank" style="${style}">${html}</a>` : html;
 }
 
 /** The price line of a listed product: the struck compare-at price before the current one. */
@@ -944,13 +1080,15 @@ function productPriceHtml(it, look, css, align) {
  * card colour, each row a card of its own (12 px apart).
  */
 function productRowsHtml(R, items, look, room) {
-  const nameCss = typeCss({ font: mailFontStack(R.headingFontKey), size: 14, lineHeight: "1.35", weight: 700, color: look.name, margin: "0 0 4px" });
-  const priceCss = typeCss({ font: R.bodyFont, size: 13, lineHeight: "1.4", weight: 400, color: look.text, margin: "0 0 8px" });
-  const descCss = typeCss({ font: R.bodyFont, size: 13, lineHeight: "1.6", weight: 400, color: look.text });
+  const nameCss = typeCss({ font: mailFontStack(R.headingFontKey), size: 14, lineHeight: "1.35", weight: 700, color: look.name, margin: "0 0 4px", word: R.word });
+  const priceCss = typeCss({ font: R.bodyFont, size: 13, lineHeight: "1.4", weight: 400, color: look.text, margin: "0 0 8px", word: R.word });
+  const descCss = typeCss({ font: R.bodyFont, size: 13, lineHeight: "1.6", weight: 400, color: look.text, word: R.word });
   const card = look.card;
   const imageCell = Math.round(room * 0.33);
   // Word sizes a picture by its attribute: never wider than its cell's room.
   const img = Math.max(40, Math.min(LIST_ROW_IMAGE, imageCell - LIST_CARD_PAD));
+  // The room of the text beside the picture (or of the whole row), inside the cells' padding.
+  const textRoom = (/** @type {boolean} */ withImage) => (withImage ? Math.round(room * 0.67) : room) - (card ? 2 * LIST_CARD_PAD : withImage ? 4 : 0);
   const rows = items.map((it, i) => {
     const image = it.imageUrl
       ? productLink(
@@ -968,13 +1106,13 @@ function productRowsHtml(R, items, look, room) {
       ? `
                           <table cellspacing="0" cellpadding="0" border="0" width="100%" role="presentation" style="direction: ltr;">
                             <tr>
-                              <td align="left" style="mso-line-height-rule: exactly; padding: 12px 0 0;">${buttonTable(R, { href: it.url, align: "left", size: "s" }, it.ctaLabel?.trim() || (R.en ? "View product" : "Zum Produkt"))}
+                              <td align="left" style="mso-line-height-rule: exactly; padding: 12px 0 0;">${buttonTable(R, { href: it.url, align: "left", size: "s", room: textRoom(Boolean(image)), backdrop: look.ground, list: true }, it.ctaLabel?.trim() || (R.en ? "View product" : "Zum Produkt"))}
                               </td>
                             </tr>
                           </table>`
       : "";
     const text = `
-                          <p style="${nameCss}" align="left">${productLink(it, escapeHtml(it.name), `text-decoration: none; color: ${look.name};`)}</p>${productPriceHtml(it, look, priceCss, "left")}${description}${button}`;
+                          <p${look.nameCls} style="${nameCss}" align="left">${productLink(it, escapeHtml(it.name), `text-decoration: none; color: ${look.name};`, look.nameCls)}</p>${productPriceHtml(it, look, priceCss, "left")}${description}${button}`;
     if (card) {
       const cells = image
         ? `
@@ -994,13 +1132,15 @@ function productRowsHtml(R, items, look, room) {
                         </td>
                       </tr>`;
     }
+    // the hairline: the top border of a cell for Word (dividerRows)
+    const hairline = `border-top: 1px solid ${look.line};`;
     const divider =
       i === 0
         ? ""
         : `
                       <tr>
                         <td colspan="2" style="mso-line-height-rule: exactly; padding: 18px 0 0;">
-                          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-top: 1px solid ${look.line}; border-spacing: 0 !important; border-collapse: collapse !important;"><tr><td style="font-size: 0; line-height: 0; mso-line-height-rule: exactly; mso-line-height-alt: 1px;">&nbsp;</td></tr></table>
+                          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="${R.word ? "" : `${hairline} `}border-spacing: 0 !important; border-collapse: collapse !important;"><tr><td style="${R.word ? `${hairline} ` : ""}font-size: 0; line-height: 0; mso-line-height-rule: exactly; mso-line-height-alt: 1px;">&nbsp;</td></tr></table>
                         </td>
                       </tr>`;
     if (!image) {
@@ -1031,8 +1171,8 @@ function productRowsHtml(R, items, look, room) {
  */
 function productGridHtml(R, items, look) {
   const card = look.card;
-  const nameCss = typeCss({ font: mailFontStack(R.headingFontKey), size: 13, lineHeight: "1.3", weight: 700, color: look.name });
-  const priceCss = typeCss({ font: R.bodyFont, size: 13, lineHeight: "1.4", weight: 400, color: look.text, margin: "4px 0 0" });
+  const nameCss = typeCss({ font: mailFontStack(R.headingFontKey), size: 13, lineHeight: "1.3", weight: 700, color: look.name, word: R.word });
+  const priceCss = typeCss({ font: R.bodyFont, size: 13, lineHeight: "1.4", weight: 400, color: look.text, margin: "4px 0 0", word: R.word });
   const gutter = card ? 6 : 0;
   const pad = card ? LIST_CARD_PAD : 10;
   const img = LIST_GRID_TILE - 2 * gutter - 2 * pad;
@@ -1057,7 +1197,7 @@ function productGridHtml(R, items, look) {
     const body = `${image}
                         <tr>
                           <td align="center" style="mso-line-height-rule: exactly; vertical-align: top; padding: 0 ${card ? pad : 15}px;">
-                            <p style="${nameCss}" align="center">${productLink(it, escapeHtml(it.name), `text-decoration: none; color: ${look.name};`)}</p>${productPriceHtml(it, look, priceCss, "center")}
+                            <p${look.nameCls} style="${nameCss}" align="center">${productLink(it, escapeHtml(it.name), `text-decoration: none; color: ${look.name};`, look.nameCls)}</p>${productPriceHtml(it, look, priceCss, "center")}
                           </td>
                         </tr>${spacer(card ? 14 : 20)}`;
     const content = card
@@ -1092,16 +1232,21 @@ function productGridHtml(R, items, look) {
 }
 
 /**
- * A line. Full width: the border of a 100 % table (as version 1); shorter
- * lines are a cell of that width beside empty cells — no floating table,
- * which Word would let content flow around.
+ * A line: the top border of a cell (Word draws cell borders; format 2 — a
+ * version-1 document keeps the border of its 100 % table), the cell flat
+ * (font-size / line-height 0, 1 px for Word). Shorter lines are a cell of
+ * that width beside empty cells — no floating table, which Word would let
+ * content flow around.
  */
 function dividerRows(R, b, box) {
   const line = `border-top: ${b.thickness ?? 1}px ${b.lineStyle ?? "solid"} ${b.color ?? "#e0e0e0"};`;
   const pct = b.widthPct ?? 100;
   const flat = "font-size: 0; line-height: 0; mso-line-height-rule: exactly; mso-line-height-alt: 1px;";
   let inner;
-  if (pct >= 100) {
+  if (pct >= 100 && R.word) {
+    inner = `
+                    <table cellspacing="0" cellpadding="0" border="0" width="100%" role="presentation" style="border-spacing: 0 !important; border-collapse: collapse !important;"><tr><td style="${line} ${flat}">&nbsp;</td></tr></table>`;
+  } else if (pct >= 100) {
     inner = `
                     <table cellspacing="0" cellpadding="0" border="0" width="100%" role="presentation" style="${line} border-spacing: 0 !important; border-collapse: collapse !important;"><tr><td style="${flat}">&nbsp;</td></tr></table>`;
   } else {
@@ -1124,8 +1269,9 @@ function menuRows(R, b, box) {
   if (items.length === 0) return placeholderRow(R, R.en ? "Navigation: no links yet." : "Navigation: noch keine Links.", opts);
   const size = b.fontSize ?? 13;
   const color = b.color ?? R.style.textColor;
+  const key = b.font ?? R.style.fontFamily;
   const css = typeCss({
-    font: mailFontStack(b.font ?? R.style.fontFamily),
+    font: mailFontStack(key),
     size,
     lineHeight: `${Math.round(size * 1.6)}px`,
     weight: b.bold ? 700 : 400,
@@ -1133,17 +1279,19 @@ function menuRows(R, b, box) {
     uppercase: b.uppercase,
     letterSpacing: b.letterSpacing,
   });
+  // Word's font class on the paragraph and on each link and separator (Word's `*` rule hits them directly).
+  const cls = fontClass(R, key);
   const links = items.map((it) => {
     // A short label never breaks („Home Gym“); a long one may wrap in a narrow column.
     const text = R.merge(it.label);
     const label = text.length <= MENU_UNBROKEN_CHARS ? nbsp(escapeHtml(text)) : escapeHtml(text);
-    return it.href ? `<a href="${escapeAttr(it.href)}" target="_blank" style="color: ${color}; text-decoration: none;">${label}</a>` : label;
+    return it.href ? `<a${cls} href="${escapeAttr(it.href)}" target="_blank" style="color: ${color}; text-decoration: none;">${label}</a>` : label;
   });
   const mark = MENU_SEPARATOR_HTML[/** @type {"|"} */ (b.separator)] ?? "|";
-  const separator = ` <span style="color: ${color};">${mark ? `&nbsp;${mark}&nbsp;` : "&nbsp;&nbsp;"}</span> `;
+  const separator = ` <span${cls} style="color: ${color};">${mark ? `&nbsp;${mark}&nbsp;` : "&nbsp;&nbsp;"}</span> `;
   return row(
     `
-                    <p style="${css}" align="${b.align}">${links.join(separator)}</p>`,
+                    <p${cls} style="${css}" align="${b.align}">${links.join(separator)}</p>`,
     opts
   );
 }
@@ -1174,10 +1322,11 @@ function productRows(R, b, box) {
   const textColor = b.color ?? R.style.textColor;
   const nameSize = b.nameSize ?? (textWidth < 180 ? 14 : textWidth < 300 ? 16 : 20);
   const small = textWidth < 180;
-  const link = (html, color) => (p.url ? `<a href="${escapeAttr(p.url)}" target="_blank" style="color: ${color}; text-decoration: none;">${html}</a>` : html);
+  const link = (html, color, cls = "") => (p.url ? `<a${cls} href="${escapeAttr(p.url)}" target="_blank" style="color: ${color}; text-decoration: none;">${html}</a>` : html);
+  const nameCls = fontClass(R, R.headingFontKey);
 
   const name = `
-                          <p style="${typeCss({ font: mailFontStack(R.headingFontKey), size: nameSize, lineHeight: `${Math.round(nameSize * 1.3)}px`, weight: 700, color: nameColor })}" align="${align}">${link(escapeHtml(p.name), nameColor)}</p>`;
+                          <p${nameCls} style="${typeCss({ font: mailFontStack(R.headingFontKey), size: nameSize, lineHeight: `${Math.round(nameSize * 1.3)}px`, weight: 700, color: nameColor })}" align="${align}">${link(escapeHtml(p.name), nameColor, nameCls)}</p>`;
   const priceSize = small ? 13 : 15;
   const price =
     b.showPrice && p.priceLabel
@@ -1191,14 +1340,14 @@ function productRows(R, b, box) {
   const description =
     b.showDescription && p.description
       ? `
-                          <p style="${typeCss({ font: R.bodyFont, size: small ? 12 : 13, lineHeight: "1.5", weight: 400, color: textColor, margin: "8px 0 0" })}" align="${align}">${escapeHtml(p.description)}</p>`
+                          <p style="${typeCss({ font: R.bodyFont, size: small ? 12 : 13, lineHeight: "1.5", weight: 400, color: textColor, margin: "8px 0 0", word: R.word })}" align="${align}">${escapeHtml(p.description)}</p>`
       : "";
   const label = b.buttonLabel && p.url ? R.merge(b.buttonLabel) : "";
   const button =
     label
       ? `
                       <tr>
-                        <td align="${align}" style="mso-line-height-rule: exactly; padding: 14px 0 0;">${buttonTable(R, { href: p.url, align, size: small ? "s" : undefined }, label)}
+                        <td align="${align}" style="mso-line-height-rule: exactly; padding: 14px 0 0;">${buttonTable(R, { href: p.url, align, size: small ? "s" : undefined, room: textWidth, backdrop: bg }, label)}
                         </td>
                       </tr>`
       : "";
@@ -1381,14 +1530,60 @@ function sectionRows(R, s) {
 }
 
 /**
+ * How much of the Outlook refinements a format-2 render carries, from the
+ * most to the least: the VML twins of every rounded button; of the prominent
+ * ones only (not the „Zum Produkt“ of product rows, up to 8 per list); none.
+ * @type {ReadonlyArray<{ twins: "all" | "primary" | "none" }>}
+ */
+const WORD_STEPS = Object.freeze([{ twins: "all" }, { twins: "primary" }, { twins: "none" }]);
+/**
+ * The sizes a mail must not cross for Outlook's sake: the Rundmail checks
+ * warn above 80 KB (mailing-checks.mjs MAILING_HTML_SOFT_LIMIT), the lint
+ * budget is 90 KB (Gmail clips at 102 KB, the checks refuse above 100 KB).
+ */
+const SIZE_ZONES = Object.freeze([80 * 1024, MAIL_SIZE_BUDGET_BYTES]);
+
+const utf8Bytes = (/** @type {string} */ s) => new TextEncoder().encode(s).length;
+
+/**
  * Render a document to the full HTML mail.
+ *
+ * A format-2 document carries the Outlook refinements (WORD_STEPS) as far as
+ * they keep the mail in the size zone it has without them (SIZE_ZONES): no
+ * new size warning, no error, never over Gmail's limit for Outlook's look —
+ * a mail above the budget without them renders exactly as before 13.11.2026.
  * @param {unknown} rawDoc
  * @param {MailRenderContext} ctx
  * @returns {string}
  */
 export function renderMailTemplateHtml(rawDoc, ctx) {
   const doc = normalizeMailTemplateDoc(rawDoc);
-  const R = environment(doc, ctx, docFormatVersion(rawDoc) >= 2);
+  if (docFormatVersion(rawDoc) < 2) return renderDocHtml(doc, ctx, false, null);
+  const plain = renderDocHtml(doc, ctx, true, null);
+  if (ctx.outlook === false) return plain;
+  const plainBytes = utf8Bytes(plain);
+  const limit = SIZE_ZONES.find((z) => plainBytes <= z);
+  if (limit === undefined) return plain;
+  for (const word of WORD_STEPS) {
+    const html = renderDocHtml(doc, ctx, true, word);
+    if (utf8Bytes(html) <= limit) return html;
+    // no twin left to drop: the later steps would render the same
+    if (!html.includes("<v:roundrect ")) break;
+  }
+  return plain;
+}
+
+/**
+ * One render of a normalised document. `word`: the Outlook refinements it
+ * carries (WORD_STEPS; null = none).
+ * @param {ReturnType<typeof normalizeMailTemplateDoc>} doc
+ * @param {MailRenderContext} ctx
+ * @param {boolean} auto  format 2 (docFormatVersion)
+ * @param {{ twins: "all" | "primary" | "none" } | null} word
+ * @returns {string}
+ */
+function renderDocHtml(doc, ctx, auto, word) {
+  const R = environment(doc, ctx, auto, word);
   const { style, merge, en } = R;
   const top = R.top;
 
@@ -1540,7 +1735,7 @@ export function renderMailTemplateHtml(rawDoc, ctx) {
     <meta name="format-detection" content="telephone=no, date=no, address=no, email=no, url=no">
     <meta name="color-scheme" content="light">
     <meta name="supported-color-schemes" content="light only">
-    <title>${escapeHtml(merge(ctx.subject))}</title>${msoHeadHtml(mailFontMsoStack(style.fontFamily))}${webFontHead}
+    <title>${escapeHtml(merge(ctx.subject))}</title>${msoHeadHtml(R.bodyMso, { fonts: [...R.msoFonts].map(([className, stack]) => ({ className, stack })) })}${webFontHead}
     <style type="text/css">
 ${EMAIL_SHELL_CSS}${R.phoneCountdown ? PHONE_COUNTDOWN_CSS : ""}
     </style>
@@ -1650,7 +1845,7 @@ function footerRows(R, b) {
   const { ctx, en } = R;
   const bg = b.background ?? "#f9f9f9";
   const fg = ink(b.textColor ?? "#000000", bg);
-  const small = (size) => typeCss({ font: R.bodyFont, size, lineHeight: "1.5", weight: 400, color: fg });
+  const small = (size) => typeCss({ font: R.bodyFont, size, lineHeight: "1.5", weight: 400, color: fg, word: R.word });
   const company = (ctx.companyLines ?? MAIL_COMPANY_LINES).map((l) => escapeHtml(l)).join("<br>");
   const year = ctx.year ?? new Date().getFullYear();
   // The unsubscribe notice comes pre-rendered in black (consent-copy.ts).
