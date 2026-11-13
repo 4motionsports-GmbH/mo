@@ -21,6 +21,7 @@ import {
   preloadDocProducts,
   renderDocSlots,
   templateAssets,
+  templateOutlookExtras,
   templateSectionRow,
   templateTheme,
 } from "./mail-template-design";
@@ -59,6 +60,7 @@ async function renderWith(
     const slots = renderDocSlots(doc, products, input.language);
     const footer = unsubscribeFooter(opts.unsubscribeUrl, input.language, opts.erasureUrl);
     const ctx = {
+      outlook: templateOutlookExtras(),
       subject: input.subject,
       preheader: input.preheader,
       locale: input.language,

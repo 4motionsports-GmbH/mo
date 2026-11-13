@@ -242,16 +242,19 @@ function slotsFor(doc) {
 test(`random documents render lint-clean with one footer (${RUNS} runs, seed ${SEED})`, () => {
   const next = generator(prng(SEED));
   const merge = (t) => applyMergeFields(t, { firstName: "anna" });
+  // a Rundmail freeze: names become per-recipient placeholders (no VML twin for a button with one)
+  const freeze = (t) => applyMergeFields(t, {}, (n, fb) => `{{mo:fn:${n}|${fb}}}`);
   for (let i = 0; i < RUNS; i++) {
     const raw = next();
     const doc = normalizeMailTemplateDoc(raw);
     const where = `run ${i} (FUZZ_SEED=${SEED}): ${JSON.stringify(raw).slice(0, 400)}`;
     // the generated custom HTML is balanced: no structure error (no false alarm)
     for (const e of validateMailTemplateDoc(doc, "template").errors) assert.doesNotMatch(e.message, /unvollständige Tabellen|Bitte nur den Inhalt/, where);
-    for (const previewPlaceholders of [false, true]) {
-      const ctx = fixtureContext({ merge, slots: slotsFor(doc), previewPlaceholders, assets: { ...FIXTURE_ASSETS, socialLinks: SOCIAL_LINKS } });
+    for (const [previewPlaceholders, mergeFn] of [[false, merge], [true, merge], [false, freeze]]) {
+      const ctx = fixtureContext({ merge: mergeFn, slots: slotsFor(doc), previewPlaceholders, assets: { ...FIXTURE_ASSETS, socialLinks: SOCIAL_LINKS } });
       const html = renderMailTemplateHtml(doc, ctx);
-      const findings = lintOutlookHtml(html, { maxImageWidth: MAIL_CARD_WIDTH, sizeBudgetBytes: 200 * 1024 });
+      // strict: Word's font and line height of every element too (email-outlook.mjs)
+      const findings = lintOutlookHtml(html, { maxImageWidth: MAIL_CARD_WIDTH, sizeBudgetBytes: 200 * 1024, strict: true });
       assert.deepEqual(findings, [], `${where}\n${JSON.stringify(findings.slice(0, 3))}`);
       assert.equal(html.split(MAIL_FOOTER_MARKER).length - 1, 1, `footer marker once — ${where}`);
       assert.doesNotMatch(html, /\bundefined\b|\bNaN\b|="null"|: null;|\[object Object\]/, where);

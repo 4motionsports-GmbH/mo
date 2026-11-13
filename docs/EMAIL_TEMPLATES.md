@@ -276,9 +276,9 @@ normalised document to HTML and plain text: a 600-px card (content width = 600 �
   is the picture's height).
 - **Web fonts** (Oswald, Bebas Neue, Poppins, Playfair Display, Roboto, Open Sans, Lato, Inter
   besides Montserrat, `MAIL_TEMPLATE_FONTS`): one Google-Fonts `<link>` plus `@import`, hidden from
-  Outlook, which gets the classic stack via `msoHeadHtml`. Apple Mail, iOS and Outlook for Mac show
-  them; Gmail and Outlook for Windows the similar system font. The stylesheet link is **not** a
-  tracked link (`freezeLinks`, [`CAMPAIGNS.md`](./CAMPAIGNS.md) §9.2).
+  Outlook, which gets their Windows fonts via `msoHeadHtml` (below, „Outlook“). Apple Mail, iOS and
+  Outlook for Mac show them; Gmail and Outlook for Windows the similar system font. The stylesheet
+  link is **not** a tracked link (`freezeLinks`, [`CAMPAIGNS.md`](./CAMPAIGNS.md) §9.2).
 - **Readability guards:** at a column edge the default top / bottom spacing collapses (explicit
   values stay); a coupon or footer on a coloured background switches to a readable ink; in narrow
   columns the coupon code and the product card shrink so they fit, and the social icons shrink
@@ -328,6 +328,47 @@ intended change: `MAIL_TEMPLATE_FIXTURES=update node --test src/lib/mail-templat
 The footer starts with the marker `<!-- mo:footer -->` (`MAIL_FOOTER_MARKER`): the Rundmail checks
 judge only what the operator wrote, not the legal notice. Images are `https` only; a picture with
 blocked images still shows its `alt` text.
+
+### Outlook
+
+The refinements are on by default; `MAIL_TEMPLATE_OUTLOOK_EXTRAS=off` (`.env.example`, `templateOutlookExtras()` in `mail-template-design.ts`, read by every template render — preview, test mail, Rundmail freeze, personal mails) renders format-2 mails without them — a switch for the day a real Outlook shows a problem; Gmail, Apple Mail and phones look the same either way.
+
+Outlook for Mac, the new Outlook for Windows and Outlook.com are browsers and show a template like
+Gmail does. Classic Outlook for Windows draws with Word ([`EMAIL_DESIGNS.md`](./EMAIL_DESIGNS.md)
+„Outlook for Windows“); for it, format 2 adds (2026-11-13, owner: „on outlook the emails still look
+off as if they miss some of the styling“) — only conditional comments, `mso-*` properties, classes
+that only Word styles, spacing and lines moved onto cells, so every other client renders pixel for
+pixel as before (Chromium at 680 and 375 px):
+
+- **Fonts:** Word takes a stack's first family literally; each font key has the Windows font its stack
+  shows everywhere else without the web font (`mailFontMsoStack`): Montserrat, Poppins → Verdana;
+  Lato, Roboto, Open Sans, Inter → Arial; Playfair Display → Georgia; Oswald → Arial Narrow (an Office
+  font, declared with its `mso-font-alt` Arial); Bebas Neue → Impact. The body gets it from the head's
+  `*` rule; an element in another font (the heading font, a block's own font, the coupon code, a menu,
+  product names — their links and bold words too) carries a class `mso-font-<key>` whose rule
+  `msoHeadHtml` adds after it.
+- **Line heights:** a relative one (`1.5`) also carries its px value (`mso-line-height-alt`); an own
+  line height under 125 % is a minimum for Word, which would cut the tops of the letters.
+- **Buttons:** a rounded or pill button gets a VML twin (`msoRoundButton`: its size, fill, border, label
+  and link, the whole shape clickable; a Rundmail tracks both as one link). A label with a Rundmail
+  first name, or one that would not fit its room on one line in Word's font (`msoTextWidth`), keeps the
+  square cell, which grows with its label.
+- **Spacing:** the space after a list sits in its last row's cells; dividers and the hairlines between
+  product rows are cell borders (Word drops a table's margin).
+- **Size:** the refinements never move a mail into a higher size zone than it has without them (the
+  checks' warning above 80 KB, the 90-KB budget): first the twins of the product rows' buttons go, then
+  all twins, then everything — a mail above the budget renders exactly as before.
+  `renderMailTemplateHtml(doc, { …, outlook: false })` renders without them.
+
+Outlook for Windows cannot show rounded corners (card, sections, coupon, product cards, pictures —
+square there, border and fill stay), web fonts (the fonts above instead), the phone layout (columns
+stay side by side, the phone countdown is hidden from it), `object-fit` (a product picture that is not
+square is stretched), animations (first frame); Outlook.com's dark mode re-colours the mail. A raw
+version-1 document keeps its output byte for byte. The tests lint the starters, the showcases and the
+fuzz documents (send, preview, Rundmail freeze) with `lintOutlookHtml(html, { strict: true })` —
+`font-word` (Word shows another font than every other client), `line-height-word`; always on:
+`table-margin`, the head's fonts (`font-word-unsafe`, `font-word-alt`, `font-word-class`),
+`vml-roundrect`. In a real Outlook: a Rundmail test mail to an Outlook for Windows address.
 
 ## 5. Storage, versions, import / export
 

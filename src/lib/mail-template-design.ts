@@ -86,6 +86,17 @@ export type MailSlot = {
 /** The kinds a template may be the design of (marketing mails only — DOI and summary keep the code designs). */
 export const TEMPLATE_DESIGN_KINDS = ["marketing", "campaign"] as const;
 
+
+/**
+ * The Outlook refinements of format-2 templates (fonts per role, Word line
+ * heights, VML twins of rounded buttons — mail-template-render.mjs, 13.11.2026)
+ * are on unless MAIL_TEMPLATE_OUTLOOK_EXTRAS=off: a switch for the day a real
+ * Outlook shows a problem, without a code change (Gmail, Apple Mail and phones
+ * render the same either way).
+ */
+export function templateOutlookExtras(): boolean {
+  return (process.env.MAIL_TEMPLATE_OUTLOOK_EXTRAS ?? "").trim().toLowerCase() !== "off";
+}
 export function isTemplateDesignKind(kind: string): boolean {
   return (TEMPLATE_DESIGN_KINDS as readonly string[]).includes(kind);
 }
@@ -354,6 +365,7 @@ export function templateDesignFromDoc(
         const language = opts.locale === "en" ? "en" : "de";
         const firstName = rd.recipientFirstName ?? null;
         const html = renderMailTemplateHtml(doc, {
+          outlook: templateOutlookExtras(),
           subject: opts.subject,
           preheader: opts.preheader ?? null,
           locale: language,
