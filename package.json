@@ -13,6 +13,7 @@
     "verify:shopify": "node --env-file=.env scripts/verify-shopify-auth.mjs",
     "shopify:webhooks": "node --env-file-if-exists=.env scripts/register-shopify-webhooks.mjs",
     "verify:pingen": "node --env-file=.env scripts/verify-pingen.mjs",
+    "verify:gift-vouchers": "node --env-file=.env scripts/verify-gift-vouchers.mjs",
     "verify:customer-account": "node --env-file=.env scripts/verify-customer-account.mjs",
     "verify:widget": "node scripts/check-live-widget.mjs",
     "verify:live": "node --env-file=.env scripts/verify-live-kpis.mjs",
