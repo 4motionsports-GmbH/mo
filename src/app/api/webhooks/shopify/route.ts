@@ -38,6 +38,14 @@
 // lib/shopify-webhook-customers.ts — deduplicated by X-Shopify-Webhook-Id, so a
 // Shopify retry never applies a delivery twice.
 //
+// GESCHENKGUTSCHEINE (docs/GIFT_VOUCHERS.md, lib/gift-voucher-issue.ts): in the
+// same order branch, independent of SHOPIFY_CUSTOMER_SYNC_ENABLED, orders/paid
+// records one row per voucher unit (fast, database only) and the cards are
+// issued after the answer (after(); the cron /api/cron/gift-vouchers retries);
+// orders/cancelled + orders/updated cancel or flag the units the order no
+// longer pays for, the Shopify deactivation runs after the answer. A failed
+// record answers 500 so Shopify redelivers (idempotent per order line unit).
+//
 // Same ingest contract as the other webhooks: 503 without a secret (fail closed),
 // 401 on a bad signature, 500 only on a real processing failure of a customer /
 // order topic (so Shopify retries safely — those are deduplicated); catalog
@@ -78,6 +86,12 @@ import {
   type PendingKind,
 } from "@/lib/shopify-throttle-gate";
 import { ingestShopifyOrder, noteUnresolvedMarker } from "@/lib/mo-orders-store";
+import {
+  handleGiftVoucherOrderChange,
+  processGiftVoucherOrder,
+  processGiftVoucherOrderChange,
+  recordGiftVoucherOrder,
+} from "@/lib/gift-voucher-issue";
 import { reportError } from "@/lib/observability";
 
 // A single-product Shopify fetch + (optional) one embedding + two blob writes,
@@ -130,6 +144,8 @@ export async function POST(req: Request) {
       }
       let outcome: WebhookOutcome;
       let attribution: Awaited<ReturnType<typeof ingestShopifyOrder>> | null = null;
+      // Gift-voucher work that runs after the answer (issuing, revocations).
+      let giftVoucherFollowUp: (() => Promise<void>) | null = null;
       // Mirror writes wait for SHOPIFY_CUSTOMER_SYNC_ENABLED (the import and
       // the reconcile catch up); the attribution below does not.
       const syncOff = webhookNeedsCustomerSync(routeKind) && !isShopifyCustomerSyncEnabled();
@@ -149,6 +165,19 @@ export async function POST(req: Request) {
             attribution = await ingestShopifyOrder(payload, { updateOnly: true });
             if (!attribution.ok) outcome = { ok: false, action: `attribution:${attribution.reason}` };
           }
+          // Geschenkgutscheine (docs/GIFT_VOUCHERS.md) — independent of
+          // SHOPIFY_CUSTOMER_SYNC_ENABLED. Synchronous part only (fast, DB):
+          // orders/paid records one row per voucher unit, an order change
+          // cancels / flags what the order no longer pays for. The Shopify
+          // calls run after the answer; a failed record makes Shopify
+          // redeliver (idempotent per order line unit).
+          const gv = await giftVoucherOrderStep(t, payload);
+          if (!gv.ok) {
+            if (outcome.ok) outcome = { ok: false, action: gv.action };
+          } else if (outcome.ok && gv.note) {
+            outcome = { ok: true, action: `${outcome.action} ${gv.note}` };
+          }
+          giftVoucherFollowUp = gv.followUp;
         }
       } else if (syncOff) {
         outcome = { ok: true, action: "ignored:sync-off" };
@@ -166,6 +195,9 @@ export async function POST(req: Request) {
         // bulk_operations/finish: the import's next step polls the operation itself.
         outcome = { ok: true, action: "noted" };
       }
+      // Recorded vouchers are issued (and flagged ones revoked) whatever the
+      // answer is: a redelivery finds them done (leases, idempotent steps).
+      if (giftVoucherFollowUp) after(giftVoucherFollowUp);
       if (!outcome.ok) {
         // Let Shopify retry: forget the delivery so the retry is applied.
         await forgetWebhookDelivery(webhookId);
@@ -215,6 +247,48 @@ export async function POST(req: Request) {
   } catch (err) {
     reportError(err, { route: "api/webhooks/shopify", phase: "ingest", topic: topic ?? "none" });
     return NextResponse.json({ ok: false, error: "Ingest failed" }, { status: 500 });
+  }
+}
+
+/**
+ * The gift-voucher part of an order delivery. orders/paid → record the
+ * voucher units (recordGiftVoucherOrder) and issue them after the answer;
+ * orders/updated + orders/cancelled → revoke what the order no longer pays
+ * for (handleGiftVoucherOrderChange) and finish it after the answer. Never
+ * throws: `ok: false` makes the caller forget the delivery (Shopify
+ * redelivers); `note` is appended to the stored outcome (≤ 120 characters).
+ */
+async function giftVoucherOrderStep(
+  topic: string,
+  payload: unknown
+): Promise<{ ok: boolean; action: string; note: string | null; followUp: (() => Promise<void>) | null }> {
+  try {
+    if (topic === "orders/paid") {
+      const r = await recordGiftVoucherOrder(payload);
+      if (!r.ok) return { ok: false, action: r.action, note: null, followUp: null };
+      const orderId = r.orderId;
+      return {
+        ok: true,
+        action: r.action,
+        note: r.created > 0 ? `gv:${r.created}` : null,
+        followUp: orderId && r.created > 0 ? () => processGiftVoucherOrder(orderId) : null,
+      };
+    }
+    if (topic === "orders/updated" || topic === "orders/cancelled") {
+      const r = await handleGiftVoucherOrderChange(payload, topic);
+      if (!r.ok) return { ok: false, action: r.action, note: null, followUp: null };
+      const followUp = r.followUp ?? null;
+      return {
+        ok: true,
+        action: r.action,
+        note: followUp ? "gv:revoke" : null,
+        followUp: followUp ? () => processGiftVoucherOrderChange(followUp) : null,
+      };
+    }
+    return { ok: true, action: "gift_vouchers:not-relevant", note: null, followUp: null };
+  } catch (err) {
+    reportError(err, { route: "api/webhooks/shopify", phase: "gift-vouchers", topic });
+    return { ok: false, action: "gift_vouchers:error", note: null, followUp: null };
   }
 }
 

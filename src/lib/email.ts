@@ -18,7 +18,9 @@
 // Bulk mail (Rundmail, mailing-send.ts) goes through sendEmailBatch: Resend's
 // batch endpoint, up to 100 separate messages per request (one recipient each
 // — never several addresses in one message), with an idempotency key so a
-// retry after a timeout can never deliver a batch twice.
+// retry after a timeout can never deliver a batch twice. A single send may
+// carry attachments and its own idempotency key too (the gift-voucher mail,
+// gift-voucher-mail.ts); the batch endpoint takes no attachments.
 
 import { Resend } from "resend";
 import { reportError } from "./observability";
@@ -68,8 +70,30 @@ export interface SendEmailInput {
   bulk?: boolean;
   /** Resend tags (ASCII letters, digits, _ and - only) — filterable in Resend. */
   tags?: Array<{ name: string; value: string }>;
+  /**
+   * Files attached to the mail (Resend: at most 40 MB per mail, content as
+   * a Buffer or base64 string). Only transactional sends that deliver a
+   * document use it (the gift-voucher PDF, gift-voucher-mail.ts).
+   */
+  attachments?: SendEmailAttachment[];
+  /**
+   * Resend `Idempotency-Key` (≤ 256 characters, remembered 24 h): a repeat of
+   * the same key is not delivered again — Resend answers 409
+   * `invalid_idempotent_request` when the payload differs, or the first
+   * response when it is identical. Use one key per logical send attempt
+   * (e.g. gift-voucher-mail-<id>-<attempt>).
+   */
+  idempotencyKey?: string;
   /** Tag used in error logs to identify which mail failed. */
   kind: string;
+}
+
+/** One attached file (SendEmailInput.attachments). */
+export interface SendEmailAttachment {
+  filename: string;
+  content: Buffer | string;
+  /** Derived from the file name when omitted. */
+  contentType?: string;
 }
 
 export type SendEmailResult =
@@ -141,16 +165,29 @@ export async function sendEmail(input: SendEmailInput): Promise<SendEmailResult>
     // Custom RFC-5322 headers (Message-ID + reply chain, unsubscribe, bulk)
     // only when set, so plain callers (e.g. the contact form) ship none.
     const headers = outboundHeaders(input);
-    const result = await resend.emails.send({
-      from,
-      to: input.to,
-      subject: input.subject,
-      text: input.text,
-      html: input.html,
-      ...(input.replyTo ? { replyTo: input.replyTo } : {}),
-      ...(Object.keys(headers).length > 0 ? { headers } : {}),
-      ...(input.tags && input.tags.length > 0 ? { tags: input.tags } : {}),
-    });
+    const result = await resend.emails.send(
+      {
+        from,
+        to: input.to,
+        subject: input.subject,
+        text: input.text,
+        html: input.html,
+        ...(input.replyTo ? { replyTo: input.replyTo } : {}),
+        ...(Object.keys(headers).length > 0 ? { headers } : {}),
+        ...(input.tags && input.tags.length > 0 ? { tags: input.tags } : {}),
+        ...(input.attachments && input.attachments.length > 0
+          ? {
+              attachments: input.attachments.map((a) => ({
+                filename: a.filename,
+                content: a.content,
+                ...(a.contentType ? { contentType: a.contentType } : {}),
+              })),
+            }
+          : {}),
+      },
+      // Callers without a key send exactly as before (no options).
+      input.idempotencyKey ? { idempotencyKey: input.idempotencyKey } : undefined
+    );
     if (result.error) {
       reportError(result.error, { route: "lib/email", kind: input.kind, phase: "resend" });
       return { ok: false, skipped: false, error: result.error };
