@@ -47,7 +47,7 @@ the pooled one. To add a migration, drop a new file with the next number
 DDL (`--` comments and `;` statement separators; no dollar-quoted function
 bodies, which the lightweight splitter doesn't parse). Production migrations are
 run manually by the maintainer. The latest migration is
-`0082_rundmail_font_clicks.sql` (data only); the [table index](#table-index--every-table-and-where-it-is-documented)
+`0083_gift_vouchers.sql` (the Geschenkgutscheine — run it before the deploy that reads it); the [table index](#table-index--every-table-and-where-it-is-documented)
 below names the migration that created each table.
 
 ## Schema overview
@@ -211,7 +211,7 @@ The schema follows the two-cluster split whose lawful bases and windows
 
 ## Table index — every table and where it is documented
 
-Every base table in the schema (migrations `0001`–`0081`; dropped tables
+Every base table in the schema (migrations `0001`–`0083`; dropped tables
 `bestandskunden_suppression_list`, `email_templates`, `email_template_assignments`
 are gone since `0029` / `0049`). Columns of the tables marked *here* are in the
 sections above; the others are owned by the linked doc. Retention and erasure of
@@ -244,9 +244,10 @@ every table: [`DATA_RETENTION.md`](./DATA_RETENTION.md).
 | view `customer_overview` | 0068 | here |
 | `customer_link_grants` | 0073 | here („The customer entity“) |
 | `campaign_letters` | 0074 | here + [`CAMPAIGNS.md`](./CAMPAIGNS.md) §8 |
-| `admin_settings` | 0078 | `key` (PK), `value` (jsonb), `updated_at` — operator settings edited in Einstellungen, parsed and clamped at read time (missing / broken → the code default). Keys: `contact_frequency` `{ maxMails, windowDays }` — the soft Kontakthäufigkeit warning ([`CAMPAIGNS.md`](./CAMPAIGNS.md) §3, [`admin-settings-store.ts`](../src/lib/admin-settings-store.ts)). Configuration: kept by `db:reset` |
+| `admin_settings` | 0078 | `key` (PK), `value` (jsonb), `updated_at` — operator settings edited in Einstellungen, parsed and clamped at read time (missing / broken → the code default). Keys: `contact_frequency` `{ maxMails, windowDays }` — the soft Kontakthäufigkeit warning ([`CAMPAIGNS.md`](./CAMPAIGNS.md) §3, [`admin-settings-store.ts`](../src/lib/admin-settings-store.ts)); `gift_vouchers` `{ salesEnabled, aiSuggestions, photoUploads, reviewPrintWithPhoto }` — the settings of Gutscheine → „Einrichtung“ ([`GIFT_VOUCHERS.md`](./GIFT_VOUCHERS.md) §8). Configuration: kept by `db:reset` |
 | `mail_templates` | 0081 | `name`, `description`, `doc` (jsonb object — the block document), `version` (+1 per save), `archived_at`, `created_at`, `updated_at` — the operator's e-mail templates ([`EMAIL_TEMPLATES.md`](./EMAIL_TEMPLATES.md) §5). Configuration: kept by `db:reset` |
 | `campaign_mailings`, `campaign_mailing_batches` | 0081 | the content, frozen release and run state of a Rundmail (one row per campaign, cascade) and one row per Resend batch call — [`CAMPAIGNS.md`](./CAMPAIGNS.md) §9.7 |
+| `gift_voucher_drafts`, `gift_vouchers`, `gift_voucher_print_jobs` | 0083 | the Geschenkgutscheine: the anonymous design before payment, one row per voucher unit (the Shopify gift card with Mo's encrypted code; `customer_id` SET NULL, `draft_id` SET NULL), one Premium-Karte print job per voucher (cascade) — columns [`GIFT_VOUCHERS.md`](./GIFT_VOUCHERS.md) §10. Data: wiped by `db:reset` |
 | `_migrations` | runner | applied migration names (`scripts/migrate.mjs`) |
 
 ## Local database (development)
@@ -283,7 +284,9 @@ correspondence, letters, bundles, feedback, Q&A, reports and attribution. Withou
 refuses to write into tables that already hold rows; re-running it with `--reset` recreates the same
 data. Not seeded: OAuth tokens, pending sign-ins, merge conflicts, erasure tombstones,
 `campaign_letters`, `customer_link_grants` — all of them empty after `--reset` (the first four are
-in its truncate list, the last two go with `TRUNCATE … CASCADE` over their `customers` FK).
+in its truncate list, the last two go with `TRUNCATE … CASCADE` over their `customers` FK). Not seeded
+either: the Geschenkgutschein tables (0083) — `--reset` empties `gift_vouchers` and `gift_voucher_print_jobs`
+through the same CASCADE, `gift_voucher_drafts` keeps its rows.
 
 `npm run db:reset` (`scripts/reset-test-data.mjs`, gated on `ALLOW_DB_RESET=true`; locally
 together with `NEON_FETCH_ENDPOINT`) is the destructive `TRUNCATE … RESTART IDENTITY` of every

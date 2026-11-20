@@ -76,7 +76,9 @@ The composers (`summary-email.ts`, `consent-copy.ts` (DOI), `marketing-email.ts`
 `campaign-email.ts`) know nothing about the active design: the send and preview entry points resolve
 the stored selection (`email-design-store.ts`, 5-minute cache, fail-soft → classic) and render inside
 `withEmailDesign(...)`; every public render helper checks for an override first and otherwise falls
-back to the classic implementation.
+back to the classic implementation. The Geschenkgutschein mail (`gift-voucher-mail.ts`, kind `gift_voucher`,
+[`GIFT_VOUCHERS.md`](./GIFT_VOUCHERS.md) §4.5) asks for its own kind, which is no selectable type — it always renders in
+the classic design, from the standard sender.
 
 ## Templates from the admin („Vorlagen“) and sender identities
 

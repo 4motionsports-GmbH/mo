@@ -73,6 +73,13 @@ fresh within 300 s. **Bucket:** see "Rate limits" below.
 | GET | `/api/configurator/assortment` (configurator page only) | origin | `products` | §3a |
 | GET | `/api/configurator/search` (configurator page only) | origin | `products` | §3b |
 | GET | `/api/configurator/offer` (configurator page only) | origin | `products` | §3c |
+| GET | `/api/gift-vouchers/config` (voucher page only) | origin | `products` | §3d |
+| GET | `/api/gift-vouchers/fonts/{file}` (voucher page only) | origin | `products` | §3d |
+| POST | `/api/gift-vouchers/photo` (voucher page only) | secret | `gift-voucher` + `gift-voucher-ip` | §3d |
+| POST | `/api/gift-vouchers/suggest` (voucher page only) | secret | `gift-voucher-ai` + `gift-voucher-ip` | §3d |
+| POST | `/api/gift-vouchers/preview` (voucher page only) | secret | `gift-voucher-render` + `gift-voucher-ip` | §3d |
+| POST | `/api/gift-vouchers/drafts` (voucher page only) | secret | `gift-voucher` + `gift-voucher-ip` | §3d |
+| POST | `/api/gift-vouchers/balance` (voucher page only) | secret | `gift-voucher-balance` | §3d |
 | POST | `/api/contact` | secret | `chat` + `contact-ip` | §4 |
 | POST | `/api/kpi` | origin | `kpi` | §5 |
 | POST | `/api/capture-email` | secret | `chat` + `capture-recipient` | §7.1 |
@@ -104,9 +111,12 @@ fresh within 300 s. **Bucket:** see "Rate limits" below.
 CORS and no secret — a mail client sends no `Origin` and no custom header; protected by unguessable
 or signed tokens): `GET /api/confirm-marketing` (§7.2), `GET /api/unsubscribe` (§7.3),
 `GET/POST /api/erase-data` (§11.1), `GET /api/r/{token}` (§11.2), `GET /api/newsletter-rating`,
-`GET /api/email-countdown/{token}`, `GET /api/email-hero-image/{file}`. Server to server (provider
-signature over the raw body): `POST /api/webhooks/shopify` (§11.3), `POST /api/webhooks/resend`,
-`POST /api/webhooks/pingen`, `POST /api/inbound/resend`.
+`GET /api/email-countdown/{token}`, `GET /api/email-hero-image/{file}`,
+`GET /api/gift-vouchers/download?t=…` (§3d). Server to server (provider signature over the raw body):
+`POST /api/webhooks/shopify` (§11.3), `POST /api/webhooks/resend`, `POST /api/webhooks/pingen`,
+`POST /api/webhooks/printone`, `POST /api/inbound/resend`; print.one's renderer also loads
+`GET /api/gift-vouchers/print-asset/{file}` (a 192-bit token in the file name — backend doc
+[`GIFT_VOUCHERS.md`](../GIFT_VOUCHERS.md) §5.1).
 
 ### Security model
 
@@ -136,13 +146,18 @@ Every `429` carries `Retry-After` (seconds) and the error envelope below.
 | Bucket | Limit | Key | Endpoints |
 | --- | --- | --- | --- |
 | `chat` | 20 / 60 s | session | `/api/chat`, `/api/contact`, `/api/capture-email`, `/api/chat-marketing-opt-in`, `/api/auth/link`, `/api/auth/me`, every `/api/account/*`, App Proxy whoami — so `/api/auth/me` polling uses chat quota |
-| `products` | 60 / 60 s | session | `/api/products`, `/api/consent-copy` |
+| `products` | 60 / 60 s | session | `/api/products`, `/api/consent-copy`, `/api/configurator/*`, `/api/gift-vouchers/config`, `/api/gift-vouchers/fonts/*` |
 | `kpi` | 120 / 60 s | session | `/api/kpi`, `/api/attribution/token` |
 | `tts` | 20 / 5 min | session | `/api/tts` single-shot |
 | `tts-stream` | 120 / 5 min | session | `/api/tts` with `stream: true` |
 | `feedback` | 5 / 5 min | session | `/api/feedback` |
 | `contact-ip` | 8 / 60 min | client IP | `/api/contact` (in addition to `chat`) |
 | `capture-recipient` | 3 / 60 min | the e-mail address | `/api/capture-email` and `/api/chat-marketing-opt-in` together (in addition to `chat`) |
+| `gift-voucher` | 40 / 10 min | session | `/api/gift-vouchers/photo`, `/api/gift-vouchers/drafts` |
+| `gift-voucher-ai` | 12 / 10 min | session | `/api/gift-vouchers/suggest` |
+| `gift-voucher-render` | 30 / 10 min | session | `/api/gift-vouchers/preview` |
+| `gift-voucher-ip` | 120 / 60 min | client IP | `/api/gift-vouchers/photo`, `suggest`, `preview`, `drafts` (in addition to their session bucket) and the mail link `download` |
+| `gift-voucher-balance` | 10 / 10 min | client IP | `/api/gift-vouchers/balance` |
 
 ### Error envelope
 
@@ -157,17 +172,17 @@ endpoint answers with which status is listed in its section.
 
 | `code` | Status | Meaning |
 | --- | --- | --- |
-| `bad_request` | 400 (404 on `/api/account/conversations/{id}` and `/api/account/summary` for a conversation that does not exist or is not the customer's) | Invalid JSON, a missing or invalid field (incl. an invalid e-mail on `/api/capture-email`) |
+| `bad_request` | 400 (404 on `/api/account/conversations/{id}` and `/api/account/summary` for a conversation that does not exist or is not the customer's; on the voucher page's routes 409 while the shop does not sell vouchers and 415 for a photo that is not JPEG / PNG / WebP, §3d) | Invalid JSON, a missing or invalid field (incl. an invalid e-mail on `/api/capture-email`) |
 | `unauthorized` | 401 | Missing or wrong `x-ms-chat-key`; on `signed-in` endpoints also no live sign-in (message „Nicht angemeldet“ or „Sitzung abgelaufen“) |
 | `forbidden` | 403 | Origin not in the allowlist (the answer carries no CORS headers, so a browser reports a network error) |
-| `not_found` | 404 | `/api/account/marketing-opt-in`: the customer row does not exist |
+| `not_found` | 404 | `/api/account/marketing-opt-in`: the customer row does not exist; `/api/gift-vouchers/fonts/{file}`: a file that is not served |
 | `rate_limited` | 429 | Bucket exhausted; `Retry-After` set |
-| `payload_too_large` | 400 (`/api/chat`, `/api/products`), 413 (`/api/feedback`) | Over a size cap |
+| `payload_too_large` | 400 (`/api/chat`, `/api/products`), 413 (`/api/feedback`, `/api/gift-vouchers/*`) | Over a size cap |
 | `transactional_consent_required` | 400 | `/api/capture-email` without the transactional tick |
 | `marketing_consent_required` | 400 | `/api/chat-marketing-opt-in`, `/api/account/marketing-opt-in` without `marketingConsent: true` |
 | `invalid_email` | 400 | `/api/chat-marketing-opt-in` |
 | `no_verified_email` | 422 | `/api/account/marketing-opt-in`: the customer has no usable address (widget fallback: CONSENT_CONTRACT.md §3.2) |
-| `upstream_unavailable` | 502 / 503 | A provider failed (mail, TTS: 502) or nothing could be stored (no database: 503) |
+| `upstream_unavailable` | 502 / 503 | A provider failed (mail, TTS: 502) or nothing could be stored (no database: 503); on the voucher page's routes also a feature switched off or a render that failed (503) and the model or the photo store failing (502), §3d |
 | `internal_error` | 500 | Anything else |
 
 The `message` is user-safe and never leaks internals; routes with user-facing messages answer in the
@@ -1408,6 +1423,169 @@ whitespace collapsed. A failed request or any other shape = no offer: the page s
 is the shop's own `GET /discount/<code>` (same origin as the page), not a backend call. Errors: §1 envelope
 (`429`, `500 internal_error`).
 
+## 3d. Geschenkgutscheine — the voucher page (since 2026-11-20)
+
+The voucher page `/pages/gutschein` (theme `sections/ms-gift-voucher.liquid` + `assets/ms-gift-voucher.js`;
+backend: [`GIFT_VOUCHERS.md`](../GIFT_VOUCHERS.md)) — the page, not the widget — calls these routes on the
+AI Advisor's „Backend URL“. The widget's transport rules hold: only the allow-listed headers (§0 rule 4),
+never `credentials`; every POST sends `x-ms-chat-key` and a `Content-Type`; JSON answers of the POST routes
+are `Cache-Control: no-store`. Errors are the §1 envelope plus **`field`** — the input to mark (`body`,
+`designKey`, `photoId`, `amountCents`, `recipientName`, `senderName`, `message`, `delivery`, `address`
+(missing), `address.name` / `.line1` / `.line2` / `.postalCode` / `.city` / `.country`, `occasion`, `tone`,
+`code`, `photo`). Messages are German, English for `locale: "en"` (the body's `locale`, else `?locale=` /
+`x-ms-locale`; `en-GB` → `en`). Without the rate limiter (no KV) every route answers 500.
+
+**While the shop does not sell** (`config` → `available: false`) `photo`, `suggest`, `preview` and `drafts`
+answer **409** `bad_request` („Gutscheine sind gerade nicht verfügbar.“) — show the fallback. `balance`
+keeps working (cards bought earlier stay valid).
+
+### `GET /api/gift-vouchers/config?locale=de|en`
+
+origin, `products` bucket, `Cache-Control: public, max-age=60` (an admin switch reaches the page within about
+two minutes). No amounts or prices — those are the voucher product's variants (Liquid).
+
+```jsonc
+{
+  "ok": true,
+  "available": true,
+  "unavailableReason": null,        // "disabled" (GIFT_VOUCHERS_ENABLED or „Verkauf im Shop“ off) | "not_configured" (Shopify, database, migration 0083)
+  "designs": [{
+    "key": "classic",               // classic | birthday | christmas | thanks | training | photo („Eigenes Foto“)
+    "name": "Klassisch", "description": "…", "photo": false,
+    "colors": { "background": "#15171a", "ink": "#f3e7c6", "accent": "#008ccb", "muted": "#9aa3ab", "insideBackground": "#fbfaf6", "insideInk": "#1b1d20" },
+    "previewSvg": { "landscape": "<svg …>", "square": "<svg …>" }  // the decorative background only (no text); "" when it could not be built
+  }],
+  "features": { "ai": true, "photo": true, "print": true },        // all false while not available
+  "limits": { "recipientName": 40, "senderName": 40, "message": 350, "messageLines": 8, "photoMaxBytes": 4000000 },
+  "occasions": [{ "key": "geburtstag", "label": "Geburtstag" }],    // geburtstag, weihnachten, danke, sport, einfach_so
+  "tones": [{ "key": "herzlich", "label": "Herzlich" }],           // herzlich, witzig, sportlich, kurz
+  "print": { "countries": ["DE"], "deliveryNote": "3–6 Werktage" },
+  "validity": { "years": 3, "untilExample": "31.12.2029" },       // { years: 0, untilExample: null } = never expires
+  "termsUrl": "https://www.motionsports.de/pages/gutscheinbedingungen",
+  "fonts": { "script": "https://mo.motionsports.de/api/gift-vouchers/fonts/caveat-500.ttf" }
+}
+```
+
+`features.ai` = `ANTHROPIC_API_KEY` and „KI-Textvorschläge“; `photo` = the Blob store and „Eigene Fotos“;
+`print` = the Premium-Karte can be fulfilled (in-house, or print.one configured and released —
+GIFT_VOUCHERS.md §5.2). Errors: `429`, `500`.
+
+### `GET /api/gift-vouchers/fonts/{file}`
+
+The handwriting font of the live preview (`@font-face`; the shop loads no Google Fonts): `caveat-500.ttf`,
+`caveat-700.ttf`, `font/ttf`, `Cache-Control: public, max-age=31536000, immutable`. origin, `products`.
+Any other name: `404 not_found`.
+
+### `POST /api/gift-vouchers/photo`
+
+The photo of „Eigenes Foto“ as the **raw body** (no multipart, no base64), `Content-Type` `image/jpeg` |
+`image/png` | `image/webp`, at most 4,000,000 bytes — Vercel refuses requests above 4.5 MB with a non-JSON
+413, so the page scales the photo down first (≤ 2400 px, JPEG). Mo sniffs the bytes, turns the picture
+upright, converts it to sRGB, scales it to at most 2400 px on the longer side and stores it as JPEG without
+any metadata (EXIF, GPS).
+
+```jsonc
+{ "ok": true, "photoId": "kX3…", "width": 1600, "height": 2400 }   // photoId goes into preview and drafts
+```
+
+Errors, all with `field: "photo"`: `415 bad_request` (not JPEG / PNG / WebP), `413 payload_too_large` (over
+4 MB or 40 megapixels), `400 bad_request` (empty, animated, unreadable, shorter side under 500 px),
+`503 upstream_unavailable` (photos switched off or no Blob store), `502 upstream_unavailable` (storing
+failed); `409`, `429`, `500`.
+
+### `POST /api/gift-vouchers/suggest`
+
+„Mit Mo formulieren“. Body `{ "occasion": "geburtstag", "tone": "herzlich", "locale": "de" }` — occasion and
+tone from the config's lists (missing → `einfach_so` / `herzlich`, unknown → `400` with `field`). Nothing
+else is read: no name ever reaches the model.
+
+```jsonc
+{ "ok": true, "suggestions": ["Hallo {{fuer}},\nfür dein nächstes Training …", "…"] }   // 1–3 texts
+```
+
+Each text has at most 300 characters and 6 lines, no emoji, and no placeholder other than these two.
+`{{fuer}}` normally stands in a greeting on its own first line (Mo splits „Hallo {{fuer}}, text…“ into two
+lines), `{{von}}` rarely (a closing line with `{{von}}` is dropped — the card prints „— <Von>“ under the
+message anyway). The page replaces both with the names, drops a line whose placeholder stays empty, and labels
+every text „KI-Vorschlag“. Errors:
+`503 upstream_unavailable` (suggestions switched off or no AI key), `502 upstream_unavailable` (the model
+failed or wrote nothing usable), `400` / `413` (body), `409`, `429`, `500`.
+
+### `POST /api/gift-vouchers/preview`
+
+The voucher exactly as it will be printed, for step 5. Body: `{ designKey, amountCents, recipientName?,
+senderName?, message?, photoId?, locale?, layout?: "landscape" | "square" }` (`landscape` for the PDF —
+default —, `square` for the Premium-Karte).
+
+```jsonc
+{ "ok": true, "front": "data:image/jpeg;base64,…", "inside": "data:image/jpeg;base64,…", "textRemoved": false }
+```
+
+A sample: diagonal „MUSTER“ („SAMPLE“ in English), the code „XXXX XXXX XXXX XXXX“, „MUSTER“ in place of the
+voucher number, „Gültig bis“ as for a voucher bought today. 1000 px wide — landscape front and inside 1000 × 705; square front
+1000 × 1000 and the opened card (message | code) 2000 × 1000. Texts go through the draft's validation;
+`textRemoved: true` = characters the fonts cannot print (emoji …) were dropped — tell the customer. Errors:
+`400` with `field` (validation; `amountCents` missing; `photoId` no longer available — upload again),
+`413`, `409`, `503 upstream_unavailable` (rendering failed), `429`, `500`.
+
+### `POST /api/gift-vouchers/drafts`
+
+Saves the design right before „Jetzt kaufen“ / „In den Warenkorb“.
+
+```jsonc
+// request
+{
+  "designKey": "photo", "photoId": "kX3…",            // photoId required for the photo design (refused while features.photo is off), ignored for the others
+  "amountCents": 5000,                                 // optional, preview only — the price is always the ordered variant's
+  "recipientName": "Lena", "senderName": "Jonas",      // ≤ 40 characters each, one line
+  "message": "…",                                       // ≤ 350 characters; lines beyond 8 are joined onto the last
+  "delivery": "print",                                 // "pdf" (default) | "print" — only while features.print
+  "address": { "name": "Lena Muster", "line1": "Musterstraße 1", "line2": null, "postalCode": "12345", "city": "Musterstadt", "country": "DE" },
+  "locale": "de"                                       // the language of the voucher, its PDF and its mail
+}
+// response
+{ "ok": true, "token": "Qm9…", "textRemoved": false }   // token: 32 characters base64url
+```
+
+The address (only for `print`): name ≤ 60, street and house number ≤ 80 with a digit, addition ≤ 80, a German
+postcode of five digits, town ≤ 60, a country of `config.print.countries` (omitted = the only one); nothing is
+shortened or changed silently. Errors: `400 bad_request` with `field`, `413`, `409`,
+`503 upstream_unavailable` (no database, or the draft could not be stored), `429`, `500`.
+
+**The cart lines** (`POST /cart/add.js`, quantity 1 each): the voucher variant with the properties „Gutschein
+für“ (the recipient or „—“), „Motiv“ (the design's name), „Versand“ („PDF per E-Mail“ | „Premium-Karte per
+Post“) and the private **`_mo_gv`** = the token; for the card the add-on product's variant with „Für Gutschein
+an“ and `_mo_gv`. Mo identifies both lines by their **product**; `_mo_gv` only links the design — the amount
+is the variant's price, a missing or unknown token gives the design „Klassisch“ without texts, and one add-on
+line pays for as many voucher units with its token as its quantity.
+
+### `POST /api/gift-vouchers/balance`
+
+„Guthaben prüfen“. Body `{ "code": "ABCD EFGH JKLM NPQR", "locale": "de" }` (any case; spaces, hyphens and
+dots between the groups are fine).
+
+```jsonc
+{ "ok": true, "found": false }
+{ "ok": true, "found": true, "balanceCents": 2500, "amountCents": 5000, "currency": "EUR",
+  "expiresOn": "2029-12-31",                    // null = never expires
+  "state": "active" }                           // active | used | expired (after that day, Berlin) | deactivated
+```
+
+Only vouchers Mo issued are found (issued or deactivated); an unknown code and every other voucher answer
+`found: false` and nothing else. The balance is read live from Shopify (≤ 4 s), else the stored one.
+Errors: `400 bad_request` with `field: "code"` (not shaped like a code — says nothing about stored codes),
+`400` / `413` (body), `503 upstream_unavailable` (no database), `429` (10 per 10 minutes per IP), `500`.
+
+### `GET /api/gift-vouchers/download?t=<token>` (mail link)
+
+The voucher PDF behind the button of the voucher mail — a top-level navigation from a mail client, no origin
+guard and no secret; the 32-character token is the bearer secret (only its hash is stored; a new mail
+rotates it). `200 application/pdf`, `Content-Disposition: attachment; filename="Gutschein-G-2026-00042.pdf"`,
+`Cache-Control: no-store, private`, `X-Robots-Tag: noindex, nofollow`, `Referrer-Policy: no-referrer`.
+Plain-text answers (German, English with `?locale=en`): `404` (unknown, rotated or not issued — deactivated,
+cancelled), `503` (the voucher cannot be rendered right now), `429` with `Retry-After` (`gift-voucher-ip`),
+`500`.
+
 ---
 
 ## 4. `POST /api/contact`
@@ -2599,6 +2777,7 @@ integration: send `x-ms-locale` on every backend call from `/en` (and `de` or no
 | `GET /api/account/summary` | query, header | The PDF and its filename. |
 | `GET /api/account/export` | query, header | The download filename and error messages. |
 | `POST /api/account/erase` | query, header | Error messages. |
+| `/api/gift-vouchers/*` (the voucher page, §3d) | body (POST), query, header | The messages; `config`: design names, occasions, tones, the validity example; a draft's `locale` is the language of the voucher, its PDF and its mail. The mail link `download` reads `?locale=` for its plain-text messages only. |
 | `GET`/`PATCH`/`DELETE /api/account/conversations/{id}` | query, header | Error messages. |
 | Mail links (`/api/confirm-marketing`, `/api/unsubscribe`, `/api/erase-data`, `/api/newsletter-rating`, `/api/r/{token}`) | `locale` on the link | Page language. The backend builds these links; the widget never does. The DOI link carries the recipient's locale always; the erasure links and the unsubscribe and `/api/r/{token}` links of campaign mails (the Einzelansprache included) carry `locale=en` for English recipients and nothing for German. The 1:1 marketing mail is German only, so its links carry none; `/api/newsletter-rating` links carry none yet. A link without `locale` is German, so links sent earlier keep working. |
 
@@ -2679,3 +2858,4 @@ section that holds the fact; this table repeats none of the detail.
 | 2026-10-24 | Konfigurator, fourth round (external feedback): new `GET /api/configurator/offer` — the „Konfigurator-Rabatt“ (`offer: null` by default and after its optional last day; with it code, title, text, terms and `trigger` `start` \| `plan`), fetched once by the configurator page, which shows the pop-up and the note above the plan and activates through the shop's own `/discount/<code>`; page events `configurator_validation_blocked` { fields } (a click on „Weiter – Mo berät mich“ with answers missing — the page outlines the incomplete cards) and `configurator_discount_shown` { trigger } / `_activated` / `_copied` / `_closed`. Additive: no widget change, no change to `/api/chat`'s shapes (Mo knows the discount only while it is on). | §1, §3c, §5 |
 | 2026-10-27 | Konfigurator round 6 (client review): `context.configurator.note` — the visitor's free text from the optional page step „Deine Hinweise“ (≤ 500 characters, cleaned, never stored); page event `configurator_note_step` { prefilled }, `configurator_handover.note` (`written` \| `skipped`), server `configurator_chat_started.note` (boolean). **Product rules:** `GET /api/products` entries and the §3a / §3b cards carry `rules` (`step` / `min` / `max` / `coverageM2`, only what applies) and — while the showroom list is known — `showroom` (boolean); the cart permalinks carry the rule's minimum (`:2` for pairs); `show_gym_plan` takes `floorAreaM2`, `offer_plan_options` `areaM2`; their results (and `add_to_cart`'s) may carry `adjusted` / `coverage` / `inShowroom` for the model; `suggest_showroom` answers `{ ok, showroomKnown, inShowroom, notInShowroom }` (`ok: false` when none is on display). Additive: an older widget ignores the new fields (and keeps its own pair heuristic), an older page sends no note. | §2 "`context.type: "configurator"`", `add_to_cart`, `suggest_showroom`, `show_gym_plan`, `offer_plan_options`; §3, §3a, §3b; §5 |
 | 2026-10-27 | Round-6 fixes after the review (lockstep backend / widget / page): `rules` on **every** `GET /api/products` entry and §3a / §3b card (`{}` = one by one; no `rules` at all = an older backend); a published `coverageM2` always means floor protection sized to the whole room (`mo.coverage_m2` > 0 on any product; `0` switches it off); a floor line holds up to **200** units, any other line 20 — the `show_gym_plan` / `offer_plan_options` item `quantity` accepts 1–200 and the backend caps a non-floor line at 20 in `adjusted` („höchstens 20 je Position“ / „höchstens 200 je Position“ names the cap); **one** floor product is sized to the area — two or more coverage lines are not resized (`coverage` keeps `coveredM2` / `missingM2`, no `neededQuantity`); edge-piece / connector variants (`NON_TILE_VARIANT`, mirrored in the widget) have no coverage; `floorAreaM2` / `areaM2` accept `null`; `offer_plan_options`'s `option` is Mo's own position even after a dropped option; `configurator.features` gains `"rules"` (the round-6 widget sends `["options", "rules"]`; without it Mo puts the final quantities into the tool input and floor lines are capped at 20); `MS_CHAT.configurator.version` 2 (note + rules — the page shows step 04 only for ≥ 2); `suggest_showroom` carries `showroomKnown` on every result, answers only-unknown ids with `ok: false` + `unknownIds` (retry, no display claim) and is read by the widget (`showroomKnown: false` → a card without product names); the add_to_cart card shows `q×` and the line total for `rules.min` > 1; one note cleaner for backend, widget and page (ZWNJ / ZWJ kept, U+2028 / U+2029 and tabs a space); `search_products` hits carry `rules` (hint) and `heightCm`; §5 trigger rows for started / handover / validation_blocked. | §0 rule 24; §2 "`context.type: "configurator"`", `add_to_cart`, `suggest_showroom`, `show_gym_plan`, `offer_plan_options`, `search_products`; §3, §3a, §3b; §5 |
+| 2026-11-20 | Geschenkgutscheine: the voucher page's routes `GET /api/gift-vouchers/config`, `GET …/fonts/{file}`, `POST …/photo`, `…/suggest`, `…/preview`, `…/drafts`, `…/balance` (409 while the shop does not sell; errors carry `field`), the mail link `GET …/download`, five rate-limit buckets (`gift-voucher`, `gift-voucher-ip`, `gift-voucher-ai`, `gift-voucher-render`, `gift-voucher-balance`) and the cart property `_mo_gv`. New routes only — nothing the widget calls changed. | §1, §3d, §12.2 |
