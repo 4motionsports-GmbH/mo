@@ -10,10 +10,10 @@ import {
   parseAdminTab,
 } from "./admin-tabs.mjs";
 
-test("registry has twelve screens with unique keys, labels and shortcuts", () => {
-  assert.equal(ADMIN_TABS.length, 12);
-  assert.equal(new Set(ADMIN_TAB_KEYS).size, 12);
-  assert.equal(new Set(ADMIN_TABS.map((t) => t.label)).size, 12);
+test("registry has thirteen screens with unique keys, labels and shortcuts", () => {
+  assert.equal(ADMIN_TABS.length, 13);
+  assert.equal(new Set(ADMIN_TAB_KEYS).size, 13);
+  assert.equal(new Set(ADMIN_TABS.map((t) => t.label)).size, 13);
   // The ten digits are taken; a screen without one carries "".
   const digits = ADMIN_TABS.map((t) => t.shortcut).filter(Boolean);
   assert.equal(digits.length, 10);
@@ -32,6 +32,7 @@ test("every legacy tab key still resolves", () => {
     "kampagne",
     "vorlagen",
     "konfigurator",
+    "gutscheine",
     "kpi",
     "feedback",
     "gespraeche",
@@ -73,6 +74,12 @@ test("shortcuts map 1…9 and 0 in display order", () => {
   assert.equal(adminTabMeta("konfigurator").shortcut, "");
   assert.equal(adminTabMeta("vorlagen").shortcut, "");
   assert.equal(adminTabMeta("vorlagen").group, "Arbeit");
+  assert.equal(adminTabMeta("gutscheine").shortcut, "");
+  assert.equal(adminTabMeta("gutscheine").group, "Arbeit");
+  assert.equal(adminTabMeta("gutscheine").wide, true);
+  // Geschenkgutscheine — not the newsletter welcome code; the InfoTip says so.
+  assert.match(adminTabMeta("gutscheine").description, /Willkommensgutschein/);
+  assert.equal(adminTabHref("gutscheine", { gutschein: "42" }), "/admin?tab=gutscheine&gutschein=42");
   assert.equal(adminTabMeta("kampagne").wide, true);
   assert.equal(adminTabMeta("feedback").group, "Einblicke");
 });

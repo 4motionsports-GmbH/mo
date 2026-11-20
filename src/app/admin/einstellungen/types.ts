@@ -49,6 +49,10 @@ export interface SystemStatus {
   campaignSendsApproved: boolean;
   singleOptInAllowed: boolean;
   physicalMailApproved: boolean;
+  /** print.one (Premium-Karte of the Geschenkgutscheine): PRINTONE_API_KEY + PRINTONE_TEMPLATE_ID. */
+  printOne: boolean;
+  /** GIFT_VOUCHER_PRINT_SENDS_APPROVED — recipient addresses may go to print.one. */
+  giftVoucherPrintApproved: boolean;
   /** Upstash KV (rate limits; without it they fail open). */
   kv: boolean;
   /** Feature switches — what is live (flag readers, never values). */
@@ -78,5 +82,7 @@ export interface SystemStatus {
     consentRewardTermsLink: boolean;
     /** CONSENT_VALUE_MOMENT_ENABLED. */
     consentValueMoment: boolean;
+    /** GIFT_VOUCHERS_ENABLED — the shop sells Geschenkgutscheine, paid orders are issued. */
+    giftVouchers: boolean;
   };
 }

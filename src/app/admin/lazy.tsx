@@ -64,3 +64,7 @@ export const VorlagenWorkspace = dynamic(() =>
 export const RundmailWorkspace = dynamic(() =>
   import("./rundmail/RundmailWorkspace").then((m) => m.RundmailWorkspace)
 );
+
+export const GutscheineWorkspace = dynamic(() =>
+  import("./gutscheine/GutscheineWorkspace").then((m) => m.GutscheineWorkspace)
+);

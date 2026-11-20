@@ -300,7 +300,7 @@ export function AdminShell({
                   <span>…</span>
                   <Kbd>9</Kbd>
                   <Kbd>0</Kbd>
-                  <span>Bereich wechseln (Reihenfolge wie links; Konfigurator ohne Ziffer)</span>
+                  <span>Bereich wechseln (Reihenfolge wie links; Konfigurator, Vorlagen und Gutscheine ohne Ziffer)</span>
                 </div>
                 <div className="flex items-center gap-2">
                   <Kbd>/</Kbd>

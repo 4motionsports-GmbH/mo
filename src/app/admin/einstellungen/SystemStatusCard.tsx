@@ -28,6 +28,12 @@ export function SystemStatusCard({ status }: { status: SystemStatus }) {
     { label: "E-Mail-Versand (Resend)", env: "RESEND_API_KEY · CONTACT_FROM_EMAIL", on: status.resendSend },
     { label: "Resend-Webhook (Zustellung, Posteingang)", env: "RESEND_WEBHOOK_SECRET", on: status.resendWebhook },
     { label: "Postversand (Pingen)", env: "PINGEN_*", on: status.pingen },
+    {
+      label: "Druckpartner (print.one)",
+      env: "PRINTONE_API_KEY · PRINTONE_TEMPLATE_ID",
+      on: status.printOne,
+      info: "Druckt und verschickt die Premium-Karte der Geschenkgutscheine. Ohne Schlüssel und Vorlage werden die Karten von Hand gedruckt (Gutscheine → Druckwarteschlange).",
+    },
     { label: "KI · Anthropic", env: "ANTHROPIC_API_KEY", on: status.anthropic },
     { label: "KI · OpenAI (Embeddings, Hero-Bilder)", env: "OPENAI_API_KEY", on: status.openai },
     { label: "Rate-Limits (Upstash KV)", env: "KV_REST_API_URL · KV_REST_API_TOKEN", on: status.kv, offTone: "warning" },
@@ -52,6 +58,14 @@ export function SystemStatusCard({ status }: { status: SystemStatus }) {
       on: status.physicalMailApproved,
       states: ["Freigegeben", "Gesperrt"],
       offTone: "warning",
+    },
+    {
+      label: "Gutschein-Kartendruck",
+      env: "GIFT_VOUCHER_PRINT_SENDS_APPROVED",
+      on: status.giftVoucherPrintApproved,
+      states: ["Freigegeben", "Gesperrt"],
+      offTone: "warning",
+      info: "Ob Empfängeradressen der Premium-Karte an den Druckpartner print.one gehen dürfen (neuer Auftragsverarbeiter — erst mit Vertrag freigeben). Gesperrt: Die Druckaufträge warten unter Gutscheine.",
     },
   ];
 
@@ -124,6 +138,13 @@ export function SystemStatusCard({ status }: { status: SystemStatus }) {
       on: f.consentValueMoment && f.consentReward && f.consentSigninVariants.includes("c"),
       states: onOff,
       info: "Variante c fragt angemeldete Kund:innen erst, nachdem Mo ein Produkt gezeigt, verglichen oder in den Warenkorb gelegt hat („Wertmoment“), statt im Popup nach der ersten Nachricht. Wirkt nur zusammen mit dem Willkommensgutschein und wenn Variante c aktiv ist.",
+    },
+    {
+      label: "Geschenkgutscheine",
+      env: "GIFT_VOUCHERS_ENABLED",
+      on: f.giftVouchers,
+      states: onOff,
+      info: "Der Shop verkauft Geschenkgutscheine (Gutschein-Designer), bezahlte Bestellungen werden als Shopify-Geschenkkarte ausgestellt und verschickt. Aus: Bestellungen werden erfasst und warten unter Gutscheine → „Zu prüfen“. Nicht der Newsletter-Willkommensgutschein.",
     },
     {
       label: "Pingen-Umgebung",
