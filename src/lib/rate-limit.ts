@@ -16,7 +16,18 @@ export type RateLimitBucket =
   | "contact-ip"
   // Keyed by the client IP — caps password attempts against the single shared
   // admin password, see app/admin/login (decision D-7).
-  | "admin-login";
+  | "admin-login"
+  // Geschenkgutscheine storefront (/api/gift-vouchers/*, docs/GIFT_VOUCHERS.md):
+  // the writes (photo upload, drafts) per session-or-IP …
+  | "gift-voucher"
+  // … every costly voucher route per client IP (keyed `ip:<addr>`) …
+  | "gift-voucher-ip"
+  // … the AI text suggestions („Mit Mo formulieren“) per session-or-IP …
+  | "gift-voucher-ai"
+  // … the balance check per client IP (keyed `ip:<addr>` — the guess guard) …
+  | "gift-voucher-balance"
+  // … and the server-rendered previews per session-or-IP.
+  | "gift-voucher-render";
 
 // Per-bucket sliding-window config: max requests over the given Upstash
 // duration string. Each bucket gets its own window so we can mix short (chat,
@@ -65,6 +76,23 @@ const BUCKET_CONFIG: Record<RateLimitBucket, { max: number; window: `${number} $
   // Admin login: 10 attempts per 10 minutes per IP. A legitimate operator
   // never needs more; a password guesser gets ~1 440 tries a day at most.
   "admin-login": { max: 10, window: "10 m" },
+  // Geschenkgutscheine (voucher page /pages/gutschein). A customer designing
+  // one voucher uploads a photo or two and saves a draft per „Jetzt kaufen“ /
+  // „In den Warenkorb“ — 40 writes per 10 minutes and session leave room for
+  // several vouchers while capping Blob and database churn from a script.
+  "gift-voucher": { max: 40, window: "10 m" },
+  // The per-IP ceiling across photo, suggest, preview, drafts and download:
+  // the session buckets are keyed by a header a script can rotate, this one
+  // by the source address.
+  "gift-voucher-ip": { max: 120, window: "60 m" },
+  // „Mit Mo formulieren“: each call is a billed model call (Haiku, ~0.3 ct).
+  "gift-voucher-ai": { max: 12, window: "10 m" },
+  // Balance check by code: 10 per 10 minutes per IP. A person checks a card
+  // or two; with 80-bit codes guessing is hopeless anyway, this keeps the
+  // lookup (database + Shopify read) from being hammered.
+  "gift-voucher-balance": { max: 10, window: "10 m" },
+  // Server-rendered previews (two JPEGs per call) in the „Prüfen & kaufen“ step.
+  "gift-voucher-render": { max: 30, window: "10 m" },
 };
 
 const cached: Partial<Record<RateLimitBucket, Ratelimit>> = {};

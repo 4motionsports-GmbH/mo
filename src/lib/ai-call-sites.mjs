@@ -30,4 +30,5 @@ export const AI_CALL_SITE_LABELS = Object.freeze({
   inbox_mail_reply: "Eingang: E-Mail beantworten",
   customer_ask: "Kunden: Frag Mo",
   improvement: "Verbesserung",
+  gift_voucher_message: "Gutschein-Texte (Shop)",
 });

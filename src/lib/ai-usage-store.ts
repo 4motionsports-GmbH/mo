@@ -89,6 +89,11 @@ export type AiCallSite =
   // Eingang „E-Mail beantworten“: summary + reply draft for an incoming mail
   // (lib/inbox-mail.ts). Admin-side spend.
   | "inbox_mail_reply"
+  // Geschenkgutscheine „Mit Mo formulieren“ (lib/gift-voucher-message.ts): three
+  // card texts for the storefront voucher page (bulk tier, no personal data in
+  // the prompt). No conversation FK; not chat-serving, so it counts on the
+  // admin/other side of the split below.
+  | "gift_voucher_message"
   // Text-to-speech for voice mode (/api/tts). NB: for this call site the
   // input_tokens column carries CHARACTERS synthesized (not LLM tokens) and
   // output_tokens is 0 — OpenAI TTS is billed per character of input, and its
