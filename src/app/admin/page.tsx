@@ -32,6 +32,7 @@ import { KampagneTab } from "./KampagneTab";
 import { EinstellungenTab } from "./EinstellungenTab";
 import { KonfiguratorTab } from "./KonfiguratorTab";
 import { VorlagenTab } from "./VorlagenTab";
+import { GutscheineTab } from "./GutscheineTab";
 import { AdminShell, type AdminBadges } from "./AdminShell";
 import { THEME_COOKIE, type Theme } from "./theme-config";
 
@@ -115,6 +116,20 @@ async function renderScreen(tab: AdminTabKey, sp: SearchParams, dbReady: boolean
     case "konfigurator":
       // The KPI period of the screen uses the KPI screen's ?kpiRange= (presets).
       return <KonfiguratorTab dbReady={dbReady} kpiRange={firstParam(sp.kpiRange)} />;
+    case "gutscheine":
+      // The list filter lives in the URL (?status=, ?quelle=, ?q=, ?seite= — a
+      // server render); ?gutschein=<id> opens one voucher (kept in sync while
+      // browsing, also off the current page).
+      return (
+        <GutscheineTab
+          dbReady={dbReady}
+          initialId={idParam(sp.gutschein)}
+          status={firstParam(sp.status)}
+          quelle={firstParam(sp.quelle)}
+          q={firstParam(sp.q)}
+          seite={firstParam(sp.seite)}
+        />
+      );
     case "kpi": {
       // KPI date-range picker state lives in the URL so a refresh / copied link
       // keeps the window; resolveKpiRange validates + clamps it.

@@ -11,7 +11,7 @@
 // `kampagnen` → Kampagnen.
 
 /**
- * @typedef {"eingang" | "kunden" | "kampagne" | "vorlagen" | "konfigurator" | "kpi" | "feedback" |
+ * @typedef {"eingang" | "kunden" | "kampagne" | "vorlagen" | "konfigurator" | "gutscheine" | "kpi" | "feedback" |
  *   "gespraeche" | "wissen" | "analyse" | "verbesserung" | "einstellungen"} AdminTabKey
  * @typedef {"Arbeit" | "Einblicke" | "System"} AdminTabGroup
  * @typedef {{
@@ -68,6 +68,15 @@ export const ADMIN_TABS = Object.freeze([
     group: "Arbeit",
     description:
       "Home-Gym-Konfigurator (Men's Health / Women's Health): Mos Sortiment & Hinweise für die geführte Beratung — und wie der Konfigurator wirkt, vom Start bis zur Bestellung.",
+    wide: true,
+    shortcut: "",
+  },
+  {
+    key: "gutscheine",
+    label: "Gutscheine",
+    group: "Arbeit",
+    description:
+      "Geschenkgutscheine aus dem Shop und von Hand: ausstellen, prüfen, versenden, sperren. (Nicht der Newsletter-Willkommensgutschein.)",
     wide: true,
     shortcut: "",
   },

@@ -42,6 +42,11 @@ import {
   isShopifyInsightsWritebackEnabled,
 } from "@/lib/platform-flags.mjs";
 import { pageContextHoldoutPct } from "@/lib/page-context";
+import {
+  isGiftVoucherPrintSendsApproved,
+  isGiftVouchersEnabled,
+  isPrintOneConfiguredEnv,
+} from "@/lib/gift-voucher-flags.mjs";
 import { activeSigninVariants, parseRewardTermsUrl } from "@/lib/consent-variants.mjs";
 import { getSyncHealth, listSyncRuns } from "@/lib/shopify-sync";
 import { getOutboxStats } from "@/lib/shopify-outbox";
@@ -99,6 +104,8 @@ export async function EinstellungenTab({ dbReady }: { dbReady: boolean }) {
     campaignSendsApproved: isCampaignSendsApproved(),
     singleOptInAllowed: isSingleOptInAllowed(),
     physicalMailApproved: isPhysicalMailSendsApproved(),
+    printOne: isPrintOneConfiguredEnv(),
+    giftVoucherPrintApproved: isGiftVoucherPrintSendsApproved(),
     kv: Boolean(process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN),
     features: {
       customerSync: isShopifyCustomerSyncEnabled(),
@@ -120,6 +127,7 @@ export async function EinstellungenTab({ dbReady }: { dbReady: boolean }) {
       consentReward: isConsentRewardEnabled(),
       consentRewardTermsLink: parseRewardTermsUrl(process.env.CONSENT_REWARD_TERMS_URL) !== null,
       consentValueMoment: isConsentValueMomentEnabled(),
+      giftVouchers: isGiftVouchersEnabled(),
     },
   };
 
