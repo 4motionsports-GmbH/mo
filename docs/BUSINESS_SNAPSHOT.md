@@ -138,7 +138,8 @@ without any data are left out.
 `shopifyConfigured`, `customerSync`, `consentWriteback`, `campaignSendsApproved`,
 `campaignRelease`, `physicalMailApproved`, `appProxySignin`,
 `attributionSessionAnchor`, `pageContext`, `pageContextHoldoutPct`,
-`chatOrderStatus`, `consentReward`, `configuratorDiscount` (the admin setting „Konfigurator-Rabatt“:
+`chatOrderStatus`, `consentReward`, `giftVouchers` (`GIFT_VOUCHERS_ENABLED`), `giftVoucherPrintApproved`
+(`GIFT_VOUCHER_PRINT_SENDS_APPROVED`; both since 2026-11-20), `configuratorDiscount` (the admin setting „Konfigurator-Rabatt“:
 on = visitors get the offer now — no env name), `emailConfigured`, `anthropicConfigured` — with their env name.
 
 ## Caveats

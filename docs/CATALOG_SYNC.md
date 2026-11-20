@@ -12,7 +12,7 @@ The committed files (`src/data/product-catalog.json`,
 | --------------------------------------------- | ------------------------------------------------------- |
 | `scripts/verify-shopify-auth.mjs`             | Standalone check that the Shopify auth grant works.    |
 | `src/lib/shopify.ts`                          | Token cache + GraphQL pagination + targeted by-id fetch.|
-| `src/lib/catalog-mapping.ts`                  | Shopify product → `Product` type (mirrors Path A rules).|
+| `src/lib/catalog-mapping.ts`                  | Shopify product → `Product` type (mirrors Path A rules). Since 2026-11-20 it drops the two Geschenkgutschein products (`GIFT_VOUCHER_PRODUCT_HANDLE`, `GIFT_VOUCHER_PRINT_PRODUCT_HANDLE` — [`GIFT_VOUCHERS.md`](./GIFT_VOUCHERS.md)), so Mo never recommends them; `convert-catalog.mjs` does the same.|
 | `src/lib/embedding-doc.mjs`                   | The embedded-text builder + `EMBEDDING_DOC_VERSION` (one source of truth). |
 | `src/lib/embed-resilience.mjs`                | Resilient embedding orchestrator (chunk → sub-batch → per-item → carry-forward). |
 | `src/lib/openai-error.mjs`                    | Classifies OpenAI errors (insufficient_quota / billing surfaced distinctly). |

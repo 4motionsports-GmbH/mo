@@ -27,6 +27,7 @@ defaults („default off in code“), never what is currently live. Screenshots 
 | [`CUSTOMER_ACCOUNT.md`](./CUSTOMER_ACCOUNT.md) | Sign-in internals: Customer Account OAuth, App Proxy shop recognition, one-time link codes, tokens, merge rule, history storage. |
 | [`CAMPAIGNS.md`](./CAMPAIGNS.md) | Campaigns, audiences, the review desk, sends, letters (Pingen), Einzelansprache, discount codes, the Rundmail (one content for a whole audience, §9). |
 | [`CONFIGURATOR.md`](./CONFIGURATOR.md) | The Home-Gym-Konfigurator (Men's Health / Women's Health): the page hands its answers to Mo, the curated assortment (Shopify tag), answer chips and the home-gym plan, the admin screen „Konfigurator“, KPIs. |
+| [`GIFT_VOUCHERS.md`](./GIFT_VOUCHERS.md) | Geschenkgutscheine: the voucher page `/pages/gutschein`, a Shopify gift card with Mo's own code per paid voucher, the voucher mail and PDF, the Premium-Karte printed by print.one (legal gate), the admin screen „Gutscheine“, configuration, privacy, the go-live checklist and troubleshooting. |
 | [`EMAIL_DESIGNS.md`](./EMAIL_DESIGNS.md) | E-mail designs, hero images and sender identities („Absender“). |
 | [`EMAIL_TEMPLATES.md`](./EMAIL_TEMPLATES.md) | The operator's e-mail templates („Vorlagen“): the block format every Mo capability is reachable through, the renderer, templates as designs, the AI assistant, picture upload, import / export. |
 | [`ORDER_ATTRIBUTION.md`](./ORDER_ATTRIBUTION.md) | Which orders count as Mo's: tiers, window and session anchor, the `_mo` marker. |
@@ -45,7 +46,7 @@ defaults („default off in code“), never what is currently live. Screenshots 
 
 | Document | What it covers |
 | --- | --- |
-| [`frontend/API_CONTRACT.md`](./frontend/API_CONTRACT.md) | **The widget contract**: rules for every widget change (§0), every endpoint the widget calls, stream parts, KPI events (§5), consent endpoints (§7), locale (§12), changes since 2026-10-01. |
+| [`frontend/API_CONTRACT.md`](./frontend/API_CONTRACT.md) | **The widget contract**: rules for every widget change (§0), every endpoint the widget calls, the routes of the configurator page (§3a–§3c) and the voucher page (§3d), stream parts, KPI events (§5), consent endpoints (§7), locale (§12), changes since 2026-10-01. |
 | [`frontend/ACCOUNT_CONTRACT.md`](./frontend/ACCOUNT_CONTRACT.md) | Sign-in, App Proxy recognition, `/api/auth/me`, logout, conversation history, export, erase, the post-sign-in opt-in (gating §6.1, request §6.2). |
 | [`frontend/CONSENT_CONTRACT.md`](./frontend/CONSENT_CONTRACT.md) | How the widget shows and renders the consent surfaces. |
 | [`frontend/README.md`](./frontend/README.md) + `01`–`07` | The as-built description of the theme and widget at the build named in `frontend/README.md` (written by the frontend agent, maintained here). |
