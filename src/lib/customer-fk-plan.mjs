@@ -32,6 +32,8 @@ export const CUSTOMER_FK_PLAN = {
   consent_events: { column: "customer_id", treatment: "repoint" },
   shopify_outbox: { column: "customer_id", treatment: "repoint" },
   inbox_items: { column: "customer_id", treatment: "repoint" },
+  // The buyer of a Geschenkgutschein (0083).
+  gift_vouchers: { column: "customer_id", treatment: "repoint" },
 };
 
 /**
