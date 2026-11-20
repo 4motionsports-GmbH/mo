@@ -13,6 +13,7 @@ import { getSql, type Sql } from "./db";
 import { reportError } from "./observability";
 import { applyConsentAct } from "./consent-store";
 import type { ConsentSource } from "./consent-core.mjs";
+import { giftVoucherTablesExist } from "./gift-voucher-store";
 
 export interface MergeResult {
   ok: boolean;
@@ -42,6 +43,8 @@ export async function mergeCustomers(
     const drop = rows.find((r) => Number(r.id) === dropId);
     if (!keep || !drop) return { ok: false, keepId, dropId, reason: "not_found" };
     const newEmail = opts.newEmail?.trim().toLowerCase() || null;
+    // The voucher table joins the transaction once migration 0083 created it.
+    const hasGiftVouchers = await giftVoucherTablesExist(sql);
 
     await sql.transaction([
       sql`UPDATE conversations SET customer_id = ${keepId} WHERE customer_id = ${dropId}`,
@@ -79,6 +82,10 @@ export async function mergeCustomers(
       sql`UPDATE consent_events SET customer_id = ${keepId} WHERE customer_id = ${dropId}`,
       sql`UPDATE shopify_outbox SET customer_id = ${keepId} WHERE customer_id = ${dropId}`,
       sql`UPDATE inbox_items SET customer_id = ${keepId} WHERE customer_id = ${dropId}`,
+      // The buyer of a Geschenkgutschein (0083).
+      ...(hasGiftVouchers
+        ? [sql`UPDATE gift_vouchers SET customer_id = ${keepId} WHERE customer_id = ${dropId}`]
+        : []),
       // The survivor keeps its values and fills its gaps from the dropped row.
       sql`
         UPDATE customers k SET

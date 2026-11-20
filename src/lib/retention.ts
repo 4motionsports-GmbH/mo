@@ -28,6 +28,9 @@
 //   5i. Order attribution: mo_orders on the analytics window; attribution
 //       tokens once inert (attribution window + 7 days; session-anchored with
 //       MO_ATTRIBUTION_SESSION_ANCHOR).
+//   5j. Geschenkgutscheine (0083): vouchers anonymised after they ended,
+//       recipient addresses of finished print jobs cleared, designer drafts
+//       deleted, unreferenced customer photos deleted from Blob.
 //   6.  Expired pending sign-ins (PKCE state) and one-time link codes.
 //   7.  Shopify sync bookkeeping (webhook dedupe rows, finished sync runs and
 //       outbox rows); 7b reviewed sign-in merge conflicts on the same window.
@@ -38,6 +41,9 @@ import { getSql } from "./db";
 import { purgeExpiredPendingAuth } from "./customer-oauth-store";
 import { purgeSessionLinkGrants } from "./session-link-grants";
 import { purgeSettledMailingBatches } from "./mailing-store";
+import { purgeGiftVoucherData, unreferencedGiftVoucherPhotos } from "./gift-voucher-store";
+import { deleteGiftVoucherBlobs, isGiftVoucherBlobConfigured, listGiftVoucherBlobs } from "./gift-voucher-blob";
+import { GIFT_VOUCHER_PHOTO_PREFIX } from "./gift-voucher-core.mjs";
 import { parseRetentionOptions } from "./retention-options.mjs";
 import {
   OUTBOX_FINISHED_STATUSES,
@@ -96,6 +102,25 @@ export interface RetentionOptions {
   inboxRetentionDays: number;
   /** Erasure tombstones confirmed by Shopify longer ago than this are deleted. 0 disables. */
   erasureTombstoneRetentionDays: number;
+  /**
+   * Geschenkgutschein designer drafts (gift_voucher_drafts, by created_at)
+   * older than this are deleted unless a voucher that still keeps its data
+   * refers to them. Also the age of uploaded photos that never became a
+   * draft. 0 disables.
+   */
+  giftVoucherDraftRetentionDays: number;
+  /**
+   * The recipient address of a finished print job (sent / done / cancelled /
+   * failed, by updated_at) and the address copy of an ordered draft (by
+   * ordered_at) are cleared after this. 0 disables.
+   */
+  giftVoucherAddressRetentionDays: number;
+  /**
+   * A voucher that ended (expired, used up, deactivated, cancelled, rejected,
+   * failed) this long ago is anonymised: names, texts, e-mails, photo and
+   * download link go; amounts, status and code hash stay. 0 disables.
+   */
+  giftVoucherPersonalRetentionDays: number;
   /**
    * Order-attribution window (days) — mirrors MO_ATTRIBUTION_WINDOW_DAYS
    * (lib/mo-orders-store). Switch off: tokens leave window + 7 days after
@@ -161,6 +186,14 @@ export interface RetentionResult {
   deletedInboxItems: number;
   /** Erasure tombstones Shopify confirmed more than ERASURE_TOMBSTONE_RETENTION_DAYS ago. */
   deletedErasureTombstones: number;
+  /** Geschenkgutscheine anonymised past GIFT_VOUCHER_PERSONAL_RETENTION_DAYS. */
+  anonymisedGiftVouchers: number;
+  /** Recipient addresses cleared (finished print jobs, ordered drafts, anonymised vouchers' jobs). */
+  clearedGiftVoucherAddresses: number;
+  /** Gutschein-Designer drafts deleted. */
+  deletedGiftVoucherDrafts: number;
+  /** Customer photos deleted from Blob (no draft or voucher refers to them). */
+  deletedGiftVoucherPhotos: number;
   ranAt: string;
 }
 
@@ -572,6 +605,36 @@ export async function runRetention(
     `) as Array<{ n: number }>;
   }
 
+  // 5j. Geschenkgutscheine (0083) on their OWN windows (0 disables a step): a
+  //     voucher's personal data (names, texts, e-mails, photo, download link)
+  //     goes GIFT_VOUCHER_PERSONAL_RETENTION_DAYS after it ended — the card
+  //     record itself (amounts, status, code hash) stays; finished print
+  //     jobs lose the recipient address after GIFT_VOUCHER_ADDRESS_RETENTION_DAYS;
+  //     designer drafts no live voucher uses leave after
+  //     GIFT_VOUCHER_DRAFT_RETENTION_DAYS. Photos no row refers to any more,
+  //     and uploads that never became a draft (older than the draft window),
+  //     are deleted from Blob. Fail-soft: before migration 0083 or on a Blob
+  //     error the step reports and the run goes on.
+  const giftVoucherPurge = await purgeGiftVoucherData(
+    {
+      draftDays: opts.giftVoucherDraftRetentionDays,
+      addressDays: opts.giftVoucherAddressRetentionDays,
+      personalDays: opts.giftVoucherPersonalRetentionDays,
+    },
+    sql
+  );
+  let deletedGiftVoucherPhotos = 0;
+  if (isGiftVoucherBlobConfigured()) {
+    const photos = new Set(giftVoucherPurge.blobPathnames);
+    if (opts.giftVoucherDraftRetentionDays > 0) {
+      const uploads = await listGiftVoucherBlobs(GIFT_VOUCHER_PHOTO_PREFIX, {
+        olderThan: new Date(Date.now() - opts.giftVoucherDraftRetentionDays * 86_400_000),
+      });
+      for (const p of await unreferencedGiftVoucherPhotos(uploads, sql)) photos.add(p);
+    }
+    if (photos.size > 0) deletedGiftVoucherPhotos = await deleteGiftVoucherBlobs([...photos]);
+  }
+
   // 6. Purge expired pending-auth records (short-lived CSRF/PKCE state). The
   //    encrypted token rows (customer_oauth_tokens) carry no separate window —
   //    they cascade with the customer (ON DELETE CASCADE), so a GDPR erasure /
@@ -694,6 +757,10 @@ export async function runRetention(
     deletedMergeConflicts,
     deletedInboxItems,
     deletedErasureTombstones,
+    anonymisedGiftVouchers: giftVoucherPurge.anonymised,
+    clearedGiftVoucherAddresses: giftVoucherPurge.addresses,
+    deletedGiftVoucherDrafts: giftVoucherPurge.drafts,
+    deletedGiftVoucherPhotos,
     ranAt: new Date().toISOString(),
   };
 }

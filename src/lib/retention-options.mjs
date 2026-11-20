@@ -39,6 +39,12 @@ export const RETENTION_DEFAULTS = Object.freeze({
   INBOX_RETENTION_DAYS: 180,
   // An erasure tombstone stays until Shopify confirmed the redaction + this.
   ERASURE_TOMBSTONE_RETENTION_DAYS: 30,
+  // Geschenkgutscheine (0083): designer drafts no live voucher uses; the
+  // recipient address of finished print jobs; a voucher's personal data this
+  // long after it ended (expired, used up, deactivated, cancelled).
+  GIFT_VOUCHER_DRAFT_RETENTION_DAYS: 30,
+  GIFT_VOUCHER_ADDRESS_RETENTION_DAYS: 180,
+  GIFT_VOUCHER_PERSONAL_RETENTION_DAYS: 365,
   MO_ATTRIBUTION_WINDOW_DAYS: 30,
 });
 
@@ -66,8 +72,9 @@ export function parseWindow(raw, fallback, { min = 0 } = {}) {
  *   customerInactivityRetentionDays: number, adminAccessLogRetentionDays: number,
  *   campaignContactRetentionDays: number, analyticsReportRetentionDays: number,
  *   shopifySyncLogRetentionDays: number, inboxRetentionDays: number,
- *   erasureTombstoneRetentionDays: number, attributionWindowDays: number,
- *   attributionSessionAnchor: boolean, attributionTokenMaxDays: number,
+ *   erasureTombstoneRetentionDays: number, giftVoucherDraftRetentionDays: number,
+ *   giftVoucherAddressRetentionDays: number, giftVoucherPersonalRetentionDays: number,
+ *   attributionWindowDays: number, attributionSessionAnchor: boolean, attributionTokenMaxDays: number,
  * }} RetentionOptions
  */
 
@@ -96,6 +103,9 @@ export function parseRetentionOptions(env = process.env) {
     shopifySyncLogRetentionDays: w("SHOPIFY_SYNC_LOG_RETENTION_DAYS"),
     inboxRetentionDays: w("INBOX_RETENTION_DAYS"),
     erasureTombstoneRetentionDays: w("ERASURE_TOMBSTONE_RETENTION_DAYS"),
+    giftVoucherDraftRetentionDays: w("GIFT_VOUCHER_DRAFT_RETENTION_DAYS"),
+    giftVoucherAddressRetentionDays: w("GIFT_VOUCHER_ADDRESS_RETENTION_DAYS"),
+    giftVoucherPersonalRetentionDays: w("GIFT_VOUCHER_PERSONAL_RETENTION_DAYS"),
     // Not a retention window — never 0 (see header).
     attributionWindowDays,
     attributionSessionAnchor: isAttributionSessionAnchorEnabled(env),

@@ -34,7 +34,22 @@ test("parseRetentionOptions: defaults with an empty env", () => {
   assert.equal(o.shopifySyncLogRetentionDays, 90);
   assert.equal(o.inboxRetentionDays, 180);
   assert.equal(o.erasureTombstoneRetentionDays, 30);
+  assert.equal(o.giftVoucherDraftRetentionDays, 30);
+  assert.equal(o.giftVoucherAddressRetentionDays, 180);
+  assert.equal(o.giftVoucherPersonalRetentionDays, 365);
   assert.equal(o.attributionWindowDays, 30);
+});
+
+test("parseRetentionOptions: the gift voucher windows read their own variables", () => {
+  const o = parseRetentionOptions({
+    GIFT_VOUCHER_DRAFT_RETENTION_DAYS: "7",
+    GIFT_VOUCHER_ADDRESS_RETENTION_DAYS: "0",
+    GIFT_VOUCHER_PERSONAL_RETENTION_DAYS: "-1",
+  });
+  assert.equal(o.giftVoucherDraftRetentionDays, 7);
+  assert.equal(o.giftVoucherAddressRetentionDays, 0, "0 disables the step");
+  assert.equal(o.giftVoucherPersonalRetentionDays, 365, "invalid falls back to the default");
+  assert.equal(o.physicalLetterRetentionDays, 365, "the letter window is unaffected");
 });
 
 test("parseRetentionOptions: 0 disables every retention window, never the attribution window", () => {

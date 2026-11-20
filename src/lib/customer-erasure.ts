@@ -18,6 +18,14 @@
 // address stays on the suppression list with reason 'erasure' so it is never
 // mailed or re-imported from Shopify again.
 //
+// Geschenkgutscheine (0083) the person bought stay — the gift card is money
+// for its recipient — but lose the buyer: customer link, Shopify id, buyer
+// e-mail and name; a finished print job loses the recipient address. Where
+// the person was the e-mail recipient of an admin voucher, that address and
+// name go. The texts and the photo of a voucher are the recipient's gift:
+// they stay (and are not deleted from Blob) until the voucher retention
+// anonymises them.
+//
 // All database steps run in ONE transaction (all-or-nothing). Blob images are
 // removed afterwards (fail-soft — an orphaned image is unreachable once no row
 // points at it, but we still try to delete it).
@@ -34,6 +42,7 @@ import { del } from "@vercel/blob";
 import { getSql, type Sql } from "./db";
 import { normalizeEmail } from "./email-capture-store";
 import { erasableHeroPathnames } from "./email-hero-blob.mjs";
+import { giftVoucherTablesExist } from "./gift-voucher-store";
 import { reportError } from "./observability";
 import { enqueueShopifyErasure, runOutboxInline } from "./shopify-outbox";
 
@@ -176,6 +185,9 @@ export async function erasePerson(
     // campaign still shows.
     const heroPaths = erasableHeroPathnames(heroRows.flatMap((r) => [r.a, r.b]));
 
+    // The voucher tables join the transaction once migration 0083 created them.
+    const hasGiftVouchers = await giftVoucherTablesExist(sql);
+
     // ── 2. Delete / anonymise, all-or-nothing ───────────────────────────────
     const reportMarker = JSON.stringify([{ customerId: cid }]);
     const queries = [
@@ -248,6 +260,32 @@ export async function erasePerson(
            AND shopify_customer_id = ${shopifyCustomerId}`,
       // Open Shopify writes for the person are moot (a pending create carries the e-mail).
       sql`DELETE FROM shopify_outbox WHERE customer_id = ${cid} AND status <> 'done'`,
+      // Geschenkgutscheine (0083): the card stays valid for its recipient; the
+      // buyer goes. The finished print jobs' addresses first (found through
+      // the buyer link that the next statement removes); an open job keeps
+      // the address until the paid card is posted.
+      ...(hasGiftVouchers
+        ? [
+            sql`UPDATE gift_voucher_print_jobs SET recipient_postal_address = NULL, updated_at = now()
+                 WHERE recipient_postal_address IS NOT NULL
+                   AND status IN ('sent', 'done', 'cancelled', 'failed')
+                   AND voucher_id IN (
+                     SELECT id FROM gift_vouchers
+                      WHERE customer_id = ${cid}
+                         OR (shopify_customer_id IS NOT NULL AND shopify_customer_id = ${shopifyCustomerId}::text)
+                         OR lower(buyer_email) = ANY(${emailList}::text[])
+                         OR lower(recipient_email) = ANY(${emailList}::text[]))`,
+            sql`UPDATE gift_vouchers
+                   SET customer_id = NULL, shopify_customer_id = NULL, buyer_email = NULL, buyer_name = NULL,
+                       updated_at = now()
+                 WHERE customer_id = ${cid}
+                    OR (shopify_customer_id IS NOT NULL AND shopify_customer_id = ${shopifyCustomerId}::text)
+                    OR lower(buyer_email) = ANY(${emailList}::text[])`,
+            // The person as the e-mail recipient of an admin voucher.
+            sql`UPDATE gift_vouchers SET recipient_email = NULL, recipient_name = NULL, updated_at = now()
+                 WHERE lower(recipient_email) = ANY(${emailList}::text[])`,
+          ]
+        : []),
       sql`DELETE FROM email_captures WHERE email = ANY(${emailList}::text[])`,
       // OAuth tokens, session links, orders, facts, consent history, Eingang
       // items and campaign places cascade with the customer row.

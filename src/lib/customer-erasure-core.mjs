@@ -77,6 +77,27 @@ export const ERASURE_PLAN = {
     treatment: "retain",
     why: "Security audit of operator actions: operator IP and a numeric customer id only, own retention window.",
   },
+  gift_vouchers: {
+    treatment: "anonymise",
+    why:
+      "Geschenkgutscheine (0083): the gift card is still money for its recipient, so the row stays; the buyer link " +
+      "(customer, Shopify customer id) and the buyer's e-mail and name go, and as the e-mail recipient of an admin " +
+      "voucher the person's address and name go. Texts and photo belong to the recipient's gift and leave with " +
+      "GIFT_VOUCHER_PERSONAL_RETENTION_DAYS.",
+  },
+  gift_voucher_print_jobs: {
+    treatment: "anonymise",
+    why:
+      "Premium-Karte print jobs of the person's vouchers: a finished job's recipient address is cleared; an open job " +
+      "keeps it until the paid card is posted (it is the recipient's delivery), then GIFT_VOUCHER_ADDRESS_RETENTION_DAYS " +
+      "clears it. Not a cascade: the voucher row stays.",
+  },
+  gift_voucher_drafts: {
+    treatment: "retain",
+    why:
+      "Gutschein-Designer drafts are anonymous (no customer, e-mail or session — an opaque token only); deleted after " +
+      "GIFT_VOUCHER_DRAFT_RETENTION_DAYS, an ordered one once its vouchers are anonymised.",
+  },
 };
 
 /** Column names that mark a table as holding personal data. */
