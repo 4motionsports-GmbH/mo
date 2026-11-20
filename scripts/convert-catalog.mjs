@@ -14,6 +14,8 @@
 //   - Has at least one image
 //   - Status=active
 //   - Not a Gift Card
+//   - Not one of the two Geschenkgutschein products (GIFT_VOUCHER_PRODUCT_HANDLE /
+//     GIFT_VOUCHER_PRINT_PRODUCT_HANDLE — regular products, but no training equipment)
 //
 // Output: products that pass the filter, mapped to the Product schema in
 // src/lib/types.ts. Persona-relevant fields without CSV equivalents
@@ -24,6 +26,8 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { MO_RULE_METAFIELDS, parseMoRuleMetafields } from "../src/lib/product-rules.mjs";
+import { giftVoucherProductHandles } from "../src/lib/gift-voucher-flags.mjs";
+import { giftVoucherCatalogHandles, isGiftVoucherCatalogHandle } from "../src/lib/shopify-gift-cards-core.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, "..");
@@ -318,14 +322,20 @@ async function main() {
     noPrice: 0,
     noImage: 0,
     giftCard: 0,
+    giftVoucher: 0,
     notActive: 0,
     kept: 0,
   };
+  const giftVoucherHandles = giftVoucherCatalogHandles(giftVoucherProductHandles());
 
   for (const [handle, groupRows] of groups) {
     const first = groupRows[0];
 
     // Filters (Path A)
+    if (isGiftVoucherCatalogHandle(handle, giftVoucherHandles)) {
+      stats.giftVoucher++;
+      continue;
+    }
     if (!isTruthy(first[COLS.published])) {
       stats.notPublished++;
       continue;

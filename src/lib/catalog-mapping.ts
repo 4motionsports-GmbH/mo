@@ -11,6 +11,8 @@ import { buildShopifyCartUrl, parseNumericVariantId } from "./shopify-cart-url.m
 import { QA_METAFIELD_KEY, QA_METAFIELD_NAMESPACE, parseQaMetafield } from "./qa-core.mjs";
 import { parseKurztextSpecs, extractKurztextDimensions } from "./kurztext.mjs";
 import { parseMoRuleMetafields } from "./product-rules.mjs";
+import { giftVoucherProductHandles } from "./gift-voucher-flags.mjs";
+import { giftVoucherCatalogHandles, isGiftVoucherCatalogHandle } from "./shopify-gift-cards-core.mjs";
 // The embedded-doc builder lives in its own module (one source of truth shared
 // with the cron sync and scripts/build-embeddings.mjs). Re-exported here so the
 // long-standing `import { buildEmbeddingDoc } from "@/lib/catalog-mapping"`
@@ -220,6 +222,8 @@ export interface MapStats {
   noPrice: number;
   noImage: number;
   notActive: number;
+  /** The Geschenkgutschein product and its print add-on (never in the chat catalog). */
+  giftVoucher: number;
   kept: number;
 }
 
@@ -275,6 +279,10 @@ function mapVariant(v: ShopifyProductVariant, isDefault: boolean): ProductVarian
  *   - Variant Price > 0
  *   - Has at least one image
  *   - Status=active
+ *   - Not one of the two Geschenkgutschein products (GIFT_VOUCHER_PRODUCT_HANDLE /
+ *     GIFT_VOUCHER_PRINT_PRODUCT_HANDLE): sold in the shop, but no training equipment —
+ *     Mo never recommends them. The webhook refresh (catalog-mutate.ts) removes a product
+ *     that maps to nothing, so both paths keep them out.
  */
 export function mapShopifyProducts(
   source: ShopifyProduct[]
@@ -284,11 +292,17 @@ export function mapShopifyProducts(
     noPrice: 0,
     noImage: 0,
     notActive: 0,
+    giftVoucher: 0,
     kept: 0,
   };
   const products: Product[] = [];
+  const giftVoucherHandles = giftVoucherCatalogHandles(giftVoucherProductHandles());
 
   for (const p of source) {
+    if (isGiftVoucherCatalogHandle(p.handle, giftVoucherHandles)) {
+      stats.giftVoucher++;
+      continue;
+    }
     if (p.status !== "ACTIVE") {
       stats.notActive++;
       continue;
