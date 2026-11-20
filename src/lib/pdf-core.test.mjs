@@ -16,6 +16,11 @@ import {
   wrapText,
   textOp,
   assemblePdf,
+  assembleImagePdf,
+  jpegInfo,
+  pdfInfoString,
+  PAGE_W,
+  PAGE_H,
 } from "./pdf-core.mjs";
 
 test("escapePdfText escapes the three PDF-literal metacharacters", () => {
@@ -83,4 +88,107 @@ test("assemblePdf scales the page tree /Count to the number of pages", () => {
     textOp("F1", 57, 700, 11, "Seite 2"),
   ]);
   assert.ok(pdf.toString("latin1").includes("/Count 2"));
+});
+
+// ---------------------------------------------------------------------------
+// assembleImagePdf — picture pages + invisible text (gift voucher download)
+// ---------------------------------------------------------------------------
+
+/** A minimal JPEG header (SOI, APP0/JFIF, SOF0, EOI) — enough for the assembler. */
+function fakeJpeg(width, height, components = 3) {
+  const sof = [0xff, 0xc0, 0x00, 8 + 3 * components, 0x08, height >> 8, height & 255, width >> 8, width & 255, components];
+  for (let i = 0; i < components; i++) sof.push(i + 1, 0x11, 0x00);
+  return Buffer.from([
+    0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01, 0x01, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x00,
+    ...sof, 0xff, 0xd9,
+  ]);
+}
+
+/** Every xref entry must point at "<n> 0 obj", startxref at "xref". */
+function assertXrefConsistent(pdf) {
+  const text = pdf.toString("latin1");
+  const startxref = Number(/startxref\n(\d+)\n%%EOF\n$/.exec(text)?.[1]);
+  assert.equal(text.slice(startxref, startxref + 5), "xref\n", "startxref points at the xref table");
+  const m = /^xref\n0 (\d+)\n/.exec(text.slice(startxref));
+  assert.ok(m);
+  const size = Number(m[1]);
+  const entries = text.slice(startxref + m[0].length).split("\n").slice(0, size);
+  assert.equal(entries[0], "0000000000 65535 f ");
+  for (let n = 1; n < size; n++) {
+    const off = Number(entries[n].slice(0, 10));
+    assert.equal(text.slice(off, off + `${n} 0 obj`.length), `${n} 0 obj`, `xref entry ${n}`);
+  }
+  assert.match(text, new RegExp(`trailer\\n<< /Size ${size} /Root 1 0 R /Info 4 0 R >>`));
+  return text;
+}
+
+test("jpegInfo reads the frame header and rejects non-JPEG bytes", () => {
+  assert.deepEqual(jpegInfo(fakeJpeg(1819, 2572)), { width: 1819, height: 2572, components: 3 });
+  assert.deepEqual(jpegInfo(fakeJpeg(10, 20, 1)), { width: 10, height: 20, components: 1 });
+  assert.equal(jpegInfo(Buffer.from("%PDF-1.4")), null);
+  assert.equal(jpegInfo(Buffer.from([0xff, 0xd8, 0xff, 0xd9])), null);
+  assert.equal(jpegInfo(Buffer.alloc(0)), null);
+});
+
+test("assembleImagePdf embeds the JPEG as is, with a byte-accurate xref", () => {
+  const jpeg = fakeJpeg(1819, 2572);
+  const pdf = assembleImagePdf(
+    [{ images: [{ data: jpeg, x: 0, y: 0, width: PAGE_W, height: PAGE_H }], texts: [] }],
+    { title: "Geschenkgutschein G-2026-00042", lang: "de-DE" }
+  );
+  assert.ok(Buffer.isBuffer(pdf));
+  const text = assertXrefConsistent(pdf);
+  assert.ok(text.startsWith("%PDF-1.4\n"));
+  assert.ok(text.includes("/Type /Pages /Kids [5 0 R] /Count 1"));
+  assert.ok(text.includes(`/MediaBox [0 0 ${PAGE_W} ${PAGE_H}]`));
+  assert.ok(text.includes("/Subtype /Image /Width 1819 /Height 2572 /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode"));
+  assert.ok(text.includes(`/Length ${jpeg.length} >>\nstream\n`));
+  assert.ok(pdf.includes(jpeg), "the JPEG bytes are embedded unchanged");
+  assert.ok(text.includes(`q ${PAGE_W} 0 0 ${PAGE_H} 0 0 cm /Im1 Do Q`));
+  assert.ok(text.includes("/Title (Geschenkgutschein G-2026-00042)"));
+  assert.ok(text.includes("/Lang (de-DE)"));
+  assert.ok(text.trimEnd().endsWith("%%EOF"));
+});
+
+test("assembleImagePdf writes the invisible text layer (render mode 3), stretched to its box", () => {
+  const pdf = assembleImagePdf([
+    {
+      images: [{ data: fakeJpeg(100, 100), x: 0, y: 0, width: PAGE_W, height: PAGE_H }],
+      texts: [
+        { text: "K7QM 4TXP 9HDA 2RWN", x: 330.5, y: 300.25, size: 12, width: 180 },
+        { text: "Gutschein-Nr. G-2026-00042 (Kopie)", x: 40, y: 20, size: 6 },
+        { text: "   ", x: 0, y: 0, size: 9 },
+      ],
+    },
+  ]);
+  const text = assertXrefConsistent(pdf);
+  const code = /BT 3 Tr \/F1 12 Tf ([\d.]+) Tz 1 0 0 1 330\.5 300\.25 Tm \(K7QM 4TXP 9HDA 2RWN\) Tj ET/.exec(text);
+  assert.ok(code, "the code is in the text layer");
+  assert.ok(Number(code[1]) > 50 && Number(code[1]) < 200, "horizontal scaling fits the printed width");
+  assert.ok(text.includes("(Gutschein-Nr. G-2026-00042 \\(Kopie\\)) Tj ET"), "escaped literal");
+  assert.equal((text.match(/ 3 Tr /g) ?? []).length, 2, "blank lines are skipped");
+  assert.ok(text.includes("/Font << /F1 3 0 R >>"));
+});
+
+test("assembleImagePdf: several pages and images, grey JPEGs, and non-JPEG input is refused", () => {
+  const pdf = assembleImagePdf([
+    { images: [{ data: fakeJpeg(10, 10), x: 0, y: 0, width: 100, height: 100 }, { data: fakeJpeg(20, 10, 1), x: 0, y: 100, width: 200, height: 100 }] },
+    { width: 300, height: 200, images: [{ data: fakeJpeg(30, 20), x: 0, y: 0, width: 300, height: 200 }] },
+  ]);
+  const text = assertXrefConsistent(pdf);
+  assert.ok(text.includes("/Count 2"));
+  assert.equal((text.match(/\/Subtype \/Image/g) ?? []).length, 3);
+  assert.ok(text.includes("/ColorSpace /DeviceGray"));
+  assert.ok(text.includes("/MediaBox [0 0 300 200]"));
+  assert.ok(text.includes("/Im2 Do"));
+  assert.throws(() => assembleImagePdf([{ images: [{ data: Buffer.from("not a jpeg"), x: 0, y: 0, width: 1, height: 1 }] }]), TypeError);
+  assert.throws(() => assembleImagePdf([]), TypeError);
+});
+
+test("pdfInfoString: ASCII literal, anything else UTF-16BE hex", () => {
+  assert.equal(pdfInfoString("Gift voucher (A)"), "(Gift voucher \\(A\\))");
+  const hex = pdfInfoString("Gutschein für Zoë");
+  assert.match(hex, /^<FEFF([0-9A-F]{4})+>$/);
+  const units = hex.slice(5, -1).match(/.{4}/g) ?? [];
+  assert.equal(String.fromCharCode(...units.map((u) => parseInt(u, 16))), "Gutschein für Zoë");
 });
