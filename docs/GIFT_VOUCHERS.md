@@ -125,7 +125,7 @@ starts `held`); the issuing step checks again with Shopify's current view of the
 | `risk` | Shopify meldet ein Betrugsrisiko | Shopify's risk level HIGH, or its recommendation CANCEL / INVESTIGATE. |
 | `daily_limit` | Tageslimit erreicht | Shop vouchers issued today (Berlin) plus this one exceed `GIFT_VOUCHER_DAILY_LIMIT_EUR`. |
 | `not_paid` | Nicht vollständig bezahlt | Not fully paid after 24 h, or refunded / voided before the card existed. |
-| `attempts` | Zu viele Fehlversuche | The tenth failed try (§4.3). |
+| `attempts` | Zu viele Fehlversuche | The eleventh failed try — the one after the plan's last wait (§4.3). |
 
 **Attention flags** — one column `attention`, „Achtung“ in the list; a revocation or a failed deactivation
 is never overwritten by a print note. „Als geklärt markieren“ clears a flag.
@@ -200,8 +200,8 @@ counts an answer slower than 5 s as failed:
 
 ### 4.3 Retries and deferrals
 
-- **A failed try** waits 1, 2, 5, 15, 30, 60, 120, 240, 480, 720 minutes; the tenth → held `attempts` (the
-  error stays visible as „Letzter Fehler“).
+- **A failed try** is retried after 1, 2, 5, 15, 30, 60, 120, 240, 480, 720 minutes (ten retries); the eleventh
+  failed try → held `attempts` (the error stays visible as „Letzter Fehler“).
 - **Fraud check still PENDING** → looked at again every 5 minutes, no attempt counted; once
   `GIFT_VOUCHER_RISK_WAIT_MINUTES` (30) have passed since the unit was recorded it is issued anyway. HIGH,
   CANCEL and INVESTIGATE always hold.
@@ -250,9 +250,9 @@ unit first).
   (it is on the voucher); every typed string is escaped.
 - **Never twice:** the Resend idempotency key is `gift-voucher-mail-<id>-<mail_attempts>`. A repeat of the
   same try (a worker died after Resend took the mail) is refused by Resend (409) and recorded as sent.
-- **Failures:** retried on the plan of §4.3, `failed` after the tenth; a mail Resend refuses as invalid (the
-  address, the payload) → `failed` at once. A PDF that cannot be rendered is retried twice, then the mail
-  goes without the attachment (code and link are the delivery).
+- **Failures:** retried on the plan of §4.3, `failed` after the eleventh failed try; a mail Resend refuses as
+  invalid (the address, the payload) → `failed` at once. A PDF that cannot be rendered is retried twice, then
+  the mail goes without the attachment (code and link are the delivery).
 - **The link rotates:** „E-Mail erneut senden“ and every retry create a new download token; an older link
   stops working (404). Only the token's sha256 is stored.
 - **The mail log** (`email_messages`, the Korrespondenz — also read by the AI customer profile) gets a
@@ -280,7 +280,7 @@ five orders per run; an order whose fulfilment fails for good is skipped for six
 | The webhook is slow, or the products cannot be loaded while a line carries `_mo_gv` | 500 → Shopify redelivers; the insert is idempotent per order line unit, print jobs per voucher. |
 | A worker dies anywhere | The 3-minute lease runs out, the sweep continues from the stored state; a stored code is reused. |
 | Death after the code was stored or after the card was created | The next try gets `TAKEN`, finds the card by its code and adopts it — if it is active and of the voucher's value, else `failed`. |
-| Shopify errors (transport, denied, not configured, order not readable) | Retry plan, held `attempts` after the tenth; `invalid` / above the issue limit → `failed`. |
+| Shopify errors (transport, denied, not configured, order not readable) | Retry plan, held `attempts` after the eleventh failed try; `invalid` / above the issue limit → `failed`. |
 | `TOKEN_ENC_KEY` missing | No code is generated (retry, then held); stored codes cannot be read (reveal, PDF, mail, print fail with „TOKEN_ENC_KEY prüfen“). |
 | Resend refuses or times out | Mail retry plan with a new key per concluded try; a repeat of the same try is a 409 → recorded as sent. |
 | Cancellation lands while the card is being created | The issuing step re-reads the row after `issued` and resolves the flag at once — the code is never mailed. |
@@ -323,8 +323,9 @@ five orders per run; an order whose fulfilment fails for good is skipped for six
   `GIFT_VOUCHER_PRINT_COUNTRIES` (default `DE`). A blocked job stays `queued`: the job card names the block
   („Jetzt drucken“ is disabled with the reason); a job blocked by its own data carries the reason as its error
   and is looked at again hourly. Separate from `PHYSICAL_MAIL_SENDS_APPROVED` (Pingen letters).
-- **The page offers the card only when it can be fulfilled:** provider `manual`, or print.one configured
-  and the gate approved — never while the shop does not sell.
+- **The page offers the card only when it can be fulfilled:** `GIFT_VOUCHER_PRINT_PROVIDER=manual`, or print.one
+  configured and the gate approved — never while the shop does not sell. The fallback above does not count: with
+  the default `printone`, no print.one keys or a closed gate, the page sells no card.
 
 ### 5.3 Submission — one card, never two
 
@@ -336,7 +337,8 @@ five orders per run; an order whose fulfilment fails for good is skipped for six
    `gift-voucher-print-<jobId>` (print.one keeps it 24 h) and a body built only from the job row
    (`recipient`, `mergeVariables`, `templateId`, `finish`, `billingId` = `PRINTONE_BILLING_ID`).
 4. **Before any repeat** Mo searches print.one's newest orders (≤ 300) for its asset token and adopts the
-   order it finds; when that search cannot run, nothing is posted.
+   order it finds; when print.one cannot be asked (no answer, 5xx / 429, 401/403), nothing is posted — only a
+   search print.one refuses outright (another 4xx) lets the POST go ahead, still guarded by its Idempotency-Key.
 
 print.one refusing the request itself (an HTTP 4xx of kind `invalid`) or reporting `order_failed` fails the
 job; every temporary problem — network, 5xx, 401/403, no prepaid balance, template not found, an
@@ -538,8 +540,9 @@ become unreadable), `BLOB_READ_WRITE_TOKEN` (photos, print files), `RESEND_API_K
 **What an operator must set** — for selling: `GIFT_VOUCHERS_ENABLED=true` (last, §13); for print.one in
 addition `PRINTONE_API_KEY`, `PRINTONE_TEMPLATE_ID`, `PRINTONE_WEBHOOK_SECRET`, `PRINTONE_FRONT_SIDE` as
 measured, and `GIFT_VOUCHER_PRINT_SENDS_APPROVED=true` once the lawyer approved print.one as a processor
-(the DPA, dossier § 23 F-48). `PUBLIC_BASE_URL` must be the public https address. Everything else has a
-working default.
+(the DPA, dossier § 23 F-48); for the card printed in-house instead `GIFT_VOUCHER_PRINT_PROVIDER=manual` —
+without one of the two the page sells no card (§5.2). `PUBLIC_BASE_URL` must be the public https address.
+Everything else has a working default.
 
 ## 10. Data model — migration `0083_gift_vouchers.sql`
 
@@ -582,25 +585,19 @@ the migration before the products are on sale.
   hand the recipient's e-mail; the encrypted code with its hash and last four; balances; the print job with
   the recipient's address. Customer photos lie in the **private** Blob store (`gift-voucher-photos/`, EXIF
   stripped), print files under `gift-voucher-print/` only while needed.
-- **Retention** (rules: [`DATA_RETENTION.md`](./DATA_RETENTION.md) „Geschenkgutscheine“, retention step 5j):
-  drafts no live voucher uses after `GIFT_VOUCHER_DRAFT_RETENTION_DAYS` (30; also uploaded photos that never
-  became a draft), the address of finished print jobs and of ordered drafts after
-  `GIFT_VOUCHER_ADDRESS_RETENTION_DAYS` (180), a voucher's personal data — names, message, e-mail addresses,
-  photo, download link — `GIFT_VOUCHER_PERSONAL_RETENTION_DAYS` (365) after it ended (expired, deactivated,
-  cancelled, rejected, failed, used up); amounts, status, code hash / last four and ids stay. **Known gap:**
-  „used up“ means a balance of 0 *last read* that long ago, but the sweep re-reads every issued card's
-  balance daily — so a used-up card is in practice anonymised only after its expiry date plus the window
-  (never with `GIFT_VOUCHER_VALIDITY_YEARS=0`).
-- **Erasure** (`erasePerson`): the voucher stays — the card is money for its recipient — but loses the buyer
-  (customer link, Shopify id, e-mail, name); where the person was the e-mail recipient of a voucher by hand,
-  that address and name go; a finished print job loses the address, an open one keeps it until the paid card
-  is posted. Texts and photo are the recipient's gift and leave with the retention. Drafts are anonymous.
-  Merge: `gift_vouchers.customer_id` is repointed.
+- **Retention:** the three windows of §9 (`0` disables a step), enforced by step 5j of `/api/cron/retention` —
+  drafts, the address of finished print jobs, and a voucher's personal data once it ended; amounts, status, the
+  encrypted code with its hash / last four and ids stay. What each step deletes, and the known gap of „used
+  up“ (the daily balance sync keeps that clause from ever firing): [`DATA_RETENTION.md`](./DATA_RETENTION.md)
+  „Geschenkgutscheine“.
+- **Erasure** (`erasePerson`) keeps the voucher — the card is money for its recipient — and removes the buyer;
+  texts and photo leave with the retention, drafts are anonymous; a merge repoints `gift_vouchers.customer_id`.
+  The rules: [`DATA_RETENTION.md`](./DATA_RETENTION.md) „Geschenkgutscheine“.
 - **Codes and tokens are bearer value:** never logged, never in `reportError` contexts, KPI events, audit
-  details or URLs (except the mail's download token); the mail log keeps a redacted copy (§4.5); revealing a
-  code in the admin is audited (`gift_voucher.code_reveal`). The balance check finds a code only by its
-  hash; a download token is stored only as its sha256, a print-asset token is a random 192-bit value that
-  dies with the job's files.
+  details or URLs (except the mail's download token and the print files' asset token); the mail log keeps a
+  redacted copy (§4.5); revealing a code in the admin is audited (`gift_voucher.code_reveal`). The balance
+  check finds a code only by its hash; a download token is stored only as its sha256, a print-asset token is
+  a random 192-bit value that dies with the job's files.
 - **Processors:** Shopify (the cards), Resend (the mail), Vercel Blob (photos, print files), Anthropic (text
   suggestions — occasion and tone only, no personal data), **print.one** (new — Print.one B.V., Netherlands,
   printed there and posted through PostNL: recipient name and address plus the card's artwork, which carries
@@ -635,10 +632,11 @@ Status of each step: [`ROLLOUT_TODO.md`](./ROLLOUT_TODO.md) item 28.
      „Betrag“ with one variant per amount (price = face value, e.g. 25 / 50 / 75 / 100 / 150 / 200 / 250 €,
      inside `GIFT_VOUCHER_MIN_EUR` … `_MAX_EUR`); **no tax charged** (a multi-purpose voucher is taxed when
      redeemed — confirm with the tax advisor); not a physical product (no shipping); inventory not tracked;
-     product type `Gutschein`; unlisted.
+     product type `Gutschein`; sales channel Onlineshop on (the cart needs it), status unlisted („Nicht
+     gelistet“ — only the voucher page shows it).
    - „Gutschein Premium-Karte“, handle `gutschein-premiumkarte` — one variant (e.g. 4,90 €), taxable, not a
      physical product (print.one posts it; the page collects the address), inventory not tracked, type
-     `Gutschein`, unlisted.
+     `Gutschein`, Onlineshop on, unlisted.
    - **Excluded from every discount:** a smart collection „Alle Produkte ohne Gutscheine“ („Produkttyp ist
      nicht gleich Gutschein“) and every active code and automatic discount set to „Gilt für: bestimmte
      Kollektionen“ → that collection. Otherwise a voucher can be bought below its value (Mo would hold it as
@@ -647,7 +645,8 @@ Status of each step: [`ROLLOUT_TODO.md`](./ROLLOUT_TODO.md) item 28.
    `GIFT_VOUCHER_FULFILL_ORDERS`, `read_gift_card_transactions`). Client-credentials tokens carry only the
    scopes granted at install, so the app must be re-authorised: add the scope to `[access_scopes]` in
    `shopify.app.toml`, `shopify app deploy`, then accept the updated permissions in the Shopify admin (or
-   reinstall the app) — the procedure of [`ROLLOUT_TODO.md`](./ROLLOUT_TODO.md) item 16.3 (steps 3–6). Then
+   reinstall the app) — the procedure of [`ROLLOUT_TODO.md`](./ROLLOUT_TODO.md) item 16.3 (steps 1 and 3–6:
+   `shopify app config link` first, so the file holds the active configuration). Then
    `npm run shopify:webhooks -- --url https://mo.motionsports.de` (read-only; it now lists `write_gift_cards`
    among the required scopes; `orders/paid`, `orders/updated` and `orders/cancelled` are already subscribed —
    `--apply` only if a reinstall removed subscriptions) and `npm run verify:gift-vouchers` (read-only: env,
@@ -656,7 +655,8 @@ Status of each step: [`ROLLOUT_TODO.md`](./ROLLOUT_TODO.md) item 28.
 3. **Migration 0083** — `npm run db:migrate`, run by the maintainer **before** the deploy (§10).
 4. **Vercel env** (Production) as in §9; `PUBLIC_BASE_URL` = `https://mo.motionsports.de`. Deploy `main`;
    Settings → Cron Jobs lists `/api/cron/gift-vouchers` every 5 minutes.
-5. **print.one** (only for the Premium-Karte via print.one; without it the cards are printed in-house):
+5. **print.one** (only for the Premium-Karte via print.one; to print the cards in-house instead, set
+   `GIFT_VOUCHER_PRINT_PROVIDER=manual` and skip this step — with neither the page sells no card, §5.2):
    account, a LIVE and a TEST API key (`PRINTONE_API_KEY`, `PRINTONE_TEST_API_KEY` locally), the **DPA
    (AV-Vertrag)** — print.one's processing agreement is part of its terms; the lawyer checks it first
    ([`ANWALTSDOSSIER.md`](./ANWALTSDOSSIER.md) § 23, F-48) —, a **prepaid balance** (a LIVE order without
@@ -668,18 +668,22 @@ Status of each step: [`ROLLOUT_TODO.md`](./ROLLOUT_TODO.md) item 28.
    template `page.gutschein-mo`) and **„Gutscheinbedingungen“** (handle `gutscheinbedingungen`, the terms —
    validity, redemption, remaining balance, no cash payout, Widerruf, loss; the lawyer reads them and the
    FAQ — dossier § 23, F-50; every voucher prints the link, so the page must exist before the first sale);
-   in the theme editor both products in the section; the menu item „Geschenkgutschein“ repointed to
-   `/pages/gutschein` and the Custom CSS selector next to it (both in the MANIFEST entry).
+   in the theme editor both products in the section; Inhalte → Menüs → `mega-menu-26`: the item
+   „Geschenkgutschein“ (today `/products/motion-sports-geschenkgutschein`) repointed to `/pages/gutschein`;
+   Theme settings → Custom CSS: the selector `.side-menu-item[href="/products/motion-sports-geschenkgutschein"]`
+   changed to `.side-menu-item[href="/pages/gutschein"]` (else the mobile menu loses the item's separator); the
+   AI Advisor stays on with its shared secret (the page reads both).
 7. **Admin check:** Gutscheine → „Einrichtung“ — every row ✓ (scope, both products without findings,
    `TOKEN_ENC_KEY`, Resend, Blob); Einstellungen → Systemstatus: „Druckpartner (print.one)“,
    „Gutschein-Kartendruck“, „Geschenkgutscheine“.
 8. **Test order:** `GIFT_VOUCHER_ALLOW_TEST_ORDERS=true` (redeploy), Shopify payments in test mode or the
-   Bogus Gateway, `GIFT_VOUCHERS_ENABLED=true`; buy a 25 € voucher as PDF (and one with the Premium-Karte):
-   the mail with the PDF arrives (at the latest after `GIFT_VOUCHER_RISK_WAIT_MINUTES` while Shopify's fraud
-   check is pending), Gutscheine lists it as „Ausgestellt“, the code works in the checkout, „Guthaben prüfen“
-   shows 25,00 €, the print job appears — in the queue while the gate is off; with the gate open and a LIVE
-   key print.one really prints and posts it to the address entered. Then „Sperren“ the test vouchers and set
-   `GIFT_VOUCHER_ALLOW_TEST_ORDERS=false` again.
+   Bogus Gateway, `GIFT_VOUCHERS_ENABLED=true`; buy a 25 € voucher as PDF (and, once the page offers the card
+   — §5.2 — one with the Premium-Karte): the mail with the PDF arrives (at the latest after
+   `GIFT_VOUCHER_RISK_WAIT_MINUTES` while Shopify's fraud check is pending), Gutscheine lists it as
+   „Ausgestellt“, the code works in the checkout, „Guthaben prüfen“ shows 25,00 €, the print job appears — a
+   job „Von Hand“ in the queue with `GIFT_VOUCHER_PRINT_PROVIDER=manual`; with print.one, the gate open and a
+   LIVE key print.one really prints and posts it to the address entered. Then „Sperren“ the test vouchers and
+   set `GIFT_VOUCHER_ALLOW_TEST_ORDERS=false` again.
 9. **Switch-on:** `GIFT_VOUCHERS_ENABLED=true` stays on; „Verkauf im Shop“ on. Orders paid while the switch
    was off wait in „Zu prüfen“ — „Ausstellen“ or „Ablehnen“ each.
 
@@ -710,7 +714,8 @@ Status of each step: [`ROLLOUT_TODO.md`](./ROLLOUT_TODO.md) item 28.
 | Print | `src/lib/gift-voucher-print.ts`, `printone.ts` |
 | Storefront | `src/app/api/gift-vouchers/*`, `src/lib/gift-voucher-storefront-io.ts`, `gift-voucher-message.ts`, `gift-voucher-photo.ts`, `rate-limit.ts` |
 | Webhooks, cron | `src/app/api/webhooks/shopify/route.ts` (`giftVoucherOrderStep`), `src/app/api/webhooks/printone/route.ts`, `src/app/api/cron/gift-vouchers/route.ts`, `vercel.json` |
-| Admin | `src/app/admin/GutscheineTab.tsx`, `src/app/admin/gutscheine/*`, `src/app/api/admin/gutscheine/*`, `src/lib/admin-tabs.mjs` |
+| Admin | `src/app/admin/GutscheineTab.tsx`, `src/app/admin/gutscheine/*`, `src/app/api/admin/gutscheine/*`, `src/lib/admin-tabs.mjs`; wired in `src/app/admin/page.tsx`, `lazy.tsx`, `tabs.tsx` (icon), `AdminShell.tsx` (shortcut sheet) |
+| Elsewhere | `src/lib/token-crypto.ts` (the code's encryption), `src/app/admin/einstellungen/SystemStatusCard.tsx` + `EinstellungenTab.tsx` (Systemstatus rows), `business-snapshot.ts` / `-core.mjs` (switches), `ai-call-sites.mjs` + `ai-usage-store.ts` (call site `gift_voucher_message`), `scripts/register-shopify-webhooks.mjs` (scope `write_gift_cards`) |
 | Privacy | `customer-erasure.ts` / `-core.mjs`, `customer-fk-plan.mjs`, `customer-merge-store.ts`, `retention.ts` (step 5j), `retention-options.mjs` |
 | Catalog | `catalog-mapping.ts`, `scripts/convert-catalog.mjs` — both voucher products stay out of Mo's chat catalog |
 | Scripts | `scripts/verify-gift-vouchers.mjs` (`npm run verify:gift-vouchers`), `scripts/verify-printone.mjs` (`npm run verify:printone`) |

@@ -617,7 +617,7 @@ lawyer ready to send, the Shopify steps and the frontend prompt: [`WELCOME_VOUCH
       tax charged (ask the tax advisor), no shipping, unlisted — and „Gutschein Premium-Karte“
       `gutschein-premiumkarte`; both excluded from every discount through the collection „Alle Produkte ohne
       Gutscheine“.
-   2. **Open — M: app scope `write_gift_cards`** (§13.2, the way of item 16.3 steps 3–6). Then
+   2. **Open — M: app scope `write_gift_cards`** (§13.2, the way of item 16.3 steps 1 and 3–6). Then
       `npm run shopify:webhooks -- --url https://mo.motionsports.de` and `npm run verify:gift-vouchers` → send C the
       output.
    3. **Open — M: migration BEFORE / with the deploy.** `git pull`, `npm run db:migrate` (applies `0083`), then deploy
@@ -628,8 +628,9 @@ lawyer ready to send, the Shopify steps and the frontend prompt: [`WELCOME_VOUCH
       on sale.
    4. **Open — M: Vercel env (Production)** (§9, §13.4): `PUBLIC_BASE_URL` = `https://mo.motionsports.de`; every other
       variable has a working default; `GIFT_VOUCHERS_ENABLED` stays `false` until the test order.
-   5. **Open — M + L: print.one** (§13.5; only for the card by print.one — without it the cards are printed in-house
-      from Gutscheine): the lawyer answers dossier § 23 F-48 first; account, LIVE and TEST key, prepaid balance,
+   5. **Open — M + L: print.one** (§13.5; only for the card by print.one — to print the cards in-house from Gutscheine
+      instead, set `GIFT_VOUCHER_PRINT_PROVIDER=manual`; with neither the page sells no card): the lawyer answers
+      dossier § 23 F-48 first; account, LIVE and TEST key, prepaid balance,
       `npm run verify:printone -- --create-template` → `PRINTONE_TEMPLATE_ID`, the webhook → `PRINTONE_WEBHOOK_SECRET`,
       the geometry check (§5.6) → `PRINTONE_FRONT_SIDE`; then `GIFT_VOUCHER_PRINT_SENDS_APPROVED=true` → Redeploy.
    6. **Open — M: theme and pages** (§13.6): the four files of the MANIFEST entry (the template once), the pages
@@ -638,9 +639,9 @@ lawyer ready to send, the Shopify steps and the frontend prompt: [`WELCOME_VOUCH
       the Custom CSS selector.
    7. **Open — M: admin check and test order** (§13.7, §13.8): Gutscheine → „Einrichtung“ all ✓ and Einstellungen →
       Systemstatus; then `GIFT_VOUCHER_ALLOW_TEST_ORDERS=true` and `GIFT_VOUCHERS_ENABLED=true` → Redeploy → a 25 € test
-      voucher as PDF and one with the Premium-Karte (mail, PDF, code in the checkout, „Guthaben prüfen“, the print
-      job); afterwards „Sperren“ the test vouchers and `GIFT_VOUCHER_ALLOW_TEST_ORDERS=false` → Redeploy. Send C what
-      differed.
+      voucher as PDF and — once the page offers the card (step 5 done, or `GIFT_VOUCHER_PRINT_PROVIDER=manual`) — one
+      with the Premium-Karte (mail, PDF, code in the checkout, „Guthaben prüfen“, the print job); afterwards „Sperren“
+      the test vouchers and `GIFT_VOUCHER_ALLOW_TEST_ORDERS=false` → Redeploy. Send C what differed.
    8. **Open — M: switch-on** (§13.9): `GIFT_VOUCHERS_ENABLED` stays `true`, Gutscheine → „Einrichtung“ → „Verkauf im
       Shop“ on. Orders paid while the switch was off wait in Gutscheine → „Zu prüfen“ („Ausstellen“ or „Ablehnen“).
    9. **Open — L:** dossier § 23 — F-48 (print.one), F-49 (the recipient's data, vouchers by hand by e-mail), F-50

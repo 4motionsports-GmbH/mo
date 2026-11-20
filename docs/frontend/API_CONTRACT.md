@@ -1541,7 +1541,7 @@ Saves the design right before „Jetzt kaufen“ / „In den Warenkorb“.
   "message": "…",                                       // ≤ 350 characters; lines beyond 8 are joined onto the last
   "delivery": "print",                                 // "pdf" (default) | "print" — only while features.print
   "address": { "name": "Lena Muster", "line1": "Musterstraße 1", "line2": null, "postalCode": "12345", "city": "Musterstadt", "country": "DE" },
-  "locale": "de"                                       // the language of the voucher, its PDF and its mail
+  "locale": "de"                                       // the language of the error messages (stored with the draft); the voucher, its PDF and its mail follow the order's language (Shopify customer_locale)
 }
 // response
 { "ok": true, "token": "Qm9…", "textRemoved": false }   // token: 32 characters base64url
@@ -2777,7 +2777,7 @@ integration: send `x-ms-locale` on every backend call from `/en` (and `de` or no
 | `GET /api/account/summary` | query, header | The PDF and its filename. |
 | `GET /api/account/export` | query, header | The download filename and error messages. |
 | `POST /api/account/erase` | query, header | Error messages. |
-| `/api/gift-vouchers/*` (the voucher page, §3d) | body (POST), query, header | The messages; `config`: design names, occasions, tones, the validity example; a draft's `locale` is the language of the voucher, its PDF and its mail. The mail link `download` reads `?locale=` for its plain-text messages only. |
+| `/api/gift-vouchers/*` (the voucher page, §3d) | body (POST), query, header | The messages; `config`: design names, occasions, tones, the validity example; `suggest`: the language of the texts. The voucher, its PDF and its mail follow the order's language (Shopify `customer_locale`, `en…` → English), not a draft's `locale`. The mail link `download` reads `?locale=` for its plain-text messages only. |
 | `GET`/`PATCH`/`DELETE /api/account/conversations/{id}` | query, header | Error messages. |
 | Mail links (`/api/confirm-marketing`, `/api/unsubscribe`, `/api/erase-data`, `/api/newsletter-rating`, `/api/r/{token}`) | `locale` on the link | Page language. The backend builds these links; the widget never does. The DOI link carries the recipient's locale always; the erasure links and the unsubscribe and `/api/r/{token}` links of campaign mails (the Einzelansprache included) carry `locale=en` for English recipients and nothing for German. The 1:1 marketing mail is German only, so its links carry none; `/api/newsletter-rating` links carry none yet. A link without `locale` is German, so links sent earlier keep working. |
 
