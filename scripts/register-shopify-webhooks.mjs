@@ -75,6 +75,9 @@ const REQUIRED_SCOPES = [
   "write_discounts",
   "read_publications",
   "write_publications",
+  // Geschenkgutscheine (docs/GIFT_VOUCHERS.md): Mo creates, looks up and deactivates the gift card
+  // behind every voucher. write_gift_cards includes read access.
+  "write_gift_cards",
 ];
 
 async function token() {

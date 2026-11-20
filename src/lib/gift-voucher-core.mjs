@@ -460,7 +460,7 @@ function emailOrNull(v) {
 }
 
 /**
- * A plausible e-mail address (one @, a dot in the domain, no spaces, ≤ 254).
+ * A plausible e-mail address (one at-sign, a dot in the domain, no spaces, ≤ 254).
  * @param {unknown} v
  * @returns {boolean}
  */

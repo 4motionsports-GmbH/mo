@@ -64,6 +64,7 @@ import { pageContextHoldoutPct } from "./page-context";
 import { parseIntEnv } from "./env-num";
 import { isCampaignReleaseEnabled, isCampaignSendsApproved } from "./campaign-flags.mjs";
 import { isPhysicalMailSendsApproved } from "./pingen-flag.mjs";
+import { isGiftVoucherPrintSendsApproved, isGiftVouchersEnabled } from "./gift-voucher-flags.mjs";
 import {
   isAppProxySigninEnabled,
   isAttributionSessionAnchorEnabled,
@@ -515,6 +516,8 @@ export function snapshotSwitches() {
     pageContextHoldoutPct: pageContextHoldoutPct(),
     chatOrderStatus: isChatOrderStatusEnabled(),
     consentReward: isConsentRewardEnabled(),
+    giftVouchers: isGiftVouchersEnabled(),
+    giftVoucherPrintApproved: isGiftVoucherPrintSendsApproved(),
     emailConfigured: isEmailConfigured(),
     anthropicConfigured: Boolean(process.env.ANTHROPIC_API_KEY),
   };
