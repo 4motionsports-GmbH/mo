@@ -39,6 +39,10 @@
       "schedule": "*/5 * * * *"
     },
     {
+      "path": "/api/cron/gift-vouchers",
+      "schedule": "*/5 * * * *"
+    },
+    {
       "path": "/api/cron/inbox",
       "schedule": "20 * * * *"
     },
