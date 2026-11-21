@@ -19,6 +19,7 @@ import {
   giftVoucherPhotoError,
   giftVoucherStorefrontState,
   giftVoucherSuggestionPrompt,
+  isGiftVoucherPrintOffered,
   isGiftVoucherFontFile,
   isValidGiftVoucherDownloadToken,
   parseContentLength,
@@ -47,6 +48,16 @@ const READY = {
   printOneConfigured: true,
   printSendsApproved: true,
 };
+
+test("isGiftVoucherPrintOffered: in-house, or print.one configured AND released by the gate", () => {
+  assert.equal(isGiftVoucherPrintOffered({ printProvider: "manual", printOneConfigured: false, printSendsApproved: false }), true);
+  assert.equal(isGiftVoucherPrintOffered({ printProvider: "printone", printOneConfigured: true, printSendsApproved: true }), true);
+  assert.equal(isGiftVoucherPrintOffered({ printProvider: "printone", printOneConfigured: true, printSendsApproved: false }), false);
+  assert.equal(isGiftVoucherPrintOffered({ printProvider: "printone", printOneConfigured: false, printSendsApproved: true }), false);
+  assert.equal(isGiftVoucherPrintOffered(/** @type {any} */ (null)), false);
+  // The page's feature follows the same rule.
+  assert.equal(giftVoucherStorefrontState({ ...READY, printSendsApproved: false }).features.print, false);
+});
 
 test("storefront state: everything set up → available with every feature", () => {
   assert.deepEqual(giftVoucherStorefrontState(READY), {

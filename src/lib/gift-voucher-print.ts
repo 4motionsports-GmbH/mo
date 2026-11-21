@@ -23,7 +23,8 @@
 //      stored under a fresh asset token BEFORE the token is recorded (a recorded
 //      token always has both files) and never rendered again while it exists,
 //      so the URLs, and with them the request body, stay the same;
-//   3. the request — Idempotency-Key gift-voucher-print-<jobId> and a body built
+//   3. the request — Idempotency-Key gift-voucher-print-<jobId>-<created ms>
+//      (giftVoucherPrintIdempotencyKey: unique across databases) and a body built
 //      only from the job row: a repeat within print.one's 24 h returns the first
 //      order instead of printing a second card;
 //   4. the lookup — before any repeat (attempts > 0, or a recovered
@@ -62,6 +63,7 @@ import {
   PRINTONE_SQ14_SPREAD,
   PRINT_SUBMIT_STALE_MS,
   buildPrintOneOrderBody,
+  canCleanPrintJobAssets,
   decideGiftVoucherPrintSubmission,
   describePrintOneOrderFailure,
   giftVoucherPrintAssetPathname,
@@ -451,7 +453,7 @@ async function processPrintJob(initial: GiftVoucherPrintJob, opts: { claimed: bo
     if (found.order) return adoptOrder(job, found.order);
   }
 
-  const key = giftVoucherPrintIdempotencyKey(job.id);
+  const key = giftVoucherPrintIdempotencyKey(job.id, job.createdAt);
   if (!key) return retryLater(job, "Interner Fehler: kein Idempotency-Key.");
   const created = await createPrintOneOrder(built.body, key);
   if (created.ok) return adoptOrder(job, created.order);
@@ -733,9 +735,10 @@ export async function markGiftVoucherPrintJobDone(jobId: number): Promise<{ ok: 
 // ── print files: cleanup and the in-house download ───────────────────────────
 
 /**
- * Delete the print files of finished jobs (and of jobs older than 14 days) from
- * Blob, then forget their token — the public asset URL stops working. A job
- * being submitted right now is left alone. `deleted` = files removed.
+ * Delete the print files of FINISHED jobs (sent, done, cancelled, failed) from
+ * Blob, then forget their token — the public asset URL stops working. An open
+ * job keeps its files however old it is (canCleanPrintJobAssets: the token
+ * finds an order whose answer was lost). `deleted` = files removed.
  */
 export async function cleanupGiftVoucherPrintAssets(opts: { limit: number }): Promise<{ deleted: number }> {
   let deleted = 0;
@@ -743,7 +746,7 @@ export async function cleanupGiftVoucherPrintAssets(opts: { limit: number }): Pr
     if (!isGiftVoucherBlobConfigured()) return { deleted };
     const jobs = await listGiftVoucherPrintJobsWithAssetsToClean({ limit: clampLimit(opts.limit, 20) });
     for (const job of jobs) {
-      if (job.status === "submitting") continue;
+      if (!canCleanPrintJobAssets(job)) continue;
       const paths = [job.assetOutsidePathname, job.assetInsidePathname].filter((p): p is string => typeof p === "string" && p.length > 0);
       const removed = paths.length > 0 ? await deleteGiftVoucherBlobs(paths) : 0;
       if (removed === paths.length && (await clearGiftVoucherPrintJobAssets(job.id))) deleted += removed;

@@ -22,16 +22,20 @@
 //      the webhook's after(), the cron sweep and an admin click never work on
 //      the same row at once;
 //   2. a shop unit: the order as Shopify sees it NOW (cancelled → revoke;
-//      refunded already → hold; decideGiftVoucherIssue → hold / defer /
-//      issue); an admin unit skips the order;
+//      refunded already → hold `refunded`; decideGiftVoucherIssue with
+//      today's issued sum read right before → hold / defer / issue); an admin
+//      unit skips the order;
 //   3. the code is generated and stored ENCRYPTED with status `issuing`
 //      BEFORE Shopify sees it (markGiftVoucherIssuing — never replaces a
-//      stored code), then giftCardCreate with that code. A lost answer is
+//      stored code; for a shop unit also the daily limit's hard cap: one
+//      reservation at a time under an advisory lock, over the limit → held
+//      `daily_limit`), then giftCardCreate with that code. A lost answer is
 //      resolved by the code: the next try gets TAKEN (Shopify's codes are
 //      unique) and adopts the card it finds by the code — never a second card;
-//   4. `issued` with a fresh download-token hash (the plain token only lives
-//      in memory for the mail), then the mail and the print job — failures
-//      there never undo the card, the sweep retries them.
+//   4. `issued` with the hash of the first mail attempt's download token
+//      (derived per attempt — the mail rebuilds the same link), then the mail
+//      and the print job — failures there never undo the card, the sweep
+//      retries them.
 //
 // REVOCATION (order cancelled or a voucher line refunded): a unit that never
 // became a card is cancelled at once; any other unit gets the attention flag
@@ -80,6 +84,7 @@ import {
   listGiftVouchersDueForMail,
   listGiftVouchersForBalanceSync,
   listGiftVouchersForOrder,
+  listGiftVoucherOrdersToFulfil,
   markGiftVoucherDeactivated,
   markGiftVoucherDraftsOrdered,
   markGiftVoucherFailed,
@@ -123,7 +128,6 @@ import {
   giftVoucherExpiryDate,
   hashOpaqueToken,
   isFinalPrintJobStatus,
-  newOpaqueToken,
   sanitizeGiftVoucherText,
   validatePostalAddress,
 } from "./gift-voucher-core.mjs";
@@ -158,7 +162,7 @@ import {
   type GiftVoucherRevokeReason,
 } from "./gift-voucher-issue-core.mjs";
 import { giftVoucherMailTarget } from "./gift-voucher-mail-core.mjs";
-import { sendGiftVoucherMail } from "./gift-voucher-mail";
+import { giftVoucherAttemptDownloadToken, sendGiftVoucherMail } from "./gift-voucher-mail";
 import {
   cancelGiftVoucherPrintJob,
   cleanupGiftVoucherPrintAssets,
@@ -199,8 +203,10 @@ const SWEEP_FULFIL_ORDERS = 5;
 /** A soft claim on a due mail: a parallel run skips it this long (the send writes the real state). */
 const MAIL_CLAIM_MS = 15 * 60_000;
 
-/** Order statuses that mean money went back before the card existed. */
+/** Order statuses that mean money went back before the card existed (the pipeline holds `refunded`). */
 const REFUNDED_ORDER_STATUSES = new Set(["REFUNDED", "PARTIALLY_REFUNDED", "VOIDED"]);
+/** … of which no operator may issue: all the money is back (PARTIALLY_REFUNDED may concern another line). */
+const FULLY_REFUNDED_ORDER_STATUSES = new Set(["REFUNDED", "VOIDED"]);
 
 /** Report without PII: the route, a phase and ids at most. */
 function report(err: unknown, phase: string, extra: Record<string, string | number | null> = {}): void {
@@ -221,6 +227,9 @@ type Fail = { ok: false; code: string; message: string };
 const fail = (code: string, message: string): Fail => ({ ok: false, code, message });
 const NOT_FOUND = () => fail("not_found", "Gutschein nicht gefunden.");
 const CONFLICT = () => fail("conflict", "Der Gutschein wurde inzwischen geändert — bitte neu laden.");
+const REFUNDED = () =>
+  fail("refunded", "Die Bestellung wurde erstattet — der Gutschein kann nicht ausgestellt werden. Bitte in Shopify prüfen und „Ablehnen“.");
+const PURGED = () => fail("purged", "Die Daten dieses Gutscheins wurden nach Ablauf der Aufbewahrungsfrist gelöscht — bitte ablehnen.");
 
 // ── orders/paid ──────────────────────────────────────────────────────────────
 
@@ -414,8 +423,6 @@ interface IssueContext {
   deadlineMs: number;
   /** One order snapshot per order and run. */
   snapshots: Map<string, Promise<SnapshotResult>>;
-  /** Shop vouchers issued today (Berlin), loaded once, counted up locally. */
-  issuedTodayCents: number | null;
   tally: IssueTally;
 }
 
@@ -432,7 +439,6 @@ function newContext(deadlineMs: number): IssueContext {
   return {
     deadlineMs,
     snapshots: new Map(),
-    issuedTodayCents: null,
     tally: { issued: 0, held: 0, deferred: 0, failed: 0, cancelled: 0, mailed: 0, printSubmitted: 0 },
   };
 }
@@ -497,19 +503,28 @@ async function issueOneUnsafe(v: GiftVoucher, mode: IssueMode, ctx: IssueContext
     }
     const order = snap.order;
     if (order.cancelledAt) return revokeUnissued(v, "cancelled");
+    const financial = String(order.displayFinancialStatus ?? "").toUpperCase();
     if (mode === "override") {
-      // An operator reviewed the hold; only a payment problem still stops it.
+      // An operator reviewed the hold; a full refund or a payment problem
+      // still stops it (a partial refund may concern another line).
+      if (FULLY_REFUNDED_ORDER_STATUSES.has(financial)) {
+        await markGiftVoucherHeld(v.id, "refunded");
+        return { kind: "held", reason: "refunded" };
+      }
       if (!order.fullyPaid) {
         await markGiftVoucherHeld(v.id, "not_paid");
         return { kind: "held", reason: "not_paid" };
       }
     } else {
       // Money went back before the card existed: an operator decides.
-      if (REFUNDED_ORDER_STATUSES.has(String(order.displayFinancialStatus ?? "").toUpperCase())) {
-        await markGiftVoucherHeld(v.id, "not_paid");
-        return { kind: "held", reason: "not_paid" };
+      if (REFUNDED_ORDER_STATUSES.has(financial)) {
+        await markGiftVoucherHeld(v.id, "refunded");
+        return { kind: "held", reason: "refunded" };
       }
-      if (ctx.issuedTodayCents == null) ctx.issuedTodayCents = await sumShopGiftVouchersIssuedToday();
+      // Today's issued sum, read right before the decision — without this
+      // unit (a retried unit is `issuing` itself). The hard cap is the
+      // reservation in ensureCode.
+      const issuedTodayCents = await sumShopGiftVouchersIssuedToday(v.id);
       const decision = decideGiftVoucherIssue({
         enabled: isGiftVouchersEnabled(),
         allowTestOrders: isGiftVoucherTestOrdersAllowed(),
@@ -525,7 +540,7 @@ async function issueOneUnsafe(v: GiftVoucher, mode: IssueMode, ctx: IssueContext
         // A discount on the line was decided when the order was recorded.
         line: { unitCents: v.amountCents, discountCents: 0 },
         limits: giftVoucherLimits(),
-        issuedTodayCents: ctx.issuedTodayCents,
+        issuedTodayCents,
         riskWaitExpired: isRiskWaitExpired({ createdAt: v.createdAt, riskWaitMinutes: giftVoucherRiskWaitMinutes() }),
       });
       if (decision.action === "cancel") return revokeUnissued(v, "cancelled");
@@ -595,15 +610,15 @@ async function issueOneUnsafe(v: GiftVoucher, mode: IssueMode, ctx: IssueContext
     card = found.card;
   }
 
-  // 3) Issued — with a fresh download link when a mail will go out.
-  const token = v.mailStatus === "pending" ? newOpaqueToken(24) : null;
+  // 3) Issued — with the download link of the first mail attempt when a mail
+  //    will go out (derived: the mail rebuilds the same link).
+  const token = v.mailStatus === "pending" ? giftVoucherAttemptDownloadToken(v, code) : null;
   const marked = await markGiftVoucherIssued(v.id, {
     giftCardId: card.id,
     balanceCents: card.balanceCents,
     downloadTokenHash: token ? hashOpaqueToken(token) : null,
   });
   if (!marked) return afterIssuedNotRecorded(v, card, mode);
-  if (v.source === "shop" && ctx.issuedTodayCents != null) ctx.issuedTodayCents += v.amountCents;
 
   // 4) A revocation that landed while the card was being created.
   const now = await getGiftVoucher(v.id);
@@ -614,14 +629,16 @@ async function issueOneUnsafe(v: GiftVoucher, mode: IssueMode, ctx: IssueContext
   }
 
   // 5) Mail and card. Failures here never undo the card; the sweep retries.
-  await deliver(now ?? v, token, ctx);
+  await deliver(now ?? v, ctx);
   await releaseGiftVoucherLock(v.id);
   return { kind: "issued" };
 }
 
 /**
  * The voucher's code: the stored one (a retry — never replaced), else a new
- * one, stored encrypted with status `issuing` before the Shopify call.
+ * one, stored encrypted with status `issuing` before the Shopify call. For a
+ * shop unit the pipeline decided itself that store is the daily limit's hard
+ * cap (markGiftVoucherIssuing): refused → held `daily_limit`.
  */
 async function ensureCode(
   v: GiftVoucher,
@@ -642,13 +659,19 @@ async function ensureCode(
     return { ok: false, result: await failIssue(v, message, mode) };
   }
   const expiresOn = giftVoucherExpiryDate(new Date(), giftVoucherValidityYears());
-  const stored = await markGiftVoucherIssuing(v.id, {
-    codeEncB64: prepared.codeEncB64,
-    codeHash: prepared.codeHash,
-    codeLast4: prepared.codeLast4,
-    expiresOn,
-  });
-  if (stored) return { ok: true, code, expiresOn };
+  // An operator's voucher and an override reserve without a cap.
+  const dailyLimitCents = v.source === "shop" && mode === "auto" ? giftVoucherLimits().dailyLimitCents : 0;
+  const stored = await markGiftVoucherIssuing(
+    v.id,
+    { codeEncB64: prepared.codeEncB64, codeHash: prepared.codeHash, codeLast4: prepared.codeLast4, expiresOn },
+    dailyLimitCents
+  );
+  if (stored === "written") return { ok: true, code, expiresOn };
+  if (stored === "limit") {
+    // Units reserved meanwhile (another instance, a parallel webhook) used up today's limit.
+    if (await markGiftVoucherHeld(v.id, "daily_limit")) return { ok: false, result: { kind: "held", reason: "daily_limit" } };
+    return { ok: false, result: await failIssue(v, "Tageslimit erreicht, der Status ließ sich aber nicht speichern (Datenbank).", mode) };
+  }
 
   // Not written: the row changed meanwhile (cancelled by an order change, a
   // code from an earlier attempt) or the database failed. Look again.
@@ -713,9 +736,9 @@ async function afterIssuedNotRecorded(v: GiftVoucher, card: ShopifyGiftCardInfo,
 }
 
 /** Mail and print after the card exists (time permitting — else the sweep does it). */
-async function deliver(v: GiftVoucher, token: string | null, ctx: IssueContext): Promise<void> {
+async function deliver(v: GiftVoucher, ctx: IssueContext): Promise<void> {
   if (v.mailStatus === "pending" && timeLeft(ctx) >= MIN_MAIL_MS) {
-    if ((await sendGiftVoucherMail(v.id, { downloadToken: token })) === "sent") ctx.tally.mailed++;
+    if ((await sendGiftVoucherMail(v.id)) === "sent") ctx.tally.mailed++;
   }
   if (v.delivery === "print" && timeLeft(ctx) >= MIN_PRINT_MS) {
     const job = await getGiftVoucherPrintJobForVoucher(v.id);
@@ -812,6 +835,8 @@ async function resolveIssuedRevocation(v: GiftVoucher): Promise<"deactivated" | 
   if (decision === "deactivate") {
     const d = await deactivateShopifyGiftCard(r.card.id);
     if (!d.ok) {
+      // Transient (timeout, throttle, 5xx): the flag stays and the next try deactivates.
+      if (d.retryable) return "retry";
       await setGiftVoucherAttention(v.id, "deactivate_failed");
       return "error";
     }
@@ -981,6 +1006,7 @@ async function issueNow(id: number, mode: IssueMode, ctx: IssueContext): Promise
     case "cancelled":
       return fail("cancelled", "Die Bestellung wurde storniert oder erstattet — der Gutschein wurde nicht ausgestellt.");
     case "held":
+      if (r.reason === "refunded") return REFUNDED();
       return fail(
         "held",
         `Der Gutschein wurde zurückgestellt: ${(GIFT_VOUCHER_HOLD_REASON_LABELS as Record<string, string>)[r.reason] ?? r.reason}.`
@@ -997,7 +1023,9 @@ async function issueNow(id: number, mode: IssueMode, ctx: IssueContext): Promise
 /**
  * „Ausstellen“ for a held voucher: the operator overrides the hold (test
  * order, discount, amount, risk, daily limit, switched off …). The order is
- * still checked — a cancelled or unpaid order is never issued.
+ * still checked — a cancelled, refunded (REFUNDED / VOIDED; a partial refund
+ * stays the operator's call) or unpaid order is never issued, nor a voucher
+ * whose data the retention removed.
  */
 export async function issueHeldGiftVoucher(id: number, actor: string): Promise<{ ok: true } | { ok: false; code: string; message: string }> {
   void actor; // the admin route audits who did it
@@ -1005,6 +1033,7 @@ export async function issueHeldGiftVoucher(id: number, actor: string): Promise<{
     const v = await getGiftVoucher(id);
     if (!v) return NOT_FOUND();
     if (v.status !== "held") return fail("not_held", "Der Gutschein wartet nicht auf Prüfung.");
+    if (v.personalDataPurgedAt) return PURGED();
     if (revokeReasonOf(v.attention)) {
       return fail("revoked", "Die Bestellung wurde storniert oder erstattet — der Gutschein kann nicht ausgestellt werden.");
     }
@@ -1015,6 +1044,7 @@ export async function issueHeldGiftVoucher(id: number, actor: string): Promise<{
       const s = await snap;
       if (!s.ok) return fail("shopify", `Die Bestellung ließ sich in Shopify nicht prüfen: ${s.message}`);
       if (s.order.cancelledAt) return fail("order_cancelled", "Die Bestellung ist storniert — der Gutschein kann nicht ausgestellt werden.");
+      if (FULLY_REFUNDED_ORDER_STATUSES.has(String(s.order.displayFinancialStatus ?? "").toUpperCase())) return REFUNDED();
       if (!s.order.fullyPaid) return fail("not_paid", "Die Bestellung ist nicht vollständig bezahlt.");
     }
     if (!(await setGiftVoucherStatus(id, "pending", { from: ["held"] }))) return CONFLICT();
@@ -1028,7 +1058,9 @@ export async function issueHeldGiftVoucher(id: number, actor: string): Promise<{
 /**
  * „Ablehnen“ for a held (or failed) voucher. When an earlier try may have
  * created the card (a stored code), it is looked up and deactivated first —
- * a rejected voucher never leaves an active card behind.
+ * a rejected voucher never leaves an active card behind. Shopify's search can
+ * lag a few seconds behind a create, so a lookup that finds nothing within
+ * two minutes of the last write is not trusted yet (`busy`).
  */
 export async function rejectGiftVoucher(id: number, note: string | null): Promise<{ ok: true } | { ok: false; code: string; message: string }> {
   try {
@@ -1042,6 +1074,9 @@ export async function rejectGiftVoucher(id: number, note: string | null): Promis
       if (!code) return fail("code", "Der gespeicherte Code ist nicht lesbar (TOKEN_ENC_KEY prüfen) — bitte später erneut versuchen.");
       const found = await findShopifyGiftCardByCode(code);
       if (!found.ok) return fail("shopify", `Shopify ließ sich nicht prüfen: ${found.message}`);
+      if (!found.card && !isRevocationLookupConclusive({ updatedAt: v.updatedAt })) {
+        return fail("busy", "Mo prüft noch, ob Shopify die Karte schon angelegt hat — bitte in zwei Minuten erneut „Ablehnen“.");
+      }
       if (found.card && found.card.enabled && !found.card.deactivatedAt) {
         const d = await deactivateShopifyGiftCard(found.card.id);
         if (!d.ok) return fail("shopify", `Die Shopify-Karte ließ sich nicht sperren: ${d.message}`);
@@ -1058,12 +1093,17 @@ export async function rejectGiftVoucher(id: number, note: string | null): Promis
   }
 }
 
-/** „Erneut versuchen“ for a failed voucher (the stored code, if any, is reused). */
+/**
+ * „Erneut versuchen“ for a failed voucher (the stored code, if any, is
+ * reused) — never for one whose data the retention removed (nobody would
+ * get its code).
+ */
 export async function retryGiftVoucher(id: number): Promise<{ ok: true } | { ok: false; code: string; message: string }> {
   try {
     const v = await getGiftVoucher(id);
     if (!v) return NOT_FOUND();
     if (v.status !== "failed") return fail("not_failed", "Nur fehlgeschlagene Gutscheine können erneut versucht werden.");
+    if (v.personalDataPurgedAt) return PURGED();
     if (!(await setGiftVoucherStatus(id, "pending", { from: ["failed"] }))) return CONFLICT();
     return await issueNow(id, "override", newContext(Date.now() + ADMIN_BUDGET_MS));
   } catch (err) {
@@ -1399,22 +1439,22 @@ export async function runGiftVoucherSweep(opts?: { deadlineMs?: number }): Promi
  */
 const fulfilBackoff = new Map<string, number>();
 const FULFIL_BACKOFF_MS = 6 * 60 * 60_000;
+/** Orders read per run as fulfilment candidates (each costs a DB read; the Shopify calls are capped). */
+const FULFIL_CANDIDATES = 50;
 
 /**
  * Mark voucher (and Premium-Karte) lines fulfilled in Shopify — needs the
- * scope write_merchant_managed_fulfillment_orders. Newest issued vouchers
- * first, at most SWEEP_FULFIL_ORDERS orders per run. Returns the voucher
- * rows marked.
+ * scope write_merchant_managed_fulfillment_orders. The candidates are the
+ * orders with issued, unfulfilled shop vouchers whose cards do not wait for
+ * the printer (listGiftVoucherOrdersToFulfil — most recently ready first,
+ * however old the order), at most SWEEP_FULFIL_ORDERS calls per run. Returns
+ * the voucher rows marked.
  */
 async function fulfilGiftVoucherOrders(deadlineMs: number): Promise<number> {
-  const { rows } = await listGiftVouchers({ status: "issued", source: "shop", page: 1, pageSize: 100 });
+  const candidates = await listGiftVoucherOrdersToFulfil({ limit: FULFIL_CANDIDATES });
   const now = Date.now();
   for (const [orderId, until] of fulfilBackoff) if (until <= now) fulfilBackoff.delete(orderId);
-  const orders: string[] = [];
-  for (const v of rows) {
-    if (v.fulfilledAt || !v.shopifyOrderId || fulfilBackoff.has(v.shopifyOrderId) || orders.includes(v.shopifyOrderId)) continue;
-    orders.push(v.shopifyOrderId);
-  }
+  const orders = candidates.filter((orderId) => !fulfilBackoff.has(orderId));
   let marked = 0;
   let calls = 0;
   for (const orderId of orders) {

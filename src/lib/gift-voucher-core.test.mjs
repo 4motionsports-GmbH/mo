@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
+import { createHash, createHmac } from "node:crypto";
+import { isValidGiftVoucherDownloadToken } from "./gift-voucher-storefront.mjs";
 import {
   GIFT_VOUCHER_STATUSES,
   GIFT_VOUCHER_REASONS,
@@ -26,6 +27,7 @@ import {
   giftVoucherCodeLast4,
   hashOpaqueToken,
   newOpaqueToken,
+  giftVoucherDownloadToken,
   isValidDraftToken,
   isValidPhotoId,
   giftVoucherPhotoPathname,
@@ -86,8 +88,9 @@ test("vocabulary: every status, reason and print status has a German label", () 
   assert.equal(GIFT_VOUCHER_STATUS_LABELS.deactivated, "Gesperrt");
   assert.equal(PRINT_JOB_STATUS_LABELS.done, "Erledigt (manuell)");
   assert.deepEqual(Object.keys(GIFT_VOUCHER_HOLD_REASON_LABELS), [
-    "disabled", "test_order", "currency", "discounted", "amount", "risk", "daily_limit", "not_paid", "attempts",
+    "disabled", "test_order", "currency", "discounted", "amount", "risk", "daily_limit", "not_paid", "refunded", "attempts",
   ]);
+  assert.equal(GIFT_VOUCHER_HOLD_REASON_LABELS.refunded, "Bestellung (teilweise) erstattet");
   assert.deepEqual(Object.keys(GIFT_VOUCHER_ATTENTION_LABELS), [
     "refund_after_use", "cancelled_after_use", "print_without_voucher", "print_without_address", "deactivate_failed", "print_cancel_too_late",
     "unknown_product_line",
@@ -189,6 +192,26 @@ test("newOpaqueToken: base64url, 32 characters from 24 bytes, 22 from 16; valida
   assert.ok(isValidDraftToken("A".repeat(24)));
   assert.ok(isValidDraftToken("A".repeat(64)));
   assert.ok(!isValidPhotoId("A".repeat(21)));
+});
+
+test("giftVoucherDownloadToken: derived per mail attempt — same attempt same link, next attempt rotates", () => {
+  const input = { secret: "a".repeat(64), voucherId: 42, mailAttempts: 0, code: "ABCDEFGHJKLMNPQR" };
+  const t = giftVoucherDownloadToken(input);
+  assert.match(t, /^[A-Za-z0-9_-]{32}$/);
+  assert.ok(isValidGiftVoucherDownloadToken(t), "the download route accepts it");
+  // HMAC-SHA256 keyed by sha256("gift-voucher-download|<secret>") over "<id>|<attempts>|<code>", first 24 bytes.
+  const key = createHash("sha256").update(`gift-voucher-download|${input.secret}`).digest();
+  const expected = createHmac("sha256", key).update("42|0|ABCDEFGHJKLMNPQR").digest().subarray(0, 24).toString("base64url");
+  assert.equal(t, expected);
+  assert.equal(giftVoucherDownloadToken({ ...input }), t, "a repeat of the attempt rebuilds the delivered link");
+  assert.notEqual(giftVoucherDownloadToken({ ...input, mailAttempts: 1 }), t, "a concluded attempt rotates it");
+  assert.notEqual(giftVoucherDownloadToken({ ...input, voucherId: 43 }), t);
+  assert.notEqual(giftVoucherDownloadToken({ ...input, code: "ABCDEFGHJKLMNPQS" }), t, "the key alone forges no link");
+  assert.notEqual(giftVoucherDownloadToken({ ...input, secret: "b".repeat(64) }), t);
+  assert.equal(giftVoucherDownloadToken({ ...input, mailAttempts: -3 }), t, "junk attempts count as 0");
+  for (const secret of ["", null, undefined]) {
+    assert.throws(() => giftVoucherDownloadToken({ ...input, secret: /** @type {any} */ (secret) }), /secret/);
+  }
 });
 
 test("photo pathnames: only valid ids, and back", () => {

@@ -695,6 +695,24 @@ test("describeGiftVoucherProductIssues: errors and warnings the setup check show
   assert.match(same[0].message, /denselben Handle/);
 });
 
+test("describeGiftVoucherProductIssues: a missing print product is an ERROR while the card is offered", () => {
+  const voucher = parseGiftVoucherProduct(VOUCHER_NODE);
+  const offered = describeGiftVoucherProductIssues({ voucher, print: null, handles: HANDLES, printOffered: true });
+  assert.deepEqual(offered.map((i) => `${i.level}:${i.product}`), ["error:print"]);
+  assert.equal(
+    offered[0].message,
+    "Druck-Zusatzprodukt „gutschein-premiumkarte“ nicht gefunden — Mo erkennt bezahlte Premium-Karten nur an diesem Produkt. Ist im Theme ein anderes Zusatzprodukt gewählt, verkauft die Seite die Karte trotzdem und Mo druckt sie nicht: Produkt mit diesem Handle anlegen, GIFT_VOUCHER_PRINT_PRODUCT_HANDLE setzen oder im Theme „Premium-Karte“ leeren."
+  );
+  // The card is not offered (print.one off, gate closed): a warning, as before.
+  for (const printOffered of [false, undefined]) {
+    const off = describeGiftVoucherProductIssues({ voucher, print: null, handles: HANDLES, printOffered });
+    assert.deepEqual(off.map((i) => `${i.level}:${i.product}`), ["warning:print"]);
+    assert.match(off[0].message, /nicht gefunden — „Premium-Karte per Post“ ist dann nicht buchbar/);
+  }
+  // A print product that exists is not judged by the flag.
+  assert.deepEqual(describeGiftVoucherProductIssues({ voucher, print: parseGiftVoucherProduct(PRINT_NODE), handles: HANDLES, printOffered: true }), []);
+});
+
 test("giftVoucherProductsSnapshot ⇄ giftVoucherProductsFromSnapshot: the last good lookup for orders/paid", () => {
   assert.equal(GIFT_VOUCHER_PRODUCTS_SNAPSHOT_KEY, "gift_voucher_products");
   const voucher = parseGiftVoucherProduct(VOUCHER_NODE);

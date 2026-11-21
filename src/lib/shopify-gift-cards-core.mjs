@@ -850,12 +850,15 @@ const SELLABLE_STATUSES = new Set(["ACTIVE", "UNLISTED"]);
 
 /**
  * What is wrong with the two voucher products for the setup check (verify script, admin):
- * errors block selling, warnings are decisions for the owner. German.
+ * errors block selling, warnings are decisions for the owner. German. `printOffered` = the
+ * Premium-Karte can be booked (gift-voucher-storefront.mjs isGiftVoucherPrintOffered): a
+ * missing print product is then an ERROR — the page sells the card with the add-on picked in
+ * the theme, but Mo recognises a paid card only by its own product — else a warning.
  * @param {{ voucher: GiftVoucherProductInfo | null, print: GiftVoucherProductInfo | null,
- *   handles: { voucher: string, print: string } }} input
+ *   handles: { voucher: string, print: string }, printOffered?: boolean }} input
  * @returns {GiftVoucherProductIssue[]}
  */
-export function describeGiftVoucherProductIssues({ voucher, print, handles }) {
+export function describeGiftVoucherProductIssues({ voucher, print, handles, printOffered = false }) {
   /** @type {GiftVoucherProductIssue[]} */
   const issues = [];
   const vh = normalizeProductHandle(handles?.voucher);
@@ -903,11 +906,19 @@ export function describeGiftVoucherProductIssues({ voucher, print, handles }) {
     }
   }
   if (!print) {
-    issues.push({
-      level: "warning",
-      product: "print",
-      message: `Druck-Zusatzprodukt „${ph}“ nicht gefunden — „Premium-Karte per Post“ ist dann nicht buchbar.`,
-    });
+    issues.push(
+      printOffered
+        ? {
+            level: "error",
+            product: "print",
+            message: `Druck-Zusatzprodukt „${ph}“ nicht gefunden — Mo erkennt bezahlte Premium-Karten nur an diesem Produkt. Ist im Theme ein anderes Zusatzprodukt gewählt, verkauft die Seite die Karte trotzdem und Mo druckt sie nicht: Produkt mit diesem Handle anlegen, GIFT_VOUCHER_PRINT_PRODUCT_HANDLE setzen oder im Theme „Premium-Karte“ leeren.`,
+          }
+        : {
+            level: "warning",
+            product: "print",
+            message: `Druck-Zusatzprodukt „${ph}“ nicht gefunden — „Premium-Karte per Post“ ist dann nicht buchbar.`,
+          }
+    );
   } else {
     if (print.isGiftCard) {
       issues.push({ level: "error", product: "print", message: `„${print.handle}“ ist ein Shopify-Geschenkkarten-Produkt — es muss ein normales Produkt sein.` });

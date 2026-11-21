@@ -7,6 +7,7 @@ import {
   PRINTONE_TEMPLATE_FORMAT,
   buildPrintOneOrderBody,
   buildPrintOneTemplateBody,
+  canCleanPrintJobAssets,
   classifyPrintOneFailure,
   decideGiftVoucherPrintSubmission,
   describePrintOneFailure,
@@ -113,10 +114,25 @@ test("order ids: only safe path segments become paths", () => {
   }
 });
 
-test("giftVoucherPrintIdempotencyKey: gift-voucher-print-<jobId>, positive integers only", () => {
-  assert.equal(giftVoucherPrintIdempotencyKey(42), "gift-voucher-print-42");
-  assert.ok(giftVoucherPrintIdempotencyKey(Number.MAX_SAFE_INTEGER).length <= 255);
-  for (const bad of [0, -1, 1.5, NaN, "42", null, undefined]) assert.equal(giftVoucherPrintIdempotencyKey(bad), null);
+test("giftVoucherPrintIdempotencyKey: gift-voucher-print-<jobId>-<created ms>, positive integers only", () => {
+  const created = "2026-11-20T10:00:00.5+00:00";
+  const ms = Date.parse("2026-11-20T10:00:00.500Z");
+  assert.equal(giftVoucherPrintIdempotencyKey(42, created), `gift-voucher-print-42-${ms}`);
+  assert.equal(giftVoucherPrintIdempotencyKey(42, created), giftVoucherPrintIdempotencyKey(42, new Date(ms)), "stable for every attempt of the job");
+  assert.notEqual(giftVoucherPrintIdempotencyKey(1, "2026-11-20T10:00:00Z"), giftVoucherPrintIdempotencyKey(1, "2026-11-22T10:00:00Z"), "job 1 of another database");
+  assert.equal(giftVoucherPrintIdempotencyKey(42, undefined), "gift-voucher-print-42-0");
+  assert.ok(giftVoucherPrintIdempotencyKey(Number.MAX_SAFE_INTEGER, created).length <= 255);
+  for (const bad of [0, -1, 1.5, NaN, "42", null, undefined]) assert.equal(giftVoucherPrintIdempotencyKey(bad, created), null);
+});
+
+test("canCleanPrintJobAssets: only a finished job loses its print files", () => {
+  for (const status of ["sent", "done", "cancelled", "failed"]) assert.equal(canCleanPrintJobAssets({ status, assetToken: TOKEN }), true, status);
+  // An open job keeps them however old it is: the token finds an order whose answer was lost.
+  for (const status of ["review", "queued", "submitting", "submitted", "printing"]) {
+    assert.equal(canCleanPrintJobAssets({ status, assetToken: TOKEN }), false, status);
+  }
+  assert.equal(canCleanPrintJobAssets({ status: "sent", assetToken: null }), false, "nothing to clean");
+  assert.equal(canCleanPrintJobAssets(null), false);
 });
 
 test("publicHttpsBaseUrl: https only (http to localhost on request), no query, no trailing slash", () => {

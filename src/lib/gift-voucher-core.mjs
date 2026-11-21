@@ -9,8 +9,8 @@
 //   · vocabulary + German labels (statuses, reasons, hold reasons, print
 //     statuses, attention keys) — the admin screen shows these words
 //   · codes: generation (32 symbols, unbiased), formatting, normalising, the
-//     sha256 lookup hash, opaque tokens (drafts, downloads, print assets,
-//     photos)
+//     sha256 lookup hash, opaque tokens (drafts, print assets, photos), the
+//     download token derived per mail attempt
 //   · money: exact decimal ⇄ cents, "50,00 €"
 //   · voucher number G-<Berlin year>-<id> and the expiry date
 //   · the orders/paid payload → voucher and print lines, refunds, pairing
@@ -96,6 +96,7 @@ export const GIFT_VOUCHER_HOLD_REASON_LABELS = Object.freeze({
   risk: "Shopify meldet ein Betrugsrisiko",
   daily_limit: "Tageslimit erreicht",
   not_paid: "Nicht vollständig bezahlt",
+  refunded: "Bestellung (teilweise) erstattet",
   attempts: "Zu viele Fehlversuche",
 });
 
@@ -246,8 +247,9 @@ function base64Url(bytes) {
 }
 
 /**
- * An unguessable URL-safe token (base64url): draft tokens and download tokens
- * (24 bytes → 32 characters), photo ids (16 bytes → 22 characters).
+ * An unguessable URL-safe token (base64url): draft tokens and print-asset
+ * tokens (24 bytes → 32 characters), photo ids (16 bytes → 22 characters).
+ * (Download tokens are derived per mail attempt: giftVoucherDownloadToken.)
  * @param {number} [bytes]
  * @param {(n: number) => Uint8Array} [randomBytes]
  * @returns {string}
@@ -257,6 +259,29 @@ export function newOpaqueToken(bytes = 24, randomBytes = webRandomBytes) {
   const raw = randomBytes(n);
   if (!raw || raw.length < n) throw new Error("randomBytes returned too few bytes");
   return base64Url(raw.subarray(0, n));
+}
+
+/**
+ * The download token of one mail attempt — the link in the voucher mail.
+ * Derived, not drawn: HMAC-SHA256 over `${voucherId}|${mailAttempts}|${code}`
+ * keyed by sha256(`gift-voucher-download|${secret}`) (the AES key
+ * TOKEN_ENC_KEY never keys an HMAC directly); the first 24 bytes as
+ * base64url = 32 characters, the shape isValidGiftVoucherDownloadToken
+ * accepts. The same attempt always gives the same token, so a repeat of a
+ * send (a worker died after Resend took the mail) rebuilds the link the
+ * delivered mail carries; every concluded attempt (mail_attempts + 1)
+ * rotates it. The code is part of the message: the key alone forges no link.
+ * Throws on an empty secret. Server only.
+ * @param {{ secret: string, voucherId: number, mailAttempts: number, code: string }} input
+ * @returns {string}
+ */
+export function giftVoucherDownloadToken({ secret, voucherId, mailAttempts, code }) {
+  if (typeof secret !== "string" || secret.length === 0) throw new Error("giftVoucherDownloadToken: no secret (TOKEN_ENC_KEY)");
+  const attempt = Number.isSafeInteger(mailAttempts) && mailAttempts >= 0 ? mailAttempts : 0;
+  const c = nodeCrypto();
+  const key = c.createHash("sha256").update(`gift-voucher-download|${secret}`, "utf8").digest();
+  const mac = c.createHmac("sha256", key).update(`${voucherId}|${attempt}|${code}`, "utf8").digest();
+  return base64Url(mac.subarray(0, 24));
 }
 
 /** @param {unknown} s @returns {s is string} */

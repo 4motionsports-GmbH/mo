@@ -416,15 +416,16 @@ export async function getShopifyGiftCard(id: string, opts: { timeoutMs?: number 
 /**
  * Deactivate a card — IRREVERSIBLE (Shopify cannot re-enable it). Idempotent: when the call
  * fails but the card turns out to be deactivated already (an earlier attempt whose answer
- * got lost, a second click), that counts as success.
+ * got lost, a second click), that counts as success. `retryable` on a failure: false only
+ * when Shopify refused it (userErrors) — a timeout, a throttle or a 5xx may work next time.
  */
 export async function deactivateShopifyGiftCard(
   id: string
-): Promise<{ ok: true; deactivatedAt: string } | { ok: false; message: string }> {
+): Promise<{ ok: true; deactivatedAt: string } | { ok: false; message: string; retryable: boolean }> {
   try {
     const gid = toGiftCardGid(id);
-    if (!gid) return { ok: false, message: "Ungültige ID einer Shopify-Geschenkkarte." };
-    if (!isShopifyConfigured()) return { ok: false, message: NOT_CONFIGURED };
+    if (!gid) return { ok: false, message: "Ungültige ID einer Shopify-Geschenkkarte.", retryable: false };
+    if (!isShopifyConfigured()) return { ok: false, message: NOT_CONFIGURED, retryable: true };
     const r = await callShopify<{
       giftCardDeactivate: {
         giftCard: { id?: string; enabled?: boolean; deactivatedAt?: string | null } | null;
@@ -451,9 +452,9 @@ export async function deactivateShopifyGiftCard(
       return { ok: true, deactivatedAt: check.card.deactivatedAt ?? new Date().toISOString() };
     }
     report("deactivateShopifyGiftCard", failure);
-    return { ok: false, message: failure.message };
+    return { ok: false, message: failure.message, retryable: failure.kind !== "userErrors" };
   } catch (err) {
-    return { ok: false, message: reportUnexpected("deactivateShopifyGiftCard", err) };
+    return { ok: false, message: reportUnexpected("deactivateShopifyGiftCard", err), retryable: true };
   }
 }
 

@@ -143,16 +143,24 @@ export function formatGiftVoucherMailDate(isoDate, locale = "de") {
 }
 
 /**
- * The Resend idempotency key of one mail attempt: a repeat of the SAME
- * attempt (a worker died after Resend took the mail, two workers raced) is
- * refused by Resend instead of delivered twice; every concluded attempt
- * counts up mail_attempts, so a resend gets a fresh key.
+ * The Resend idempotency key of one mail attempt:
+ * gift-voucher-mail-<id>-<created_at in ms>-<mailAttempts>. A repeat of the
+ * SAME attempt (a worker died after Resend took the mail, two workers raced)
+ * is refused by Resend instead of delivered twice; every concluded attempt
+ * counts up mail_attempts, so a resend gets a fresh key. The voucher's
+ * creation time makes the key unique across databases that share the Resend
+ * account (a local or preview database, a Neon branch, a reset test
+ * database all start at id 1 again) — without it, voucher 1 of one database
+ * would be refused as „already sent“ because voucher 1 of another one was
+ * mailed within Resend's 24 hours.
  * @param {number} id
  * @param {number} mailAttempts
+ * @param {string | Date | null | undefined} createdAt the voucher's created_at
  */
-export function giftVoucherMailIdempotencyKey(id, mailAttempts) {
+export function giftVoucherMailIdempotencyKey(id, mailAttempts, createdAt) {
   const n = Number.isSafeInteger(mailAttempts) && mailAttempts >= 0 ? mailAttempts : 0;
-  return `gift-voucher-mail-${id}-${n}`;
+  const t = createdAt instanceof Date ? createdAt.getTime() : Date.parse(String(createdAt ?? ""));
+  return `gift-voucher-mail-${id}-${Number.isFinite(t) ? t : 0}-${n}`;
 }
 
 /**
@@ -426,7 +434,12 @@ const MAIL_CONCURRENT = "Ein anderer Versand dieser E-Mail lief gerade — Mo pr
 
 /**
  * What a send that did not go through means for the mail state. `attempts`
- * is mail_attempts BEFORE this try.
+ * is mail_attempts BEFORE this try. Every failure but a concurrent repeat
+ * counts as a CONCLUDED try — a transport failure too (a lost answer may
+ * still have been delivered): the next try has a new idempotency key and
+ * link, so the buyer may get a second mail with the same code, which is
+ * harmless — whereas not counting it would retry every minute forever
+ * (backoff and give-up run on mail_attempts).
  *   · not configured (sendEmail skipped) → retry by the plan, then failed;
  *   · Resend refused the key as already used for another payload → this
  *     attempt was taken before (a worker died after the send, or raced):

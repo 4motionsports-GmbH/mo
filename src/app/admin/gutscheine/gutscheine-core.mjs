@@ -228,6 +228,8 @@ export const HOLD_REASON_HINTS = Object.freeze({
   risk: "Shopify stuft die Bestellung als riskant ein — zuerst in Shopify prüfen.",
   daily_limit: "Das Tageslimit für Gutscheine (GIFT_VOUCHER_DAILY_LIMIT_EUR) war erreicht.",
   not_paid: "Die Bestellung war nach 24 Stunden noch nicht vollständig bezahlt.",
+  refunded:
+    "Die Bestellung wurde erstattet, bevor der Gutschein ausgestellt war — in Shopify prüfen, ob die Gutschein-Position erstattet ist, dann ablehnen.",
   attempts: "Das Ausstellen ist zu oft fehlgeschlagen — der letzte Fehler steht unten.",
 });
 
@@ -422,13 +424,19 @@ export function parseGutscheinAction(body) {
 /**
  * HTTP status for a refused action ({ ok: false, code } of the issue / print
  * libraries): not found 404, input 400, missing configuration 503, a failed
- * call to Shopify / print.one 502, everything else (wrong state, too late) 409.
+ * call to Shopify / print.one 502, everything else (wrong state, too late,
+ * Mo still busy) 409.
  * @param {unknown} code
  */
 export function actionErrorStatus(code) {
   switch (code) {
     case "not_found":
       return 404;
+    case "busy": // Mo still checks the card / works on the voucher — try again shortly
+    case "revoking": // a revocation is still looking for a Shopify card
+    case "refunded": // the order was refunded — no card for it
+    case "purged": // the retention removed the voucher's data — reject it
+      return 409;
     case "bad_request":
     case "invalid":
     case "invalid_input":
@@ -730,14 +738,16 @@ export function buildGutscheineSetup(input) {
             ? `${voucher.title} — ${plural(voucher.variants.length, "Betrag", "Beträge")}${voucher.variants.length ? `: ${amountList(voucher.variants.map((v) => v.priceCents))}` : ""}`
             : "Nicht gefunden — Produkt anlegen oder GIFT_VOUCHER_PRODUCT_HANDLE setzen."
         );
+        // A missing print product is an error while the shop offers the card (describeGiftVoucherProductIssues).
+        const printMissing = print ? null : issues.find((i) => i.product === "print") ?? null;
         check(
           "printProduct",
           "Shopify",
           `Druck-Zusatzprodukt „${input.handles.print}“`,
-          print ? "ok" : "warn",
+          print ? "ok" : printMissing?.level === "error" ? "error" : "warn",
           print
             ? `${print.title}${print.variants[0] ? ` — ${eurFromCents(print.variants[0].priceCents)}` : ""}`
-            : "Nicht gefunden — „Premium-Karte per Post“ ist nicht buchbar."
+            : (printMissing?.message ?? "Nicht gefunden — „Premium-Karte per Post“ ist nicht buchbar.")
         );
         // „Not found“ is already its own row; every other finding gets one.
         issues
