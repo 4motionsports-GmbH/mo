@@ -882,13 +882,14 @@ const PRINTABLE_EXTRA = new Set([0x20ac, 0x201e, 0x201c, 0x201d, 0x201a, 0x2018,
 
 /**
  * Can the voucher fonts draw this code point? Basic Latin, Latin-1
- * Supplement, Latin Extended-A, plus € „ “ ” ‚ ‘ ’ – — … • ‹ ›.
+ * Supplement, Latin Extended-A without the long s ſ (U+017F — the
+ * handwriting font Caveat has no glyph for it), plus € „ “ ” ‚ ‘ ’ – — … • ‹ ›.
  * @param {number} cp
  */
 function isPrintableCodePoint(cp) {
   return (
     (cp >= 0x20 && cp <= 0x7e) ||
-    (cp >= 0xa0 && cp <= 0x17f && cp !== 0xad) ||
+    (cp >= 0xa0 && cp <= 0x17f && cp !== 0xad && cp !== 0x17f) ||
     PRINTABLE_EXTRA.has(cp)
   );
 }

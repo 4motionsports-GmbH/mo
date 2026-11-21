@@ -419,7 +419,7 @@ of [`gift-voucher-designs.mjs`](../src/lib/gift-voucher-designs.mjs) (tested).
   line for an empty message („Viel Freude beim Training!“, „Alles Gute zum Geburtstag!“ …). Decorations are
   vector and seeded — the same input gives the same artwork at every resolution.
 - **Every letter is a vector path** from the bundled fonts — no system font on Vercel. Texts are cleaned to
-  what the fonts can draw (Basic Latin, Latin-1, Latin Extended-A, € „ “ ” ‚ ‘ ’ – — … • ‹ ›); emoji and
+  what the fonts can draw (Basic Latin, Latin-1, Latin Extended-A without ſ, € „ “ ” ‚ ‘ ’ – — … • ‹ ›); emoji and
   other characters are removed, and the page tells the customer (`textRemoved`).
 - **Fonts:** Montserrat 400/600/700/800 and Caveat 500/700 in `src/assets/fonts/`, under the SIL Open Font
   License 1.1 (`OFL-Montserrat.txt`, `OFL-Caveat.txt` beside them; taken from the `@expo-google-fonts`

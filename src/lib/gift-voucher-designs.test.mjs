@@ -258,6 +258,22 @@ test("the artwork is deterministic", () => {
   }
 });
 
+test("every character the core lets through has a glyph in all six fonts", () => {
+  const candidates = [];
+  for (let cp = 0x21; cp <= 0x24f; cp++) candidates.push(cp);
+  for (let cp = 0x2000; cp <= 0x20cf; cp++) candidates.push(cp);
+  let kept = 0;
+  for (const cp of candidates) {
+    const ch = String.fromCodePoint(cp);
+    if (sanitizeGiftVoucherText(ch, { max: 5 }).text !== ch) continue;
+    kept++;
+    for (const [name, f] of Object.entries(FONTS)) {
+      assert.ok(f.charToGlyphIndex(ch) > 0, `U+${cp.toString(16).padStart(4, "0")} ${ch} passes the core but ${name} has no glyph`);
+    }
+  }
+  assert.ok(kept > 300, `${kept} printable characters checked`);
+});
+
 test("characters the fonts lack are dropped, not drawn as boxes, and nothing breaks", () => {
   const l = layoutOf("birthday", "landscape", "inside", {
     data: { ...DATA, message: "Hallo 😀 Welt\u0007 ✨", recipientName: "Zoë 🎉", senderName: "Jo" },
