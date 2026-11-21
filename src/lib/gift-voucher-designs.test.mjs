@@ -134,23 +134,27 @@ function layoutOf(key, layout, panel, extra = {}) {
 
 /**
  * The strings a layout draws, per font (every getPath call), with wrapped
- * copies of the fonts so the shared FONTS stay untouched.
+ * copies of the fonts so the shared FONTS stay untouched. `sizes`, when
+ * given, receives the size (px of the em) of each drawn string, per font.
  * @param {(fonts: typeof FONTS) => unknown} run
+ * @param {Record<string, number[]>} [sizes]
  * @returns {Record<string, string[]>}
  */
-function drawnStrings(run) {
+function drawnStrings(run, sizes) {
   /** @type {Record<string, string[]>} */
   const drawn = {};
   const fonts = /** @type {typeof FONTS} */ (
     Object.fromEntries(
       Object.entries(FONTS).map(([key, f]) => {
         drawn[key] = [];
+        if (sizes) sizes[key] = [];
         const wrapped = Object.create(f, {
           getPath: {
-            /** @param {string} text @param {...any} rest */
-            value(text, ...rest) {
+            /** @param {string} text @param {number} x @param {number} y @param {number} fontSize @param {...any} rest */
+            value(text, x, y, fontSize, ...rest) {
               drawn[key].push(text);
-              return f.getPath.call(this, text, ...rest);
+              sizes?.[key].push(fontSize);
+              return f.getPath.call(this, text, x, y, fontSize, ...rest);
             },
           },
         });
@@ -356,12 +360,34 @@ test("a sender of up to 40 characters shrinks to the column instead of being sho
     "Familie Schönberger-Wiesenthal & Freunde",
     "Oma Gertrud, Opa Heinz und Tante Marlene",
     "M".repeat(40),
+    // The widest glyphs Caveat has (0.8 em): the core lets 40 of them through.
+    "¼".repeat(40),
+    "Æ".repeat(40),
   ];
+  const ptPerMm = 72 / 25.4;
   for (const [layout, panel] of MESSAGE_PANELS) {
     for (const message of ["Alles Gute!", DATA.message]) {
       for (const senderName of senders) {
-        const drawn = drawnStrings((fonts) => layoutOf("classic", layout, panel, { fonts, data: { ...DATA, message, senderName } }));
-        assert.deepEqual(drawn.scriptBold, [`— ${senderName}`], `${layout}: ${senderName}`);
+        /** @type {Record<string, number[]>} */
+        const sizes = {};
+        /** @type {import("./gift-voucher-designs.mjs").GiftVoucherPanelLayout | undefined} */
+        let l;
+        const drawn = drawnStrings((fonts) => (l = layoutOf("classic", layout, panel, { fonts, data: { ...DATA, message, senderName } })), sizes);
+        assert.ok(l);
+        const what = `${layout}: ${senderName}`;
+        assert.deepEqual(drawn.scriptBold, [`— ${senderName}`], what);
+        // Still legible: even 40 of the widest glyphs stay at 6 pt or more in the narrowest column.
+        assert.ok((sizes.scriptBold[0] / l.pxPerMm) * ptPerMm >= 6, `${what}: ${((sizes.scriptBold[0] / l.pxPerMm) * ptPerMm).toFixed(1)} pt`);
+        // The sender (the last lettering of the panel) stays in the message column: left of the code
+        // card on the landscape inside, inside the safe area on the card.
+        const sender = /** @type {{ x1: number, x2: number }} */ (l.elements.filter((e) => e.role === "text").pop()?.bbox);
+        if (layout === "landscape") {
+          const card = l.elements.find((e) => e.role === "decor" && /^<rect [^>]* rx="[^"]*" fill="#[0-9a-f]{6}" stroke=/.test(e.svg));
+          assert.ok(card?.bbox && sender.x2 < card.bbox.x1, `${what}: the sender runs into the code card`);
+        } else {
+          const safe = l.bleedPx + GIFT_VOUCHER_PRINT_SPREAD.safeMarginMm * l.pxPerMm;
+          assert.ok(sender.x1 >= safe && sender.x2 <= l.widthPx - safe, `${what}: the sender leaves the safe area`);
+        }
       }
     }
   }

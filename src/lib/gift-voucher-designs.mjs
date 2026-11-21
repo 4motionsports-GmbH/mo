@@ -1483,9 +1483,11 @@ function drawMessage(c, fonts, d, key, box, sizes) {
   const senderLabel = sender ? `— ${sender}` : "";
   const LH = 1.2;
   const blank = 0.5;
-  // The sender line shrinks to the column (a 40-character „Von“ stays above
-  // 7 pt in the narrowest column); only a longer one is shortened below.
-  const senderFit = sender ? Math.max(SMALL, box.w / emWidth(fonts.scriptBold, senderLabel)) : Infinity;
+  // The sender line shrinks to the column, so a „Von“ within the core's 40
+  // characters is never shortened: a realistic one prints at 10 pt or more
+  // in the narrowest column (landscape / PDF), 40 of the widest glyphs
+  // (¼ ½ ¾ Æ Œ) at about 6.5 pt. The ellipsis below is only a safety net.
+  const senderFit = sender ? box.w / emWidth(fonts.scriptBold, senderLabel) : Infinity;
   /** @param {number} s */
   const layout = (s) => {
     const lines = wrapEm(font, text, box.w / s);
