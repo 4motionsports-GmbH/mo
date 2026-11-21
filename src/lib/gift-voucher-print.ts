@@ -7,7 +7,9 @@
 //     job to print.one behind the gate (printone-core decideGiftVoucherPrintSubmission):
 //     LEGAL GATE GIFT_VOUCHER_PRINT_SENDS_APPROVED (fail-closed), print.one
 //     configured, provider printone, a public https PUBLIC_BASE_URL, job queued,
-//     voucher issued (not deactivated), address valid. A blocked job stays
+//     voucher issued (not deactivated) without an open revocation (a revoke
+//     flag: the card may be deactivated in a moment, or a refund on a spent
+//     card waits for the operator), address valid. A blocked job stays
 //     queued and its `error` tells the admin queue why;
 //   · pollGiftVoucherPrintJobs + applyPrintOneOrderUpdate (the webhook) — follow
 //     print.one's status MONOTONICALLY (canAdvancePrintJobStatus: a late, old or
@@ -48,6 +50,7 @@
 
 import sharp from "sharp";
 import { canAdvancePrintJobStatus, newOpaqueToken, planGiftVoucherRetry, validatePostalAddress } from "./gift-voucher-core.mjs";
+import { revokeReasonOf } from "./gift-voucher-issue-core.mjs";
 import {
   configuredGiftVoucherPrintProvider,
   giftVoucherPrintCountries,
@@ -398,7 +401,8 @@ async function processPrintJob(initial: GiftVoucherPrintJob, opts: { claimed: bo
   const voucher = await getGiftVoucher(job.voucherId);
   const decision = decideGiftVoucherPrintSubmission({
     job: { provider: job.provider, status: job.status },
-    voucher: voucher ? { status: voucher.status } : null,
+    // A revoke flag: the card may be deactivated in a moment, or a refund on a spent card waits for the operator.
+    voucher: voucher ? { status: voucher.status, revoking: revokeReasonOf(voucher.attention) !== null } : null,
     ...globalGateInput(),
     address: job.address,
     countries: giftVoucherPrintCountries(),

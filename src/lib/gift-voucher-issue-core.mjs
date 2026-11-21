@@ -91,6 +91,15 @@ export const GIFT_VOUCHER_REVOKE_ACK_ATTENTION = Object.freeze({
 });
 
 /**
+ * Why a Premium-Karte is not printed (print.one gate, the admin's print
+ * section): its voucher carries a revoke flag — the card may be deactivated
+ * in a moment, or a refund stayed on a (partly) spent card and the operator
+ * decides („Sperren“ cancels the card, „Als geklärt markieren“ lets it print).
+ */
+export const GIFT_VOUCHER_PRINT_HELD_MESSAGE =
+  "Für diesen Gutschein ist eine Stornierung oder Erstattung offen — die Karte wird erst gedruckt, wenn sie geklärt ist.";
+
+/**
  * The revoke reason behind an attention key, or null for any other key
  * (an acknowledged key is no revocation any more).
  * @param {unknown} attention
@@ -498,7 +507,7 @@ export function giftVoucherOrderChangeFacts(payload, topic) {
 /**
  * @typedef {{
  *   id: number, status: string, hasCode: boolean, shopifyLineItemId: string | null, unitIndex: number,
- *   attention: string | null, amountCents: number, balanceCents: number | null,
+ *   attention: string | null, amountCents: number, balanceCents: number | null, shopifyGiftCardId?: string | null,
  * }} ChangeVoucher
  * @typedef {{ id: number, voucherId: number, status: string, paidLineItemId: string | null }} ChangePrintJob
  * @typedef {{
@@ -577,6 +586,22 @@ export function isLiveGiftVoucherUnit(v) {
  * print provider (`cancelJobsLater`), which knows whether it is with the
  * printer already. Run it again once the revocations are resolved (a refund
  * that moved to an untouched sibling took that sibling's card along).
+ * A refund not settled yet — flagged by this plan, or `unsettled` (a flag
+ * the Shopify step has not checked: Shopify did not answer, out of time) —
+ * may still move to an untouched sibling (issued, a card, no flag, the same
+ * value, not revoked by this plan, no stored balance below the value). When
+ * such a sibling has its own open card on the same print line, the card of
+ * the flagged unit WAITS: it keeps its place among the jobs to cancel (no
+ * other card is cancelled for it) but is not cancelled, because the
+ * deactivation of whichever unit finally takes the refund cancels that
+ * unit's card. Whether the add-on line was refunded is known only to the
+ * order change, so a refund that ends on the spent card later (the sweep, no
+ * untouched sibling left) cannot cancel its card by itself: a card is not
+ * printed while its voucher carries a revoke flag (decideGiftVoucherPrintSubmission,
+ * and the admin offers no print files), so the operator decides — „Sperren“
+ * cancels it, „Als geklärt markieren“ lets it print. Without such a sibling
+ * the card goes now, whatever the outcome. A cancellation revokes
+ * everything: nothing waits.
  * `revokedEarlier`: units this order change revoked in an earlier round (a
  * write found its row changed and the change was planned again on fresh
  * rows) — they count as gone like any revoked unit, and the cards of those
@@ -587,10 +612,11 @@ export function isLiveGiftVoucherUnit(v) {
  *   vouchers: readonly ChangeVoucher[],
  *   printJobs: readonly ChangePrintJob[],
  *   revokedEarlier?: Iterable<number> | null,
+ *   unsettled?: Iterable<number> | null,
  * }} input
  * @returns {GiftVoucherOrderChangePlan}
  */
-export function planGiftVoucherOrderChange({ facts, vouchers, printJobs, revokedEarlier = null }) {
+export function planGiftVoucherOrderChange({ facts, vouchers, printJobs, revokedEarlier = null, unsettled = null }) {
   const reason = facts.cancelled ? "cancelled" : "refunded";
   const attention = GIFT_VOUCHER_REVOKE_ATTENTION[reason];
 
@@ -653,6 +679,23 @@ export function planGiftVoucherOrderChange({ facts, vouchers, printJobs, revoked
   // became a card has its job cancelled as if it were revoked now.
   const earlier = new Set(revokedEarlier ?? []);
   for (const v of vouchers) if (earlier.has(v.id) && !revokedIds.has(v.id) && NEVER_CARDED.has(v.status)) unissued.add(v.id);
+  /** @type {Set<number>} refunds not settled yet that may still move to an untouched sibling — their cards wait */
+  const waiting = new Set();
+  if (reason === "refunded") {
+    /** @type {Map<number, string>} voucher → the print line of its open card */
+    const openCardLine = new Map();
+    for (const j of printJobs) if (!FINAL_JOB.has(j.status) && j.paidLineItemId) openCardLine.set(j.voucherId, j.paidLineItemId);
+    const open = new Set([...plan.flagIssued, ...(unsettled ?? [])]);
+    for (const v of vouchers) {
+      if (!open.has(v.id) || v.status !== "issued") continue;
+      if (!revokedIds.has(v.id) && revokeReasonOf(v.attention) !== "refunded") continue;
+      const line = openCardLine.get(v.id);
+      // Only a sibling whose own card is on the same print line (its deactivation then cancels that
+      // card) and that may still be untouched (a stored balance below the value never comes back).
+      const mayTake = (/** @type {ChangeVoucher} */ s) => !revokedIds.has(s.id) && !isKnownSpent(s) && openCardLine.get(s.id) === line;
+      if (line && revocationSiblingCandidates(v, vouchers).some(mayTake)) waiting.add(v.id);
+    }
+  }
   /** @type {Set<number>} units revoked now or before — their cards are the first to go */
   const gone = new Set(vouchers.filter((v) => revokedIds.has(v.id) || !isLiveGiftVoucherUnit(v)).map((v) => v.id));
 
@@ -697,7 +740,8 @@ export function planGiftVoucherOrderChange({ facts, vouchers, printJobs, revoked
       if (ga !== gb) return ga - gb;
       return (unitOf.get(b.voucherId) ?? 0) - (unitOf.get(a.voucherId) ?? 0) || b.id - a.id;
     });
-    for (const j of ordered.slice(0, n)) cancelJob(j);
+    // A waiting card keeps its place: whichever unit takes the refund loses its card.
+    for (const j of ordered.slice(0, n)) if (!waiting.has(j.voucherId)) cancelJob(j);
   }
   for (const id of now) later.delete(id);
   plan.cancelJobsNow = [...now];

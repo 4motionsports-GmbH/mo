@@ -62,7 +62,12 @@
 // webhook's after(), the issuing step (also for a flag that landed while the
 // card was being created), the balance sync or the sweep. The card prints of
 // a refunded add-on line follow the same rule per line and are decided once
-// the flags are resolved.
+// the flags are resolved; the card of a refund Shopify could not settle yet
+// waits while an untouched sibling with a card on that line may still take
+// the refund (its deactivation then cancels the sibling's card), and no card
+// is printed while its voucher carries a revoke flag — a refund that stays on
+// a spent card leaves its card to the operator („Sperren“ cancels it, „Als
+// geklärt markieren“ lets it print).
 //
 // FAILURE MODES (see also the notes in docs/GIFT_VOUCHERS.md):
 //   · webhook slow / Shopify product list not loaded → recordGiftVoucherOrder
@@ -1031,6 +1036,8 @@ export async function handleGiftVoucherOrderChange(
         vouchers,
         printJobs: await printJobsOf(vouchers),
         revokedEarlier: revoked,
+        // Refund flags of earlier deliveries the Shopify step has not checked yet: they may still move.
+        unsettled: pickRevocationsToResolve(vouchers).map((v) => v.id),
       });
       const nothingLeft = plan.revoked === 0 && plan.cancelJobsNow.length === 0 && plan.cancelJobsLater.length === 0;
       if (nothingLeft && revoked.length === 0) return { ok: true, action: "gift_vouchers:unchanged" };
@@ -1102,9 +1109,11 @@ async function printJobsOf(vouchers: readonly GiftVoucher[]) {
  * a flag this change set is checked whatever balance is stored), then cancel
  * the card prints the order no longer pays for — decided only now, on the
  * resolved rows: a refund that moved to an untouched sibling took that
- * sibling's card along, which then counts for the add-on line — and let the
- * issuing step close the units that never became a card. Never throws;
- * whatever does not finish here is finished by the sweep (the flags persist).
+ * sibling's card along, which then counts for the add-on line; a refund
+ * Shopify could not settle now keeps its card waiting while it may still
+ * move — and let the issuing step close the units that never became a card.
+ * Never throws; whatever does not finish here is finished by the sweep (the
+ * flags persist).
  */
 export async function processGiftVoucherOrderChange(followUp: GiftVoucherOrderChangeFollowUp): Promise<void> {
   try {
@@ -1112,11 +1121,13 @@ export async function processGiftVoucherOrderChange(followUp: GiftVoucherOrderCh
     // The money first: deactivate untouched cards (this also cancels their
     // card prints), then the remaining prints of refunded add-on lines.
     const vouchers = await listGiftVouchersForOrder(followUp.orderId);
+    /** Flags this run found on a (partly) spent card with no sibling to take them: settled, they stay. */
+    const settledUsed = new Set<number>();
     for (const v of pickRevocationsToResolve(vouchers, Infinity, followUp.revokedIds)) {
       if (deadlineMs - Date.now() < MIN_STEP_MS) break;
-      await resolveIssuedRevocation(v);
+      if ((await resolveIssuedRevocation(v)) === "used") settledUsed.add(v.id);
     }
-    for (const jobId of await printJobsToCancel(followUp)) {
+    for (const jobId of await printJobsToCancel(followUp, settledUsed)) {
       if (deadlineMs - Date.now() < MIN_STEP_MS) break;
       const job = await getGiftVoucherPrintJob(jobId);
       if (job && !isFinalPrintJobStatus(job.status)) await cancelPrintJobViaProvider(job.id, job.voucherId);
@@ -1129,15 +1140,23 @@ export async function processGiftVoucherOrderChange(followUp: GiftVoucherOrderCh
 
 /**
  * The card prints an order change cancels, planned again on the rows as they
- * are after the revocations were resolved (the same facts). The change's own
- * plan is the fallback when the order's units cannot be read again — or when
- * the new plan would revoke a unit itself (the rows moved on in a way only
- * the next order change may act on).
+ * are after the revocations were resolved (the same facts). A refund flag
+ * the Shopify step has still to settle (Shopify did not answer, out of time —
+ * what pickRevocationsToResolve still picks, except the flags `settledUsed`
+ * just found on a spent card) is passed as unsettled: its card waits while
+ * an untouched sibling with a card on the same add-on line may still take
+ * the refund (planGiftVoucherOrderChange) — the deactivation of whichever
+ * unit takes it cancels that unit's card. The change's own plan is the
+ * fallback when the order's units cannot be read again — or when the new
+ * plan would revoke a unit itself (the rows moved on in a way only the next
+ * order change may act on).
  */
-async function printJobsToCancel(followUp: GiftVoucherOrderChangeFollowUp): Promise<number[]> {
+async function printJobsToCancel(followUp: GiftVoucherOrderChangeFollowUp, settledUsed: ReadonlySet<number>): Promise<number[]> {
   const vouchers = await listGiftVouchersForOrder(followUp.orderId);
   if (vouchers.length === 0) return followUp.printJobIds;
-  const plan = planGiftVoucherOrderChange({ facts: followUp.facts, vouchers, printJobs: await printJobsOf(vouchers) });
+  const recheck = followUp.revokedIds.filter((id) => !settledUsed.has(id));
+  const unsettled = pickRevocationsToResolve(vouchers, Infinity, recheck).map((v) => v.id);
+  const plan = planGiftVoucherOrderChange({ facts: followUp.facts, vouchers, printJobs: await printJobsOf(vouchers), unsettled });
   if (plan.revoked > 0) return followUp.printJobIds;
   return [...new Set([...plan.cancelJobsNow, ...plan.cancelJobsLater])];
 }

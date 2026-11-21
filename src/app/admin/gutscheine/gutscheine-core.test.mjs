@@ -32,6 +32,7 @@ import {
   voucherStatusTone,
 } from "./gutscheine-core.mjs";
 import { GIFT_VOUCHER_STATUSES } from "../../../lib/gift-voucher-core.mjs";
+import { GIFT_VOUCHER_PRINT_HELD_MESSAGE } from "../../../lib/gift-voucher-issue-core.mjs";
 
 test("parseGutscheineFilter keeps known values and drops junk", () => {
   assert.deepEqual(parseGutscheineFilter(), { status: "", quelle: "", q: "", page: 1 });
@@ -203,6 +204,32 @@ test("printJobActions: print.one submits behind the gate, hand printing offers f
   const submitted = printJobActions({ status: "submitted", provider: "printone" }, issued, open);
   assert.equal(submitted.cancel, true);
   assert.equal(printJobActions({ status: "cancelled", provider: "manual" }, issued, open).files, false);
+});
+
+test("printJobActions: a card is held while its voucher carries a revoke flag — no print files, no „Jetzt drucken“", () => {
+  const open = { gateOpen: true, printOneConfigured: true };
+  for (const attention of ["refund_after_use", "cancelled_after_use"]) {
+    const flagged = { status: "issued", attention };
+    const manual = printJobActions({ status: "queued", provider: "manual" }, flagged, open);
+    assert.equal(manual.files, false, attention);
+    assert.equal(manual.done, true, "a card already posted can still be recorded");
+    assert.equal(manual.cancel, true, "„Stornieren“ stays");
+    const printone = printJobActions({ status: "queued", provider: "printone" }, flagged, open);
+    assert.equal(printone.submit, true);
+    assert.equal(printone.submitBlocked, GIFT_VOUCHER_PRINT_HELD_MESSAGE, attention);
+    assert.equal(printJobActions({ status: "failed", provider: "printone" }, flagged, open).files, false, "no hand print of a failed job either");
+  }
+  // Settled: no flag, its acknowledged form or another note → offered again.
+  for (const attention of [null, undefined, "refund_after_use_ok", "cancelled_after_use_ok", "print_without_address"]) {
+    const v = { status: "issued", attention };
+    assert.equal(printJobActions({ status: "queued", provider: "manual" }, v, open).files, true, String(attention));
+    assert.equal(printJobActions({ status: "queued", provider: "printone" }, v, open).submitBlocked, null, String(attention));
+  }
+  // The legal gate is still named first.
+  const gateClosed = printJobActions({ status: "queued", provider: "printone" }, { status: "issued", attention: "refund_after_use" }, { gateOpen: false, printOneConfigured: true });
+  assert.match(gateClosed.submitBlocked ?? "", /GIFT_VOUCHER_PRINT_SENDS_APPROVED/);
+  // The hint tells the operator what happens to the card.
+  assert.match(attentionHint("refund_after_use"), /Premium-Karte dazu wird bis dahin nicht gedruckt/);
 });
 
 test("shopifyAdminOrderUrl needs a myshopify domain and a numeric order id", () => {

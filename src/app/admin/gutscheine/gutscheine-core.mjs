@@ -29,7 +29,7 @@ import {
   sanitizeGiftVoucherText,
   validatePostalAddress,
 } from "../../../lib/gift-voucher-core.mjs";
-import { isAcknowledgedRevocation } from "../../../lib/gift-voucher-issue-core.mjs";
+import { GIFT_VOUCHER_PRINT_HELD_MESSAGE, isAcknowledgedRevocation, revokeReasonOf } from "../../../lib/gift-voucher-issue-core.mjs";
 import { eurFromCents, plural } from "../../../lib/admin-format.mjs";
 
 // ---------------------------------------------------------------------------
@@ -237,7 +237,7 @@ export const HOLD_REASON_HINTS = Object.freeze({
 /** What an attention flag means and what to do (the detail's „Achtung“ callout). */
 export const ATTENTION_HINTS = Object.freeze({
   refund_after_use:
-    "Die Bestellung wurde erstattet, der Gutschein ist aber schon (teilweise) eingelöst. Mo sperrt ihn nicht von selbst — mit der Kundin oder dem Kunden klären und bei Bedarf sperren.",
+    "Die Bestellung wurde erstattet, der Gutschein ist aber schon (teilweise) eingelöst. Mo sperrt ihn nicht von selbst — mit der Kundin oder dem Kunden klären und bei Bedarf sperren. Eine Premium-Karte dazu wird bis dahin nicht gedruckt: „Sperren“ storniert sie, nach „Als geklärt markieren“ wird sie gedruckt — wurde die Karte mit erstattet, vorher den Druck stornieren.",
   cancelled_after_use:
     "Die Bestellung wurde storniert, der Gutschein ist aber schon (teilweise) eingelöst. Mo sperrt ihn nicht von selbst — klären und bei Bedarf sperren.",
   print_without_voucher:
@@ -291,13 +291,17 @@ export function voucherActions(v) {
  * („Jetzt drucken“, behind the legal gate); jobs printed by hand — the manual
  * provider, or a print.one job that failed — offer the print files and
  * „Als versendet markieren“. `submitBlocked` says why „Jetzt drucken“ is
- * disabled.
+ * disabled. While the voucher carries a revoke flag the card is held — no
+ * „Jetzt drucken“, no print files (the print.one gate holds it the same way)
+ * — until the operator settles the flag; marking a card already posted stays
+ * possible.
  * @param {{ status: string, provider: string }} job
- * @param {{ status: string }} voucher
+ * @param {{ status: string, attention?: string | null }} voucher
  * @param {{ gateOpen: boolean, printOneConfigured: boolean }} ctx
  */
 export function printJobActions(job, voucher, ctx) {
   const issued = voucher.status === "issued";
+  const held = revokeReasonOf(voucher.attention) !== null;
   const printone = job.provider === "printone";
   const byHand = !printone || job.status === "failed";
   const submit = printone && job.status === "queued";
@@ -307,12 +311,13 @@ export function printJobActions(job, voucher, ctx) {
     if (!ctx.gateOpen) submitBlocked = "Kartendruck ist nicht freigegeben (GIFT_VOUCHER_PRINT_SENDS_APPROVED).";
     else if (!ctx.printOneConfigured) submitBlocked = "print.one ist nicht eingerichtet (PRINTONE_API_KEY, PRINTONE_TEMPLATE_ID).";
     else if (!issued) submitBlocked = "Der Gutschein ist noch nicht ausgestellt.";
+    else if (held) submitBlocked = GIFT_VOUCHER_PRINT_HELD_MESSAGE;
   }
   return {
     release: job.status === "review",
     submit,
     submitBlocked,
-    files: byHand && issued && job.status !== "cancelled",
+    files: byHand && issued && !held && job.status !== "cancelled",
     done: byHand && issued && canAdvancePrintJobStatus(job.status, "done"),
     cancel: !isFinalPrintJobStatus(job.status),
   };
