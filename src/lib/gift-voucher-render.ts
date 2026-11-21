@@ -48,6 +48,7 @@ import { getGiftVoucherBlob } from "./gift-voucher-blob";
 import type { GiftVoucher } from "./gift-voucher-store";
 import { reportError } from "./observability";
 import { MARGIN_X, PAGE_H, PAGE_W, assembleImagePdf, assemblePdf, brandHeaderOps, footerOp, textOp, wrapText } from "./pdf-core.mjs";
+import { createSlotLimiter } from "./slot-limiter.mjs";
 
 export interface GiftVoucherRenderInput {
   designKey: string;
@@ -115,19 +116,15 @@ export function loadGiftVoucherFonts(): Promise<GiftVoucherFonts> {
 // Helpers
 // ---------------------------------------------------------------------------
 
-let activeRenders = 0;
-const waiting: Array<() => void> = [];
+const renderSlots = createSlotLimiter(MAX_CONCURRENT_RENDERS);
 
-/** At most MAX_CONCURRENT_RENDERS rasterisations at a time per instance (memory, CPU). */
-async function withRenderSlot<T>(fn: () => Promise<T>): Promise<T> {
-  if (activeRenders >= MAX_CONCURRENT_RENDERS) await new Promise<void>((resolve) => waiting.push(resolve));
-  activeRenders++;
-  try {
-    return await fn();
-  } finally {
-    activeRenders--;
-    waiting.shift()?.();
-  }
+/**
+ * At most MAX_CONCURRENT_RENDERS rasterisations at a time per instance
+ * (memory, CPU) — a finished render hands its slot to the next waiter, so
+ * the limit holds under any interleaving (slot-limiter.mjs).
+ */
+function withRenderSlot<T>(fn: () => Promise<T>): Promise<T> {
+  return renderSlots.run(fn);
 }
 
 function designOf(key: string): Readonly<GiftVoucherDesign> {
