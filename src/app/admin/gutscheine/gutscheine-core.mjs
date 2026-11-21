@@ -702,6 +702,7 @@ export function actionErrorStatus(code) {
     case "shopify_error":
     case "provider_error":
     case "send_failed": // Resend did not take the mail
+    case "deactivate_failed": // Shopify refused to deactivate the card (or it is gone)
       return 502;
     case "db": // a write did not go through
     case "error": // an exception in the library

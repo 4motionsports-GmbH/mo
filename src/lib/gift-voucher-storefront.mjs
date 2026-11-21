@@ -212,14 +212,17 @@ const BASE_URL_NOT_CHECKED = "https://base-url-not-checked.invalid";
  *
  * `printBaseUrl` = publicHttpsBaseUrl(PUBLIC_BASE_URL), null when it is
  * missing or not https. A caller that leaves it out does not check that
- * condition (the storefront state always passes it).
+ * condition (the storefront state always passes it). `blobConfigured`: the
+ * print files reach print.one through the Vercel Blob store — without it
+ * print.one gets no card (left out = not checked).
  * @param {{ printProvider: "printone" | "manual", printOneConfigured: boolean, printSendsApproved: boolean,
- *   printBaseUrl?: string | null }} input
+ *   printBaseUrl?: string | null, blobConfigured?: boolean }} input
  * @returns {boolean}
  */
 export function isGiftVoucherPrintOffered(input) {
   if (input?.printProvider === "manual") return true;
   if (input?.printProvider !== "printone") return false;
+  if (input.blobConfigured === false) return false;
   return (
     giftVoucherPrintGlobalBlock({
       gateApproved: input.printSendsApproved === true,
@@ -241,7 +244,8 @@ export function isGiftVoucherPrintOffered(input) {
  *     (GIFT_VOUCHER_PRINT_PROVIDER=manual) or by print.one when the sweep
  *     would submit it (isGiftVoucherPrintOffered: legal gate
  *     GIFT_VOUCHER_PRINT_SENDS_APPROVED, print.one configured, https
- *     PUBLIC_BASE_URL — a missing printBaseUrl counts as none).
+ *     PUBLIC_BASE_URL — a missing printBaseUrl counts as none — and the
+ *     Blob store for the print files).
  * Nothing is offered while the shop does not sell.
  * @param {GiftVoucherStorefrontInputs} input
  * @returns {GiftVoucherStorefrontState}
@@ -260,6 +264,7 @@ export function giftVoucherStorefrontState(input) {
     printOneConfigured: input?.printOneConfigured,
     printSendsApproved: input?.printSendsApproved,
     printBaseUrl: typeof input?.printBaseUrl === "string" ? input.printBaseUrl : null,
+    blobConfigured: input?.blobConfigured === true,
   });
   return {
     available,

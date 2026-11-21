@@ -664,7 +664,7 @@ the migration before the products are on sale.
   stripped), print files under `gift-voucher-print/` only while needed.
 - **Retention:** the three windows of §9 (`0` disables a step), enforced by step 5j of `/api/cron/retention` —
   drafts, the address of finished print jobs, and a voucher's personal data (the team's note and block reason
-  with it) once it ended — used up included — or, for a held test order, once untouched that long; amounts,
+  with it) once it ended — used up included — or, for a held test order or a voucher held because its order was refunded before the card existed, once untouched that long; amounts,
   status, the encrypted code with its hash / last four and ids stay. What each step deletes and when a voucher
   counts as ended: [`DATA_RETENTION.md`](./DATA_RETENTION.md) „Geschenkgutscheine“.
 - **Erasure** (`erasePerson`) keeps the voucher — the card is money for its recipient — and removes the buyer;

@@ -2178,7 +2178,9 @@ const windowDays = (v: unknown) => (typeof v === "number" && Number.isSafeIntege
  *     updateGiftVoucherBalance). Never a voucher still pending, held or
  *     issuing — a held one is a paid order whose voucher is still owed —
  *     except a held TEST order (hold_reason 'test_order', no money behind
- *     it) untouched that long. Names, texts, e-mail addresses, the photo,
+ *     it) or a voucher held because its order was refunded before the card
+ *     existed (hold_reason 'refunded' — also what a refunded test order
+ *     ends as), untouched that long. Names, texts, e-mail addresses, the photo,
  *     the download link and the team's free texts (admin note, deactivation
  *     reason — they may name the buyer) go (and the address of its print job,
  *     open or finished); amounts, status, code hash / last 4, ids stay.
@@ -2215,7 +2217,7 @@ export async function purgeGiftVoucherData(
                         OR (status = 'deactivated' AND COALESCE(deactivated_at, updated_at) < ${cutoff}::timestamptz)
                         OR (status IN ('cancelled', 'rejected', 'failed') AND updated_at < ${cutoff}::timestamptz)
                         OR (balance_cents = 0 AND updated_at < ${cutoff}::timestamptz)))
-                  OR (status = 'held' AND hold_reason = 'test_order' AND updated_at < ${cutoff}::timestamptz))
+                  OR (status = 'held' AND hold_reason IN ('test_order', 'refunded') AND updated_at < ${cutoff}::timestamptz))
         ),
         upd AS (
           UPDATE gift_vouchers v

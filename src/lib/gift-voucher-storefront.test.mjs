@@ -63,6 +63,10 @@ test("isGiftVoucherPrintOffered: in-house, or print.one configured, released by 
   assert.equal(offered({ printOneConfigured: false, printBaseUrl: BASE }), false);
   // print.one loads the print files from PUBLIC_BASE_URL: without an https one the sweep submits nothing.
   assert.equal(offered({ printBaseUrl: null }), false);
+  // The print files reach print.one through the Blob store: without it no card.
+  assert.equal(offered({ printBaseUrl: BASE, blobConfigured: false }), false);
+  assert.equal(offered({ printBaseUrl: BASE, blobConfigured: true }), true);
+  assert.equal(giftVoucherStorefrontState({ ...READY, blobConfigured: false }).features.print, READY.printProvider === "manual");
   // A caller that does not pass the base URL does not check it.
   assert.equal(offered({}), true);
   assert.equal(offered({ printSendsApproved: false }), false);

@@ -35,7 +35,7 @@ test("GUARDRAIL: the voucher retention anonymises ended vouchers and old held TE
                     OR (status = 'deactivated' AND COALESCE(deactivated_at, updated_at) < \${cutoff}::timestamptz)
                     OR (status IN ('cancelled', 'rejected', 'failed') AND updated_at < \${cutoff}::timestamptz)
                     OR (balance_cents = 0 AND updated_at < \${cutoff}::timestamptz)))
-              OR (status = 'held' AND hold_reason = 'test_order' AND updated_at < \${cutoff}::timestamptz))
+              OR (status = 'held' AND hold_reason IN ('test_order', 'refunded') AND updated_at < \${cutoff}::timestamptz))
     `),
     "a held voucher is a paid order whose voucher is still owed — only a test order (no money) may be anonymised; " +
       "'used up' counts from the last change (updated_at), not from the last balance read"

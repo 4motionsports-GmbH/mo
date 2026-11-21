@@ -1418,6 +1418,12 @@ export async function clearGiftVoucherAttention(id: number): Promise<{ ok: true 
     if (step === "resolve") {
       const r = await resolveIssuedRevocation(v);
       if (r === "deactivated" || r === "moved") return { ok: true };
+      if (r === "error") {
+        return fail(
+          "deactivate_failed",
+          "Shopify hat das Sperren der Karte abgelehnt oder die Karte fehlt — siehe „Achtung“; bitte in Shopify prüfen und „Sperren“ erneut versuchen."
+        );
+      }
       if (r !== "used") return fail("busy", "Mo prüft die Karte noch — bitte gleich erneut versuchen oder „Sperren“ wählen.");
     }
     return await acknowledgeRevocation(v);

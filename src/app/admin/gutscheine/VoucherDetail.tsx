@@ -80,6 +80,7 @@ import {
   holdReasonLabel,
   mailStatusLabel,
   printJobActions,
+  printOneHold,
   printStatusLabel,
   printStatusTone,
   voucherActions,
@@ -288,7 +289,7 @@ export function VoucherDetail({
   };
   const releasePrint = async (pj: GutscheinPrintJobView) => {
     // With print.one taking cards, „Freigeben“ is the order: the next run prints and posts it.
-    if (pj.provider === "printone" && !env.printGateBlock) {
+    if (pj.provider === "printone" && printOneHold({ gateBlock: env.printGateBlock, blobConfigured: env.blobConfigured }) === null) {
       const a = pj.address;
       const ok = await confirm({
         title: "Karte freigeben?",

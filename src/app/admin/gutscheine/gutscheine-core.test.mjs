@@ -530,6 +530,7 @@ test("parseGutscheinAction validates action, id, note and reason", () => {
 
 test("actionErrorStatus maps library codes to HTTP statuses", () => {
   assert.equal(actionErrorStatus("not_found"), 404);
+  assert.equal(actionErrorStatus("deactivate_failed"), 502);
   assert.equal(actionErrorStatus("invalid"), 400);
   assert.equal(actionErrorStatus("not_implemented"), 503);
   assert.equal(actionErrorStatus("not_configured"), 503);
