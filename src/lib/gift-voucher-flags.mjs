@@ -118,7 +118,8 @@ export function giftVoucherProductHandles(env = process.env) {
 
 /**
  * GIFT_VOUCHER_VALIDITY_YEARS (default 3, 0 = never expires, at most 10): a
- * voucher is valid until 31 December of the year of purchase + this.
+ * voucher is valid until 31 December of the Berlin year it is issued (its
+ * code stored — giftVoucherExpiryDate) + this.
  * @param {Env} [env]
  */
 export function giftVoucherValidityYears(env = process.env) {
