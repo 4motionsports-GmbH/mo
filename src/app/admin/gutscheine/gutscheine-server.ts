@@ -115,10 +115,12 @@ function setupProduct(p: GiftVoucherProductInfo | null): SetupProduct | null {
 
 /**
  * The Shopify half of the setup check: scopes, the two products (with their
- * findings) and the shop's gift-card issue limit. Never throws — a failed
- * check is reported as „nicht prüfbar“.
+ * findings) and the shop's gift-card issue limit. `printOffered` = the shop
+ * can sell the Premium-Karte (isGiftVoucherPrintOffered) — a missing print
+ * product is an error then. Never throws — a failed check is reported as
+ * „nicht prüfbar“.
  */
-export async function loadSetupShopify(opts: { fresh?: boolean } = {}): Promise<SetupShopify | null> {
+export async function loadSetupShopify(opts: { fresh?: boolean; printOffered?: boolean } = {}): Promise<SetupShopify | null> {
   if (!isShopifyConfigured()) return null;
   try {
     const [scopes, products, issueLimitCents] = await Promise.all([
@@ -136,7 +138,12 @@ export async function loadSetupShopify(opts: { fresh?: boolean } = {}): Promise<
             ok: true,
             voucher: setupProduct(products.voucher),
             print: setupProduct(products.print),
-            issues: describeGiftVoucherProductIssues({ voucher: products.voucher, print: products.print, handles }),
+            issues: describeGiftVoucherProductIssues({
+              voucher: products.voucher,
+              print: products.print,
+              handles,
+              printOffered: opts.printOffered === true,
+            }),
           }
         : { ok: false, message: products.message },
       issueLimitCents,

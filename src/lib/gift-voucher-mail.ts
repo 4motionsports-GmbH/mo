@@ -4,16 +4,22 @@
 // delivery „E-Mail“ to the recipient; admin vouchers delivered as PDF or card
 // get no mail. The mail carries the code, the PDF (attachment) and a download
 // link (`/api/gift-vouchers/download?t=<token>` — only the token's hash is
-// stored; every new mail rotates it, so an older link stops working).
+// stored). The token is DERIVED per mail attempt (giftVoucherDownloadToken:
+// TOKEN_ENC_KEY, the voucher, mail_attempts and the code), so a repeat of the
+// same attempt rebuilds the link the delivered mail carries, while every new
+// attempt (a resend, a retry) rotates it — an older link stops working.
 // Transactional (Art. 6(1)(b) GDPR): no marketing, no discount, no promo
 // block. What the mail says and what a failure means are pure
 // (gift-voucher-mail-core.mjs, tested); this file does the I/O.
 //
-// Idempotency: the Resend key is gift-voucher-mail-<id>-<mail_attempts>.
-// mail_attempts counts up with every concluded try (sent, failed, an error
-// with a retry), so a resend gets a fresh key while a REPEAT of the same try
-// — a worker died after Resend took the mail, before the state was written —
-// is refused by Resend (409) and recorded as sent instead of mailed twice.
+// Idempotency: the Resend key is gift-voucher-mail-<id>-<created ms>-<mail_attempts>
+// (the creation time keeps it unique across databases sharing the Resend
+// account). mail_attempts counts up with every concluded try (sent, failed,
+// an error with a retry — a transport failure too, so the buyer may get a
+// second mail with the same code), so a resend gets a fresh key while a
+// REPEAT of the same try — a worker died after Resend took the mail, before
+// the state was written — is refused by Resend (409) and recorded as sent
+// instead of mailed twice; its link is the one the delivered mail carries.
 //
 // The mail log (email_messages, which also feeds the AI customer profile and
 // the admin's correspondence view) gets the REDACTED copy: the code masked
@@ -37,7 +43,12 @@ import { withEmailDesign } from "./email-design-context";
 import { getCachedEmailDesignForKind } from "./email-design-store";
 import { getBaseUrl } from "./base-url";
 import { reportError } from "./observability";
-import { hashOpaqueToken, newOpaqueToken, planGiftVoucherRetry } from "./gift-voucher-core.mjs";
+import {
+  giftVoucherDownloadToken,
+  hashOpaqueToken,
+  isGiftVoucherPhotoUnavailable,
+  planGiftVoucherRetry,
+} from "./gift-voucher-core.mjs";
 import { giftVoucherPageUrl, giftVoucherTermsUrl } from "./gift-voucher-flags.mjs";
 import {
   getGiftVoucher,
@@ -74,21 +85,33 @@ const ROUTE = "lib/gift-voucher-mail";
 const RENDER_TRIES_BEFORE_PLAIN_MAIL = 2;
 
 /**
- * Send (or resend) the mail of a voucher. `downloadToken` is the plain token
- * of the download link when the caller just created it (only its hash is
- * stored); without it a new link is created and the old one stops working.
- * Only an issued voucher is mailed. Never throws.
+ * The download token of a voucher's CURRENT mail attempt (giftVoucherDownloadToken), or null
+ * without TOKEN_ENC_KEY. The issuer stores its hash with the card; the mail derives the same.
  */
-export async function sendGiftVoucherMail(id: number, opts: { downloadToken?: string | null } = {}): Promise<GiftVoucherMailOutcome> {
+export function giftVoucherAttemptDownloadToken(v: Pick<GiftVoucher, "id" | "mailAttempts">, code: string): string | null {
   try {
-    return await send(id, opts.downloadToken ?? null);
+    return giftVoucherDownloadToken({ secret: process.env.TOKEN_ENC_KEY ?? "", voucherId: v.id, mailAttempts: v.mailAttempts, code });
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Send (or resend) the mail of a voucher. Its download link belongs to the
+ * attempt: a repeat of the same attempt keeps the link, the next attempt
+ * rotates it (the old link stops working). Only an issued voucher is mailed.
+ * Never throws.
+ */
+export async function sendGiftVoucherMail(id: number): Promise<GiftVoucherMailOutcome> {
+  try {
+    return await send(id);
   } catch (err) {
     reportError(err, { route: ROUTE, phase: "send" });
     return "failed";
   }
 }
 
-async function send(id: number, issuedToken: string | null): Promise<GiftVoucherMailOutcome> {
+async function send(id: number): Promise<GiftVoucherMailOutcome> {
   const v = await getGiftVoucher(id);
   if (!v || v.status !== "issued") return "skipped";
 
@@ -122,12 +145,10 @@ async function send(id: number, issuedToken: string | null): Promise<GiftVoucher
     return retryLater(v, "Das PDF ließ sich nicht erzeugen — Mo versucht es gleich noch einmal.");
   }
 
-  // The download link: the issuer's fresh token, else a new one (rotation).
-  let token = issuedToken;
-  if (!token) {
-    const fresh = newOpaqueToken(24);
-    token = (await setGiftVoucherDownloadTokenHash(id, hashOpaqueToken(fresh))) ? fresh : null;
-  }
+  // The download link of this attempt — its hash is stored every time (idempotent for a
+  // repeat of the attempt, a rotation for a new one).
+  const derived = giftVoucherAttemptDownloadToken(v, code);
+  const token = derived && (await setGiftVoucherDownloadTokenHash(id, hashOpaqueToken(derived))) ? derived : null;
 
   // The Premium-Karte note (the card is on its way unless its job was given up).
   let print: GiftVoucherMailParams["print"] = null;
@@ -177,7 +198,7 @@ async function send(id: number, issuedToken: string | null): Promise<GiftVoucher
     replyTo: threading.replyTo,
     tags: [{ name: "kind", value: GIFT_VOUCHER_MAIL_KIND }],
     attachments: pdf ? [{ filename: giftVoucherPdfFilename(v.number), content: pdf, contentType: "application/pdf" }] : undefined,
-    idempotencyKey: giftVoucherMailIdempotencyKey(v.id, v.mailAttempts),
+    idempotencyKey: giftVoucherMailIdempotencyKey(v.id, v.mailAttempts, v.createdAt),
   });
 
   if (result.ok) {
@@ -223,7 +244,7 @@ async function renderPdf(v: GiftVoucher, code: string): Promise<Buffer | null> {
   try {
     const photo = v.photoPathname ? await loadGiftVoucherPhoto(v.photoPathname) : null;
     // Never the „Klassisch“ look in place of the customer's photo.
-    if (v.designKey === "photo" && v.photoPathname && !photo) {
+    if (isGiftVoucherPhotoUnavailable(v, photo)) {
       reportError(new Error("gift voucher photo unavailable"), { route: ROUTE, phase: "photo", voucherId: v.id });
       return null;
     }

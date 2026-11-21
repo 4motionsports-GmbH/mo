@@ -12,7 +12,7 @@
 //     never a name or any other personal data) and the clean-up of the
 //     model's answer
 //   · the photo upload checks, the balance answer, the download file name
-// The I/O halves: lib/gift-voucher-storefront.ts (state, body reading),
+// The I/O halves: lib/gift-voucher-storefront-io.ts (state, body reading),
 // lib/gift-voucher-message.ts (the model call), lib/gift-voucher-photo.ts
 // (sharp + Blob). Like gift-voucher-core.mjs this module imports no Node
 // built-ins.
@@ -26,6 +26,7 @@ import {
   sanitizeGiftVoucherText,
 } from "./gift-voucher-core.mjs";
 import { normalizeLocale, pick } from "./locale.mjs";
+import { giftVoucherPrintGlobalBlock } from "./printone-core.mjs";
 
 /** @typedef {"de" | "en"} Locale */
 
@@ -186,6 +187,7 @@ export function giftVoucherErrorBody(code, message, field = null) {
  *   printProvider: "printone" | "manual",
  *   printOneConfigured: boolean,
  *   printSendsApproved: boolean,
+ *   printBaseUrl: string | null,
  * }} GiftVoucherStorefrontInputs
  *
  * @typedef {{
@@ -195,6 +197,39 @@ export function giftVoucherErrorBody(code, message, field = null) {
  * }} GiftVoucherStorefrontState
  */
 
+/** Stands in for PUBLIC_BASE_URL when a caller of isGiftVoucherPrintOffered does not pass it. */
+const BASE_URL_NOT_CHECKED = "https://base-url-not-checked.invalid";
+
+/**
+ * Can the Premium-Karte really be fulfilled — the rule behind the page's
+ * `features.print` and the setup check: in-house
+ * (GIFT_VOUCHER_PRINT_PROVIDER=manual), or by print.one only when the print
+ * sweep would really submit the card — its own gate, printone-core
+ * giftVoucherPrintGlobalBlock: the legal gate GIFT_VOUCHER_PRINT_SENDS_APPROVED,
+ * print.one configured and a public https PUBLIC_BASE_URL (print.one loads
+ * the print files from there). The automatic fallback to the in-house queue
+ * while print.one is not set up does not count: the page sells no card then.
+ *
+ * `printBaseUrl` = publicHttpsBaseUrl(PUBLIC_BASE_URL), null when it is
+ * missing or not https. A caller that leaves it out does not check that
+ * condition (the storefront state always passes it).
+ * @param {{ printProvider: "printone" | "manual", printOneConfigured: boolean, printSendsApproved: boolean,
+ *   printBaseUrl?: string | null }} input
+ * @returns {boolean}
+ */
+export function isGiftVoucherPrintOffered(input) {
+  if (input?.printProvider === "manual") return true;
+  if (input?.printProvider !== "printone") return false;
+  return (
+    giftVoucherPrintGlobalBlock({
+      gateApproved: input.printSendsApproved === true,
+      printOneConfigured: input.printOneConfigured === true,
+      configuredProvider: "printone",
+      baseUrl: input.printBaseUrl === undefined ? BASE_URL_NOT_CHECKED : input.printBaseUrl,
+    }) === null
+  );
+}
+
 /**
  * Does the shop sell vouchers right now, and what may the page offer?
  *   available — GIFT_VOUCHERS_ENABLED and the admin switch „Verkauf im Shop“
@@ -203,8 +238,10 @@ export function giftVoucherErrorBody(code, message, field = null) {
  *   features.ai — ANTHROPIC_API_KEY and „KI-Textvorschläge“;
  *   features.photo — the Blob store and „Eigene Fotos“;
  *   features.print — the Premium-Karte can really be fulfilled: in-house
- *     (GIFT_VOUCHER_PRINT_PROVIDER=manual) or by print.one, configured AND
- *     released by the legal gate GIFT_VOUCHER_PRINT_SENDS_APPROVED.
+ *     (GIFT_VOUCHER_PRINT_PROVIDER=manual) or by print.one when the sweep
+ *     would submit it (isGiftVoucherPrintOffered: legal gate
+ *     GIFT_VOUCHER_PRINT_SENDS_APPROVED, print.one configured, https
+ *     PUBLIC_BASE_URL — a missing printBaseUrl counts as none).
  * Nothing is offered while the shop does not sell.
  * @param {GiftVoucherStorefrontInputs} input
  * @returns {GiftVoucherStorefrontState}
@@ -218,8 +255,12 @@ export function giftVoucherStorefrontState(input) {
     unavailableReason = "not_configured";
   }
   const available = unavailableReason === null;
-  const printUsable =
-    input?.printProvider === "manual" || (input?.printOneConfigured === true && input?.printSendsApproved === true);
+  const printUsable = isGiftVoucherPrintOffered({
+    printProvider: input?.printProvider,
+    printOneConfigured: input?.printOneConfigured,
+    printSendsApproved: input?.printSendsApproved,
+    printBaseUrl: typeof input?.printBaseUrl === "string" ? input.printBaseUrl : null,
+  });
   return {
     available,
     unavailableReason,

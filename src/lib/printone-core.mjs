@@ -14,8 +14,8 @@
 //     mergeVariables, billingId }. mergeVariables are STRINGS and every
 //     variable the template uses must be present (≤ 16 KB). Header
 //     Idempotency-Key (≤ 255 characters, kept 24 h; the same key with another
-//     body is an error) — Mo sends gift-voucher-print-<jobId> and builds the
-//     body only from the job row, so a retry is byte-identical.
+//     body is an error) — Mo sends gift-voucher-print-<jobId>-<created ms>
+//     and builds the body only from the job row, so a retry is byte-identical.
 //   · GET /v2/orders/{id}; POST /v2/orders/{id}/cancel (412 = "not cancellable
 //     yet" right after creation, or "anymore" once in production).
 //   · Order statuses → print-job statuses (applied monotonically through
@@ -33,7 +33,7 @@
 //     the back panel) and serves them while the job is open at
 //     /api/gift-vouchers/print-asset/<assetToken>-<outside|inside>.jpg.
 
-import { giftVoucherAddressToJson, validatePostalAddress } from "./gift-voucher-core.mjs";
+import { giftVoucherAddressToJson, isFinalPrintJobStatus, validatePostalAddress } from "./gift-voucher-core.mjs";
 
 /** @typedef {"review" | "queued" | "submitting" | "submitted" | "printing" | "sent" | "failed" | "cancelled" | "done"} PrintJobStatus */
 /** @typedef {"outside" | "inside"} PrintAssetSide */
@@ -210,18 +210,38 @@ export function printOnePreviewPath(id) {
 }
 
 /**
- * The Idempotency-Key of a print job: gift-voucher-print-<jobId>. Same key for
- * every attempt, so a retry after a lost answer never prints a second card.
+ * The Idempotency-Key of a print job: gift-voucher-print-<jobId>-<created_at
+ * in ms>. Same key for every attempt of the job, so a retry after a lost
+ * answer never prints a second card; the job's creation time keeps it unique
+ * across databases that share the print.one account (a reset test database
+ * or a Neon branch starts at job 1 again — print.one would answer such a
+ * key with a conflict for 24 h). An unreadable time counts as 0.
  * @param {unknown} jobId
+ * @param {string | Date | null | undefined} createdAt the job's created_at
  * @returns {string | null}
  */
-export function giftVoucherPrintIdempotencyKey(jobId) {
-  return typeof jobId === "number" && Number.isSafeInteger(jobId) && jobId > 0 ? `${PRINTONE_IDEMPOTENCY_PREFIX}${jobId}` : null;
+export function giftVoucherPrintIdempotencyKey(jobId, createdAt) {
+  if (typeof jobId !== "number" || !Number.isSafeInteger(jobId) || jobId <= 0) return null;
+  const t = createdAt instanceof Date ? createdAt.getTime() : Date.parse(String(createdAt ?? ""));
+  return `${PRINTONE_IDEMPOTENCY_PREFIX}${jobId}-${Number.isFinite(t) ? t : 0}`;
 }
 
 // ---------------------------------------------------------------------------
 // Print files (assets)
 // ---------------------------------------------------------------------------
+
+/**
+ * May the print files of a job be deleted (cleanupGiftVoucherPrintAssets)?
+ * Only once the job is FINISHED (sent, done, cancelled, failed) — an open job
+ * keeps them however old it is: its asset token is how Mo finds an order
+ * whose answer was lost (findUnrecordedOrder) — without it a retry after the
+ * Idempotency-Key's 24 hours would render new files and print a second card
+ * — and print.one may still fetch them while the job is open.
+ * @param {{ status: unknown, assetToken: unknown }} job
+ */
+export function canCleanPrintJobAssets(job) {
+  return isFinalPrintJobStatus(job?.status) && typeof job?.assetToken === "string" && job.assetToken.length > 0;
+}
 
 /** An asset token (newOpaqueToken: base64url, 22–64 characters). @param {unknown} t @returns {t is string} */
 export function isValidPrintAssetToken(t) {

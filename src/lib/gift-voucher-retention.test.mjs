@@ -42,6 +42,32 @@ test("GUARDRAIL: the voucher retention anonymises ended vouchers and old held TE
   );
 });
 
+test("GUARDRAIL: the anonymisation clears every personal text — the team's note and deactivation reason too", () => {
+  const body = squash(fnSource("purgeGiftVoucherData"));
+  const start = body.indexOf("upd AS ( UPDATE gift_vouchers v SET ");
+  const end = body.indexOf(" FROM ended e", start);
+  assert.ok(start >= 0 && end > start, "the anonymising UPDATE");
+  const set = body
+    .slice(start + "upd AS ( UPDATE gift_vouchers v SET ".length, end)
+    .split(",")
+    .map((s) => s.trim());
+  assert.deepEqual(set, [
+    "recipient_name = NULL",
+    "sender_name = NULL",
+    "message = NULL",
+    "buyer_name = NULL",
+    "buyer_email = NULL",
+    "recipient_email = NULL",
+    "photo_pathname = NULL",
+    "download_token_hash = NULL",
+    // Operator free text („Absprache mit der Kundin …“) may name the person.
+    "admin_note = NULL",
+    "deactivation_reason = NULL",
+    "personal_data_purged_at = now()",
+    "updated_at = now()",
+  ]);
+});
+
 test("GUARDRAIL: an unchanged balance read is no activity (updated_at stays), a changed one is", () => {
   const body = squash(fnSource("updateGiftVoucherBalance"));
   assert.ok(body.includes("balance_checked_at = now()"), "every read is stamped");

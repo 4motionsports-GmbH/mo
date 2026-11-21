@@ -4,7 +4,9 @@
 // Tables: gift_voucher_drafts (what a customer designed before paying),
 // gift_vouchers (one row per voucher unit, shop or admin), and
 // gift_voucher_print_jobs (the Premium-Karte of a voucher). Settings live in
-// admin_settings key 'gift_vouchers' (no migration of their own).
+// admin_settings key 'gift_vouchers', the last good voucher-product lookup
+// (orders/paid's fallback) in key 'gift_voucher_products' (no migration of
+// their own).
 //
 // House rules, as in every store:
 //   · every function takes `sql = getSql()` last, answers a null-safe fallback
@@ -59,6 +61,7 @@ import {
   parseGiftVoucherSettings,
   type GiftVoucherSettings,
 } from "./gift-voucher-settings.mjs";
+import { GIFT_VOUCHER_PRODUCTS_SNAPSHOT_KEY } from "./shopify-gift-cards-core.mjs";
 
 export type { GiftVoucherSettings };
 
@@ -593,10 +596,19 @@ export async function getGiftVoucherDraftByToken(token: string, sql: Sql | null 
   }
 }
 
-/** The drafts of the given tokens (invalid tokens are ignored, at most 100). */
-export async function getGiftVoucherDraftsByTokens(tokens: readonly string[], sql: Sql | null = getSql()): Promise<GiftVoucherDraft[]> {
+/**
+ * The drafts of the given tokens (invalid tokens are ignored, at most 100).
+ * `[]` when no token is given; NULL when they could not be read (no
+ * database, a read error) — never mistaken for „no drafts“, so orders/paid
+ * can ask Shopify to redeliver instead of recording the design defaults.
+ */
+export async function getGiftVoucherDraftsByTokens(
+  tokens: readonly string[],
+  sql: Sql | null = getSql()
+): Promise<GiftVoucherDraft[] | null> {
   const list = [...new Set(tokens.filter(isValidDraftToken))].slice(0, 100);
-  if (!sql || list.length === 0) return [];
+  if (list.length === 0) return [];
+  if (!sql) return null;
   try {
     const rows = (await sql`
       SELECT to_jsonb(d) AS j FROM gift_voucher_drafts d WHERE d.token = ANY(${list}::text[])
@@ -604,7 +616,7 @@ export async function getGiftVoucherDraftsByTokens(tokens: readonly string[], sq
     return rows.map(mapDraft);
   } catch (err) {
     reportRead(err, "getDrafts");
-    return [];
+    return null;
   }
 }
 
@@ -833,27 +845,52 @@ export async function releaseGiftVoucherLock(id: number, sql: Sql | null = getSq
  * Store the code (prepareGiftVoucherCode) and the expiry BEFORE the Shopify
  * call: status → 'issuing'. Only while the voucher is pending or failed AND
  * has no code yet — an existing code is never replaced (a retry must reuse
- * it). True when written.
+ * it). This is also the daily limit's HARD cap: one transaction under an
+ * advisory lock (every reservation of every instance queues there) writes
+ * only while this unit plus every other shop voucher issued — or being
+ * issued — today (Europe/Berlin) stays within `dailyLimitCents`; 0 (an
+ * operator's voucher, an override) reserves without a cap.
+ * 'written' = stored; 'limit' = refused by the cap (the row is still pending
+ * or failed without a code); 'not_written' = the row changed meanwhile (a
+ * revocation, a code from an earlier attempt) or the database failed.
  */
 export async function markGiftVoucherIssuing(
   id: number,
   input: { codeEncB64: string; codeHash: string; codeLast4: string; expiresOn: string | null },
+  dailyLimitCents: number,
   sql: Sql | null = getSql()
-): Promise<boolean> {
-  if (!sql) return false;
+): Promise<"written" | "limit" | "not_written"> {
+  if (!sql) return "not_written";
   const expiresOn = input.expiresOn && /^\d{4}-\d{2}-\d{2}$/.test(input.expiresOn) ? input.expiresOn : null;
+  const cap = Number.isSafeInteger(dailyLimitCents) && dailyLimitCents > 0 ? dailyLimitCents : 0;
   try {
-    const rows = (await sql`
-      UPDATE gift_vouchers
-         SET status = 'issuing', code_enc = decode(${input.codeEncB64}, 'base64'), code_hash = ${input.codeHash},
-             code_last4 = ${input.codeLast4}, expires_on = ${expiresOn}::date, updated_at = now()
-       WHERE id = ${id} AND status IN ('pending', 'failed') AND code_enc IS NULL
-      RETURNING id
-    `) as Row[];
-    return rows.length > 0;
+    const results = (await sql.transaction([
+      // 830083: the gift-voucher reservation lock (held until this transaction ends).
+      sql`SELECT pg_advisory_xact_lock(830083)`,
+      sql`
+        UPDATE gift_vouchers v
+           SET status = 'issuing', code_enc = decode(${input.codeEncB64}, 'base64'), code_hash = ${input.codeHash},
+               code_last4 = ${input.codeLast4}, expires_on = ${expiresOn}::date, updated_at = now()
+         WHERE v.id = ${id} AND v.status IN ('pending', 'failed') AND v.code_enc IS NULL
+           AND (${cap}::int = 0
+                OR v.amount_cents + (SELECT COALESCE(SUM(g.amount_cents), 0)
+                                       FROM gift_vouchers g
+                                      WHERE g.source = 'shop' AND g.id <> ${id}
+                                        AND (g.issued_at >= (date_trunc('day', now() AT TIME ZONE 'Europe/Berlin') AT TIME ZONE 'Europe/Berlin')
+                                             OR (g.status = 'issuing' AND g.issued_at IS NULL
+                                                 AND g.updated_at >= (date_trunc('day', now() AT TIME ZONE 'Europe/Berlin') AT TIME ZONE 'Europe/Berlin')))
+                                    ) <= ${cap}::int)
+        RETURNING v.id
+      `,
+      sql`SELECT status, (code_enc IS NULL) AS no_code FROM gift_vouchers WHERE id = ${id}`,
+    ])) as Row[][];
+    if ((results[1] ?? []).length > 0) return "written";
+    const row = results[2]?.[0];
+    const stillOpen = row != null && (row.status === "pending" || row.status === "failed") && row.no_code === true;
+    return cap > 0 && stillOpen ? "limit" : "not_written";
   } catch (err) {
     report(err, "markIssuing");
-    return false;
+    return "not_written";
   }
 }
 
@@ -1004,9 +1041,9 @@ export async function setGiftVoucherStatus(
 /**
  * The buyer / recipient mail state. A concluded try ('sent', 'failed', or an
  * error with a retry) counts a mail attempt, so the next send gets a new
- * idempotency key (gift-voucher-mail-<id>-<mailAttempts>); `countAttempt`
- * overrides. `error` is stored as last_error when given. 'sent' stamps
- * mailed_at (now unless given).
+ * idempotency key (gift-voucher-mail-<id>-<created ms>-<mailAttempts>) and a
+ * new download link; `countAttempt` overrides. `error` is stored as
+ * last_error when given. 'sent' stamps mailed_at (now unless given).
  */
 export async function setGiftVoucherMailState(
   id: number,
@@ -1043,12 +1080,20 @@ export async function setGiftVoucherMailState(
   }
 }
 
-/** A new download link (the old one stops working). `hash` = sha256 hex of the token. */
+/**
+ * The download link of a mail attempt (the previous one stops working).
+ * `hash` = sha256 hex of the token. Storing the same hash again (a repeat of
+ * the attempt) changes nothing — updated_at moves only with a new link.
+ */
 export async function setGiftVoucherDownloadTokenHash(id: number, hash: string, sql: Sql | null = getSql()): Promise<boolean> {
   if (!sql || !isSha256Hex(hash)) return false;
   try {
     const rows = (await sql`
-      UPDATE gift_vouchers SET download_token_hash = ${hash}, updated_at = now() WHERE id = ${id} RETURNING id
+      UPDATE gift_vouchers
+         SET download_token_hash = ${hash},
+             updated_at = CASE WHEN download_token_hash IS DISTINCT FROM ${hash}::text THEN now() ELSE updated_at END
+       WHERE id = ${id}
+      RETURNING id
     `) as Row[];
     return rows.length > 0;
   } catch (err) {
@@ -1110,6 +1155,67 @@ export async function setGiftVoucherAttention(id: number, key: string | null, sq
     return rows.length > 0;
   } catch (err) {
     report(err, "setAttention");
+    return false;
+  }
+}
+
+/**
+ * Change the attention flag only while it is still `expected` (an operator
+ * acknowledging a revoke flag — never over a flag that moved on meanwhile).
+ * True when changed.
+ */
+export async function replaceGiftVoucherAttention(
+  id: number,
+  expected: string,
+  key: string | null,
+  sql: Sql | null = getSql()
+): Promise<boolean> {
+  if (!sql) return false;
+  try {
+    const rows = (await sql`
+      UPDATE gift_vouchers SET attention = ${cut(key, 100)}, updated_at = now()
+       WHERE id = ${id} AND attention = ${expected}
+      RETURNING id
+    `) as Row[];
+    return rows.length > 0;
+  } catch (err) {
+    report(err, "replaceAttention");
+    return false;
+  }
+}
+
+/**
+ * Move a refund's revocation flag from a (partly) spent unit to an untouched
+ * sibling of the same line — single winner: one transaction locks both rows,
+ * then moves the flag only while `fromId` still carries it and `toId` is
+ * issued with a card and no attention. When several order updates resolve
+ * the same flag at once, the first moves it and the others find it gone.
+ * True when moved.
+ */
+export async function moveGiftVoucherRevocation(
+  fromId: number,
+  toId: number,
+  flag: string,
+  sql: Sql | null = getSql()
+): Promise<boolean> {
+  if (!sql || fromId === toId) return false;
+  try {
+    const results = (await sql.transaction([
+      sql`SELECT id FROM gift_vouchers WHERE id IN (${fromId}, ${toId}) ORDER BY id FOR UPDATE`,
+      sql`
+        UPDATE gift_vouchers g
+           SET attention = CASE WHEN g.id = ${toId} THEN ${flag}::text ELSE NULL END, updated_at = now()
+         WHERE g.id IN (${fromId}, ${toId})
+           AND EXISTS (SELECT 1 FROM gift_vouchers f WHERE f.id = ${fromId} AND f.attention = ${flag}::text)
+           AND EXISTS (SELECT 1 FROM gift_vouchers t
+                        WHERE t.id = ${toId} AND t.status = 'issued' AND t.attention IS NULL
+                          AND t.shopify_gift_card_id IS NOT NULL)
+        RETURNING g.id
+      `,
+    ])) as Row[][];
+    return (results[1] ?? []).length === 2;
+  } catch (err) {
+    report(err, "moveRevocation");
     return false;
   }
 }
@@ -1224,17 +1330,22 @@ export async function listGiftVouchersForOrder(orderId: string, sql: Sql | null 
 }
 
 /**
- * Cents of shop vouchers issued today (Europe/Berlin day) — the daily limit.
- * Vouchers being issued right now count too. 0 without a database or on an
- * error (reported): the limit is a fraud brake, not a legal gate.
+ * Cents of shop vouchers issued today (Europe/Berlin day) — the daily limit's
+ * check before the decision (markGiftVoucherIssuing is the hard cap).
+ * Vouchers being issued right now count too — except `excludeId`, the unit
+ * being decided (a retried unit is 'issuing' itself and must not count
+ * twice). 0 without a database or on an error (reported): the limit is a
+ * fraud brake, not a legal gate.
  */
-export async function sumShopGiftVouchersIssuedToday(sql: Sql | null = getSql()): Promise<number> {
+export async function sumShopGiftVouchersIssuedToday(excludeId: number | null = null, sql: Sql | null = getSql()): Promise<number> {
   if (!sql) return 0;
+  const exclude = typeof excludeId === "number" && Number.isSafeInteger(excludeId) ? excludeId : null;
   try {
     const rows = (await sql`
       SELECT COALESCE(SUM(amount_cents), 0)::bigint AS cents
         FROM gift_vouchers
        WHERE source = 'shop'
+         AND (${exclude}::bigint IS NULL OR id <> ${exclude}::bigint)
          AND (issued_at >= (date_trunc('day', now() AT TIME ZONE 'Europe/Berlin') AT TIME ZONE 'Europe/Berlin')
               OR (status = 'issuing' AND issued_at IS NULL
                   AND updated_at >= (date_trunc('day', now() AT TIME ZONE 'Europe/Berlin') AT TIME ZONE 'Europe/Berlin')))
@@ -1304,6 +1415,35 @@ export async function listGiftVouchersForBalanceSync(
   }
 }
 
+/**
+ * The orders whose voucher lines may be fulfilled now (GIFT_VOUCHER_FULFILL_ORDERS):
+ * issued shop vouchers not marked fulfilled yet, leaving out units whose card
+ * still waits for the printer (review, queued, submitting) — most recently
+ * ready first, so an order that keeps failing sinks instead of starving the
+ * others. At most `limit` order ids; planGiftVoucherFulfilment decides per
+ * line. [] without a database or on an error.
+ */
+export async function listGiftVoucherOrdersToFulfil(opts: { limit: number }, sql: Sql | null = getSql()): Promise<string[]> {
+  if (!sql) return [];
+  const limit = positiveInt(opts.limit, 50, 500);
+  try {
+    const rows = (await sql`
+      SELECT v.shopify_order_id AS order_id
+        FROM gift_vouchers v
+        LEFT JOIN gift_voucher_print_jobs pj ON pj.voucher_id = v.id
+       WHERE v.source = 'shop' AND v.status = 'issued' AND v.fulfilled_at IS NULL AND v.shopify_order_id IS NOT NULL
+         AND (pj.id IS NULL OR pj.status NOT IN ('review', 'queued', 'submitting'))
+       GROUP BY v.shopify_order_id
+       ORDER BY max(GREATEST(v.issued_at, pj.updated_at)) DESC NULLS LAST
+       LIMIT ${limit}
+    `) as Array<{ order_id: unknown }>;
+    return rows.map((r) => String(r.order_id));
+  } catch (err) {
+    reportRead(err, "listOrdersToFulfil");
+    return [];
+  }
+}
+
 /** `%…%` ILIKE pattern with the LIKE wildcards of the input escaped. */
 function likePattern(q: string): string {
   return `%${q.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
@@ -1311,7 +1451,8 @@ function likePattern(q: string): string {
 
 /**
  * The admin list, newest first, with filters: status, source, attention
- * only, and a search over the voucher number (G-2026-00042), the order name,
+ * only („Achtung“ — an acknowledged revoke flag is no „Achtung“ any more),
+ * and a search over the voucher number (G-2026-00042), the order name,
  * buyer / recipient name and e-mail, and the last four characters of the
  * code. Pages of 1–100 rows; `total` counts every match.
  */
@@ -1342,7 +1483,8 @@ export async function listGiftVouchers(
         LEFT JOIN gift_voucher_print_jobs pj ON pj.voucher_id = v.id
        WHERE (${status}::text IS NULL OR v.status = ${status}::text)
          AND (${source}::text IS NULL OR v.source = ${source}::text)
-         AND (${attentionOnly}::boolean = false OR v.attention IS NOT NULL)
+         AND (${attentionOnly}::boolean = false
+              OR (v.attention IS NOT NULL AND v.attention NOT IN ('refund_after_use_ok', 'cancelled_after_use_ok')))
          AND (${pattern}::text IS NULL
               OR v.id = ${numberId}::bigint
               OR v.code_last4 = ${last4}::text
@@ -1359,7 +1501,8 @@ export async function listGiftVouchers(
         FROM gift_vouchers v
        WHERE (${status}::text IS NULL OR v.status = ${status}::text)
          AND (${source}::text IS NULL OR v.source = ${source}::text)
-         AND (${attentionOnly}::boolean = false OR v.attention IS NOT NULL)
+         AND (${attentionOnly}::boolean = false
+              OR (v.attention IS NOT NULL AND v.attention NOT IN ('refund_after_use_ok', 'cancelled_after_use_ok')))
          AND (${pattern}::text IS NULL
               OR v.id = ${numberId}::bigint
               OR v.code_last4 = ${last4}::text
@@ -1413,7 +1556,8 @@ export async function giftVoucherSummary(sql: Sql | null = getSql()): Promise<Gi
         COALESCE(SUM(GREATEST(amount_cents - balance_cents, 0)) FILTER (
           WHERE status IN ('issued', 'deactivated') AND balance_cents IS NOT NULL), 0)::bigint AS redeemed_cents,
         count(*) FILTER (WHERE status = 'held')::int AS held_count,
-        count(*) FILTER (WHERE attention IS NOT NULL)::int AS attention_count,
+        count(*) FILTER (WHERE attention IS NOT NULL
+                           AND attention NOT IN ('refund_after_use_ok', 'cancelled_after_use_ok'))::int AS attention_count,
         (SELECT count(*) FROM gift_voucher_print_jobs
           WHERE status IN ('review', 'queued', 'submitting', 'submitted', 'printing'))::int AS open_print_jobs,
         (SELECT count(*) FROM gift_voucher_drafts WHERE created_at >= now() - interval '30 days')::int AS draft_count_30d
@@ -1726,7 +1870,11 @@ export async function markGiftVoucherPrintJobPolled(id: number, sql: Sql | null 
   }
 }
 
-/** Jobs whose print files can go: finished, or created more than 14 days ago. */
+/**
+ * Jobs whose print files can go: FINISHED ones (sent, done, cancelled, failed),
+ * oldest change first. An open job keeps its files however old it is (its
+ * asset token finds a print.one order whose answer was lost).
+ */
 export async function listGiftVoucherPrintJobsWithAssetsToClean(
   opts: { limit: number },
   sql: Sql | null = getSql()
@@ -1737,7 +1885,7 @@ export async function listGiftVoucherPrintJobsWithAssetsToClean(
     const rows = (await sql`
       SELECT to_jsonb(j) AS j FROM gift_voucher_print_jobs j
        WHERE j.asset_token IS NOT NULL
-         AND (j.status = ANY(${FINAL_PRINT_STATUSES}::text[]) OR j.created_at < now() - interval '14 days')
+         AND j.status = ANY(${FINAL_PRINT_STATUSES}::text[])
        ORDER BY j.updated_at, j.id
        LIMIT ${limit}
     `) as Row[];
@@ -1825,6 +1973,47 @@ export async function setGiftVoucherSettings(
   }
 }
 
+// ── the last good voucher-product lookup (admin_settings 'gift_voucher_products') ──
+
+/**
+ * The stored snapshot of the last good product lookup (shopify-gift-cards-core
+ * giftVoucherProductsSnapshot) as stored — the caller validates it
+ * (giftVoucherProductsFromSnapshot). Null when there is none, without a
+ * database or on an error.
+ */
+export async function getGiftVoucherProductsSnapshot(sql: Sql | null = getSql()): Promise<unknown> {
+  if (!sql) return null;
+  try {
+    const rows = (await sql`
+      SELECT value FROM admin_settings WHERE key = ${GIFT_VOUCHER_PRODUCTS_SNAPSHOT_KEY}
+    `) as Array<{ value: unknown }>;
+    return rows[0]?.value ?? null;
+  } catch (err) {
+    reportRead(err, "getProductsSnapshot");
+    return null;
+  }
+}
+
+/**
+ * Store the last good product lookup — the row only changes when the
+ * snapshot did (jsonb comparison). True when stored or unchanged.
+ */
+export async function saveGiftVoucherProductsSnapshot(snapshot: object, sql: Sql | null = getSql()): Promise<boolean> {
+  if (!sql) return false;
+  try {
+    await sql`
+      INSERT INTO admin_settings (key, value, updated_at)
+      VALUES (${GIFT_VOUCHER_PRODUCTS_SNAPSHOT_KEY}, ${JSON.stringify(snapshot)}::jsonb, now())
+      ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()
+       WHERE admin_settings.value IS DISTINCT FROM EXCLUDED.value
+    `;
+    return true;
+  } catch (err) {
+    reportRead(err, "saveProductsSnapshot");
+    return false;
+  }
+}
+
 // ── retention ────────────────────────────────────────────────────────────────
 
 const daysAgoIso = (days: number) => new Date(Date.now() - days * 86_400_000).toISOString();
@@ -1840,9 +2029,10 @@ const windowDays = (v: unknown) => (typeof v === "number" && Number.isSafeIntege
  *     updateGiftVoucherBalance). Never a voucher still pending, held or
  *     issuing — a held one is a paid order whose voucher is still owed —
  *     except a held TEST order (hold_reason 'test_order', no money behind
- *     it) untouched that long. Names, texts, e-mail addresses, the photo and
- *     the download link go (and the address of its print job, open or
- *     finished); amounts, status, code hash / last 4, ids stay.
+ *     it) untouched that long. Names, texts, e-mail addresses, the photo,
+ *     the download link and the team's free texts (admin note, deactivation
+ *     reason — they may name the buyer) go (and the address of its print job,
+ *     open or finished); amounts, status, code hash / last 4, ids stay.
  *   addressDays — the recipient address of a FINISHED print job (sent,
  *     done, cancelled, failed) unchanged that long, and the address copy of
  *     an ordered draft, are cleared.
@@ -1882,7 +2072,8 @@ export async function purgeGiftVoucherData(
           UPDATE gift_vouchers v
              SET recipient_name = NULL, sender_name = NULL, message = NULL, buyer_name = NULL,
                  buyer_email = NULL, recipient_email = NULL, photo_pathname = NULL,
-                 download_token_hash = NULL, personal_data_purged_at = now(), updated_at = now()
+                 download_token_hash = NULL, admin_note = NULL, deactivation_reason = NULL,
+                 personal_data_purged_at = now(), updated_at = now()
             FROM ended e
            WHERE v.id = e.id
           RETURNING v.id, e.photo_pathname

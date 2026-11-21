@@ -20,6 +20,7 @@ import {
   isGiftVouchersEnabled,
 } from "./gift-voucher-flags.mjs";
 import { isPrintOneConfigured } from "./printone";
+import { publicHttpsBaseUrl } from "./printone-core.mjs";
 import {
   GIFT_VOUCHER_JSON_MAX_BYTES,
   giftVoucherApiText,
@@ -70,9 +71,12 @@ export async function loadGiftVoucherStorefrontState(): Promise<GiftVoucherStore
     blobConfigured: isGiftVoucherBlobConfigured(),
     // The same rule as every AI helper: no key, no model call.
     aiConfigured: Boolean(process.env.ANTHROPIC_API_KEY),
+    // The print sweep's own inputs (gift-voucher-print.ts globalGateInput): the
+    // page offers the card through print.one only when the sweep would submit it.
     printProvider: configuredGiftVoucherPrintProvider(),
     printOneConfigured: isPrintOneConfigured(),
     printSendsApproved: isGiftVoucherPrintSendsApproved(),
+    printBaseUrl: publicHttpsBaseUrl(process.env.PUBLIC_BASE_URL),
   });
 }
 

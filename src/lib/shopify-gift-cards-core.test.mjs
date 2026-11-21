@@ -20,6 +20,9 @@ import {
   describeAdminGraphqlError,
   describeGiftVoucherProductIssues,
   evaluateGiftVoucherScopes,
+  GIFT_VOUCHER_PRODUCTS_SNAPSHOT_KEY,
+  giftVoucherProductsFromSnapshot,
+  giftVoucherProductsSnapshot,
   extractOrderRisk,
   fulfillmentUserErrorMessage,
   giftCardDeactivateErrorMessage,
@@ -692,6 +695,72 @@ test("describeGiftVoucherProductIssues: errors and warnings the setup check show
   assert.match(same[0].message, /denselben Handle/);
 });
 
+test("describeGiftVoucherProductIssues: a missing print product is an ERROR while the card is offered", () => {
+  const voucher = parseGiftVoucherProduct(VOUCHER_NODE);
+  const offered = describeGiftVoucherProductIssues({ voucher, print: null, handles: HANDLES, printOffered: true });
+  assert.deepEqual(offered.map((i) => `${i.level}:${i.product}`), ["error:print"]);
+  assert.equal(
+    offered[0].message,
+    "Druck-Zusatzprodukt „gutschein-premiumkarte“ nicht gefunden — Mo erkennt bezahlte Premium-Karten nur an diesem Produkt. Ist im Theme ein anderes Zusatzprodukt gewählt, verkauft die Seite die Karte trotzdem und Mo druckt sie nicht: Produkt mit diesem Handle anlegen, GIFT_VOUCHER_PRINT_PRODUCT_HANDLE setzen oder im Theme „Premium-Karte“ leeren."
+  );
+  // The card is not offered (print.one off, gate closed): a warning, as before.
+  for (const printOffered of [false, undefined]) {
+    const off = describeGiftVoucherProductIssues({ voucher, print: null, handles: HANDLES, printOffered });
+    assert.deepEqual(off.map((i) => `${i.level}:${i.product}`), ["warning:print"]);
+    assert.match(off[0].message, /nicht gefunden — „Premium-Karte per Post“ ist dann nicht buchbar/);
+  }
+  // A print product that exists is not judged by the flag.
+  assert.deepEqual(describeGiftVoucherProductIssues({ voucher, print: parseGiftVoucherProduct(PRINT_NODE), handles: HANDLES, printOffered: true }), []);
+});
+
+test("giftVoucherProductsSnapshot ⇄ giftVoucherProductsFromSnapshot: the last good lookup for orders/paid", () => {
+  assert.equal(GIFT_VOUCHER_PRODUCTS_SNAPSHOT_KEY, "gift_voucher_products");
+  const voucher = parseGiftVoucherProduct(VOUCHER_NODE);
+  const print = parseGiftVoucherProduct(PRINT_NODE);
+  const snap = giftVoucherProductsSnapshot({ handles: { voucher: " DesignGutschein ", print: "gutschein-premiumkarte" }, voucher, print });
+  assert.deepEqual(snap, {
+    voucherHandle: "designgutschein",
+    printHandle: "gutschein-premiumkarte",
+    voucher: {
+      id: "gid://shopify/Product/9012345678901",
+      numericId: "9012345678901",
+      isGiftCard: false,
+      variants: [
+        { numericId: "49000000000001", priceCents: 2500 },
+        { numericId: "49000000000002", priceCents: 5000 },
+      ],
+    },
+    print: { id: "gid://shopify/Product/9012345678902", numericId: "9012345678902" },
+  });
+  // Stored as JSON (admin_settings.value) and read back — only for the handles configured now.
+  const stored = JSON.parse(JSON.stringify(snap));
+  assert.deepEqual(giftVoucherProductsFromSnapshot(stored, HANDLES), {
+    voucher: {
+      numericId: "9012345678901",
+      isGiftCard: false,
+      variants: [
+        { numericId: "49000000000001", priceCents: 2500 },
+        { numericId: "49000000000002", priceCents: 5000 },
+      ],
+    },
+    print: { numericId: "9012345678902" },
+  });
+  assert.equal(giftVoucherProductsFromSnapshot(stored, { voucher: "designgutschein-2", print: HANDLES.print }), null, "another voucher handle");
+  assert.equal(giftVoucherProductsFromSnapshot(stored, { voucher: HANDLES.voucher, print: "karte" }), null, "another print handle");
+  // No voucher product → nothing to fall back on; no print product is fine.
+  assert.equal(giftVoucherProductsSnapshot({ handles: HANDLES, voucher: null, print }), null);
+  const noPrint = giftVoucherProductsSnapshot({ handles: HANDLES, voucher, print: null });
+  assert.equal(noPrint?.print, null);
+  assert.equal(giftVoucherProductsFromSnapshot(JSON.parse(JSON.stringify(noPrint)), HANDLES)?.print, null);
+  // Junk never becomes a product list.
+  for (const junk of [null, "x", [], {}, { ...stored, voucher: { numericId: "12a" } }, { ...stored, print: { numericId: null } }]) {
+    assert.equal(giftVoucherProductsFromSnapshot(junk, HANDLES), null, JSON.stringify(junk));
+  }
+  const badVariant = { ...stored, voucher: { ...stored.voucher, variants: [{ numericId: "1", priceCents: 1.5 }, { numericId: "2", priceCents: 900 }] } };
+  assert.deepEqual(giftVoucherProductsFromSnapshot(badVariant, HANDLES)?.voucher?.variants, [{ numericId: "2", priceCents: 900 }]);
+  assert.equal(giftVoucherProductsFromSnapshot({ ...stored, voucher: { ...stored.voucher, isGiftCard: true } }, HANDLES)?.voucher?.isGiftCard, true);
+});
+
 test("parseGiftCardConfiguration: limits in cents and the default expiry", () => {
   assert.deepEqual(
     parseGiftCardConfiguration({
@@ -714,28 +783,36 @@ test("parseGiftCardConfiguration: limits in cents and the default expiry", () =>
 
 test("scopes: write grants read; required and optional evaluated separately", () => {
   assert.deepEqual([...GIFT_VOUCHER_REQUIRED_SCOPES], ["write_gift_cards"]);
-  assert.deepEqual([...GIFT_VOUCHER_OPTIONAL_SCOPES], ["read_gift_card_transactions", "write_merchant_managed_fulfillment_orders"]);
+  // Nothing reads gift-card transactions — that scope is not asked for.
+  assert.deepEqual([...GIFT_VOUCHER_OPTIONAL_SCOPES], ["write_merchant_managed_fulfillment_orders"]);
   assert.equal(hasScope(new Set(["write_gift_cards"]), "read_gift_cards"), true);
   assert.equal(hasScope(new Set(["read_gift_cards"]), "write_gift_cards"), false);
-  assert.equal(hasScope(new Set(["write_gift_card_transactions"]), "read_gift_card_transactions"), true);
+  assert.equal(
+    hasScope(new Set(["write_merchant_managed_fulfillment_orders"]), "read_merchant_managed_fulfillment_orders"),
+    true
+  );
 
   assert.deepEqual(
     evaluateGiftVoucherScopes([{ handle: "read_products" }, { handle: "write_gift_cards" }, { handle: "read_orders" }, { handle: "write_gift_cards" }]),
     {
       granted: ["read_orders", "read_products", "write_gift_cards"],
       missing: [],
-      optionalMissing: ["read_gift_card_transactions", "write_merchant_managed_fulfillment_orders"],
+      optionalMissing: ["write_merchant_managed_fulfillment_orders"],
     }
   );
-  assert.deepEqual(evaluateGiftVoucherScopes(["read_gift_cards", "write_merchant_managed_fulfillment_orders", "read_gift_card_transactions"]), {
-    granted: ["read_gift_card_transactions", "read_gift_cards", "write_merchant_managed_fulfillment_orders"],
+  assert.deepEqual(evaluateGiftVoucherScopes(["read_gift_cards", "write_merchant_managed_fulfillment_orders"]), {
+    granted: ["read_gift_cards", "write_merchant_managed_fulfillment_orders"],
     missing: ["write_gift_cards"],
     optionalMissing: [],
   });
+  // A granted transactions scope is simply another granted scope.
+  assert.deepEqual(evaluateGiftVoucherScopes(["write_gift_cards", "read_gift_card_transactions"]).optionalMissing, [
+    "write_merchant_managed_fulfillment_orders",
+  ]);
   assert.deepEqual(evaluateGiftVoucherScopes(null), {
     granted: [],
     missing: ["write_gift_cards"],
-    optionalMissing: ["read_gift_card_transactions", "write_merchant_managed_fulfillment_orders"],
+    optionalMissing: ["write_merchant_managed_fulfillment_orders"],
   });
 });
 

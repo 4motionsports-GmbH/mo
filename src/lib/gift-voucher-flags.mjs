@@ -118,7 +118,8 @@ export function giftVoucherProductHandles(env = process.env) {
 
 /**
  * GIFT_VOUCHER_VALIDITY_YEARS (default 3, 0 = never expires, at most 10): a
- * voucher is valid until 31 December of the year of purchase + this.
+ * voucher is valid until 31 December of the Berlin year it is issued (its
+ * code stored — giftVoucherExpiryDate) + this.
  * @param {Env} [env]
  */
 export function giftVoucherValidityYears(env = process.env) {
@@ -284,12 +285,12 @@ export function printOneBillingId(env = process.env) {
 }
 
 /**
- * PRINTONE_CARD_COST_CENTS (default 384 ≈ 3.19 € net + VAT): the cost
- * estimate per card the admin shows before printing.
+ * PRINTONE_CARD_COST_CENTS (default 380 = 3.19 € net + 19 % VAT, rounded):
+ * the cost estimate per card the admin shows before printing.
  * @param {Env} [env]
  */
 export function printOneCardCostCents(env = process.env) {
-  return intInRange(env.PRINTONE_CARD_COST_CENTS, 384, 0, 100000);
+  return intInRange(env.PRINTONE_CARD_COST_CENTS, 380, 0, 100000);
 }
 
 /**

@@ -141,9 +141,9 @@ test("print.one settings: secrets as set/unset, finish, billing, cost, front sid
   assert.equal(printOneBillingId({}), "Gutscheine");
   assert.equal(printOneBillingId({ PRINTONE_BILLING_ID: "Marketing" }), "Marketing");
   assert.equal(printOneBillingId({ PRINTONE_BILLING_ID: "x".repeat(65) }), "Gutscheine");
-  assert.equal(printOneCardCostCents({}), 384);
+  assert.equal(printOneCardCostCents({}), 380, "3,19 € net + 19 % VAT = 3,7961 € → 3,80 €");
   assert.equal(printOneCardCostCents({ PRINTONE_CARD_COST_CENTS: "399" }), 399);
-  assert.equal(printOneCardCostCents({ PRINTONE_CARD_COST_CENTS: "3.99" }), 384);
+  assert.equal(printOneCardCostCents({ PRINTONE_CARD_COST_CENTS: "3.99" }), 380);
   assert.equal(printOneFrontSide({}), "right");
   assert.equal(printOneFrontSide({ PRINTONE_FRONT_SIDE: "LEFT" }), "left");
   assert.equal(printOneFrontSide({ PRINTONE_FRONT_SIDE: "top" }), "right");
@@ -175,7 +175,7 @@ test("giftVoucherFlagSummary: everything at once, never a secret value", () => {
     webhookSecretSet: true,
     finish: "MATTE",
     billingId: "Gutscheine",
-    cardCostCents: 384,
+    cardCostCents: 380,
     frontSide: "right",
   });
   const json = JSON.stringify(s);

@@ -81,7 +81,7 @@ export interface SendEmailInput {
    * the same key is not delivered again — Resend answers 409
    * `invalid_idempotent_request` when the payload differs, or the first
    * response when it is identical. Use one key per logical send attempt
-   * (e.g. gift-voucher-mail-<id>-<attempt>).
+   * (e.g. gift-voucher-mail-<id>-<created ms>-<attempt>).
    */
   idempotencyKey?: string;
   /** Tag used in error logs to identify which mail failed. */

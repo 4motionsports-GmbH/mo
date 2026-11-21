@@ -109,6 +109,10 @@ test("labels and tones fall back instead of throwing", () => {
   assert.equal(attentionHint("unknown_key"), "unknown_key");
   assert.equal(attentionHint(null), "");
   assert.match(holdReasonHint("risk"), /riskant/);
+  assert.match(holdReasonHint("refunded"), /erstattet, bevor der Gutschein ausgestellt war/);
+  assert.match(attentionHint("unknown_product_line"), /GIFT_VOUCHER_PRODUCT_HANDLE \/ GIFT_VOUCHER_PRINT_PRODUCT_HANDLE/);
+  assert.equal(attentionLabel("refund_after_use_ok"), "Erstattet, eingelöst — geklärt");
+  assert.match(attentionHint("cancelled_after_use_ok"), /als geklärt markiert/);
   assert.equal(MANUAL_REASON_OPTIONS.map((o) => o.value).join(","), "kulanz,marketing,gewinnspiel,firmengeschenk,sonstiges");
   assert.equal(MANUAL_REASON_OPTIONS[0].label, "Kulanz");
 });
@@ -278,6 +282,12 @@ test("parseGutscheinAction validates action, id, note and reason", () => {
   assert.equal(other.ok && other.note, null);
   assert.equal(other.ok && other.reason, null);
   assert.equal(GUTSCHEIN_ACTIONS.includes("reveal_code"), true);
+
+  // „Als geklärt markieren“: any flag — except an acknowledged revocation (it is „geklärt“ and must stay).
+  assert.equal(voucherActions({ ...base, attention: "refund_after_use" }).clearAttention, true);
+  assert.equal(voucherActions({ ...base, attention: "print_without_address" }).clearAttention, true);
+  assert.equal(voucherActions({ ...base, attention: "refund_after_use_ok" }).clearAttention, false);
+  assert.equal(voucherActions({ ...base, attention: "cancelled_after_use_ok" }).clearAttention, false);
 });
 
 test("actionErrorStatus maps library codes to HTTP statuses", () => {
@@ -288,6 +298,7 @@ test("actionErrorStatus maps library codes to HTTP statuses", () => {
   assert.equal(actionErrorStatus("failed"), 502);
   assert.equal(actionErrorStatus("too_late"), 409);
   assert.equal(actionErrorStatus("gate_off"), 409);
+  for (const code of ["busy", "revoking", "refunded", "purged"]) assert.equal(actionErrorStatus(code), 409, code);
   assert.equal(actionErrorStatus(undefined), 409);
 });
 
@@ -493,6 +504,22 @@ test("buildGutscheineSetup: missing pieces become errors, warnings and infos", (
     ["error", "warning"]
   );
   assert.ok(setupCounts(checks).errors >= 4);
+});
+
+test("buildGutscheineSetup: a missing print product row follows its issue (error while the card is offered)", () => {
+  const missing = (issue) =>
+    buildGutscheineSetup({
+      ...SETUP_OK,
+      shopify: { ...SETUP_OK.shopify, products: { ...SETUP_OK.shopify.products, print: null, issues: [issue] } },
+    });
+  const offered = missing({ level: "error", product: "print", message: "Druck-Zusatzprodukt „gutschein-premiumkarte“ nicht gefunden — Mo erkennt …" });
+  const row = offered.checks.find((c) => c.key === "printProduct");
+  assert.equal(row?.state, "error");
+  assert.match(row?.detail ?? "", /Mo erkennt/);
+  assert.deepEqual(offered.notices.map((n) => `${n.level}:${n.key}`), ["error:product0"]);
+  assert.equal(offered.checks.filter((c) => c.key.startsWith("productIssue")).length, 0, "not found is the row itself");
+  const off = missing({ level: "warning", product: "print", message: "Druck-Zusatzprodukt „gutschein-premiumkarte“ nicht gefunden — „Premium-Karte per Post“ ist dann nicht buchbar." });
+  assert.equal(off.checks.find((c) => c.key === "printProduct")?.state, "warn");
 });
 
 test("buildGutscheineSetup: Shopify not loaded yet, not configured, or not checkable", () => {

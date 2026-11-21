@@ -2908,8 +2908,8 @@ still count in „Umsatz durch Mo“ (channel „Persönliche Marketing-E-Mail�
   operator names it. The Geschenkgutscheine (§3.13, since 20.11.2026) need
   `write_gift_cards` (create, find and deactivate the cards; it includes the read
   access) and optionally `write_merchant_managed_fulfillment_orders` (for
-  `GIFT_VOUCHER_FULFILL_ORDERS`) and `read_gift_card_transactions` — Gutscheine →
-  „Einrichtung“ checks them ([`GIFT_VOUCHERS.md`](./GIFT_VOUCHERS.md) §13).
+  `GIFT_VOUCHER_FULFILL_ORDERS`) — Gutscheine → „Einrichtung“ checks them
+  ([`GIFT_VOUCHERS.md`](./GIFT_VOUCHERS.md) §13).
 - **API version:** requests target the configured `SHOPIFY_API_VERSION` (current
   stable, e.g. `2026-04`), not `latest`.
 - The discount + orders calls follow the Shopify docs for

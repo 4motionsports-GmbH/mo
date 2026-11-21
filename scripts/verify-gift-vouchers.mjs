@@ -8,8 +8,8 @@
 //   2. token     the client-credentials grant, as lib/shopify.ts does it.
 //   3. shop      name, plan, currency (Shopify issues gift cards in the shop currency).
 //   4. scopes    currentAppInstallation.accessScopes — write_gift_cards (required; also
-//                grants read_gift_cards), read_gift_card_transactions and
-//                write_merchant_managed_fulfillment_orders (optional).
+//                grants read_gift_cards) and write_merchant_managed_fulfillment_orders
+//                (optional, for GIFT_VOUCHER_FULFILL_ORDERS).
 //   5. products  both handles via productByIdentifier: found, NOT a Shopify gift-card
 //                product, variants with prices, taxable and requiresShipping flags.
 //   6. config    giftCardConfiguration (issue / purchase limit, default expiry) — this
@@ -29,7 +29,13 @@
 
 import process from "node:process";
 import { randomBytes } from "node:crypto";
-import { giftVoucherProductHandles } from "../src/lib/gift-voucher-flags.mjs";
+import {
+  configuredGiftVoucherPrintProvider,
+  giftVoucherProductHandles,
+  isGiftVoucherPrintSendsApproved,
+  isPrintOneConfiguredEnv,
+} from "../src/lib/gift-voucher-flags.mjs";
+import { isGiftVoucherPrintOffered } from "../src/lib/gift-voucher-storefront.mjs";
 import {
   ACCESS_SCOPES_QUERY,
   GIFT_CARD_BY_ID_QUERY,
@@ -286,7 +292,7 @@ async function main() {
       } else if (scope === "write_merchant_managed_fulfillment_orders" && flag("GIFT_VOUCHER_FULFILL_ORDERS")) {
         warn(`${scope} fehlt, aber GIFT_VOUCHER_FULFILL_ORDERS ist an — Gutschein-Positionen können nicht als erledigt markiert werden.`);
       } else {
-        info(`– ${scope} (optional) nicht erteilt${scope === "read_gift_card_transactions" ? " — kein Einlöseverlauf, nur das Restguthaben" : " — Positionen bleiben in Shopify offen"}`);
+        info(`– ${scope} (optional) nicht erteilt — Positionen bleiben in Shopify offen`);
       }
     }
   }
@@ -316,7 +322,13 @@ async function main() {
         );
       }
     }
-    for (const issue of describeGiftVoucherProductIssues({ voucher, print, handles: { voucher: voucherHandle, print: printHandle } })) {
+    // The Premium-Karte can be sold (the page's features.print): a missing print product is an error then.
+    const printOffered = isGiftVoucherPrintOffered({
+      printProvider: configuredGiftVoucherPrintProvider(process.env),
+      printOneConfigured: isPrintOneConfiguredEnv(process.env),
+      printSendsApproved: isGiftVoucherPrintSendsApproved(process.env),
+    });
+    for (const issue of describeGiftVoucherProductIssues({ voucher, print, handles: { voucher: voucherHandle, print: printHandle }, printOffered })) {
       if (issue.level === "error") fail(issue.message);
       else warn(issue.message);
     }

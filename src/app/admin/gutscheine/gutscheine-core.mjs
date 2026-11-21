@@ -29,6 +29,7 @@ import {
   sanitizeGiftVoucherText,
   validatePostalAddress,
 } from "../../../lib/gift-voucher-core.mjs";
+import { isAcknowledgedRevocation } from "../../../lib/gift-voucher-issue-core.mjs";
 import { eurFromCents, plural } from "../../../lib/admin-format.mjs";
 
 // ---------------------------------------------------------------------------
@@ -228,6 +229,8 @@ export const HOLD_REASON_HINTS = Object.freeze({
   risk: "Shopify stuft die Bestellung als riskant ein — zuerst in Shopify prüfen.",
   daily_limit: "Das Tageslimit für Gutscheine (GIFT_VOUCHER_DAILY_LIMIT_EUR) war erreicht.",
   not_paid: "Die Bestellung war nach 24 Stunden noch nicht vollständig bezahlt.",
+  refunded:
+    "Die Bestellung wurde erstattet, bevor der Gutschein ausgestellt war — in Shopify prüfen, ob die Gutschein-Position erstattet ist, dann ablehnen.",
   attempts: "Das Ausstellen ist zu oft fehlgeschlagen — der letzte Fehler steht unten.",
 });
 
@@ -243,6 +246,12 @@ export const ATTENTION_HINTS = Object.freeze({
     "Für die Premium-Karte fehlt die Adresse — beim Käufer nachfragen, von Hand drucken oder den Druck erstatten.",
   deactivate_failed: "Das Sperren in Shopify ist fehlgeschlagen — erneut sperren oder die Geschenkkarte in Shopify prüfen.",
   print_cancel_too_late: "Der Druckauftrag war schon in Produktion und ließ sich nicht mehr stornieren.",
+  unknown_product_line:
+    "Eine bezahlte Bestellzeile trägt einen Gutschein-Entwurf, liegt aber weder auf dem Gutschein- noch auf dem Druck-Zusatzprodukt — meist eine bezahlte Premium-Karte auf einem anderen Produkt. Die Karte von Hand drucken oder erstatten, dann GIFT_VOUCHER_PRODUCT_HANDLE / GIFT_VOUCHER_PRINT_PRODUCT_HANDLE und die Produktauswahl im Theme abgleichen.",
+  refund_after_use_ok:
+    "Erstattet, aber schon (teilweise) eingelöst — als geklärt markiert. Die Karte bleibt aktiv; Mo meldet den Gutschein bei weiteren Bestelländerungen nicht noch einmal.",
+  cancelled_after_use_ok:
+    "Storniert, aber schon (teilweise) eingelöst — als geklärt markiert. Die Karte bleibt aktiv; Mo meldet den Gutschein bei weiteren Bestelländerungen nicht noch einmal.",
 });
 
 /** @param {unknown} key */
@@ -272,7 +281,8 @@ export function voucherActions(v) {
     syncBalance: (issued || v.status === "deactivated") && Boolean(v.shopifyGiftCardId),
     pdf: issued && v.hasCode,
     revealCode: v.hasCode,
-    clearAttention: v.attention != null && v.attention !== "",
+    // An acknowledged revoke flag is „geklärt“ already — it stays (it keeps the unit revoked).
+    clearAttention: v.attention != null && v.attention !== "" && !isAcknowledgedRevocation(v.attention),
   };
 }
 
@@ -420,13 +430,19 @@ export function parseGutscheinAction(body) {
 /**
  * HTTP status for a refused action ({ ok: false, code } of the issue / print
  * libraries): not found 404, input 400, missing configuration 503, a failed
- * call to Shopify / print.one 502, everything else (wrong state, too late) 409.
+ * call to Shopify / print.one 502, everything else (wrong state, too late,
+ * Mo still busy) 409.
  * @param {unknown} code
  */
 export function actionErrorStatus(code) {
   switch (code) {
     case "not_found":
       return 404;
+    case "busy": // Mo still checks the card / works on the voucher — try again shortly
+    case "revoking": // a revocation is still looking for a Shopify card
+    case "refunded": // the order was refunded — no card for it
+    case "purged": // the retention removed the voucher's data — reject it
+      return 409;
     case "bad_request":
     case "invalid":
     case "invalid_input":
@@ -728,14 +744,16 @@ export function buildGutscheineSetup(input) {
             ? `${voucher.title} — ${plural(voucher.variants.length, "Betrag", "Beträge")}${voucher.variants.length ? `: ${amountList(voucher.variants.map((v) => v.priceCents))}` : ""}`
             : "Nicht gefunden — Produkt anlegen oder GIFT_VOUCHER_PRODUCT_HANDLE setzen."
         );
+        // A missing print product is an error while the shop offers the card (describeGiftVoucherProductIssues).
+        const printMissing = print ? null : issues.find((i) => i.product === "print") ?? null;
         check(
           "printProduct",
           "Shopify",
           `Druck-Zusatzprodukt „${input.handles.print}“`,
-          print ? "ok" : "warn",
+          print ? "ok" : printMissing?.level === "error" ? "error" : "warn",
           print
             ? `${print.title}${print.variants[0] ? ` — ${eurFromCents(print.variants[0].priceCents)}` : ""}`
-            : "Nicht gefunden — „Premium-Karte per Post“ ist nicht buchbar."
+            : (printMissing?.message ?? "Nicht gefunden — „Premium-Karte per Post“ ist nicht buchbar.")
         );
         // „Not found“ is already its own row; every other finding gets one.
         issues

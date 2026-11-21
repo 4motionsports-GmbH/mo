@@ -168,7 +168,7 @@ function unreadableAnswer(op: PrintOneOp, status: number): PrintOneFailure {
 }
 
 /**
- * Create one order (one card). `idempotencyKey` = gift-voucher-print-<jobId>;
+ * Create one order (one card). `idempotencyKey` = gift-voucher-print-<jobId>-<created ms>;
  * the caller must send the identical body for the same key (print.one refuses
  * the same key with another body for 24 h).
  */

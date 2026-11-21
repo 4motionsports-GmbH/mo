@@ -1,10 +1,12 @@
 // GET /api/gift-vouchers/download?t=<token> — the voucher PDF behind the
 // download button of the voucher mail (spec §8.8).
 //
-// The token is a bearer secret (24 random bytes, base64url) that only the mail
-// carries; the database keeps its sha256 hash (download_token_hash) and the
-// lookup goes by that hash. A resend rotates it (the old link stops working),
-// the retention clears it. Only an issued voucher downloads — deactivated,
+// The token is a bearer secret that only the mail carries — derived per mail
+// attempt (giftVoucherDownloadToken: an HMAC under TOKEN_ENC_KEY over the
+// voucher, the attempt and the code; 32 base64url characters), so a repeated
+// send keeps the delivered link working; the database keeps its sha256 hash
+// (download_token_hash) and the lookup goes by that hash. A resend rotates it
+// (the old link stops working), the retention clears it. Only an issued voucher downloads — deactivated,
 // cancelled or not (yet) issued ones answer the same plain 404 as an unknown
 // token, without any detail. The PDF is rendered on demand with the
 // decrypted code (lib/gift-voucher-render.ts renderGiftVoucherPdf) and is
@@ -21,7 +23,7 @@ import { corsHeaders, preflightResponse } from "@/lib/security";
 import { checkRateLimitKeyed, clientIp } from "@/lib/rate-limit";
 import { reportError } from "@/lib/observability";
 import { resolveLocale } from "@/lib/locale";
-import { hashOpaqueToken } from "@/lib/gift-voucher-core.mjs";
+import { hashOpaqueToken, isGiftVoucherPhotoUnavailable } from "@/lib/gift-voucher-core.mjs";
 import {
   giftVoucherApiText,
   giftVoucherPdfFilename,
@@ -74,7 +76,7 @@ export async function GET(req: Request) {
     if (!code) return text(503, "download_unavailable");
     const photo = voucher.photoPathname ? await loadGiftVoucherPhoto(voucher.photoPathname) : null;
     // A photo voucher is never served in the „Klassisch“ look: no photo, no PDF (try again later).
-    if (voucher.designKey === "photo" && voucher.photoPathname && !photo) {
+    if (isGiftVoucherPhotoUnavailable(voucher, photo)) {
       reportError(new Error("gift voucher photo unavailable"), { route: "api/gift-vouchers/download", phase: "photo", voucherId: voucher.id });
       return text(503, "download_unavailable");
     }

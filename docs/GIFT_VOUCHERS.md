@@ -298,7 +298,7 @@ five orders per run; an order whose fulfilment fails for good is skipped for six
   `PRINTONE_FINISH` (`MATTE`, or `GLOSSY`). Front: the design; back: wordmark and „motionsports.de“ at the
   bottom, the central area empty — print.one prints the recipient's address in a Ø 77 mm circle there (Mo
   keeps Ø 95 mm free); inside: the message on the left, the code panel on the right. The customer pays the
-  add-on product; Mo shows `PRINTONE_CARD_COST_CENTS` (384 ≈ 3,19 € net + VAT) as the cost per card.
+  add-on product; Mo shows `PRINTONE_CARD_COST_CENTS` (380 = 3,19 € net + 19 % VAT) as the cost per card.
 - **One print.one template, Mo's own images.** The template (`PRINTONE_TEMPLATE_ID`) has two pages holding
   nothing but a full-bleed `<img src="{{outside_url}}">` / `<img src="{{inside_url}}">`;
   `npm run verify:printone -- --create-template` creates it and prints its id. Mo renders both spreads itself
@@ -324,8 +324,10 @@ five orders per run; an order whose fulfilment fails for good is skipped for six
   („Jetzt drucken“ is disabled with the reason); a job blocked by its own data carries the reason as its error
   and is looked at again hourly. Separate from `PHYSICAL_MAIL_SENDS_APPROVED` (Pingen letters).
 - **The page offers the card only when it can be fulfilled:** `GIFT_VOUCHER_PRINT_PROVIDER=manual`, or print.one
-  configured and the gate approved — never while the shop does not sell. The fallback above does not count: with
-  the default `printone`, no print.one keys or a closed gate, the page sells no card.
+  when the sweep would really submit the card — its own gate above: approved, configured and an https
+  `PUBLIC_BASE_URL` (`isGiftVoucherPrintOffered` over `giftVoucherPrintGlobalBlock`) — never while the shop does
+  not sell. The fallback above does not count: with the default `printone`, no print.one keys, a closed gate or no
+  https `PUBLIC_BASE_URL`, the page sells no card.
 
 ### 5.3 Submission — one card, never two
 
@@ -534,7 +536,7 @@ vouchers“; the readers are [`gift-voucher-flags.mjs`](../src/lib/gift-voucher-
 | `PRINTONE_TEST_API_KEY` | — | Only `verify:printone --test-order` (falls back to `PRINTONE_API_KEY`). |
 | `PRINTONE_FINISH` | `MATTE` | `MATTE` or `GLOSSY`. |
 | `PRINTONE_BILLING_ID` | `Gutscheine` | Cost centre on print.one's invoice. |
-| `PRINTONE_CARD_COST_CENTS` | `384` | Cost estimate per card shown in the admin. |
+| `PRINTONE_CARD_COST_CENTS` | `380` | Cost estimate per card shown in the admin (3,19 € net + 19 % VAT). |
 | `PRINTONE_FRONT_SIDE` | `right` | Which half of the outside spread is the front — check it (§5.6). |
 | `PRINTONE_API_BASE` | `https://api.print.one` | Only for a local test server. |
 
@@ -548,7 +550,8 @@ become unreadable), `BLOB_READ_WRITE_TOKEN` (photos, print files), `RESEND_API_K
 addition `PRINTONE_API_KEY`, `PRINTONE_TEMPLATE_ID`, `PRINTONE_WEBHOOK_SECRET`, `PRINTONE_FRONT_SIDE` as
 measured, and `GIFT_VOUCHER_PRINT_SENDS_APPROVED=true` once the lawyer approved print.one as a processor
 (the DPA, dossier § 23 F-48); for the card printed in-house instead `GIFT_VOUCHER_PRINT_PROVIDER=manual` —
-without one of the two the page sells no card (§5.2). `PUBLIC_BASE_URL` must be the public https address.
+without one of the two the page sells no card (§5.2). `PUBLIC_BASE_URL` must be the public https address
+(with print.one the page sells no card without it).
 Everything else has a working default.
 
 ## 10. Data model — migration `0083_gift_vouchers.sql`
@@ -649,7 +652,7 @@ Status of each step: [`ROLLOUT_TODO.md`](./ROLLOUT_TODO.md) item 28.
      Kollektionen“ → that collection. Otherwise a voucher can be bought below its value (Mo would hold it as
      `discounted`).
 2. **App scope `write_gift_cards`** (optional: `write_merchant_managed_fulfillment_orders` for
-   `GIFT_VOUCHER_FULFILL_ORDERS`, `read_gift_card_transactions`). Client-credentials tokens carry only the
+   `GIFT_VOUCHER_FULFILL_ORDERS`). Client-credentials tokens carry only the
    scopes granted at install, so the app must be re-authorised: add the scope to `[access_scopes]` in
    `shopify.app.toml`, `shopify app deploy`, then accept the updated permissions in the Shopify admin (or
    reinstall the app) — the procedure of [`ROLLOUT_TODO.md`](./ROLLOUT_TODO.md) item 16.3 (steps 1 and 3–6:
