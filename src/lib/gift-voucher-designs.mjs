@@ -1394,8 +1394,12 @@ function drawMessage(c, fonts, d, key, box, sizes) {
     isDefault = true;
   }
   const sender = d.senderName ? printable(fonts.scriptBold, d.senderName).replace(/\n/g, " ").trim() : "";
+  const senderLabel = sender ? `— ${sender}` : "";
   const LH = 1.2;
   const blank = 0.5;
+  // The sender line shrinks to the column (a 40-character „Von“ stays above
+  // 7 pt in the narrowest column); only a longer one is shortened below.
+  const senderFit = sender ? Math.max(SMALL, box.w / emWidth(fonts.scriptBold, senderLabel)) : Infinity;
   /** @param {number} s */
   const layout = (s) => {
     const lines = wrapEm(font, text, box.w / s);
@@ -1404,7 +1408,7 @@ function drawMessage(c, fonts, d, key, box, sizes) {
       if (i > 0) h += (l === "" ? blank : 1) * LH * s;
     });
     h += 0.95 * s;
-    const ss = Math.min(s * 0.92, sizes.maxSize * 0.8);
+    const ss = Math.min(s * 0.92, sizes.maxSize * 0.8, senderFit);
     const senderH = sender ? 0.62 * s + 0.95 * ss : 0;
     return { lines, h: h + senderH, ss };
   };
@@ -1420,14 +1424,25 @@ function drawMessage(c, fonts, d, key, box, sizes) {
   }
   const s = lo;
   const { lines: rawLines, ss } = layout(s);
-  // Never more lines than fit at the minimum size: cut with an ellipsis.
+  // The lines that fit, counted the way layout() measures them (an empty line
+  // is half a line) — all of them unless even the minimum size is too big.
+  // Only that last case is cut, with an ellipsis (a safety net: the core's
+  // limits of 350 characters and 8 lines always fit).
   let lines = rawLines;
-  const maxLines = Math.max(1, Math.floor((box.h - 0.95 * s - (sender ? 0.62 * s + 0.95 * ss : 0)) / (LH * s)) + 1);
+  const room = box.h - 0.95 * s - (sender ? 0.62 * s + 0.95 * ss : 0);
+  let maxLines = 1;
+  for (let i = 1, used = 0; i < rawLines.length; i++) {
+    used += (rawLines[i] === "" ? blank : 1) * LH * s;
+    if (used > room + 1e-6) break;
+    maxLines = i + 1;
+  }
+  // A cut never ends on an empty line (the ellipsis goes onto words).
+  while (maxLines > 1 && rawLines.length > maxLines && rawLines[maxLines - 1] === "") maxLines--;
   if (lines.length > maxLines) {
     lines = lines.slice(0, maxLines);
     lines[maxLines - 1] = ellipsize(font, `${lines[maxLines - 1]}…`, box.w / s);
   }
-  const widest = Math.max(...lines.map((l) => emWidth(font, l) * s), sender ? emWidth(fonts.scriptBold, `— ${sender}`) * ss : 0);
+  const widest = Math.max(...lines.map((l) => emWidth(font, l) * s), sender ? emWidth(fonts.scriptBold, senderLabel) * ss : 0);
   const blockW = Math.min(box.w, widest);
   // Height of the block as laid out → vertical centre.
   let h = 0;
@@ -1453,9 +1468,9 @@ function drawMessage(c, fonts, d, key, box, sizes) {
   if (dPath) c.add("text", `<path d="${dPath}" fill="${th.script}"/>`, bbox);
   if (sender) {
     const sy = y + 0.3 * s + 0.95 * ss;
-    const label = `— ${sender}`;
-    const maxEm = box.w / ss;
-    c.text("text", fonts.scriptBold, ellipsize(fonts.scriptBold, label, maxEm), x0 + blockW, sy, ss, { fill: th.script, anchor: "end" });
+    // (1 + 1e-9: ss may be exactly the column's width — no cut for rounding.)
+    const maxEm = (box.w / ss) * (1 + 1e-9);
+    c.text("text", fonts.scriptBold, ellipsize(fonts.scriptBold, senderLabel, maxEm), x0 + blockW, sy, ss, { fill: th.script, anchor: "end" });
   }
   return { top: box.y + (box.h - total) / 2, cx: x0 + blockW / 2 };
 }

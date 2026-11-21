@@ -11,7 +11,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import opentype from "opentype.js";
 import QRCode from "qrcode";
-import { GIFT_VOUCHER_DESIGN_KEYS } from "./gift-voucher-core.mjs";
+import { GIFT_VOUCHER_DESIGN_KEYS, sanitizeGiftVoucherText } from "./gift-voucher-core.mjs";
 import {
   GIFT_VOUCHER_DESIGNS,
   GIFT_VOUCHER_PRINT_SPREAD,
@@ -132,6 +132,45 @@ function layoutOf(key, layout, panel, extra = {}) {
   });
 }
 
+/**
+ * The strings a layout draws, per font (every getPath call), with wrapped
+ * copies of the fonts so the shared FONTS stay untouched.
+ * @param {(fonts: typeof FONTS) => unknown} run
+ * @returns {Record<string, string[]>}
+ */
+function drawnStrings(run) {
+  /** @type {Record<string, string[]>} */
+  const drawn = {};
+  const fonts = /** @type {typeof FONTS} */ (
+    Object.fromEntries(
+      Object.entries(FONTS).map(([key, f]) => {
+        drawn[key] = [];
+        const wrapped = Object.create(f, {
+          getPath: {
+            /** @param {string} text @param {...any} rest */
+            value(text, ...rest) {
+              drawn[key].push(text);
+              return f.getPath.call(this, text, ...rest);
+            },
+          },
+        });
+        return [key, wrapped];
+      })
+    )
+  );
+  run(fonts);
+  return drawn;
+}
+
+/** @param {string} s */
+const words = (s) => s.replace(/\s+/g, " ").trim();
+
+/** Inside panels with the personal message: landscape (PDF size) and the card's left panel. */
+const MESSAGE_PANELS = /** @type {const} */ ([
+  ["landscape", "inside"],
+  ["square", "inside-message"],
+]);
+
 test("the designs are exactly GIFT_VOUCHER_DESIGN_KEYS, complete and frozen", () => {
   assert.deepEqual(
     GIFT_VOUCHER_DESIGNS.map((d) => d.key),
@@ -232,6 +271,84 @@ test("characters the fonts lack are dropped, not drawn as boxes, and nothing bre
     layoutOf("thanks", "landscape", "inside", { data: { ...DATA, message: "😀 🎉" } }).svg,
     layoutOf("thanks", "landscape", "inside", { data: { ...DATA, message: null } }).svg
   );
+});
+
+test("a message with paragraph breaks prints every line — nothing cut, no ellipsis", () => {
+  const lena =
+    "Liebe Lena,\n\nalles Liebe zum Geburtstag! Such dir etwas Schönes aus, das dich beim Training begleitet – ob neue Hanteln oder eine Matte.\n\nDein Jonas";
+  const papa =
+    "Hallo Papa,\n\ndanke für alles, was du für uns tust. Jetzt bist du mal dran: gönn dir was Gutes für dein Home-Gym!\n\nFrohe Weihnachten\nAnna & Tom";
+  for (const [layout, panel] of MESSAGE_PANELS) {
+    for (const message of [lena, papa]) {
+      const drawn = drawnStrings((fonts) => layoutOf("classic", layout, panel, { fonts, data: { ...DATA, message } }));
+      assert.equal(drawn.script.join(" "), words(message), `${layout}: ${JSON.stringify(drawn.script.slice(-2))}`);
+      assert.deepEqual(drawn.scriptBold, ["— Jonas"]);
+    }
+  }
+});
+
+test("every message the core accepts fits whole (a sweep with blank lines and long senders)", () => {
+  const vocab = (
+    "Liebe Lieber Hallo alles Gute zum Geburtstag viel Freude beim Training mit deinen neuen Hanteln oder einer Matte " +
+    "herzlichen Glückwunsch Gesundheit Energie bleib so sportlich wie du bist genieße deinen Tag Deine Familie Freunde"
+  ).split(" ");
+  let seed = 11;
+  const rnd = () => (seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648;
+  let checked = 0;
+  for (let i = 0; i < 24; i++) {
+    const paragraphs = 2 + (i % 4);
+    const target = 70 + ((i * 53) % 270);
+    const paras = [];
+    for (let p = 0; p < paragraphs; p++) {
+      let t = "";
+      while (t.length < target / paragraphs) t += (t ? " " : "") + vocab[Math.floor(rnd() * vocab.length)];
+      paras.push(t);
+    }
+    const s = sanitizeGiftVoucherText(paras.join(i % 3 ? "\n\n" : "\n"), { max: 350, maxLines: 8 });
+    if (s.truncated || !s.text) continue;
+    const senderName = i % 2 ? "Familie Schönberger-Wiesenthal & Freunde" : "Jonas";
+    for (const [layout, panel] of MESSAGE_PANELS) {
+      const drawn = drawnStrings((fonts) => layoutOf("birthday", layout, panel, { fonts, data: { ...DATA, message: s.text, senderName } }));
+      assert.equal(drawn.script.join(" "), words(s.text), `${layout} #${i}`);
+      assert.deepEqual(drawn.scriptBold, [`— ${senderName}`], `${layout} #${i}`);
+      checked++;
+    }
+  }
+  assert.ok(checked >= 40, `${checked} layouts checked`);
+});
+
+test("only a message beyond the core's limits is cut, with an ellipsis", () => {
+  const huge = Array.from({ length: 40 }, (_, i) => `Zeile ${i + 1} mit etwas mehr Text darin`).join("\n\n");
+  for (const [layout, panel] of MESSAGE_PANELS) {
+    const drawn = drawnStrings((fonts) => layoutOf("thanks", layout, panel, { fonts, data: { ...DATA, message: huge } }));
+    assert.ok(drawn.script.length > 3 && drawn.script.length < 40, `${layout}: ${drawn.script.length} lines`);
+    assert.match(drawn.script[drawn.script.length - 1], /…$/);
+    // Lettering stays on the panel.
+    const l = layoutOf("thanks", layout, panel, { data: { ...DATA, message: huge } });
+    for (const e of l.elements) {
+      if (e.role !== "text" || !e.bbox) continue;
+      assert.ok(e.bbox.y1 >= 0 && e.bbox.y2 <= l.heightPx, `${layout}: ${JSON.stringify(e.bbox)}`);
+    }
+  }
+});
+
+test("a sender of up to 40 characters shrinks to the column instead of being shortened", () => {
+  const senders = [
+    "Deine Freunde vom Lauftreff",
+    "Deine Kolleginnen und Kollegen",
+    "Familie Müller-Lüdenscheidt & Co.",
+    "Familie Schönberger-Wiesenthal & Freunde",
+    "Oma Gertrud, Opa Heinz und Tante Marlene",
+    "M".repeat(40),
+  ];
+  for (const [layout, panel] of MESSAGE_PANELS) {
+    for (const message of ["Alles Gute!", DATA.message]) {
+      for (const senderName of senders) {
+        const drawn = drawnStrings((fonts) => layoutOf("classic", layout, panel, { fonts, data: { ...DATA, message, senderName } }));
+        assert.deepEqual(drawn.scriptBold, [`— ${senderName}`], `${layout}: ${senderName}`);
+      }
+    }
+  }
 });
 
 test("the photo design shows the photo, and falls back to classic without one", () => {
