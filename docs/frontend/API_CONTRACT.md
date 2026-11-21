@@ -1551,7 +1551,8 @@ Saves the design right before „Jetzt kaufen“ / „In den Warenkorb“.
 
 The address (only for `print`): name ≤ 60, street and house number ≤ 80 with a digit, addition ≤ 80, a German
 postcode of five digits, town ≤ 60, a country of `config.print.countries` (omitted = the only one); nothing is
-shortened or changed silently. Errors: `400 bad_request` with `field`, `413`, `409`,
+shortened or changed silently. Errors: `400 bad_request` with `field` (validation; like the preview, `photoId`
+no longer available — upload again), `413`, `409`,
 `503 upstream_unavailable` (no database, or the draft could not be stored), `429`, `500`.
 
 **The cart lines** (`POST /cart/add.js`, quantity 1 each): the voucher variant with the properties „Gutschein
