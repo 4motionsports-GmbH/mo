@@ -50,3 +50,32 @@ test("personalDataTables replays drops", () => {
   ]);
   assert.equal(t.size, 0);
 });
+
+test("Geschenkgutscheine: no voucher table keeps the person's data as it is", () => {
+  for (const t of ["gift_vouchers", "gift_voucher_print_jobs", "gift_voucher_drafts"]) {
+    assert.equal(ERASURE_PLAN[t].treatment, "anonymise", `${t} is anonymised (the card stays money for its recipient)`);
+  }
+  // An ordered draft holds a copy of the Premium-Karte's recipient address.
+  assert.match(ERASURE_PLAN.gift_voucher_drafts.why, /recipient address/);
+});
+
+// Source-level (tests cannot import lib/customer-erasure.ts).
+test("GUARDRAIL: erasePerson clears the ordered drafts' address while the buyer link still finds them", () => {
+  const src = readFileSync(new URL("./customer-erasure.ts", import.meta.url), "utf8").replace(/\s+/g, " ");
+  const jobs = src.indexOf("sql`UPDATE gift_voucher_print_jobs SET recipient_postal_address = NULL");
+  const drafts = src.indexOf("sql`UPDATE gift_voucher_drafts SET recipient_postal_address = NULL");
+  const buyer = src.indexOf("sql`UPDATE gift_vouchers SET customer_id = NULL, shopify_customer_id = NULL, buyer_email = NULL");
+  assert.ok(jobs > 0, "the print jobs' statement exists");
+  assert.ok(drafts > jobs, "the drafts' statement exists and follows the print jobs'");
+  assert.ok(buyer > drafts, "… and runs before the statement that removes the buyer link it matches on");
+  const stmt = src.slice(drafts, src.indexOf("`,", drafts));
+  for (const match of [
+    "WHERE recipient_postal_address IS NOT NULL",
+    "id IN ( SELECT draft_id FROM gift_vouchers WHERE draft_id IS NOT NULL",
+    "customer_id = ${cid}",
+    "(shopify_customer_id IS NOT NULL AND shopify_customer_id = ${shopifyCustomerId}::text)",
+    "lower(buyer_email) = ANY(${emailList}::text[])",
+  ]) {
+    assert.ok(stmt.includes(match), `the drafts' statement has ${match}`);
+  }
+});
