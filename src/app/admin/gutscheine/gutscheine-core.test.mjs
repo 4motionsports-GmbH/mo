@@ -242,9 +242,14 @@ test("voucherAttentionView: „Achtung“, a revocation under way, or an acknowl
 });
 
 test("„Als geklärt markieren“: a revoke flag is confirmed, the toast says what happened", () => {
-  assert.equal(clearAttentionConfirm({ attention: "print_without_address" }), null);
-  assert.match(clearAttentionConfirm({ attention: "refund_after_use" })?.description ?? "", /unbenutzte Karte derselben Bestellposition/);
-  assert.match(clearAttentionConfirm({ attention: "cancelled_after_use" })?.description ?? "", /bleibt aktiv/);
+  assert.equal(clearAttentionConfirm({ status: "issued", attention: "print_without_address" }), null);
+  assert.match(clearAttentionConfirm({ status: "issued", attention: "refund_after_use" })?.description ?? "", /unbenutzte Karte derselben Bestellposition/);
+  assert.match(clearAttentionConfirm({ status: "issued", attention: "cancelled_after_use" })?.description ?? "", /bleibt aktiv/);
+  // A leftover flag on a voucher that ended is just cleared — nothing to confirm, no „Karte gesperrt“.
+  assert.equal(clearAttentionConfirm({ status: "deactivated", attention: "refund_after_use" }), null);
+  assert.deepEqual(clearAttentionToast({ status: "deactivated", attention: "refund_after_use" }, { status: "deactivated", attention: null }), {
+    title: "Als geklärt markiert",
+  });
 
   const refund = { status: "issued", attention: "refund_after_use" };
   assert.equal(clearAttentionToast(refund, { status: "deactivated", attention: null }).title, "Karte gesperrt");

@@ -739,7 +739,7 @@ function PrintJobCard({
             <p className="mt-0.5 text-muted-foreground">Keine Adresse</p>
           )}
           {acts.address && (
-            <Button size="xs" variant={a ? "ghost" : "outline"} className="-ml-1 mt-1" onClick={onEditAddress}>
+            <Button size="xs" variant={a ? "ghost" : "outline"} className={a ? "-ml-2.5 mt-1" : "mt-1.5"} onClick={onEditAddress}>
               <MapPin aria-hidden /> {a ? "Adresse ändern" : "Adresse eingeben"}
             </Button>
           )}

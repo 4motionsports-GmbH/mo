@@ -347,15 +347,16 @@ export function voucherAttentionView(v) {
 }
 
 /**
- * The confirmation before „Als geklärt markieren“ — only for a revoke flag
- * (the library checks the card live and may deactivate one: irreversible);
- * null for any other flag (cleared at once).
- * @param {{ attention: string | null }} v
+ * The confirmation before „Als geklärt markieren“ — only for a revoke flag on
+ * an issued card (the library checks it live and may deactivate one, or
+ * stores the acknowledgement for good); null for any other flag and for a
+ * voucher that ended (both are simply cleared).
+ * @param {{ status: string, attention: string | null }} v
  * @returns {{ title: string, description: string } | null}
  */
 export function clearAttentionConfirm(v) {
   const reason = revokeReasonOf(v.attention);
-  if (!reason) return null;
+  if (!reason || v.status !== "issued") return null;
   return reason === "refunded"
     ? {
         title: "Erstattung als geklärt markieren?",
@@ -381,7 +382,7 @@ export function clearAttentionConfirm(v) {
  */
 export function clearAttentionToast(before, after) {
   const reason = revokeReasonOf(before.attention);
-  if (!reason || !after) return { title: "Als geklärt markiert" };
+  if (!reason || before.status !== "issued" || !after) return { title: "Als geklärt markiert" };
   if (after.status === "deactivated") {
     return {
       title: "Karte gesperrt",
