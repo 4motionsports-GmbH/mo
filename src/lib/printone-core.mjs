@@ -34,6 +34,7 @@
 //     /api/gift-vouchers/print-asset/<assetToken>-<outside|inside>.jpg.
 
 import { giftVoucherAddressToJson, isFinalPrintJobStatus, validatePostalAddress } from "./gift-voucher-core.mjs";
+import { GIFT_VOUCHER_PRINT_HELD_MESSAGE } from "./gift-voucher-issue-core.mjs";
 
 /** @typedef {"review" | "queued" | "submitting" | "submitted" | "printing" | "sent" | "failed" | "cancelled" | "done"} PrintJobStatus */
 /** @typedef {"outside" | "inside"} PrintAssetSide */
@@ -711,7 +712,10 @@ export function giftVoucherPrintGlobalBlock(input) {
  * GIFT_VOUCHER_PRINT_SENDS_APPROVED (legal gate, fail-closed); print.one
  * configured; provider printone (job and configuration); PUBLIC_BASE_URL (the
  * files must be reachable); the job is queued (or a lost 'submitting' one the
- * sweep recovers); the voucher is issued; the address is valid.
+ * sweep recovers); the voucher is issued and no revocation of it is open
+ * (`revoking`: a revoke flag — the card may be deactivated in a moment, or a
+ * refund stayed on a spent card and the operator decides: „Sperren“ cancels
+ * the card print, „Als geklärt markieren“ lets it go); the address is valid.
  *
  * `scope` tells the sweep what to do with a blocked job: "global" (nothing is
  * submitted at all), "job" (try this job again later), "voucher_ended" (the
@@ -719,7 +723,7 @@ export function giftVoucherPrintGlobalBlock(input) {
  *
  * @param {{
  *   job: { provider: string, status: string } | null,
- *   voucher: { status: string } | null,
+ *   voucher: { status: string, revoking?: boolean } | null,
  *   gateApproved: boolean,
  *   printOneConfigured: boolean,
  *   configuredProvider: string,
@@ -763,6 +767,7 @@ export function decideGiftVoucherPrintSubmission(input) {
     return block("not_ready", "voucher_ended", "Der Gutschein ist gesperrt, storniert oder abgelehnt — die Karte wird nicht gedruckt.");
   }
   if (voucher.status !== "issued") return block("not_ready", "job", "Der Gutschein ist noch nicht ausgestellt.");
+  if (voucher.revoking === true) return block("not_ready", "job", GIFT_VOUCHER_PRINT_HELD_MESSAGE);
   const checked = validatePostalAddress(input.address, { countries: input.countries ?? ["DE"], locale: "de" });
   if (!checked.ok) {
     return block("not_ready", "job", `Die Empfängeradresse fehlt oder ist ungültig: ${checked.message}`);

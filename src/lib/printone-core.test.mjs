@@ -38,6 +38,7 @@ import {
   printOneTemplatePageHtml,
   publicHttpsBaseUrl,
 } from "./printone-core.mjs";
+import { GIFT_VOUCHER_PRINT_HELD_MESSAGE } from "./gift-voucher-issue-core.mjs";
 import { canAdvancePrintJobStatus, isPrintJobStatus, newOpaqueToken, planGiftVoucherRetry } from "./gift-voucher-core.mjs";
 
 const TOKEN = "AbCdEfGhIjKlMnOpQrStUvWxYz012345"; // 32 characters, like newOpaqueToken(24)
@@ -557,6 +558,22 @@ test("decideGiftVoucherPrintSubmission: the blockers, in spec order", () => {
   assert.deepEqual(pick(d({ address: { ...ADDRESS_JSON, country: "AT", postal_code: "1010" }, countries: ["DE", "AT"] })), ["submit"]);
   // the legal gate is checked before anything about the job's data
   assert.deepEqual(pick(d({ gateApproved: false, voucher: { status: "held" }, address: null })), ["gate_off", "global"]);
+});
+
+test("decideGiftVoucherPrintSubmission: a card is held while its voucher carries a revoke flag", () => {
+  // A refund or cancellation is open (the card may be deactivated in a moment, or a refund stayed
+  // on a spent card for the operator): not submitted, the job stays queued and is tried again.
+  const held = decideGiftVoucherPrintSubmission({ ...READY, voucher: { status: "issued", revoking: true } });
+  assert.deepEqual(held, { action: "block", code: "not_ready", scope: "job", message: GIFT_VOUCHER_PRINT_HELD_MESSAGE });
+  assert.match(held.message, /Stornierung oder Erstattung offen/);
+  // Settled (no flag, or its acknowledged form — the gift-voucher-print.ts caller passes false): submitted.
+  for (const revoking of [false, undefined]) {
+    assert.deepEqual(decideGiftVoucherPrintSubmission({ ...READY, voucher: { status: "issued", revoking } }), { action: "submit" }, String(revoking));
+  }
+  // An ended voucher stays "voucher_ended" (the sweep cancels the job), whatever the flag.
+  assert.equal(decideGiftVoucherPrintSubmission({ ...READY, voucher: { status: "deactivated", revoking: true } }).scope, "voucher_ended");
+  // The global gates come first.
+  assert.equal(decideGiftVoucherPrintSubmission({ ...READY, gateApproved: false, voucher: { status: "issued", revoking: true } }).code, "gate_off");
 });
 
 test("giftVoucherPrintGlobalBlock: the gates in front of every submission", () => {

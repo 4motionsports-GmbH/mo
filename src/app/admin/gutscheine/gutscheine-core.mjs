@@ -34,6 +34,7 @@ import {
   validatePostalAddress,
 } from "../../../lib/gift-voucher-core.mjs";
 import {
+  GIFT_VOUCHER_PRINT_HELD_MESSAGE,
   isAcknowledgedRevocation,
   pickRevocationsToResolve,
   planClearGiftVoucherAttention,
@@ -258,7 +259,7 @@ export const HOLD_REASON_HINTS = Object.freeze({
 /** What an attention flag means and what to do (the detail's „Achtung“ callout). */
 export const ATTENTION_HINTS = Object.freeze({
   refund_after_use:
-    "Die Bestellung wurde erstattet, der Gutschein ist aber schon (teilweise) eingelöst. Mo sperrt ihn nicht von selbst — mit der Kundin oder dem Kunden klären und bei Bedarf sperren.",
+    "Die Bestellung wurde erstattet, der Gutschein ist aber schon (teilweise) eingelöst. Mo sperrt ihn nicht von selbst — mit der Kundin oder dem Kunden klären und bei Bedarf sperren. Eine Premium-Karte dazu wird bis dahin nicht gedruckt: „Sperren“ storniert sie, nach „Als geklärt markieren“ wird sie gedruckt — wurde die Karte mit erstattet, vorher den Druck stornieren.",
   cancelled_after_use:
     "Die Bestellung wurde storniert, der Gutschein ist aber schon (teilweise) eingelöst. Mo sperrt ihn nicht von selbst — klären und bei Bedarf sperren.",
   print_without_voucher:
@@ -496,12 +497,16 @@ export function manualPrintRoute(env) {
  * entered or corrected while the card waits (review / queued), for print.one
  * only before its print files exist. `submitBlocked` says why „Jetzt drucken“
  * is disabled; `held` why print.one does not take this waiting card now.
+ * While the voucher carries a revoke flag the card is held — no „Jetzt
+ * drucken“, no print files (the print.one gate holds it the same way) — until
+ * the operator settles the flag; marking a card already posted stays possible.
  * @param {{ status: string, provider: string, address?: unknown, hasAssets?: boolean }} job
- * @param {{ status: string }} voucher
+ * @param {{ status: string, attention?: string | null }} voucher
  * @param {{ gateBlock?: string | null, blobConfigured?: boolean }} ctx
  */
 export function printJobActions(job, voucher, ctx) {
   const issued = voucher.status === "issued";
+  const held = revokeReasonOf(voucher.attention) !== null;
   const printone = job.provider === "printone";
   const waiting = job.status === "review" || job.status === "queued";
   const hasAddress = Boolean(job.address);
@@ -513,6 +518,7 @@ export function printJobActions(job, voucher, ctx) {
   if (submit) {
     if (hold) submitBlocked = hold;
     else if (!issued) submitBlocked = "Der Gutschein ist noch nicht ausgestellt.";
+    else if (held) submitBlocked = GIFT_VOUCHER_PRINT_HELD_MESSAGE;
   }
   return {
     release: job.status === "review" && hasAddress,
@@ -520,7 +526,7 @@ export function printJobActions(job, voucher, ctx) {
     submitBlocked,
     held: waiting ? hold : null,
     address: waiting && !(printone && job.hasAssets === true),
-    files: byHand && issued && job.status !== "cancelled",
+    files: byHand && issued && !held && job.status !== "cancelled",
     done: byHand && issued && canAdvancePrintJobStatus(job.status, "done"),
     cancel: !isFinalPrintJobStatus(job.status),
   };
