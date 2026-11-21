@@ -676,9 +676,9 @@ Cache-Control: no-store
 
 The body is one pretty-printed JSON document (top-level keys `exportedAt`, `note`, `customer`,
 `consentRecords`, `conversations`, `correspondence`, `physicalLetters`, `marketingSends`,
-`bundleOffers`, `feedback`, `consentEvents`, `orders`, `facts`, `campaign`, `suppression`; more
-may be added). Treat it as an opaque file: save it, never parse, render, log or cache it — it is
-the customer's personal data.
+`bundleOffers`, `feedback`, `consentEvents`, `orders`, `facts`, `campaign`, `suppression`,
+`giftVouchers`; more may be added). Treat it as an opaque file: save it, never parse, render, log
+or cache it — it is the customer's personal data.
 
 | Status | Code | Widget |
 |---|---|---|
@@ -770,3 +770,4 @@ built before the date. Changes to other endpoints: API_CONTRACT Appendix A.
 | 2026-10-08 | Before the DOI decision the backend checks the shop's consent (its own copy; the shop's live status when the copy has none). A shop sign-up still awaiting the shop's confirmation mail is not asked and is answered `pending`, `doiEmailSent: true` without a Mo mail; subscribed in the shop → `confirmed`, `alreadyConfirmed: true`; unsubscribed or invalid in the shop → `none`. The opt-in server events gain `shopifyConsent`. No widget change. | §6.1, §6.2 |
 | 2026-10-08 | `/api/auth/me` records the server-only event `consent_ask_eligible` when it answers `optInActionable: true` (reads `x-ms-locale`); response unchanged, no widget change. | §4 |
 | 2026-10-11 | Copy v6 can carry the value-moment lead (variant `c`, behind a switch that is off by default): the ask then moves from the first-send popup to after a product recommendation; the same anti-nag cap counts it. No widget change (the widget of 2026-10-08 does this). | §6.1 |
+| 2026-11-20 | The data export gains the top-level key `giftVouchers` (the customer's Geschenkgutscheine with the Premium-Karte's status and address; never a code or a download link). The file stays opaque; no widget change. | §7.7 |

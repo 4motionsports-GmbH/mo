@@ -2,9 +2,12 @@
 //
 // The machine-readable Art. 15 (access) / Art. 20 (portability) companion to the
 // per-thread PDF summary: a single JSON document of EVERYTHING this system holds
-// about the caller — profile, consent records, conversations + transcripts,
-// correspondence, letters, marketing sends, bundle offers, feedback, suppression
-// status. Delivered as a downloadable attachment.
+// about the caller — profile, consent records and history, conversations +
+// transcripts, correspondence, letters, marketing sends, bundle offers,
+// feedback, orders and computed figures, Kampagne mails and letters,
+// suppression status, Geschenkgutscheine (with the Premium-Karte's address;
+// never a code, its hash or a download link — lib/account-export.ts).
+// Delivered as a downloadable attachment.
 //
 // Gated by the CA-1 signed-in resolver (origin + secret + a live sign-in: a
 // valid access token or the fresh shop proof, lib/account-guard); scoped strictly
