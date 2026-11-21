@@ -122,7 +122,8 @@ via `NEON_FETCH_ENDPOINT`, seed data with `scripts/seed-dev.mjs`).
   mutates through `adminFetch()` + `useAsyncAction()`, updates its own state (or calls `router.refresh()`),
   never `window.location.reload()`. Long-running generation uses `useStepLoop()`.
 - **State that a colleague should be able to link to lives in the URL**: `?tab=`, `?customer=`, `?gid=`,
-  `?report=`, `?run=`, `?kpiRange=…`, `?filter=`, `?campaign=`, `?edit=`, `?status=` (Eingang), `?vorlage=`, the
+  `?report=`, `?run=`, `?kpiRange=…`, `?filter=`, `?campaign=`, `?edit=`, `?status=` (Eingang, Gutscheine),
+  `?vorlage=`, `?gutschein=` + the Gutscheine filters `?quelle=` / `?q=` / `?seite=`, the
   Kunden list filters (see `docs/ADMIN_DASHBOARD.md` §2.2). Use
   `history.replaceState` for selection, `router.push` for filters that change the server render.
 - **Adding a screen**: entry in `src/lib/admin-tabs.mjs` (+ its test), icon in `tabs.tsx`, `<Screen>Tab.tsx`,
@@ -131,6 +132,6 @@ via `NEON_FETCH_ENDPOINT`, seed data with `scripts/seed-dev.mjs`).
 - **Verify visually.** Run the production build, take Playwright/Chromium screenshots of the changed
   screen at 1440 px and 1024 px in light and dark, and exercise the interactions you touched (the
   before/after sets of the 2026-09 redesign are under `docs/screenshots/`).
-- **Keep the German terminology** and the keyboard shortcuts (`1…9`/`0` screens — the Konfigurator and
-  Vorlagen have none, `/` search; Kampagne
+- **Keep the German terminology** and the keyboard shortcuts (`1…9`/`0` screens — the Konfigurator,
+  Vorlagen and Gutscheine have none, `/` search; Kampagne
   `N P V C S A X`; Wissen `j k Esc`; Eingang `J K Enter E Z D Esc`).
