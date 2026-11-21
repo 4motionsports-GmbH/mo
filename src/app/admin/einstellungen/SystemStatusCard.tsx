@@ -32,7 +32,7 @@ export function SystemStatusCard({ status }: { status: SystemStatus }) {
       label: "Druckpartner (print.one)",
       env: "PRINTONE_API_KEY · PRINTONE_TEMPLATE_ID",
       on: status.printOne,
-      info: "Druckt und verschickt die Premium-Karte der Geschenkgutscheine. Ohne Schlüssel und Vorlage werden die Karten von Hand gedruckt (Gutscheine → Druckwarteschlange).",
+      info: "Druckt und verschickt die Premium-Karte der Geschenkgutscheine. Ohne Schlüssel und Vorlage bietet der Shop die Karte nicht an — außer mit GIFT_VOUCHER_PRINT_PROVIDER=manual: Dann wird von Hand gedruckt (Gutscheine → Status „Druck offen“).",
     },
     { label: "KI · Anthropic", env: "ANTHROPIC_API_KEY", on: status.anthropic },
     { label: "KI · OpenAI (Embeddings, Hero-Bilder)", env: "OPENAI_API_KEY", on: status.openai },
@@ -65,7 +65,7 @@ export function SystemStatusCard({ status }: { status: SystemStatus }) {
       on: status.giftVoucherPrintApproved,
       states: ["Freigegeben", "Gesperrt"],
       offTone: "warning",
-      info: "Ob Empfängeradressen der Premium-Karte an den Druckpartner print.one gehen dürfen (neuer Auftragsverarbeiter — erst mit Vertrag freigeben). Gesperrt: Die Druckaufträge warten unter Gutscheine.",
+      info: "Ob Empfängeradressen der Premium-Karte an den Druckpartner print.one gehen dürfen (neuer Auftragsverarbeiter — erst mit Vertrag freigeben). Gesperrt: Der Shop bietet die Karte über print.one nicht an; wartende Karten stehen unter Gutscheine → Status „Druck offen“ und lassen sich von Hand drucken.",
     },
   ];
 
