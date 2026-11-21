@@ -183,6 +183,18 @@ async function photoDataUri(input: GiftVoucherRenderInput, width: number, height
   }
 }
 
+/**
+ * A delivered voucher (PDF, print file) of a photo design whose photo was
+ * given but could not be prepared fails instead of printing the „Klassisch“
+ * look in its place. (Previews keep the fallback; a photo that could not be
+ * READ is refused by the callers before they render.)
+ */
+function requirePreparedPhoto(input: GiftVoucherRenderInput, photo: string | null): void {
+  if (designOf(input.designKey).photo && input.photo && input.photo.length > 0 && !photo) {
+    throw new Error("gift voucher photo could not be prepared");
+  }
+}
+
 interface RasterOptions {
   width: number;
   height: number;
@@ -278,6 +290,7 @@ export async function renderGiftVoucherPdf(input: GiftVoucherRenderInput): Promi
       const fonts = await loadGiftVoucherFonts();
       const qr = qrMatrix();
       const photo = await photoDataUri(input, A4_W_PX, A4_HALF_PX);
+      requirePreparedPhoto(input, photo);
       const dims = { layout: "landscape" as const, widthPx: A4_W_PX, heightPx: A4_HALF_PX };
       const front = layoutPanel(input, fonts, { ...dims, panel: "front" }, photo, qr);
       const inside = layoutPanel(input, fonts, { ...dims, panel: "inside" }, null, qr);
@@ -389,6 +402,7 @@ export async function renderGiftVoucherPrintSpreads(input: GiftVoucherRenderInpu
       const fonts = await loadGiftVoucherFonts();
       const qr = qrMatrix();
       const photo = await photoDataUri(input, G.panelPx, G.panelPx);
+      requirePreparedPhoto(input, photo);
       const dims = { layout: "square" as const, widthPx: G.panelPx, heightPx: G.heightPx, bleedPx: G.bleedPx };
       const front = layoutPanel(input, fonts, { ...dims, panel: "front" }, photo, qr);
       const back = layoutPanel(input, fonts, { ...dims, panel: "back" }, null, qr);

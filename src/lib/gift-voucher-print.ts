@@ -196,11 +196,21 @@ async function renderSpreads(
   const code = await getGiftVoucherCode(voucher.id);
   if (!code) return { ok: false, message: "Der Gutscheincode ist nicht lesbar (TOKEN_ENC_KEY prüfen)." };
   const photo = voucher.designKey === "photo" && voucher.photoPathname ? await loadGiftVoucherPhoto(voucher.photoPathname) : null;
+  // Without its photo the card would print in the „Klassisch“ look — and a
+  // posted card cannot be taken back: a failed read is retried instead.
+  if (voucher.designKey === "photo" && voucher.photoPathname && !photo) {
+    reportError(new Error("gift voucher photo unavailable"), { route: ROUTE, phase: "photo", voucherId: voucher.id });
+    return { ok: false, message: "Das Kundenfoto ließ sich nicht laden (Vercel Blob) — neuer Versuch später." };
+  }
   let spreads: { outside: Buffer; inside: Buffer };
   try {
     spreads = await renderGiftVoucherPrintSpreads(giftVoucherRenderInputFromVoucher(voucher, code, photo));
   } catch (err) {
     reportError(err, { route: ROUTE, phase: "render", voucherId: voucher.id });
+    return { ok: false, message: "Die Druckdateien konnten nicht erzeugt werden." };
+  }
+  // Empty = the renderer failed and reported why (e.g. a photo it could not prepare).
+  if (!spreads?.outside?.length || !spreads?.inside?.length) {
     return { ok: false, message: "Die Druckdateien konnten nicht erzeugt werden." };
   }
   const [outsideOk, insideOk] = await Promise.all([isPrintSpread(spreads?.outside), isPrintSpread(spreads?.inside)]);
