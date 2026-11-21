@@ -1433,11 +1433,14 @@ are `Cache-Control: no-store`. Errors are the §1 envelope plus **`field`** — 
 `designKey`, `photoId`, `amountCents`, `recipientName`, `senderName`, `message`, `delivery`, `address`
 (missing), `address.name` / `.line1` / `.line2` / `.postalCode` / `.city` / `.country`, `occasion`, `tone`,
 `code`, `photo`). Messages are German, English for `locale: "en"` (the body's `locale`, else `?locale=` /
-`x-ms-locale`; `en-GB` → `en`). Without the rate limiter (no KV) every route answers 500.
+`x-ms-locale`; `en-GB` → `en`). Without the rate limiter (no KV) every route answers 500. The page shows Mo's
+`message` as it is, except for a `429` (or code `rate_limited`), the codes `internal_error`, `unauthorized` and
+`forbidden` (generic English texts) and a lost connection — those get the page's own line (German, English on the
+English page), so the backend keeps these codes.
 
 **While the shop does not sell** (`config` → `available: false`) `photo`, `suggest`, `preview` and `drafts`
-answer **409** `bad_request` („Gutscheine sind gerade nicht verfügbar.“) — show the fallback. `balance`
-keeps working (cards bought earlier stay valid).
+answer **409** `bad_request` („Gutscheine sind gerade nicht verfügbar.“) — show the fallback, also when the 409
+comes mid-visit. `balance` keeps working (cards bought earlier stay valid).
 
 ### `GET /api/gift-vouchers/config?locale=de|en`
 
@@ -1582,8 +1585,8 @@ Errors: `400 bad_request` with `field: "code"` (not shaped like a code — says 
 ### `GET /api/gift-vouchers/download?t=<token>` (mail link)
 
 The voucher PDF behind the button of the voucher mail — a top-level navigation from a mail client, no origin
-guard and no secret; the 32-character token is the bearer secret (only its hash is stored; a new mail
-rotates it). `200 application/pdf`, `Content-Disposition: attachment; filename="Gutschein-G-2026-00042.pdf"`,
+guard and no secret; the 32-character token is the bearer secret (derived per mail attempt, only its hash is
+stored; a repeat of the same attempt keeps it, every new attempt — a resend, a retry — rotates it). `200 application/pdf`, `Content-Disposition: attachment; filename="Gutschein-G-2026-00042.pdf"`,
 `Cache-Control: no-store, private`, `X-Robots-Tag: noindex, nofollow`, `Referrer-Policy: no-referrer`.
 Plain-text answers (German, English with `?locale=en`): `404` (unknown, rotated or not issued — deactivated,
 cancelled), `503` (the voucher cannot be rendered right now), `429` with `Retry-After` (`gift-voucher-ip`),
@@ -2862,3 +2865,4 @@ section that holds the fact; this table repeats none of the detail.
 | 2026-10-27 | Konfigurator round 6 (client review): `context.configurator.note` — the visitor's free text from the optional page step „Deine Hinweise“ (≤ 500 characters, cleaned, never stored); page event `configurator_note_step` { prefilled }, `configurator_handover.note` (`written` \| `skipped`), server `configurator_chat_started.note` (boolean). **Product rules:** `GET /api/products` entries and the §3a / §3b cards carry `rules` (`step` / `min` / `max` / `coverageM2`, only what applies) and — while the showroom list is known — `showroom` (boolean); the cart permalinks carry the rule's minimum (`:2` for pairs); `show_gym_plan` takes `floorAreaM2`, `offer_plan_options` `areaM2`; their results (and `add_to_cart`'s) may carry `adjusted` / `coverage` / `inShowroom` for the model; `suggest_showroom` answers `{ ok, showroomKnown, inShowroom, notInShowroom }` (`ok: false` when none is on display). Additive: an older widget ignores the new fields (and keeps its own pair heuristic), an older page sends no note. | §2 "`context.type: "configurator"`", `add_to_cart`, `suggest_showroom`, `show_gym_plan`, `offer_plan_options`; §3, §3a, §3b; §5 |
 | 2026-10-27 | Round-6 fixes after the review (lockstep backend / widget / page): `rules` on **every** `GET /api/products` entry and §3a / §3b card (`{}` = one by one; no `rules` at all = an older backend); a published `coverageM2` always means floor protection sized to the whole room (`mo.coverage_m2` > 0 on any product; `0` switches it off); a floor line holds up to **200** units, any other line 20 — the `show_gym_plan` / `offer_plan_options` item `quantity` accepts 1–200 and the backend caps a non-floor line at 20 in `adjusted` („höchstens 20 je Position“ / „höchstens 200 je Position“ names the cap); **one** floor product is sized to the area — two or more coverage lines are not resized (`coverage` keeps `coveredM2` / `missingM2`, no `neededQuantity`); edge-piece / connector variants (`NON_TILE_VARIANT`, mirrored in the widget) have no coverage; `floorAreaM2` / `areaM2` accept `null`; `offer_plan_options`'s `option` is Mo's own position even after a dropped option; `configurator.features` gains `"rules"` (the round-6 widget sends `["options", "rules"]`; without it Mo puts the final quantities into the tool input and floor lines are capped at 20); `MS_CHAT.configurator.version` 2 (note + rules — the page shows step 04 only for ≥ 2); `suggest_showroom` carries `showroomKnown` on every result, answers only-unknown ids with `ok: false` + `unknownIds` (retry, no display claim) and is read by the widget (`showroomKnown: false` → a card without product names); the add_to_cart card shows `q×` and the line total for `rules.min` > 1; one note cleaner for backend, widget and page (ZWNJ / ZWJ kept, U+2028 / U+2029 and tabs a space); `search_products` hits carry `rules` (hint) and `heightCm`; §5 trigger rows for started / handover / validation_blocked. | §0 rule 24; §2 "`context.type: "configurator"`", `add_to_cart`, `suggest_showroom`, `show_gym_plan`, `offer_plan_options`, `search_products`; §3, §3a, §3b; §5 |
 | 2026-11-20 | Geschenkgutscheine: the voucher page's routes `GET /api/gift-vouchers/config`, `GET …/fonts/{file}`, `POST …/photo`, `…/suggest`, `…/preview`, `…/drafts`, `…/balance` (409 while the shop does not sell; errors carry `field`), the mail link `GET …/download`, five rate-limit buckets (`gift-voucher`, `gift-voucher-ip`, `gift-voucher-ai`, `gift-voucher-render`, `gift-voucher-balance`) and the cart property `_mo_gv`. New routes only — nothing the widget calls changed. | §1, §3d, §12.2 |
+| 2026-11-21 | Geschenkgutscheine after the review (the voucher page only; no shape changes): `POST /api/gift-vouchers/drafts` refuses an „Eigenes Foto“ design whose photo is no longer stored — `400` with `field: "photoId"`, like the preview (upload again); with print.one as the provider `features.print` also needs an https `PUBLIC_BASE_URL` (the print sweep's own gate — the page never sells a card that is not submitted); `GET …/config` gains `designs[].defaultMessage` and `limits.photoPrintMinSide` (additive). Nothing the widget calls changed. | §3d |
