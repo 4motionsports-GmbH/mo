@@ -351,6 +351,37 @@ test("a sender of up to 40 characters shrinks to the column instead of being sho
   }
 });
 
+test("a long issuer line (160 characters) wraps instead of being cut, and the code card stays above the footer", () => {
+  const issuerLine =
+    "4motionsports GmbH · Am Weidegrund 1 · 82194 Gröbenzell · Geschäftsführerin: Dr. Maximiliane Mustermann · " +
+    "Amtsgericht München HRB 123456 · USt-IdNr. DE123456789";
+  assert.equal(issuerLine.length, 160);
+  const tokens = (/** @type {string} */ s) => words(s).split(" ").filter((t) => t !== "·");
+  const wanted = tokens(issuerLine).join(" ");
+  for (const { key } of GIFT_VOUCHER_DESIGNS) {
+    for (const [layout, panel, sizes] of /** @type {const} */ ([
+      ["landscape", "inside", {}],
+      ["square", "inside-info", {}],
+      ["square", "inside-info", { widthPx: 800, heightPx: 800, bleedPx: 0 }],
+    ])) {
+      /** @type {import("./gift-voucher-designs.mjs").GiftVoucherPanelLayout | undefined} */
+      let l;
+      const drawn = drawnStrings((fonts) => (l = layoutOf(key, layout, panel, { fonts, ...sizes, data: { ...DATA, issuerLine } })));
+      assert.ok(l);
+      assert.ok(!drawn.regular.some((s) => s.includes("…")), `${key} ${layout}: nothing shortened`);
+      assert.ok(tokens(drawn.regular.join(" ")).join(" ").includes(wanted), `${key} ${layout}: the whole issuer line is printed`);
+      const card = l.elements.find((e) => e.role === "decor" && /^<rect [^>]* rx="[^"]*" fill="#[0-9a-f]{6}" stroke=/.test(e.svg));
+      assert.ok(card?.bbox);
+      const cardBottom = card.bbox.y2;
+      const footer = l.elements.filter((e) => (e.role === "text" || e.role === "number") && e.bbox && e.bbox.y1 > cardBottom);
+      assert.ok(footer.length >= 3, `${key} ${layout}: the footer sits below the card`);
+      assert.ok(Math.min(...footer.map((e) => /** @type {{ y1: number }} */ (e.bbox).y1)) - cardBottom > 3 * l.pxPerMm, `${key} ${layout}: gap card → footer`);
+      assert.ok(Math.max(...footer.map((e) => /** @type {{ y2: number }} */ (e.bbox).y2)) <= l.heightPx - l.bleedPx - 5 * l.pxPerMm, `${key} ${layout}: footer inside the safe area`);
+      assert.ok(footer.some((e) => e.role === "number"), `${key} ${layout}: the voucher number is still its own element`);
+    }
+  }
+});
+
 test("the photo design shows the photo, and falls back to classic without one", () => {
   const withPhoto = layoutOf("photo", "landscape", "front");
   assert.ok(withPhoto.elements.some((e) => e.role === "image"));

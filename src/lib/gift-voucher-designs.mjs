@@ -1619,10 +1619,42 @@ function drawRuns(c, wrapped, x, y, size, lineH, fill, anchor = "start", boxW = 
 }
 
 const FOOTER_SEP = "  ·  ";
+/** The separator inside one footer item (GIFT_VOUCHER_ISSUER_LINE's own „ · “). */
+const ITEM_SEP = " · ";
 
 /**
- * Footer items joined with „ · “ into as few lines as fit (an item longer
- * than a line is shortened).
+ * One footer item that is wider than a line, wrapped: at its own „ · “
+ * first (the issuer line with register court and VAT id breaks between
+ * those), between words only inside a part that alone is too wide.
+ * @param {Panel} c @param {GiftVoucherFonts} fonts @param {string} item @param {number} size @param {number} maxW
+ * @returns {string[]}
+ */
+function wrapFooterItem(c, fonts, item, size, maxW) {
+  const fits = (/** @type {string} */ s) => c.measure(fonts.regular, s, size) <= maxW;
+  /** @type {string[]} */
+  const out = [];
+  let line = "";
+  for (const part of item.split(ITEM_SEP).map((p) => p.trim()).filter(Boolean)) {
+    const cand = line ? `${line}${ITEM_SEP}${part}` : part;
+    if (fits(cand)) {
+      line = cand;
+      continue;
+    }
+    if (line) out.push(line);
+    line = part;
+    if (!fits(part)) {
+      const words = wrapEm(fonts.regular, printable(fonts.regular, part), maxW / size);
+      out.push(...words.slice(0, -1));
+      line = words[words.length - 1] ?? "";
+    }
+  }
+  if (line) out.push(line);
+  return out;
+}
+
+/**
+ * Footer items joined with „ · “ into as few lines as fit. An item longer
+ * than a line wraps (wrapFooterItem); its last line can take the next items.
  * @param {Panel} c @param {GiftVoucherFonts} fonts @param {string[]} items @param {number} size @param {number} maxW
  * @returns {string[][]}
  */
@@ -1632,12 +1664,18 @@ function packFooter(c, fonts, items, size, maxW) {
   /** @type {string[]} */
   let cur = [];
   for (const raw of items) {
-    const it = c.measure(fonts.regular, raw, size) > maxW ? ellipsize(fonts.regular, raw, maxW / size) : raw;
-    if (cur.length && c.measure(fonts.regular, [...cur, it].join(FOOTER_SEP), size) > maxW) {
+    if (c.measure(fonts.regular, raw, size) > maxW) {
+      const parts = wrapFooterItem(c, fonts, raw, size, maxW);
+      if (cur.length) lines.push(cur);
+      for (const part of parts.slice(0, -1)) lines.push([part]);
+      cur = parts.length ? [parts[parts.length - 1]] : [];
+      continue;
+    }
+    if (cur.length && c.measure(fonts.regular, [...cur, raw].join(FOOTER_SEP), size) > maxW) {
       lines.push(cur);
       cur = [];
     }
-    cur.push(it);
+    cur.push(raw);
   }
   if (cur.length) lines.push(cur);
   return lines;
