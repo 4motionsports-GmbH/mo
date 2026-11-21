@@ -1208,9 +1208,10 @@ const NAME_LH = 1.2;
  * „für Lena“: "für" light, the name semibold, as large as fits `maxW`:
  *   1. one line, shrunk to no less than 80 %;
  *   2. else two lines, broken after a space or a hyphen of the name — the
- *      break that allows the largest size; at equal size after a comma
- *      before after a space (between first and last name) before after a
- *      hyphen (inside a double name), then the more even split;
+ *      break that allows the largest size. At equal size a break after a
+ *      comma wins over one after another space (between first and last
+ *      name), which wins over one after a hyphen (inside a double name);
+ *      then the more even split;
  *   3. a name without such a break: one line down to 50 %, else two lines
  *      split between letters.
  * Only what still does not fit at 50 % (never a core-valid name of ≤ 40
