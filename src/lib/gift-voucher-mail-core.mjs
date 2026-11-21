@@ -432,6 +432,14 @@ const MAIL_CONFLICT =
   "Resend kannte diesen Versand schon (gleicher Idempotenz-Schlüssel) — die E-Mail ging bereits raus, kein zweiter Versand.";
 const MAIL_CONCURRENT = "Ein anderer Versand dieser E-Mail lief gerade — Mo prüft gleich noch einmal.";
 
+/** German operator text per Resend failure class (classifyResendError); the provider's own message follows in brackets. */
+const RESEND_FAILURE_TEXT = Object.freeze({
+  transient: "Resend war nicht erreichbar",
+  rate_limited: "Resend hat gedrosselt (zu viele Anfragen)",
+  quota: "Das Resend-Kontingent ist aufgebraucht",
+  config: "Resend-Zugang oder Absender ungültig (RESEND_API_KEY / CONTACT_FROM_EMAIL prüfen)",
+});
+
 /**
  * What a send that did not go through means for the mail state. `attempts`
  * is mail_attempts BEFORE this try. Every failure but a concurrent repeat
@@ -483,5 +491,5 @@ export function planGiftVoucherMailFailure(input) {
   if (cls === "invalid" || cls === "conflict") {
     return { status: "failed", countAttempt: true, nextAttemptAt: null, error: `Resend hat die E-Mail abgelehnt: ${detail}`, outcome: "failed" };
   }
-  return retry(`E-Mail nicht gesendet (${cls}): ${detail}.`, "failed");
+  return retry(`E-Mail nicht gesendet: ${RESEND_FAILURE_TEXT[cls] ?? "Fehler bei Resend"} (${detail}).`, "failed");
 }

@@ -1,8 +1,8 @@
 // GET /api/admin/gutscheine/setup[?fresh=1] → { checks, notices, checkedAt }
 //
 // Gutscheine → „Einrichtung“: the setup check with Shopify — the app's scopes
-// (write_gift_cards required; read_gift_card_transactions,
-// write_merchant_managed_fulfillment_orders optional), the voucher product
+// (write_gift_cards required; write_merchant_managed_fulfillment_orders
+// optional), the voucher product
 // and the Premium-Karte add-on by their handles with their findings
 // (describeGiftVoucherProductIssues: not found, a gift-card product, taxable
 // or shipping variants …), the shop's gift-card issue limit — plus the

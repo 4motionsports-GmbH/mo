@@ -1014,7 +1014,7 @@ export function buildGutscheineSetup(input) {
           "Shopify",
           "Optionale Berechtigungen",
           opt.length ? "info" : "ok",
-          opt.length ? `Fehlen: ${opt.join(", ")} (Einlöse-Verlauf, Bestellungen als erfüllt markieren).` : "Vorhanden."
+          opt.length ? `Fehlen: ${opt.join(", ")} (Bestellungen als erfüllt markieren).` : "Vorhanden."
         );
       }
       if (!sh.products.ok) {

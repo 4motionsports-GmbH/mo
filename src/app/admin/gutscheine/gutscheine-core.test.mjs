@@ -708,7 +708,7 @@ test("buildGutscheineSetup: missing pieces become errors, warnings and infos", (
     openPrintJobs: 3,
     printOpenCount: 3,
     shopify: {
-      scopes: { ok: true, missing: ["write_gift_cards"], optionalMissing: ["read_gift_card_transactions"] },
+      scopes: { ok: true, missing: ["write_gift_cards"], optionalMissing: ["write_merchant_managed_fulfillment_orders"] },
       products: {
         ok: true,
         voucher: null,

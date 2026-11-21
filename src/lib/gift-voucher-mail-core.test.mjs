@@ -308,3 +308,14 @@ test("planGiftVoucherMailFailure: an idempotency conflict means the attempt went
   assert.equal(concurrent.countAttempt, false);
   assert.equal(concurrent.nextAttemptAt?.getTime(), NOW + 2 * 60_000);
 });
+
+test("planGiftVoucherMailFailure: the operator text is German, the provider message follows in brackets", () => {
+  const now = Date.UTC(2026, 10, 21, 10, 0, 0);
+  const transient = planGiftVoucherMailFailure({ attempts: 0, now, error: { name: "application_error", statusCode: null, message: "Unable to fetch data. The request could not be resolved." } });
+  assert.equal(transient.status, "pending");
+  assert.match(transient.error, /^E-Mail nicht gesendet: Resend war nicht erreichbar \(Unable to fetch data/);
+  const config = planGiftVoucherMailFailure({ attempts: 0, now, error: { name: "invalid_api_key", statusCode: 403, message: "API key is invalid" } });
+  assert.match(config.error, /^E-Mail nicht gesendet: Resend-Zugang oder Absender ungültig/);
+  const quota = planGiftVoucherMailFailure({ attempts: 0, now, error: { name: "daily_quota_exceeded", statusCode: 429, message: "quota" } });
+  assert.match(quota.error, /Resend-Kontingent ist aufgebraucht/);
+});

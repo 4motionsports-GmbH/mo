@@ -746,7 +746,7 @@ export function decideGiftVoucherPrintSubmission(input) {
     return { action: /** @type {const} */ ("already"), status: /** @type {PrintJobStatus} */ (job.status) };
   }
   if (job.provider === "manual") {
-    return block("manual", "job", "Dieser Druckauftrag wird von Hand gedruckt (Druckwarteschlange).");
+    return block("manual", "job", "Dieser Druckauftrag wird von Hand gedruckt (Gutscheine → „Druck offen“).");
   }
   const global = giftVoucherPrintGlobalBlock(input);
   if (global) return block(global.code, "global", global.message);

@@ -15,6 +15,7 @@ import { recordAdminAccess } from "@/lib/admin-access-log";
 import { reportError } from "@/lib/observability";
 import { getGiftVoucher, getGiftVoucherCode } from "@/lib/gift-voucher-store";
 import { giftVoucherRenderInputFromVoucher, loadGiftVoucherPhoto, renderGiftVoucherPdf } from "@/lib/gift-voucher-render";
+import { isGiftVoucherPhotoUnavailable } from "@/lib/gift-voucher-core.mjs";
 import { fileSafe, giftVoucherTablesGate, idFromQuery } from "../route-helpers";
 
 export const runtime = "nodejs";
@@ -36,7 +37,7 @@ export async function GET(req: Request) {
     const code = await getGiftVoucherCode(id);
     if (!code) return adminJsonError("not_configured", "Der Code lässt sich nicht entschlüsseln (TOKEN_ENC_KEY prüfen).", 503);
     const photo = await loadGiftVoucherPhoto(voucher.photoPathname);
-    if (voucher.designKey === "photo" && voucher.photoPathname && !photo) {
+    if (isGiftVoucherPhotoUnavailable(voucher, photo)) {
       reportError(new Error("gift voucher photo unavailable"), { route: "api/admin/gutscheine/pdf", phase: "photo", voucherId: id });
       return adminJsonError("upstream_unavailable", "Das Kundenfoto ließ sich nicht laden (Vercel Blob) — bitte später noch einmal versuchen.", 503);
     }
