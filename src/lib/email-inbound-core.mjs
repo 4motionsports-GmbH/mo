@@ -15,6 +15,8 @@
 //      References chain, else In-Reply-To, else the message's own Message-ID.
 //   5. generateMessageId    — our own Message-ID for outbound, so the replies we
 //      receive carry an In-Reply-To/References we can thread back.
+//   6. redactGiftVoucherSecrets — a received body is stored without the code
+//      and the download link of a quoted Geschenkgutschein mail.
 
 import { randomBytes } from "node:crypto";
 
@@ -194,6 +196,45 @@ function stripHtml(html) {
   return html.replace(/<[^>]+>/g, " ");
 }
 
+// Geschenkgutschein secrets in replies. The voucher mail invites replies and
+// mail clients quote it — with the full code and the live download link. The
+// mail log (email_messages: Korrespondenz, Eingang, AI prompts) keeps the
+// voucher mail itself only redacted (gift-voucher-mail-core.mjs), so a reply
+// is stored redacted too. A code is 16 symbols of GIFT_VOUCHER_CODE_ALPHABET
+// (gift-voucher-core.mjs: A–Z without I and O, 2–9) printed in four groups
+// (formatGiftVoucherCode); quoted HTML may join the groups with a no-break
+// space or its entity. The link (giftVoucherDownloadUrl) also appears
+// URL-encoded inside a rewritten link (Outlook Safe Links:
+// …?url=https%3A%2F%2F…%2Fapi%2Fgift-vouchers%2Fdownload%3Ft%3D<token>&data=…).
+const VOUCHER_CODE_GROUP = "[A-HJ-NP-Z2-9]{4}";
+const VOUCHER_CODE_GAP = "(?:[ \\u00a0]|&nbsp;|&#160;|&#[xX][aA]0;)";
+const PRINTED_VOUCHER_CODE = new RegExp(
+  `\\b${VOUCHER_CODE_GROUP}${VOUCHER_CODE_GAP}${VOUCHER_CODE_GROUP}${VOUCHER_CODE_GAP}` +
+    `${VOUCHER_CODE_GROUP}${VOUCHER_CODE_GAP}(${VOUCHER_CODE_GROUP})\\b`,
+  "g"
+);
+const VOUCHER_DOWNLOAD_LINK = /(\/api\/gift-vouchers\/download\?t=)[A-Za-z0-9_-]+/g;
+const VOUCHER_DOWNLOAD_LINK_ENCODED = /(%2Fapi%2Fgift-vouchers%2Fdownload%3Ft%3D)[A-Za-z0-9_%-]+/gi;
+
+/**
+ * Mask Geschenkgutschein secrets in a received body (text or HTML): a printed
+ * code keeps only its last group („•••• •••• •••• NPQR“, as the logged
+ * voucher mail shows it), a download link loses its token
+ * („…/api/gift-vouchers/download?t=[entfernt]“), plain or URL-encoded. Known
+ * false positive: four all-caps four-letter words without I, O, 0 and 1
+ * („DANK EUCH SEHR GUTE“) lose their first three in the stored copy —
+ * harmless. A code typed without separators is left as it is.
+ * @param {string} text
+ * @returns {string}
+ */
+export function redactGiftVoucherSecrets(text) {
+  if (typeof text !== "string") return text;
+  return text
+    .replace(PRINTED_VOUCHER_CODE, "•••• •••• •••• $1")
+    .replace(VOUCHER_DOWNLOAD_LINK, "$1[entfernt]")
+    .replace(VOUCHER_DOWNLOAD_LINK_ENCODED, "$1[entfernt]");
+}
+
 /**
  * Normalise a Resend inbound message (the receiving.get response, with the
  * webhook event data as fallback) into the flat row shape email_messages
@@ -201,6 +242,9 @@ function stripHtml(html) {
  *
  * `full` is GetReceivingEmailResponseSuccess; `eventData` is the
  * email.received `data` (used only to backfill fields the fetch lacks).
+ * Text and HTML come back with Geschenkgutschein secrets masked
+ * (redactGiftVoucherSecrets) — the webhook insert, the admin's lazy re-fetch
+ * and the snippet all store only that copy.
  */
 export function normalizeInboundMessage(full, eventData = {}) {
   const f = full ?? {};
@@ -214,8 +258,8 @@ export function normalizeInboundMessage(full, eventData = {}) {
   const fromRaw = f.from ?? eventData.from ?? "";
   const toRaw = firstString(f.to) || firstString(eventData.to) || "";
   const subject = f.subject ?? eventData.subject ?? null;
-  const bodyText = typeof f.text === "string" ? f.text : null;
-  const bodyHtml = typeof f.html === "string" ? f.html : null;
+  const bodyText = typeof f.text === "string" ? redactGiftVoucherSecrets(f.text) : null;
+  const bodyHtml = typeof f.html === "string" ? redactGiftVoucherSecrets(f.html) : null;
 
   return {
     messageId,
