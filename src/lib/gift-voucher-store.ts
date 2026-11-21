@@ -1057,12 +1057,20 @@ export async function setGiftVoucherDownloadTokenHash(id: number, hash: string, 
   }
 }
 
-/** The balance just read from Shopify. */
+/**
+ * The balance just read from Shopify. A read that finds the balance unchanged
+ * is no activity: it stamps balance_checked_at but leaves updated_at alone, so
+ * the daily balance sync does not keep a used-up voucher „fresh“ for the
+ * retention (purgeGiftVoucherData); a changed balance (spent, refunded onto
+ * the card) moves updated_at. SET reads the old balance_cents.
+ */
 export async function updateGiftVoucherBalance(id: number, balanceCents: number, sql: Sql | null = getSql()): Promise<boolean> {
   if (!sql || !Number.isSafeInteger(balanceCents) || balanceCents < 0) return false;
   try {
     const rows = (await sql`
-      UPDATE gift_vouchers SET balance_cents = ${balanceCents}, balance_checked_at = now(), updated_at = now()
+      UPDATE gift_vouchers
+         SET balance_cents = ${balanceCents}, balance_checked_at = now(),
+             updated_at = CASE WHEN balance_cents IS DISTINCT FROM ${balanceCents}::int THEN now() ELSE updated_at END
        WHERE id = ${id}
       RETURNING id
     `) as Row[];
@@ -1827,9 +1835,14 @@ const windowDays = (v: unknown) => (typeof v === "number" && Number.isSafeIntege
  * "delete everything"):
  *   personalDays — a voucher that ENDED that many days ago is anonymised:
  *     expired (expires_on), deactivated, cancelled, rejected, failed and
- *     untouched, or used up (balance 0 read that long ago). Names, texts,
- *     e-mail addresses, the photo and the download link go (and the address
- *     of its print job); amounts, status, code hash / last 4, ids stay.
+ *     untouched, or used up (balance 0 and the row unchanged that long — an
+ *     unchanged balance read does not move updated_at, see
+ *     updateGiftVoucherBalance). Never a voucher still pending, held or
+ *     issuing — a held one is a paid order whose voucher is still owed —
+ *     except a held TEST order (hold_reason 'test_order', no money behind
+ *     it) untouched that long. Names, texts, e-mail addresses, the photo and
+ *     the download link go (and the address of its print job, open or
+ *     finished); amounts, status, code hash / last 4, ids stay.
  *   addressDays — the recipient address of a FINISHED print job (sent,
  *     done, cancelled, failed) unchanged that long, and the address copy of
  *     an ordered draft, are cleared.
@@ -1857,12 +1870,13 @@ export async function purgeGiftVoucherData(
         WITH ended AS (
           SELECT id, photo_pathname FROM gift_vouchers
            WHERE personal_data_purged_at IS NULL
-             AND status NOT IN ('pending', 'held', 'issuing')
-             AND ((expires_on IS NOT NULL
-                   AND expires_on < (now() AT TIME ZONE 'Europe/Berlin')::date - ${personalDays}::int)
-                  OR (status = 'deactivated' AND COALESCE(deactivated_at, updated_at) < ${cutoff}::timestamptz)
-                  OR (status IN ('cancelled', 'rejected', 'failed') AND updated_at < ${cutoff}::timestamptz)
-                  OR (balance_cents = 0 AND balance_checked_at < ${cutoff}::timestamptz))
+             AND ((status NOT IN ('pending', 'held', 'issuing')
+                   AND ((expires_on IS NOT NULL
+                         AND expires_on < (now() AT TIME ZONE 'Europe/Berlin')::date - ${personalDays}::int)
+                        OR (status = 'deactivated' AND COALESCE(deactivated_at, updated_at) < ${cutoff}::timestamptz)
+                        OR (status IN ('cancelled', 'rejected', 'failed') AND updated_at < ${cutoff}::timestamptz)
+                        OR (balance_cents = 0 AND updated_at < ${cutoff}::timestamptz)))
+                  OR (status = 'held' AND hold_reason = 'test_order' AND updated_at < ${cutoff}::timestamptz))
         ),
         upd AS (
           UPDATE gift_vouchers v
