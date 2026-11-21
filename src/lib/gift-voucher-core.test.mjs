@@ -32,6 +32,8 @@ import {
   isValidPhotoId,
   giftVoucherPhotoPathname,
   giftVoucherPhotoIdFromPathname,
+  hasGiftVoucherPhotoBytes,
+  isGiftVoucherPhotoUnavailable,
   berlinYear,
   giftVoucherExpiryDate,
   formatGiftVoucherNumber,
@@ -223,6 +225,31 @@ test("photo pathnames: only valid ids, and back", () => {
   assert.equal(giftVoucherPhotoIdFromPathname(`gift-voucher-print/${id}.jpg`), null);
   assert.equal(giftVoucherPhotoIdFromPathname(`gift-voucher-photos/${id}.png`), null);
   assert.equal(giftVoucherPhotoIdFromPathname(null), null);
+});
+
+test("hasGiftVoucherPhotoBytes: a non-empty Buffer / Uint8Array — an empty body is no photo", () => {
+  assert.equal(hasGiftVoucherPhotoBytes(Buffer.from([0xff, 0xd8, 0xff])), true);
+  assert.equal(hasGiftVoucherPhotoBytes(new Uint8Array([1])), true);
+  assert.equal(hasGiftVoucherPhotoBytes(Buffer.alloc(0)), false, "200 with an empty body");
+  for (const v of [null, undefined, "", "jpeg", [1, 2], { length: 3 }, 0]) {
+    assert.equal(hasGiftVoucherPhotoBytes(v), false, JSON.stringify(v));
+  }
+});
+
+test("isGiftVoucherPhotoUnavailable: a photo voucher without readable photo bytes is never delivered", () => {
+  const photoVoucher = { designKey: "photo", photoPathname: "gift-voucher-photos/abcdefghijklmnopqrstuv.jpg" };
+  const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xe0]);
+  assert.equal(isGiftVoucherPhotoUnavailable(photoVoucher, jpeg), false, "the photo is there");
+  // Missing (404), unreadable (5xx, network) → null; a 200 with an empty body → an empty Buffer.
+  assert.equal(isGiftVoucherPhotoUnavailable(photoVoucher, null), true);
+  assert.equal(isGiftVoucherPhotoUnavailable(photoVoucher, undefined), true);
+  assert.equal(isGiftVoucherPhotoUnavailable(photoVoucher, Buffer.alloc(0)), true, "empty bytes are no photo");
+  // Another design, or a photo design without a stored photo, renders as it is.
+  assert.equal(isGiftVoucherPhotoUnavailable({ designKey: "classic", photoPathname: photoVoucher.photoPathname }, null), false);
+  assert.equal(isGiftVoucherPhotoUnavailable({ designKey: "classic", photoPathname: null }, null), false);
+  assert.equal(isGiftVoucherPhotoUnavailable({ designKey: "photo", photoPathname: null }, null), false);
+  assert.equal(isGiftVoucherPhotoUnavailable({ designKey: "photo", photoPathname: "" }, Buffer.alloc(0)), false);
+  assert.equal(isGiftVoucherPhotoUnavailable(null, null), false);
 });
 
 // ── dates and numbers ────────────────────────────────────────────────────────

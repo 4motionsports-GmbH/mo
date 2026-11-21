@@ -23,7 +23,7 @@ import { corsHeaders, preflightResponse } from "@/lib/security";
 import { checkRateLimitKeyed, clientIp } from "@/lib/rate-limit";
 import { reportError } from "@/lib/observability";
 import { resolveLocale } from "@/lib/locale";
-import { hashOpaqueToken } from "@/lib/gift-voucher-core.mjs";
+import { hashOpaqueToken, isGiftVoucherPhotoUnavailable } from "@/lib/gift-voucher-core.mjs";
 import {
   giftVoucherApiText,
   giftVoucherPdfFilename,
@@ -76,7 +76,7 @@ export async function GET(req: Request) {
     if (!code) return text(503, "download_unavailable");
     const photo = voucher.photoPathname ? await loadGiftVoucherPhoto(voucher.photoPathname) : null;
     // A photo voucher is never served in the „Klassisch“ look: no photo, no PDF (try again later).
-    if (voucher.designKey === "photo" && voucher.photoPathname && !photo) {
+    if (isGiftVoucherPhotoUnavailable(voucher, photo)) {
       reportError(new Error("gift voucher photo unavailable"), { route: "api/gift-vouchers/download", phase: "photo", voucherId: voucher.id });
       return text(503, "download_unavailable");
     }

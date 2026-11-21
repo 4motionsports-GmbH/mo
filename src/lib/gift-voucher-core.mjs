@@ -318,6 +318,30 @@ export function giftVoucherPhotoIdFromPathname(pathname) {
   return m ? m[1] : null;
 }
 
+/**
+ * Photo bytes that count as a photo: a non-empty Buffer / Uint8Array. A read
+ * that answered 200 with an empty body is no photo.
+ * @param {unknown} bytes
+ * @returns {bytes is Uint8Array}
+ */
+export function hasGiftVoucherPhotoBytes(bytes) {
+  return bytes instanceof Uint8Array && bytes.length > 0;
+}
+
+/**
+ * A photo voucher („Eigenes Foto“, with a stored photo pathname) whose photo
+ * could not be read — missing, unreadable or empty. Such a voucher is never
+ * delivered (PDF, mail attachment, print files): the „Klassisch“ look would
+ * stand in for the customer's photo, so the caller refuses or retries. Any
+ * other design, or one without a pathname, never counts.
+ * @param {{ designKey: string, photoPathname: string | null } | null | undefined} voucher
+ * @param {unknown} photo  the bytes loadGiftVoucherPhoto returned
+ * @returns {boolean}
+ */
+export function isGiftVoucherPhotoUnavailable(voucher, photo) {
+  return voucher?.designKey === "photo" && Boolean(voucher.photoPathname) && !hasGiftVoucherPhotoBytes(photo);
+}
+
 // ---------------------------------------------------------------------------
 // Dates and numbers
 // ---------------------------------------------------------------------------

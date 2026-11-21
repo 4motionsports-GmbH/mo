@@ -84,6 +84,7 @@ import {
 } from "./printone";
 import { deleteGiftVoucherBlobs, getGiftVoucherBlob, isGiftVoucherBlobConfigured, putGiftVoucherBlob } from "./gift-voucher-blob";
 import { giftVoucherRenderInputFromVoucher, loadGiftVoucherPhoto, renderGiftVoucherPrintSpreads } from "./gift-voucher-render";
+import { isGiftVoucherPhotoUnavailable } from "./gift-voucher-core.mjs";
 import {
   claimDueGiftVoucherPrintJobs,
   clearGiftVoucherPrintJobAssets,
@@ -200,7 +201,7 @@ async function renderSpreads(
   const photo = voucher.designKey === "photo" && voucher.photoPathname ? await loadGiftVoucherPhoto(voucher.photoPathname) : null;
   // Without its photo the card would print in the „Klassisch“ look — and a
   // posted card cannot be taken back: a failed read is retried instead.
-  if (voucher.designKey === "photo" && voucher.photoPathname && !photo) {
+  if (isGiftVoucherPhotoUnavailable(voucher, photo)) {
     reportError(new Error("gift voucher photo unavailable"), { route: ROUTE, phase: "photo", voucherId: voucher.id });
     return { ok: false, message: "Das Kundenfoto ließ sich nicht laden (Vercel Blob) — neuer Versuch später." };
   }

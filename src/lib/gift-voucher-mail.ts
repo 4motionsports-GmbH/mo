@@ -43,7 +43,12 @@ import { withEmailDesign } from "./email-design-context";
 import { getCachedEmailDesignForKind } from "./email-design-store";
 import { getBaseUrl } from "./base-url";
 import { reportError } from "./observability";
-import { giftVoucherDownloadToken, hashOpaqueToken, planGiftVoucherRetry } from "./gift-voucher-core.mjs";
+import {
+  giftVoucherDownloadToken,
+  hashOpaqueToken,
+  isGiftVoucherPhotoUnavailable,
+  planGiftVoucherRetry,
+} from "./gift-voucher-core.mjs";
 import { giftVoucherPageUrl, giftVoucherTermsUrl } from "./gift-voucher-flags.mjs";
 import {
   getGiftVoucher,
@@ -239,7 +244,7 @@ async function renderPdf(v: GiftVoucher, code: string): Promise<Buffer | null> {
   try {
     const photo = v.photoPathname ? await loadGiftVoucherPhoto(v.photoPathname) : null;
     // Never the „Klassisch“ look in place of the customer's photo.
-    if (v.designKey === "photo" && v.photoPathname && !photo) {
+    if (isGiftVoucherPhotoUnavailable(v, photo)) {
       reportError(new Error("gift voucher photo unavailable"), { route: ROUTE, phase: "photo", voucherId: v.id });
       return null;
     }

@@ -42,7 +42,7 @@ import type {
   GiftVoucherPanelLayout,
   GiftVoucherQrMatrix,
 } from "./gift-voucher-designs.mjs";
-import { formatEuro, formatGiftVoucherCode } from "./gift-voucher-core.mjs";
+import { formatEuro, formatGiftVoucherCode, hasGiftVoucherPhotoBytes } from "./gift-voucher-core.mjs";
 import { giftVoucherIssuerLine, giftVoucherPageUrl, giftVoucherTermsUrl, printOneFrontSide } from "./gift-voucher-flags.mjs";
 import { getGiftVoucherBlob } from "./gift-voucher-blob";
 import type { GiftVoucher } from "./gift-voucher-store";
@@ -182,12 +182,13 @@ async function photoDataUri(input: GiftVoucherRenderInput, width: number, height
 
 /**
  * A delivered voucher (PDF, print file) of a photo design whose photo was
- * given but could not be prepared fails instead of printing the „Klassisch“
- * look in its place. (Previews keep the fallback; a photo that could not be
- * READ is refused by the callers before they render.)
+ * given — any bytes, an empty Buffer too — but could not be prepared fails
+ * instead of printing the „Klassisch“ look in its place. (Previews keep the
+ * fallback; a photo that could not be READ is refused by the callers before
+ * they render — gift-voucher-core isGiftVoucherPhotoUnavailable.)
  */
 function requirePreparedPhoto(input: GiftVoucherRenderInput, photo: string | null): void {
-  if (designOf(input.designKey).photo && input.photo && input.photo.length > 0 && !photo) {
+  if (designOf(input.designKey).photo && input.photo != null && !photo) {
     throw new Error("gift voucher photo could not be prepared");
   }
 }
@@ -431,12 +432,16 @@ export async function renderGiftVoucherPrintSpreads(input: GiftVoucherRenderInpu
   }
 }
 
-/** The customer's photo from the private Blob store, or null. Never throws. */
+/**
+ * The customer's photo from the private Blob store, or null — also for a
+ * read that answered with an empty body (hasGiftVoucherPhotoBytes), so the
+ * callers' isGiftVoucherPhotoUnavailable guard holds. Never throws.
+ */
 export async function loadGiftVoucherPhoto(pathname: string | null): Promise<Buffer | null> {
   if (!pathname) return null;
   try {
     const file = await getGiftVoucherBlob(pathname);
-    return file?.bytes ?? null;
+    return file && hasGiftVoucherPhotoBytes(file.bytes) ? file.bytes : null;
   } catch (err) {
     reportError(err, { route: ROUTE, phase: "photo_load" });
     return null;
