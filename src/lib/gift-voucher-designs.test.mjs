@@ -362,6 +362,49 @@ test("the photo design shows the photo, and falls back to classic without one", 
   assert.ok(!injected.svg.includes("onload"), "an odd data URI is never embedded");
 });
 
+/** WCAG relative luminance of a "#rrggbb" colour. @param {string} hex */
+function luminance(hex) {
+  const [r, g, b] = [1, 3, 5].map((i) => {
+    const v = parseInt(hex.slice(i, i + 2), 16) / 255;
+    return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+  });
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
+
+/** WCAG contrast ratio of two "#rrggbb" colours. @param {string} a @param {string} b */
+function contrast(a, b) {
+  const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x);
+  return (hi + 0.05) / (lo + 0.05);
+}
+
+test("photo front: the white eyebrow keeps 4.5 : 1 over a bright photo (legibility shade)", () => {
+  for (const layout of /** @type {const} */ (["landscape", "square"])) {
+    const l = layoutOf("photo", layout, "front");
+    const m = /<linearGradient id="[^"]*shade-b" [^>]*y1="([\d.]+)" x2="0" y2="([\d.]+)">(.*?)<\/linearGradient>/.exec(l.svg);
+    assert.ok(m, "the lower shade");
+    const [y1, y2] = [Number(m[1]), Number(m[2])];
+    const stops = [...m[3].matchAll(/offset="([\d.]+)"[^>]*stop-opacity="([\d.]+)"/g)].map((s) => [Number(s[1]), Number(s[2])]);
+    /** @param {number} y px */
+    const opacityAt = (y) => {
+      const t = Math.min(1, Math.max(0, (y - y1) / (y2 - y1)));
+      for (let i = 1; i < stops.length; i++) {
+        const [t0, a0] = stops[i - 1];
+        const [t1, a1] = stops[i];
+        if (t <= t1) return a0 + ((a1 - a0) * (t - t0)) / (t1 - t0);
+      }
+      return stops[stops.length - 1][1];
+    };
+    // The eyebrow is the last text before the value; its cap line is the lightest spot behind it.
+    const firstValue = l.elements.findIndex((e) => e.role === "value");
+    const eyebrow = l.elements.slice(0, firstValue).filter((e) => e.role === "text").pop();
+    assert.ok(eyebrow?.bbox);
+    const photo = 0xf2; // an almost white photo (#f2f2f2)
+    const grey = Math.round(photo * (1 - opacityAt(eyebrow.bbox.y1)));
+    const behind = `#${grey.toString(16).padStart(2, "0").repeat(3)}`;
+    assert.ok(contrast("#ffffff", behind) >= 4.5, `${layout}: white on ${behind} = ${contrast("#ffffff", behind).toFixed(2)} : 1`);
+  }
+});
+
 test("a sample carries the watermark, a real voucher does not", () => {
   const sample = layoutOf("christmas", "landscape", "inside", { data: { ...DATA, sample: true, code: null, number: null } });
   assert.ok(sample.elements.some((e) => e.role === "watermark"));
