@@ -264,7 +264,10 @@ revokes nothing (`gift_vouchers:unchanged`).
 - **The card prints of an add-on line** follow the same rule: the line still pays for its quantity minus the
   revoked cards, the jobs above that are cancelled — those of revoked units first, then jobs already cancelled or
   failed, then the highest units —, decided once the flags are resolved (a refund that moved took the sibling's
-  card print along).
+  card print along). While a refund Shopify could not settle yet may still move to an untouched sibling whose own
+  open card the change does not cancel, the flagged unit's card waits — the sibling's deactivation cancels the
+  sibling's card instead, and such siblings are tried first; if the change cancels that sibling's card as well, the
+  flagged unit's card goes at once.
 - **„Als geklärt markieren“** on a revocation flag (confirmed in the admin): an issued card is checked live first —
   untouched → deactivated; a refund on a spent card → moved to an untouched card of the line as above; else the
   acknowledged key `*_after_use_ok` is stored (the card stays active, no „Achtung“, never flagged again). A
@@ -340,7 +343,7 @@ ones); an order whose fulfilment fails for good is skipped for six hours on that
 | Resend refuses or times out | Mail retry plan with a new key per concluded try; a repeat of the same try is a 409 → recorded as sent. |
 | Cancellation lands while the card is being created | The issuing step re-reads the row after `issued` and resolves the flag at once — the code is never mailed. |
 | An admin „E-Mail erneut senden“ races a sweep mail | Can send twice (the same code) — a known small window. |
-| Voucher and card refunded together, the refund lands on a spent card, and Shopify's card read fails in the webhook's `after()` | The flagged unit's card print is cancelled at once; when the sweep later moves the refund to an untouched card of the line, that card's print is cancelled too — two card prints for one refunded add-on (the vouchers are right). Print one in-house or refund it — a known small window. |
+| Voucher and card refunded together on a line of several vouchers with cards, the refund lands on a spent card, and Shopify's card read fails in the webhook's `after()` | Mostly settled right by the sweep (the refund moves to an untouched card whose own print frees the add-on). Known small windows: if the sibling was ALSO spent after the last balance read, one refunded card can still print (≈ the add-on price); if the webhook's `after()` never ran at all, the sweep does not re-plan the add-on line. Check the order's card prints in the admin („Druck offen“) after such a refund and cancel or print by hand. |
 
 ## 5. The Premium-Karte
 
