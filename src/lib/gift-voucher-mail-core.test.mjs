@@ -88,9 +88,19 @@ test("file name, date, key, download link", () => {
   assert.equal(formatGiftVoucherMailDate("31.12.2029", "de"), null);
   assert.equal(formatGiftVoucherMailDate("2029-13-01", "de"), null);
   assert.equal(formatGiftVoucherMailDate(null, "de"), null);
-  assert.equal(giftVoucherMailIdempotencyKey(42, 0), "gift-voucher-mail-42-0");
-  assert.equal(giftVoucherMailIdempotencyKey(42, 3), "gift-voucher-mail-42-3");
-  assert.equal(giftVoucherMailIdempotencyKey(42, -1), "gift-voucher-mail-42-0");
+  // Unique across databases: the voucher's created_at (ms) — the +00:00 microsecond JSON form parses.
+  const created = "2026-11-20T10:00:00.123456+00:00";
+  const ms = Date.parse("2026-11-20T10:00:00.123Z");
+  assert.equal(giftVoucherMailIdempotencyKey(42, 0, created), `gift-voucher-mail-42-${ms}-0`);
+  assert.equal(giftVoucherMailIdempotencyKey(42, 3, created), `gift-voucher-mail-42-${ms}-3`);
+  assert.equal(giftVoucherMailIdempotencyKey(42, -1, created), `gift-voucher-mail-42-${ms}-0`);
+  assert.equal(giftVoucherMailIdempotencyKey(42, 0, new Date(ms)), `gift-voucher-mail-42-${ms}-0`);
+  assert.notEqual(
+    giftVoucherMailIdempotencyKey(1, 0, "2026-11-20T10:00:00Z"),
+    giftVoucherMailIdempotencyKey(1, 0, "2026-11-21T08:00:00Z"),
+    "voucher 1 of another database is another key"
+  );
+  assert.equal(giftVoucherMailIdempotencyKey(42, 1, null), "gift-voucher-mail-42-0-1", "an unreadable time counts as 0");
   assert.equal(DOWNLOAD, `https://mo.motionsports.de/api/gift-vouchers/download?t=${TOKEN}`);
   assert.equal(giftVoucherDownloadUrl("https://x.de", "a b+c"), "https://x.de/api/gift-vouchers/download?t=a%20b%2Bc");
   assert.equal(GIFT_VOUCHER_MAIL_KIND, "gift_voucher");

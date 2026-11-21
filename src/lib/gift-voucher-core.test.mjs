@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
+import { createHash, createHmac } from "node:crypto";
+import { isValidGiftVoucherDownloadToken } from "./gift-voucher-storefront.mjs";
 import {
   GIFT_VOUCHER_STATUSES,
   GIFT_VOUCHER_REASONS,
@@ -26,6 +27,7 @@ import {
   giftVoucherCodeLast4,
   hashOpaqueToken,
   newOpaqueToken,
+  giftVoucherDownloadToken,
   isValidDraftToken,
   isValidPhotoId,
   giftVoucherPhotoPathname,
@@ -41,7 +43,6 @@ import {
   extractGiftVoucherOrder,
   pairPrintLines,
   refundedQuantities,
-  unitsToRevoke,
   decideGiftVoucherIssue,
   decideManualGiftVoucher,
   planGiftVoucherRetry,
@@ -86,11 +87,15 @@ test("vocabulary: every status, reason and print status has a German label", () 
   assert.equal(GIFT_VOUCHER_STATUS_LABELS.deactivated, "Gesperrt");
   assert.equal(PRINT_JOB_STATUS_LABELS.done, "Erledigt (manuell)");
   assert.deepEqual(Object.keys(GIFT_VOUCHER_HOLD_REASON_LABELS), [
-    "disabled", "test_order", "currency", "discounted", "amount", "risk", "daily_limit", "not_paid", "attempts",
+    "disabled", "test_order", "currency", "discounted", "amount", "risk", "daily_limit", "not_paid", "refunded", "attempts",
   ]);
+  assert.equal(GIFT_VOUCHER_HOLD_REASON_LABELS.refunded, "Bestellung (teilweise) erstattet");
   assert.deepEqual(Object.keys(GIFT_VOUCHER_ATTENTION_LABELS), [
     "refund_after_use", "cancelled_after_use", "print_without_voucher", "print_without_address", "deactivate_failed", "print_cancel_too_late",
+    "unknown_product_line", "refund_after_use_ok", "cancelled_after_use_ok",
   ]);
+  assert.equal(GIFT_VOUCHER_ATTENTION_LABELS.unknown_product_line, "Bestellzeile mit Gutschein-Entwurf auf unbekanntem Produkt");
+  assert.equal(GIFT_VOUCHER_ATTENTION_LABELS.refund_after_use_ok, "Erstattet, eingelöst — geklärt");
   assert.ok(isGiftVoucherStatus("issued"));
   assert.ok(!isGiftVoucherStatus("ISSUED"));
   assert.ok(isPrintJobStatus("printing"));
@@ -187,6 +192,26 @@ test("newOpaqueToken: base64url, 32 characters from 24 bytes, 22 from 16; valida
   assert.ok(isValidDraftToken("A".repeat(24)));
   assert.ok(isValidDraftToken("A".repeat(64)));
   assert.ok(!isValidPhotoId("A".repeat(21)));
+});
+
+test("giftVoucherDownloadToken: derived per mail attempt — same attempt same link, next attempt rotates", () => {
+  const input = { secret: "a".repeat(64), voucherId: 42, mailAttempts: 0, code: "ABCDEFGHJKLMNPQR" };
+  const t = giftVoucherDownloadToken(input);
+  assert.match(t, /^[A-Za-z0-9_-]{32}$/);
+  assert.ok(isValidGiftVoucherDownloadToken(t), "the download route accepts it");
+  // HMAC-SHA256 keyed by sha256("gift-voucher-download|<secret>") over "<id>|<attempts>|<code>", first 24 bytes.
+  const key = createHash("sha256").update(`gift-voucher-download|${input.secret}`).digest();
+  const expected = createHmac("sha256", key).update("42|0|ABCDEFGHJKLMNPQR").digest().subarray(0, 24).toString("base64url");
+  assert.equal(t, expected);
+  assert.equal(giftVoucherDownloadToken({ ...input }), t, "a repeat of the attempt rebuilds the delivered link");
+  assert.notEqual(giftVoucherDownloadToken({ ...input, mailAttempts: 1 }), t, "a concluded attempt rotates it");
+  assert.notEqual(giftVoucherDownloadToken({ ...input, voucherId: 43 }), t);
+  assert.notEqual(giftVoucherDownloadToken({ ...input, code: "ABCDEFGHJKLMNPQS" }), t, "the key alone forges no link");
+  assert.notEqual(giftVoucherDownloadToken({ ...input, secret: "b".repeat(64) }), t);
+  assert.equal(giftVoucherDownloadToken({ ...input, mailAttempts: -3 }), t, "junk attempts count as 0");
+  for (const secret of ["", null, undefined]) {
+    assert.throws(() => giftVoucherDownloadToken({ ...input, secret: /** @type {any} */ (secret) }), /secret/);
+  }
 });
 
 test("photo pathnames: only valid ids, and back", () => {
@@ -421,6 +446,7 @@ test("extractGiftVoucherOrder: a realistic paid order — order info, voucher an
     shopifyCustomerId: "7712345678901",
     customerName: "Jonas Muster",
     currency: "EUR",
+    presentmentCurrency: "EUR",
     locale: "de",
   });
   assert.deepEqual(r.vouchers, [
@@ -437,6 +463,7 @@ test("extractGiftVoucherOrder: a realistic paid order — order info, voucher an
     },
   ]);
   assert.deepEqual(r.prints, [{ lineItemId: "15123456789002", quantity: 1, unitCents: 490, draftToken: TOKEN_A }]);
+  assert.deepEqual(r.unmatchedDraftLines, [], "the kettlebell carries no draft");
 });
 
 test("extractGiftVoucherOrder: no voucher product → no lines; junk → null", () => {
@@ -478,10 +505,16 @@ test("extractGiftVoucherOrder: discounts from discount_allocations (shop money),
 });
 
 test("extractGiftVoucherOrder: price from price_set shop money (never presentment), price as fallback", () => {
-  const chf = paidOrder({ presentment_currency: "CHF" });
-  chf.line_items[0].price_set = money("50.00", "54.00", "EUR", "CHF");
-  chf.line_items[0].price = "54.00";
-  assert.equal(extractGiftVoucherOrder(chf, PRODUCTS)?.vouchers[0].unitCents, 5000);
+  // A 50 € voucher paid as CHF 46.90: Shopify back-converts shop money at the live rate, so it is
+  // rarely the face value (the record plan takes the variant's own price — gift-voucher-issue-core).
+  const chf = paidOrder({ presentment_currency: "chf" });
+  chf.line_items[0].price_set = money("50.14", "46.90", "EUR", "CHF");
+  chf.line_items[0].price = "46.90";
+  const r = extractGiftVoucherOrder(chf, PRODUCTS);
+  assert.equal(r?.vouchers[0].unitCents, 5014, "shop money, never the presentment price");
+  assert.equal(r?.order.currency, "EUR", "REST currency = the shop currency");
+  assert.equal(r?.order.presentmentCurrency, "CHF", "what the buyer paid in, upper-case");
+  assert.equal(extractGiftVoucherOrder(paidOrder({ presentment_currency: undefined }), PRODUCTS)?.order.presentmentCurrency, null);
 
   const plain = paidOrder();
   delete plain.line_items[0].price_set;
@@ -545,6 +578,61 @@ test("extractGiftVoucherOrder: exact ids from the GraphQL ids even beyond 2^53",
   const r = extractGiftVoucherOrder(order, PRODUCTS);
   assert.equal(r?.order.id, "820982911946154508");
   assert.equal(r?.vouchers[0].lineItemId, "487817672276298554");
+});
+
+test("extractGiftVoucherOrder: units are the quantity the line still holds (current_quantity)", () => {
+  // Vorkasse: 2 × 50 € ordered, one removed by an order edit before the money came — never paid.
+  const edited = paidOrder();
+  edited.line_items[0].current_quantity = 1;
+  edited.line_items[1].quantity = 2;
+  edited.line_items[1].current_quantity = 1;
+  const r = extractGiftVoucherOrder(edited, PRODUCTS);
+  assert.equal(r?.vouchers[0].quantity, 1);
+  assert.equal(r?.prints[0].quantity, 1, "print lines follow the same rule");
+  // Everything removed → the line is skipped; a current_quantity above the quantity never adds units.
+  const removed = paidOrder();
+  removed.line_items[0].current_quantity = 0;
+  removed.line_items[1].current_quantity = 0;
+  assert.deepEqual(extractGiftVoucherOrder(removed, PRODUCTS)?.vouchers, []);
+  assert.deepEqual(extractGiftVoucherOrder(removed, PRODUCTS)?.prints, []);
+  const more = paidOrder();
+  more.line_items[0].current_quantity = 5;
+  assert.equal(extractGiftVoucherOrder(more, PRODUCTS)?.vouchers[0].quantity, 2);
+  // Missing or junk current_quantity → the ordered quantity.
+  for (const junk of [undefined, null, "1", -1, 1.5]) {
+    const o = paidOrder();
+    o.line_items[0].current_quantity = junk;
+    assert.equal(extractGiftVoucherOrder(o, PRODUCTS)?.vouchers[0].quantity, 2, String(junk));
+  }
+});
+
+test("extractGiftVoucherOrder: a draft token on a product Mo does not know is listed, never a voucher", () => {
+  // The theme sells another product than Mo's handle names (a duplicate, a re-created product):
+  // the line keeps its draft token but is neither the voucher nor the print product.
+  const voucherElsewhere = paidOrder();
+  voucherElsewhere.line_items[0].product_id = Number(OTHER_PRODUCT) - 1;
+  const a = extractGiftVoucherOrder(voucherElsewhere, PRODUCTS);
+  assert.deepEqual(a?.vouchers, []);
+  assert.deepEqual(a?.unmatchedDraftLines, ["15123456789001"]);
+  assert.equal(a?.prints.length, 1, "the add-on is still recognised");
+  // The paid Premium-Karte on another add-on product: the voucher stays, the card line is listed.
+  const printElsewhere = paidOrder();
+  printElsewhere.line_items[1].product_id = Number(OTHER_PRODUCT) - 2;
+  const b = extractGiftVoucherOrder(printElsewhere, PRODUCTS);
+  assert.equal(b?.vouchers.length, 1);
+  assert.deepEqual(b?.prints, []);
+  assert.deepEqual(b?.unmatchedDraftLines, ["15123456789002"]);
+  // No product id at all, a token on a removed line, an invalid token, no token: nothing listed.
+  const noProduct = paidOrder();
+  delete noProduct.line_items[0].product_id;
+  assert.deepEqual(extractGiftVoucherOrder(noProduct, PRODUCTS)?.unmatchedDraftLines, ["15123456789001"]);
+  const gone = paidOrder();
+  gone.line_items[0].product_id = 1;
+  gone.line_items[0].current_quantity = 0;
+  assert.deepEqual(extractGiftVoucherOrder(gone, PRODUCTS)?.unmatchedDraftLines, []);
+  const junkToken = paidOrder();
+  junkToken.line_items[2].properties = [{ name: "_mo_gv", value: "<script>" }];
+  assert.deepEqual(extractGiftVoucherOrder(junkToken, PRODUCTS)?.unmatchedDraftLines, []);
 });
 
 test("extractGiftVoucherOrder: lines without id or quantity are skipped", () => {
@@ -639,17 +727,6 @@ test("refundedQuantities: sums refund_line_items per line over every refund", ()
   assert.equal(m.size, 2);
   assert.equal(refundedQuantities(null).size, 0);
   assert.equal(refundedQuantities({ refunds: "x" }).size, 0);
-});
-
-test("unitsToRevoke: highest units first; all when cancelled; never more than the quantity", () => {
-  assert.deepEqual(unitsToRevoke({ lineItemId: "v", quantity: 3, refundedQty: 1, cancelled: false }), [2]);
-  assert.deepEqual(unitsToRevoke({ lineItemId: "v", quantity: 3, refundedQty: 2 }), [2, 1]);
-  assert.deepEqual(unitsToRevoke({ lineItemId: "v", quantity: 3, refundedQty: 5 }), [2, 1, 0]);
-  assert.deepEqual(unitsToRevoke({ lineItemId: "v", quantity: 3, refundedQty: 0, cancelled: true }), [2, 1, 0]);
-  assert.deepEqual(unitsToRevoke({ lineItemId: "v", quantity: 2, refundedQty: 0 }), []);
-  assert.deepEqual(unitsToRevoke({ lineItemId: "v", quantity: 0, cancelled: true }), []);
-  assert.deepEqual(unitsToRevoke({ lineItemId: "v", quantity: 2, refundedQty: -1 }), []);
-  assert.deepEqual(unitsToRevoke({ lineItemId: "v", quantity: 1.5, cancelled: true }), []);
 });
 
 // ── decisions ────────────────────────────────────────────────────────────────

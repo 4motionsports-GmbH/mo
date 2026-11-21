@@ -29,7 +29,13 @@
 
 import process from "node:process";
 import { randomBytes } from "node:crypto";
-import { giftVoucherProductHandles } from "../src/lib/gift-voucher-flags.mjs";
+import {
+  configuredGiftVoucherPrintProvider,
+  giftVoucherProductHandles,
+  isGiftVoucherPrintSendsApproved,
+  isPrintOneConfiguredEnv,
+} from "../src/lib/gift-voucher-flags.mjs";
+import { isGiftVoucherPrintOffered } from "../src/lib/gift-voucher-storefront.mjs";
 import {
   ACCESS_SCOPES_QUERY,
   GIFT_CARD_BY_ID_QUERY,
@@ -316,7 +322,13 @@ async function main() {
         );
       }
     }
-    for (const issue of describeGiftVoucherProductIssues({ voucher, print, handles: { voucher: voucherHandle, print: printHandle } })) {
+    // The Premium-Karte can be sold (the page's features.print): a missing print product is an error then.
+    const printOffered = isGiftVoucherPrintOffered({
+      printProvider: configuredGiftVoucherPrintProvider(process.env),
+      printOneConfigured: isPrintOneConfiguredEnv(process.env),
+      printSendsApproved: isGiftVoucherPrintSendsApproved(process.env),
+    });
+    for (const issue of describeGiftVoucherProductIssues({ voucher, print, handles: { voucher: voucherHandle, print: printHandle }, printOffered })) {
       if (issue.level === "error") fail(issue.message);
       else warn(issue.message);
     }

@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { extractGiftVoucherOrder } from "./gift-voucher-core.mjs";
 import {
+  GIFT_VOUCHER_REVOKE_ACK_ATTENTION,
   GIFT_VOUCHER_REVOKE_ATTENTION,
   GIFT_VOUCHER_REVOKE_REASON_TEXT,
   adoptableGiftCard,
@@ -9,15 +10,19 @@ import {
   giftVoucherOrderChangeFacts,
   giftVoucherOrderHint,
   giftVoucherRevocationDecision,
+  isAcknowledgedRevocation,
+  isLiveGiftVoucherUnit,
   isRevocationLookupConclusive,
   isRiskWaitExpired,
   nextStepAfterCreateFailure,
   pickRevocationsToResolve,
+  planClearGiftVoucherAttention,
   planGiftVoucherDeferral,
   planGiftVoucherFulfilment,
   planGiftVoucherIssueRetry,
   planGiftVoucherOrderChange,
   planGiftVoucherOrderRecord,
+  revocationSiblingCandidates,
   revokeReasonOf,
 } from "./gift-voucher-issue-core.mjs";
 
@@ -115,6 +120,52 @@ test("revocation flag: keys, reasons and texts", () => {
   assert.equal(revokeReasonOf(null), null);
   assert.equal(GIFT_VOUCHER_REVOKE_REASON_TEXT.cancelled, "Bestellung storniert");
   assert.equal(GIFT_VOUCHER_REVOKE_REASON_TEXT.refunded, "Erstattet");
+  // The acknowledged form is no revocation any more.
+  assert.deepEqual({ ...GIFT_VOUCHER_REVOKE_ACK_ATTENTION }, { cancelled: "cancelled_after_use_ok", refunded: "refund_after_use_ok" });
+  assert.equal(revokeReasonOf("refund_after_use_ok"), null);
+  assert.equal(isAcknowledgedRevocation("refund_after_use_ok"), true);
+  assert.equal(isAcknowledgedRevocation("cancelled_after_use_ok"), true);
+  assert.equal(isAcknowledgedRevocation("refund_after_use"), false);
+  assert.equal(isAcknowledgedRevocation(null), false);
+});
+
+test("revocationSiblingCandidates: issued units of the same line with a card, no flag, the same value", () => {
+  const unit = { id: 2, status: "issued", attention: "refund_after_use", shopifyGiftCardId: "gc2", shopifyLineItemId: "L1", unitIndex: 1, amountCents: 5000 };
+  const units = [
+    { id: 1, status: "issued", attention: null, shopifyGiftCardId: "gc1", shopifyLineItemId: "L1", unitIndex: 0, amountCents: 5000 },
+    unit,
+    { id: 3, status: "issued", attention: null, shopifyGiftCardId: "gc3", shopifyLineItemId: "L1", unitIndex: 2, amountCents: 5000 },
+    { id: 4, status: "issued", attention: "print_cancel_too_late", shopifyGiftCardId: "gc4", shopifyLineItemId: "L1", unitIndex: 3, amountCents: 5000 },
+    { id: 5, status: "deactivated", attention: null, shopifyGiftCardId: "gc5", shopifyLineItemId: "L1", unitIndex: 4, amountCents: 5000 },
+    { id: 6, status: "issued", attention: null, shopifyGiftCardId: "gc6", shopifyLineItemId: "L2", unitIndex: 0, amountCents: 5000 },
+    { id: 7, status: "issued", attention: null, shopifyGiftCardId: null, shopifyLineItemId: "L1", unitIndex: 5, amountCents: 5000 },
+    { id: 8, status: "issued", attention: null, shopifyGiftCardId: "gc8", shopifyLineItemId: "L1", unitIndex: 6, amountCents: 2500 },
+  ];
+  assert.deepEqual(revocationSiblingCandidates(unit, units).map((u) => u.id), [3, 1], "highest unit first");
+  assert.deepEqual(revocationSiblingCandidates({ ...unit, shopifyLineItemId: null }, units), []);
+});
+
+test("planClearGiftVoucherAttention: what „Als geklärt markieren“ does", () => {
+  const issued = { status: "issued", attention: "refund_after_use", balanceCents: 5000, amountCents: 5000 };
+  assert.equal(planClearGiftVoucherAttention({ ...issued, attention: null }), "none");
+  assert.equal(planClearGiftVoucherAttention({ ...issued, attention: "refund_after_use_ok" }), "keep");
+  assert.equal(planClearGiftVoucherAttention({ ...issued, attention: "print_without_address" }), "clear");
+  assert.equal(planClearGiftVoucherAttention({ ...issued, attention: "deactivate_failed" }), "clear");
+  assert.equal(planClearGiftVoucherAttention(issued), "resolve", "not checked against Shopify yet");
+  assert.equal(planClearGiftVoucherAttention({ ...issued, balanceCents: null }), "resolve");
+  // A refund found spent already — maybe by a balance read BEFORE the refund:
+  // still checked live (an untouched sibling may take it over; the card may
+  // be deactivated in Shopify meanwhile), else acknowledged.
+  assert.equal(planClearGiftVoucherAttention({ ...issued, balanceCents: 3000 }), "resolve");
+  // A cancellation revokes every unit: no sibling can take it.
+  assert.equal(planClearGiftVoucherAttention({ ...issued, attention: "cancelled_after_use", balanceCents: 0 }), "acknowledge");
+  assert.equal(planClearGiftVoucherAttention({ ...issued, attention: "cancelled_after_use", balanceCents: 5000 }), "resolve");
+  for (const status of ["pending", "held", "failed", "issuing"]) {
+    assert.equal(planClearGiftVoucherAttention({ ...issued, status }), "revoking", status);
+  }
+  for (const status of ["cancelled", "rejected", "deactivated"]) {
+    assert.equal(planClearGiftVoucherAttention({ ...issued, status }), "clear", status);
+  }
 });
 
 test("giftVoucherRevocationDecision: untouched → deactivate, spent → used, off in Shopify → record", () => {
@@ -139,6 +190,10 @@ test("pickRevocationsToResolve: issued + revoke flag + card, not yet found used"
   ];
   assert.deepEqual(pickRevocationsToResolve(rows).map((r) => r.id), [1, 2, 7]);
   assert.deepEqual(pickRevocationsToResolve(rows, 2).map((r) => r.id), [1, 2]);
+  // A flag an order change set just now is checked whatever balance is stored:
+  // a balance read before the refund is no check of it.
+  assert.deepEqual(pickRevocationsToResolve(rows, Infinity, [3, 4, 5, 6]).map((r) => r.id), [1, 2, 3, 7]);
+  assert.deepEqual(pickRevocationsToResolve(rows, Infinity, null).map((r) => r.id), [1, 2, 7]);
 });
 
 test("isRevocationLookupConclusive: only two minutes after the last write", () => {
@@ -291,9 +346,71 @@ test("planGiftVoucherOrderRecord: a print line without a voucher flags the first
   assert.deepEqual(q.unmatchedPrints, [{ lineItemId: "9002", missing: 1 }]);
 });
 
+/** A CHF purchase of the 50 € voucher (variant 31): shop money back-converted at the live rate. */
+function chfPayload(over = {}) {
+  const p0 = payload({ presentment_currency: "CHF", ...over });
+  p0.line_items[0].price = "46.90";
+  p0.line_items[0].price_set = {
+    shop_money: { amount: "50.14", currency_code: "EUR" },
+    presentment_money: { amount: "46.90", currency_code: "CHF" },
+  };
+  return p0;
+}
+const VARIANT_PRICES = new Map([["31", 5000], ["99", 2500]]);
+
+test("planGiftVoucherOrderRecord: another presentment currency → the variant's own price (the face value)", () => {
+  const p = plan({ extract: extract(chfPayload()), variantPriceCents: VARIANT_PRICES, reviewPrintWithPhoto: false });
+  assert.equal(p.units[0].row.amountCents, 5000, "not the back-converted 50,14 €");
+  assert.equal(p.units[0].row.currency, "EUR");
+  assert.deepEqual(holdOf(p), ["pending", null]);
+  // The variant is not known (no map, or another variant): held `currency` with the shop money.
+  for (const variantPriceCents of [undefined, new Map([["99", 2500]])]) {
+    const q = plan({ extract: extract(chfPayload()), variantPriceCents });
+    assert.deepEqual(holdOf(q), ["held", "currency"]);
+    assert.equal(q.units[0].row.amountCents, 5014, "the operator decides on the shop money");
+  }
+  // The documented order holds before `currency` stay; later ones are replaced by it.
+  assert.deepEqual(holdOf(plan({ extract: extract(chfPayload({ test: true })) })), ["held", "test_order"]);
+  assert.deepEqual(holdOf(plan({ extract: extract(chfPayload()), enabled: false })), ["held", "disabled"]);
+  assert.deepEqual(holdOf(plan({ extract: extract(chfPayload()), limits: { minCents: 500, maxCents: 2500 } })), ["held", "currency"]);
+  // With the face value known, the limits judge the face value.
+  assert.deepEqual(
+    holdOf(plan({ extract: extract(chfPayload()), variantPriceCents: VARIANT_PRICES, limits: { minCents: 500, maxCents: 2500 } })),
+    ["held", "amount"]
+  );
+  // Paid in the shop currency: shop money, the variant map is not used.
+  const eur = plan({ extract: extract(payload({ presentment_currency: "EUR" })), variantPriceCents: new Map([["31", 9900]]) });
+  assert.equal(eur.units[0].row.amountCents, 5000);
+  assert.deepEqual(holdOf(eur), ["pending", null]);
+});
+
+test("planGiftVoucherOrderRecord: a draft line on an unknown product flags the first unit without a flag", () => {
+  // The paid Premium-Karte sits on another add-on product.
+  const p0 = payload();
+  p0.line_items[0].quantity = 2;
+  p0.line_items[1].product_id = 2099;
+  const p = plan({ extract: extract(p0), reviewPrintWithPhoto: false });
+  assert.equal(p.units.length, 2);
+  assert.deepEqual(p.units.map((u) => [u.row.delivery, u.row.attention]), [
+    ["pdf", "unknown_product_line"],
+    ["pdf", null],
+  ]);
+  // A unit that is flagged already keeps its flag; the next one takes the note.
+  const q0 = payload();
+  q0.line_items[0].quantity = 2;
+  q0.line_items.push({ id: 9009, product_id: 2099, quantity: 1, price: "4.90", properties: [{ name: "_mo_gv", value: TOKEN_A }] });
+  const q = plan({ extract: extract(q0), drafts: [draft({ address: null })] });
+  assert.deepEqual(q.units.map((u) => u.row.attention), ["print_without_address", "unknown_product_line"]);
+  // Every unit flagged: nothing is overwritten (the caller reports the line).
+  const r0 = payload();
+  r0.line_items.push({ id: 9009, product_id: 2099, quantity: 1, price: "4.90", properties: [{ name: "_mo_gv", value: TOKEN_A }] });
+  const r = plan({ extract: extract(r0), drafts: [draft({ address: null })] });
+  assert.deepEqual(r.units.map((u) => u.row.attention), ["print_without_address"]);
+});
+
 // ── order changes ────────────────────────────────────────────────────────────
 
-test("giftVoucherOrderChangeFacts: id, cancellation, refunds, quantities", () => {
+test("giftVoucherOrderChangeFacts: id, cancellation, revoked units per line, quantities", () => {
   const p = payload({
     refunds: [
       { refund_line_items: [{ line_item_id: 9001, quantity: 1 }] },
@@ -303,20 +420,64 @@ test("giftVoucherOrderChangeFacts: id, cancellation, refunds, quantities", () =>
   const f = giftVoucherOrderChangeFacts(p, "orders/updated");
   assert.equal(f.orderId, "5550001");
   assert.equal(f.cancelled, false);
-  assert.deepEqual([...f.refunded], [["9001", 1], ["9002", 1]]);
+  assert.deepEqual([...f.revoked], [["9001", 1], ["9002", 1]]);
   assert.equal(f.lineQuantities.get("9001"), 1);
   assert.equal(f.lineQuantities.get("9003"), 2);
   assert.equal(giftVoucherOrderChangeFacts(payload(), "orders/cancelled").cancelled, true);
   assert.equal(giftVoucherOrderChangeFacts(payload({ cancelled_at: "2026-11-20T10:00:00Z" }), "orders/updated").cancelled, true);
   assert.equal(giftVoucherOrderChangeFacts(null, "orders/updated").orderId, null);
+  assert.equal(giftVoucherOrderChangeFacts(payload(), "orders/updated").revoked.size, 0, "nothing refunded, nothing removed");
+});
+
+test("giftVoucherOrderChangeFacts: one rule per line — max(refunded, quantity − current_quantity)", () => {
+  const lines = (current, refunds = []) => {
+    const p = payload({ refunds });
+    p.line_items[0].quantity = 3;
+    p.line_items[0].current_quantity = current;
+    return giftVoucherOrderChangeFacts(p, "orders/updated").revoked.get("9001") ?? 0;
+  };
+  assert.equal(lines(2), 1, "a unit removed by an order edit after payment");
+  assert.equal(lines(3, [{ refund_line_items: [{ line_item_id: 9001, quantity: 2 }] }]), 2, "refund lines without a current_quantity change");
+  assert.equal(lines(1, [{ refund_line_items: [{ line_item_id: 9001, quantity: 2 }] }]), 2, "the same two units — not four");
+  assert.equal(lines(0, [{ refund_line_items: [{ line_item_id: 9001, quantity: 1 }] }]), 3);
+  assert.equal(lines(undefined, [{ refund_line_items: [{ line_item_id: 9001, quantity: 5 }] }]), 3, "never more than the quantity");
+  // A refund line of a line the payload does not list still counts.
+  const orphan = giftVoucherOrderChangeFacts(payload({ refunds: [{ refund_line_items: [{ line_item_id: 9999, quantity: 1 }] }] }), "orders/updated");
+  assert.equal(orphan.revoked.get("9999"), 1);
+});
+
+test("giftVoucherOrderChangeFacts: a refunded or voided order revokes every unit (an amount-only refund lists no lines)", () => {
+  for (const status of ["refunded", "REFUNDED", "voided"]) {
+    const f = giftVoucherOrderChangeFacts(payload({ financial_status: status, refunds: [{ refund_line_items: [] }] }), "orders/updated");
+    assert.deepEqual([...f.revoked], [["9001", 1], ["9002", 1], ["9003", 2]], status);
+    assert.equal(f.cancelled, false, "the reason stays a refund");
+  }
+  const partly = giftVoucherOrderChangeFacts(payload({ financial_status: "partially_refunded", refunds: [{ refund_line_items: [] }] }), "orders/updated");
+  assert.equal(partly.revoked.size, 0, "an amount-only PARTIAL refund stays manual");
 });
 
 /** @param {Partial<import("./gift-voucher-issue-core.mjs").ChangeVoucher> & { id: number }} v */
 function cv(v) {
-  return { status: "issued", hasCode: true, shopifyLineItemId: "9001", unitIndex: 0, attention: null, ...v };
+  return { status: "issued", hasCode: true, shopifyLineItemId: "9001", unitIndex: 0, attention: null, amountCents: 5000, balanceCents: null, ...v };
 }
 
-test("planGiftVoucherOrderChange: a cancellation revokes every unit by status", () => {
+/** Facts of a refund: revoked units per line, ordered quantities. */
+function refundFacts(revoked, quantities) {
+  return { cancelled: false, revoked: new Map(Object.entries(revoked)), lineQuantities: new Map(Object.entries(quantities)) };
+}
+
+test("isLiveGiftVoucherUnit: what an order may still pay for", () => {
+  for (const status of ["pending", "held", "failed", "issuing", "issued"]) assert.equal(isLiveGiftVoucherUnit({ status, attention: null }), true, status);
+  for (const status of ["cancelled", "rejected", "deactivated"]) assert.equal(isLiveGiftVoucherUnit({ status, attention: null }), false, status);
+  for (const attention of ["refund_after_use", "cancelled_after_use", "refund_after_use_ok", "cancelled_after_use_ok", "deactivate_failed"]) {
+    assert.equal(isLiveGiftVoucherUnit({ status: "issued", attention }), false, attention);
+  }
+  for (const attention of ["print_without_address", "print_cancel_too_late", "unknown_product_line"]) {
+    assert.equal(isLiveGiftVoucherUnit({ status: "issued", attention }), true, attention);
+  }
+});
+
+test("planGiftVoucherOrderChange: a cancellation revokes every live unit by status", () => {
   const vouchers = [
     cv({ id: 1, status: "pending", hasCode: false, unitIndex: 0 }),
     cv({ id: 2, status: "held", hasCode: true, unitIndex: 1 }),
@@ -330,7 +491,7 @@ test("planGiftVoucherOrderChange: a cancellation revokes every unit by status", 
     { id: 22, voucherId: 2, status: "review", paidLineItemId: "9002" },
     { id: 24, voucherId: 4, status: "submitted", paidLineItemId: "9002" },
   ];
-  const facts = { cancelled: true, refunded: new Map(), lineQuantities: new Map([["9001", 6]]) };
+  const facts = { cancelled: true, revoked: new Map(), lineQuantities: new Map([["9001", 6]]) };
   const p = planGiftVoucherOrderChange({ facts, vouchers, printJobs: jobs });
   assert.equal(p.reason, "cancelled");
   assert.equal(p.attention, "cancelled_after_use");
@@ -346,31 +507,171 @@ test("planGiftVoucherOrderChange: a cancellation revokes every unit by status", 
   assert.deepEqual(p.cancelJobsLater, [24]);
 });
 
-test("planGiftVoucherOrderChange: a refund revokes the highest units of the line only", () => {
-  const vouchers = [cv({ id: 1, unitIndex: 0 }), cv({ id: 2, unitIndex: 1 }), cv({ id: 3, unitIndex: 2, shopifyLineItemId: "9005" })];
-  const facts = { cancelled: false, refunded: new Map([["9001", 1]]), lineQuantities: new Map([["9001", 2], ["9005", 1]]) };
-  const p = planGiftVoucherOrderChange({ facts, vouchers, printJobs: [] });
+test("planGiftVoucherOrderChange: refund 1 of 2 — one unit, units without a card first, else the highest", () => {
+  const issued = [cv({ id: 1, unitIndex: 0 }), cv({ id: 2, unitIndex: 1 }), cv({ id: 3, unitIndex: 0, shopifyLineItemId: "9005" })];
+  const p = planGiftVoucherOrderChange({ facts: refundFacts({ 9001: 1 }, { 9001: 2, 9005: 1 }), vouchers: issued, printJobs: [] });
   assert.equal(p.reason, "refunded");
   assert.equal(p.attention, "refund_after_use");
   assert.deepEqual(p.flagIssued, [2]);
   assert.equal(p.revoked, 1);
   assert.deepEqual(p.cancel, []);
+  // A unit without a card goes first (nothing is lost), then one being issued.
+  const mixed = [cv({ id: 1, unitIndex: 0, status: "held", hasCode: false }), cv({ id: 2, unitIndex: 1 }), cv({ id: 3, unitIndex: 2, status: "issuing" })];
+  const m = planGiftVoucherOrderChange({ facts: refundFacts({ 9001: 2 }, { 9001: 3 }), vouchers: mixed, printJobs: [] });
+  assert.deepEqual([m.cancel, m.flagIssuing, m.flagIssued], [[1], [3], []]);
 });
 
-test("planGiftVoucherOrderChange: an existing flag is not set again; no refund → nothing", () => {
-  const flagged = [cv({ id: 1, attention: "refund_after_use" })];
-  const facts = { cancelled: false, refunded: new Map([["9001", 1]]), lineQuantities: new Map([["9001", 1]]) };
-  const p = planGiftVoucherOrderChange({ facts, vouchers: flagged, printJobs: [] });
-  assert.deepEqual(p.flagIssued, []);
-  assert.equal(p.revoked, 1);
-  // A full cancellation later replaces the refund flag with the cancel flag.
-  const c = planGiftVoucherOrderChange({ facts: { ...facts, cancelled: true }, vouchers: flagged, printJobs: [] });
-  assert.deepEqual(c.flagIssued, [1]);
-  const none = planGiftVoucherOrderChange({
-    facts: { cancelled: false, refunded: new Map(), lineQuantities: new Map([["9001", 1]]) },
-    vouchers: flagged,
+test("planGiftVoucherOrderChange: a card the stored balance shows spent is revoked last", () => {
+  // The daily balance sync read unit 1's card at 30 € before the refund of one unit.
+  const synced = [cv({ id: 1, unitIndex: 0, balanceCents: 5000 }), cv({ id: 2, unitIndex: 1, balanceCents: 3000 })];
+  const p = planGiftVoucherOrderChange({ facts: refundFacts({ 9001: 1 }, { 9001: 2 }), vouchers: synced, printJobs: [] });
+  assert.deepEqual(p.flagIssued, [1], "the untouched card, not the highest unit");
+  // Not read yet (null) counts as untouched; among the untouched the highest unit.
+  const unread = [cv({ id: 1, unitIndex: 0, balanceCents: null }), cv({ id: 2, unitIndex: 1, balanceCents: 0 }), cv({ id: 3, unitIndex: 2, balanceCents: 5000 })];
+  assert.deepEqual(planGiftVoucherOrderChange({ facts: refundFacts({ 9001: 1 }, { 9001: 3 }), vouchers: unread, printJobs: [] }).flagIssued, [3]);
+  // Two of three: both untouched ones before the spent one.
+  assert.deepEqual(
+    planGiftVoucherOrderChange({ facts: refundFacts({ 9001: 2 }, { 9001: 3 }), vouchers: unread, printJobs: [] }).flagIssued.sort(),
+    [1, 3]
+  );
+  // Every card spent: the highest unit (the Shopify step looks for an untouched sibling live).
+  const allSpent = [cv({ id: 1, unitIndex: 0, balanceCents: 1000 }), cv({ id: 2, unitIndex: 1, balanceCents: 3000 })];
+  assert.deepEqual(planGiftVoucherOrderChange({ facts: refundFacts({ 9001: 1 }, { 9001: 2 }), vouchers: allSpent, printJobs: [] }).flagIssued, [2]);
+  // A unit without a card still goes first — whatever the balances say.
+  const mixed = [cv({ id: 1, unitIndex: 0, balanceCents: 5000 }), cv({ id: 2, unitIndex: 1, status: "held", hasCode: false })];
+  const m = planGiftVoucherOrderChange({ facts: refundFacts({ 9001: 1 }, { 9001: 2 }), vouchers: mixed, printJobs: [] });
+  assert.deepEqual([m.cancel, m.flagIssued], [[2], []]);
+});
+
+test("planGiftVoucherOrderChange: a print line edited before payment — the card never created counts as gone", () => {
+  // 2 vouchers + 2 Premium-Karten ordered, one card removed by an order edit
+  // before payment: orders/paid recorded ONE job (current_quantity 1).
+  const p0 = payload();
+  p0.line_items[0].quantity = 2;
+  p0.line_items[0].current_quantity = 2;
+  p0.line_items[1].quantity = 2;
+  p0.line_items[1].current_quantity = 1;
+  const record = plan({ extract: extract(p0), reviewPrintWithPhoto: false });
+  assert.deepEqual(record.units.map((u) => u.print?.paidLineItemId ?? null), ["9002", null]);
+  const vouchers = [cv({ id: 1, unitIndex: 0 }), cv({ id: 2, unitIndex: 1 })];
+  const jobs = [{ id: 100, voucherId: 1, status: "queued", paidLineItemId: "9002" }];
+  // Any later orders/updated without a refund keeps the one PAID card.
+  const later = planGiftVoucherOrderChange({ facts: giftVoucherOrderChangeFacts({ ...p0, tags: "later" }, "orders/updated"), vouchers, printJobs: jobs });
+  assert.equal(later.revoked, 0);
+  assert.deepEqual([later.cancelJobsNow, later.cancelJobsLater], [[], []]);
+  // The same when a voucher and its card were removed (both lines 2 → 1).
+  p0.line_items[0].current_quantity = 1;
+  const both = planGiftVoucherOrderChange({
+    facts: giftVoucherOrderChangeFacts(p0, "orders/updated"),
+    vouchers: [cv({ id: 1, unitIndex: 0 })],
+    printJobs: jobs,
+  });
+  assert.equal(both.revoked, 0);
+  assert.deepEqual([both.cancelJobsNow, both.cancelJobsLater], [[], []]);
+  // A refund of that card later (current_quantity 0) cancels its job.
+  p0.line_items[0].current_quantity = 2;
+  p0.line_items[1].current_quantity = 0;
+  p0.refunds = [{ refund_line_items: [{ line_item_id: 9002, quantity: 1 }] }];
+  const refunded = planGiftVoucherOrderChange({ facts: giftVoucherOrderChangeFacts(p0, "orders/updated"), vouchers, printJobs: jobs });
+  assert.equal(refunded.revoked, 0, "the vouchers stay");
+  assert.deepEqual(refunded.cancelJobsLater, [100]);
+});
+
+test("planGiftVoucherOrderChange: a card already cancelled or failed counts before a live one", () => {
+  const vouchers = [cv({ id: 1, unitIndex: 0 }), cv({ id: 2, unitIndex: 1 }), cv({ id: 3, unitIndex: 2 })];
+  for (const given of ["cancelled", "failed"]) {
+    // The operator cancelled (or print.one failed) the card of unit 0; then one card is refunded.
+    const jobs = [
+      { id: 31, voucherId: 1, status: given, paidLineItemId: "9002" },
+      { id: 32, voucherId: 2, status: "queued", paidLineItemId: "9002" },
+      { id: 33, voucherId: 3, status: "queued", paidLineItemId: "9002" },
+    ];
+    const p = planGiftVoucherOrderChange({ facts: refundFacts({ 9002: 1 }, { 9001: 3, 9002: 3 }), vouchers, printJobs: jobs });
+    assert.deepEqual([p.cancelJobsNow, p.cancelJobsLater], [[], []], given);
+    // Two refunded: that card and the highest live one.
+    const two = planGiftVoucherOrderChange({ facts: refundFacts({ 9002: 2 }, { 9001: 3, 9002: 3 }), vouchers, printJobs: jobs });
+    assert.deepEqual(two.cancelJobsLater, [33], given);
+  }
+});
+
+test("planGiftVoucherOrderChange: planned again after a refund moved to an untouched sibling, one paid card survives", () => {
+  // 2 × (voucher + Premium-Karte); one voucher and one card refunded.
+  const facts = refundFacts({ 9001: 1, 9002: 1 }, { 9001: 2, 9002: 2 });
+  const jobs = [
+    { id: 1, voucherId: 1, status: "queued", paidLineItemId: "9002" },
+    { id: 2, voucherId: 2, status: "queued", paidLineItemId: "9002" },
+  ];
+  // At the webhook: unit 1 (highest, not known spent) is revoked — with its card.
+  const before = planGiftVoucherOrderChange({ facts, vouchers: [cv({ id: 1, unitIndex: 0 }), cv({ id: 2, unitIndex: 1 })], printJobs: jobs });
+  assert.deepEqual([before.flagIssued, before.cancelJobsLater], [[2], [2]]);
+  // Unit 1's card was spent: the refund moved to unit 0 (deactivated, its card cancelled).
+  const after = planGiftVoucherOrderChange({
+    facts,
+    vouchers: [cv({ id: 1, unitIndex: 0, status: "deactivated" }), cv({ id: 2, unitIndex: 1, balanceCents: 3000 })],
+    printJobs: [{ ...jobs[0], status: "cancelled" }, jobs[1]],
+  });
+  assert.equal(after.revoked, 0);
+  assert.deepEqual([after.cancelJobsNow, after.cancelJobsLater], [[], []], "unit 1 keeps its paid card");
+  // Still flagged (Shopify did not answer): the flagged unit's card stays the one to go.
+  const pending = planGiftVoucherOrderChange({
+    facts,
+    vouchers: [cv({ id: 1, unitIndex: 0 }), cv({ id: 2, unitIndex: 1, attention: "refund_after_use" })],
+    printJobs: jobs,
+  });
+  assert.deepEqual([pending.revoked, pending.cancelJobsLater], [0, [2]]);
+});
+
+test("planGiftVoucherOrderChange: a repeated webhook revokes nothing more", () => {
+  const facts = refundFacts({ 9001: 1 }, { 9001: 2 });
+  // The first delivery flagged unit 1; the flag may still be open or acknowledged, or the card deactivated.
+  for (const second of [cv({ id: 2, unitIndex: 1, attention: "refund_after_use" }), cv({ id: 2, unitIndex: 1, attention: "refund_after_use_ok" }), cv({ id: 2, unitIndex: 1, status: "deactivated" }), cv({ id: 2, unitIndex: 1, attention: "deactivate_failed" })]) {
+    const p = planGiftVoucherOrderChange({ facts, vouchers: [cv({ id: 1, unitIndex: 0 }), second], printJobs: [] });
+    assert.equal(p.revoked, 0, `${second.status}/${second.attention}`);
+    assert.deepEqual([...p.cancel, ...p.flagIssued, ...p.flagIssuing, ...p.cancelJobsNow, ...p.cancelJobsLater], []);
+  }
+  // The refund moved to an untouched sibling (unit 0 deactivated, unit 1 back to normal): still nothing.
+  const moved = [cv({ id: 1, unitIndex: 0, status: "deactivated" }), cv({ id: 2, unitIndex: 1 })];
+  assert.equal(planGiftVoucherOrderChange({ facts, vouchers: moved, printJobs: [] }).revoked, 0);
+  // A cancellation later revokes the rest — an existing refund flag stays as it is.
+  const later = planGiftVoucherOrderChange({
+    facts: { ...facts, cancelled: true },
+    vouchers: [cv({ id: 1, unitIndex: 0 }), cv({ id: 2, unitIndex: 1, attention: "refund_after_use" })],
     printJobs: [],
   });
+  assert.deepEqual(later.flagIssued, [1]);
+  assert.equal(later.attention, "cancelled_after_use");
+});
+
+test("planGiftVoucherOrderChange: a unit removed before payment was never created — a refund after it revokes nothing", () => {
+  // 2 ordered, 1 removed by an order edit before payment: only unit 0 exists (current_quantity 1).
+  const p0 = payload();
+  p0.line_items[0].quantity = 2;
+  p0.line_items[0].current_quantity = 1;
+  // A later delivery lists one refunded unit — the removed one: current_quantity is still 1.
+  p0.refunds = [{ refund_line_items: [{ line_item_id: 9001, quantity: 1 }] }];
+  const facts = giftVoucherOrderChangeFacts(p0, "orders/updated");
+  const p = planGiftVoucherOrderChange({ facts, vouchers: [cv({ id: 1, unitIndex: 0 })], printJobs: [] });
+  assert.equal(p.revoked, 0, "the paid unit stays");
+  // Removed after payment (both units exist): the removal revokes one.
+  const q = planGiftVoucherOrderChange({ facts, vouchers: [cv({ id: 1, unitIndex: 0 }), cv({ id: 2, unitIndex: 1 })], printJobs: [] });
+  assert.deepEqual(q.flagIssued, [2]);
+});
+
+test("planGiftVoucherOrderChange: an amount-only full refund revokes every unit", () => {
+  const p0 = payload({ financial_status: "refunded", refunds: [{ refund_line_items: [], transactions: [{ kind: "refund", amount: "54.90" }] }] });
+  p0.line_items[0].quantity = 2;
+  const facts = giftVoucherOrderChangeFacts(p0, "orders/updated");
+  const jobs = [{ id: 31, voucherId: 1, status: "queued", paidLineItemId: "9002" }];
+  const p = planGiftVoucherOrderChange({ facts, vouchers: [cv({ id: 1, unitIndex: 0 }), cv({ id: 2, unitIndex: 1, status: "pending", hasCode: false })], printJobs: jobs });
+  assert.equal(p.reason, "refunded");
+  assert.deepEqual(p.cancel, [2]);
+  assert.deepEqual(p.flagIssued, [1]);
+  assert.equal(p.revoked, 2);
+  assert.deepEqual(p.cancelJobsLater, [31], "the card of the issued unit goes through the provider");
+});
+
+test("planGiftVoucherOrderChange: no refund → nothing", () => {
+  const none = planGiftVoucherOrderChange({ facts: refundFacts({}, { 9001: 1 }), vouchers: [cv({ id: 1 })], printJobs: [] });
   assert.equal(none.revoked, 0);
   assert.deepEqual([...none.cancel, ...none.flagIssued, ...none.cancelJobsNow, ...none.cancelJobsLater], []);
 });
@@ -384,37 +685,33 @@ test("planGiftVoucherOrderChange: a refunded print add-on cancels its cards, rev
   ];
   // Only the card of one unit refunded (the vouchers stay): the highest unit's
   // card is already posted (final) and counts; nothing else is cancelled.
-  const onlyPrint = planGiftVoucherOrderChange({
-    facts: { cancelled: false, refunded: new Map([["9002", 1]]), lineQuantities: new Map([["9001", 3], ["9002", 3]]) },
-    vouchers,
-    printJobs: jobs,
-  });
+  const onlyPrint = planGiftVoucherOrderChange({ facts: refundFacts({ 9002: 1 }, { 9001: 3, 9002: 3 }), vouchers, printJobs: jobs });
   assert.equal(onlyPrint.revoked, 0);
   assert.deepEqual(onlyPrint.cancelJobsNow, []);
   assert.deepEqual(onlyPrint.cancelJobsLater, []);
   // Two cards refunded → unit 2 (posted) and unit 1 (at the printer).
-  const two = planGiftVoucherOrderChange({
-    facts: { cancelled: false, refunded: new Map([["9002", 2]]), lineQuantities: new Map([["9001", 3], ["9002", 3]]) },
-    vouchers,
-    printJobs: jobs,
-  });
+  const two = planGiftVoucherOrderChange({ facts: refundFacts({ 9002: 2 }, { 9001: 3, 9002: 3 }), vouchers, printJobs: jobs });
   assert.deepEqual(two.cancelJobsLater, [32]);
   assert.deepEqual(two.cancelJobsNow, []);
   // Voucher unit 0 and one card refunded → that unit's own card goes first.
   const paired = planGiftVoucherOrderChange({
-    facts: { cancelled: false, refunded: new Map([["9001", 1], ["9002", 1]]), lineQuantities: new Map([["9001", 1], ["9002", 1]]) },
+    facts: refundFacts({ 9001: 1, 9002: 1 }, { 9001: 1, 9002: 1 }),
     vouchers: [cv({ id: 1, unitIndex: 0, status: "pending", hasCode: false })],
     printJobs: [jobs[0]],
   });
   assert.deepEqual(paired.cancel, [1]);
   assert.deepEqual(paired.cancelJobsNow, [31]);
+  // The card of a unit revoked EARLIER also goes first (a stable choice across deliveries).
+  const earlier = planGiftVoucherOrderChange({
+    facts: refundFacts({ 9001: 1, 9002: 1 }, { 9001: 3, 9002: 3 }),
+    vouchers: [cv({ id: 1, unitIndex: 0, status: "deactivated" }), cv({ id: 2, unitIndex: 1 }), cv({ id: 3, unitIndex: 2 })],
+    printJobs: jobs,
+  });
+  assert.equal(earlier.revoked, 0);
+  assert.deepEqual(earlier.cancelJobsLater, [31]);
   // The queued card of an ISSUED voucher may be in the print pipeline's
   // hands (a submit lease): cancelled through the provider, not directly.
-  const issuedQueued = planGiftVoucherOrderChange({
-    facts: { cancelled: false, refunded: new Map([["9002", 1]]), lineQuantities: new Map([["9001", 1], ["9002", 1]]) },
-    vouchers: [cv({ id: 1, unitIndex: 0 })],
-    printJobs: [jobs[0]],
-  });
+  const issuedQueued = planGiftVoucherOrderChange({ facts: refundFacts({ 9002: 1 }, { 9001: 1, 9002: 1 }), vouchers: [cv({ id: 1, unitIndex: 0 })], printJobs: [jobs[0]] });
   assert.deepEqual(issuedQueued.cancelJobsNow, []);
   assert.deepEqual(issuedQueued.cancelJobsLater, [31]);
 });

@@ -196,6 +196,18 @@ export function giftVoucherErrorBody(code, message, field = null) {
  */
 
 /**
+ * Can the Premium-Karte really be fulfilled — the rule behind the page's
+ * `features.print` and the setup check: in-house
+ * (GIFT_VOUCHER_PRINT_PROVIDER=manual), or by print.one, configured AND
+ * released by the legal gate GIFT_VOUCHER_PRINT_SENDS_APPROVED.
+ * @param {{ printProvider: "printone" | "manual", printOneConfigured: boolean, printSendsApproved: boolean }} input
+ * @returns {boolean}
+ */
+export function isGiftVoucherPrintOffered(input) {
+  return input?.printProvider === "manual" || (input?.printOneConfigured === true && input?.printSendsApproved === true);
+}
+
+/**
  * Does the shop sell vouchers right now, and what may the page offer?
  *   available — GIFT_VOUCHERS_ENABLED and the admin switch „Verkauf im Shop“
  *     (else `disabled`), Shopify, the database and migration 0083 (else
@@ -218,8 +230,7 @@ export function giftVoucherStorefrontState(input) {
     unavailableReason = "not_configured";
   }
   const available = unavailableReason === null;
-  const printUsable =
-    input?.printProvider === "manual" || (input?.printOneConfigured === true && input?.printSendsApproved === true);
+  const printUsable = isGiftVoucherPrintOffered(input);
   return {
     available,
     unavailableReason,
