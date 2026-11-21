@@ -8,7 +8,7 @@ import { giftVoucherFlagSummary } from "@/lib/gift-voucher-flags.mjs";
 import { isShopifyConfigured } from "@/lib/shopify";
 import { isEmailConfigured } from "@/lib/email";
 import { isGiftVoucherBlobConfigured } from "@/lib/gift-voucher-blob";
-import { giftVoucherPrintProvider } from "@/lib/gift-voucher-print";
+import { giftVoucherPrintGateBlock, giftVoucherPrintProvider } from "@/lib/gift-voucher-print";
 import { GIFT_VOUCHER_DESIGNS, giftVoucherDesign } from "@/lib/gift-voucher-designs.mjs";
 import {
   checkGiftVoucherScopes,
@@ -25,7 +25,14 @@ import {
   type GiftVoucherPrintJob,
 } from "@/lib/gift-voucher-store";
 import { reportError } from "@/lib/observability";
-import { buildGutscheineSetup, shopifyAdminOrderUrl, type SetupProduct, type SetupShopify } from "./gutscheine-core.mjs";
+import {
+  buildGutscheineSetup,
+  isPrintOfferedInShop,
+  printOneHold,
+  shopifyAdminOrderUrl,
+  type SetupProduct,
+  type SetupShopify,
+} from "./gutscheine-core.mjs";
 import type { GutscheinDetail, GutscheinPrintJobView, GutscheinRow, GutscheineEnv, GutscheineSetup } from "./types";
 
 // A syntactically valid dummy code: encrypting it tells whether TOKEN_ENC_KEY
@@ -35,6 +42,10 @@ const KEY_PROBE_CODE = "MOKEYPROBE234567";
 /** The screen's environment: switches, limits, what is configured (never a value). */
 export function gutscheineEnv(): GutscheineEnv {
   const flags = giftVoucherFlagSummary();
+  // Why print.one takes no card right now (P4's submission gate: legal gate,
+  // keys, provider, https PUBLIC_BASE_URL) — the shop offers the card only
+  // when it may (isPrintOfferedInShop, the storefront's features.print rule).
+  const printGateBlock = giftVoucherPrintGateBlock()?.message ?? null;
   return {
     enabled: flags.enabled,
     shopifyConfigured: isShopifyConfigured(),
@@ -45,12 +56,22 @@ export function gutscheineEnv(): GutscheineEnv {
     printProvider: giftVoucherPrintProvider(),
     configuredPrintProvider: flags.printProvider,
     printOneConfigured: flags.printOne.configured,
+    printGateBlock,
+    printOffered: isPrintOfferedInShop({ configuredPrintProvider: flags.printProvider, printGateBlock }),
     printCountries: [...flags.printCountries],
     cardCostCents: flags.printOne.cardCostCents,
     limits: { ...flags.limits },
     validityYears: flags.validityYears,
     handles: { ...flags.productHandles },
   };
+}
+
+/**
+ * print.one takes no card right now (gate, keys, PUBLIC_BASE_URL, file store —
+ * printOneHold): its waiting cards then belong to „Druck offen“ (printed by hand).
+ */
+export function isPrintOneHeld(env: GutscheineEnv): boolean {
+  return printOneHold({ gateBlock: env.printGateBlock, blobConfigured: env.blobConfigured }) !== null;
 }
 
 /** The designs an operator can pick by hand (no „Eigenes Foto“). */
@@ -164,7 +185,8 @@ export function gutscheineSetup(input: {
   dbReady: boolean;
   tablesExist: boolean;
   salesEnabled: boolean;
-  openPrintJobs: number;
+  /** giftVoucherSummary: open print jobs, of them waiting for „Freigeben“, and the vouchers of „Druck offen“. */
+  print: { openPrintJobs: number; printReviewCount: number; printOpenCount: number };
   shopify: SetupShopify | null;
   checkedAt: string | null;
 }): GutscheineSetup {
@@ -182,7 +204,10 @@ export function gutscheineSetup(input: {
     printProvider: env.printProvider,
     configuredPrintProvider: env.configuredPrintProvider,
     printOneConfigured: env.printOneConfigured,
-    openPrintJobs: input.openPrintJobs,
+    printGateBlock: env.printGateBlock,
+    openPrintJobs: input.print.openPrintJobs,
+    printReviewCount: input.print.printReviewCount,
+    printOpenCount: input.print.printOpenCount,
     handles: env.handles,
     limits: env.limits,
     validityYears: env.validityYears,

@@ -1,4 +1,4 @@
-// POST /api/admin/gutscheine/action  { action, id, note?, reason? }
+// POST /api/admin/gutscheine/action  { action, id, note?, reason?, address? }
 //   → { ok: true, detail }  (reveal_code: { ok: true, code }; sync_balance also balanceCents)
 //
 // The operator's actions on one Geschenkgutschein (`id` = voucher id; the
@@ -18,12 +18,20 @@
 //                    an untouched card is deactivated, a spent one keeps its
 //                    acknowledged flag; 409 while Mo still checks the card)
 //   print_release    „Freigeben“ (review → queued)
-//   print_submit     „Jetzt drucken“ (print.one, behind GIFT_VOUCHER_PRINT_SENDS_APPROVED)
+//   print_submit     „Jetzt drucken“ (print.one, behind its submission gate)
 //   print_cancel     „Stornieren“ of the print job
 //   print_done       „Als versendet markieren“ (printed by hand)
+//   print_address {address}  „Adresse eingeben“ / „Adresse ändern“ — the
+//                    card's recipient (validatePostalAddress for
+//                    GIFT_VOUCHER_PRINT_COUNTRIES; 400 with `field`), only while
+//                    the card waits (review / queued, for print.one before its
+//                    print files exist; 409 otherwise); clears the voucher's
+//                    „Druck bezahlt, aber keine Adresse“
 // The libraries decide whether an action is allowed; their German message
-// comes back as the error (404 unknown, 409 wrong state, 502 Shopify /
-// print.one failed, 503 not configured). Every successful action is
+// comes back as the error (gutscheine-core.mjs actionErrorStatus: 404
+// unknown, 400 input, 409 wrong state / too late / Mo still busy / refunded /
+// purged, 502 a Shopify, print.one or Resend call failed, 503 not configured
+// or TOKEN_ENC_KEY unusable, 500 database / internal). Every successful action is
 // audit-logged as gift_voucher.<action> (the reveal as gift_voucher.code_reveal)
 // with ids only (voucher, print job,
 // the buyer's customer id) — never a code, a note, a reason or an address.
@@ -32,11 +40,14 @@ import { guardAdminPost, adminJson, adminJsonError } from "@/lib/admin-api";
 import { recordAdminAccess } from "@/lib/admin-access-log";
 import { reportError } from "@/lib/observability";
 import { formatGiftVoucherCode } from "@/lib/gift-voucher-core.mjs";
+import { giftVoucherPrintCountries } from "@/lib/gift-voucher-flags.mjs";
 import {
   getGiftVoucher,
   getGiftVoucherCode,
   getGiftVoucherPrintJobForVoucher,
+  replaceGiftVoucherAttention,
   setGiftVoucherAdminNote,
+  setGiftVoucherPrintJobAddress,
 } from "@/lib/gift-voucher-store";
 import {
   clearGiftVoucherAttention,
@@ -53,7 +64,7 @@ import {
   releaseGiftVoucherPrintJob,
   submitGiftVoucherPrintJob,
 } from "@/lib/gift-voucher-print";
-import { actionErrorStatus, parseGutscheinAction } from "@/app/admin/gutscheine/gutscheine-core.mjs";
+import { PRINT_ADDRESS_REFUSALS, actionErrorStatus, parseGutscheinAction } from "@/app/admin/gutscheine/gutscheine-core.mjs";
 import { loadGutscheinDetail } from "@/app/admin/gutscheine/gutscheine-server";
 import { ADMIN_ACTOR, giftVoucherTablesGate } from "../route-helpers";
 
@@ -61,7 +72,7 @@ export const maxDuration = 60;
 
 type ActionResult = { ok: true } | { ok: false; code: string; message: string };
 
-const PRINT_ACTIONS = new Set(["print_release", "print_submit", "print_cancel", "print_done"]);
+const PRINT_ACTIONS = new Set(["print_release", "print_submit", "print_cancel", "print_done", "print_address"]);
 
 export async function POST(req: Request) {
   const blocked = await guardAdminPost(req);
@@ -72,8 +83,10 @@ export async function POST(req: Request) {
   } catch {
     return adminJsonError("bad_request", "Ungültige Anfrage (kein JSON).", 400);
   }
-  const parsed = parseGutscheinAction(body);
-  if (!parsed.ok) return adminJsonError("bad_request", parsed.message, 400);
+  const parsed = parseGutscheinAction(body, { printCountries: giftVoucherPrintCountries() });
+  if (!parsed.ok) {
+    return adminJson({ error: { code: "bad_request", message: parsed.message, ...(parsed.field ? { field: parsed.field } : {}) } }, 400);
+  }
   const gate = await giftVoucherTablesGate();
   if (gate) return gate;
   const { action, id } = parsed;
@@ -157,13 +170,24 @@ export async function POST(req: Request) {
       case "print_done":
         result = await markGiftVoucherPrintJobDone(jobId as number);
         break;
+      case "print_address": {
+        if (!parsed.address) return adminJsonError("bad_request", "Bitte eine vollständige Adresse angeben.", 400);
+        const stored = await setGiftVoucherPrintJobAddress(jobId as number, parsed.address);
+        if (stored !== "ok") {
+          const refusal = PRINT_ADDRESS_REFUSALS[stored];
+          return adminJsonError(stored, refusal.message, refusal.status);
+        }
+        // The card has its address now: the note about a missing one is settled.
+        if (voucher.attention === "print_without_address") await replaceGiftVoucherAttention(id, "print_without_address", null);
+        result = { ok: true };
+        break;
+      }
       default:
         return adminJsonError("bad_request", "Unbekannte Aktion.", 400);
     }
 
     if (!result.ok) {
-      const status = result.code === "internal_error" ? 500 : actionErrorStatus(result.code);
-      return adminJsonError(result.code || "conflict", result.message || "Die Aktion ist nicht möglich.", status);
+      return adminJsonError(result.code || "conflict", result.message || "Die Aktion ist nicht möglich.", actionErrorStatus(result.code));
     }
     await audit(jobId !== null ? { jobId } : {});
     const detail = await loadGutscheinDetail(id);

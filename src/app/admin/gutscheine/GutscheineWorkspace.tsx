@@ -2,8 +2,10 @@
 
 // Gutscheine — the Geschenkgutscheine from the shop and those issued by hand
 // (not the newsletter welcome code; docs/GIFT_VOUCHERS.md). From the top:
-// the setup notices (grouped callouts, „Einrichtung“ opens the check), the
-// stats row, the toolbar (search, status, source, „Gutschein ausstellen“),
+// the setup notices (grouped callouts, „Einrichtung“ opens the check, a notice
+// about waiting cards links to „Druck offen“), the stats row (Zu prüfen,
+// Achtung and the open print jobs link to their filter), the toolbar (search,
+// status incl. „Druck offen“, source, „Gutschein ausstellen“),
 // the list (one server-rendered page, newest first) next to the selected
 // voucher (VoucherDetail, loaded on demand), and „Einrichtung“ (SetupPanel:
 // the setup check with Shopify and the operator settings).
@@ -13,6 +15,7 @@
 // selection (history.replaceState), #einrichtung opens the setup.
 
 import * as React from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { AlertTriangle, FileText, Gift, Mail, Plus, Printer, SearchX } from "lucide-react";
 import { adminTabHref } from "@/lib/admin-tabs.mjs";
@@ -45,6 +48,7 @@ import {
   deliveryLabel,
   groupNotices,
   gutscheineFilterParams,
+  hasAchtung,
   printStatusLabel,
   printStatusTone,
   voucherOriginLabel,
@@ -93,6 +97,23 @@ function DeliveryIcon({ row }: { row: GutscheinRow }) {
         <span className="sr-only">{label}</span>
       </span>
     </Tooltip>
+  );
+}
+
+/** A setup notice; one about waiting cards links to its list filter („Druck offen“). */
+function NoticeText({ notice }: { notice: GutscheineSetup["notices"][number] }) {
+  if (!notice.filter) return <>{notice.text}</>;
+  return (
+    <>
+      {notice.text}{" "}
+      <Link
+        href={adminTabHref("gutscheine", { status: notice.filter })}
+        scroll={false}
+        className="whitespace-nowrap font-medium text-accent underline-offset-2 hover:underline"
+      >
+        Anzeigen
+      </Link>
+    </>
   );
 }
 
@@ -220,7 +241,13 @@ export function GutscheineWorkspace({
   const redeemedShare = summary.issuedCents > 0 ? (summary.redeemedCents / summary.issuedCents) * 100 : null;
   const draftShare = summary.draftCount30d > 0 ? (summary.soldCount30d / summary.draftCount30d) * 100 : null;
   const statusCount = (value: GutscheineStatusFilter) =>
-    value === "held" ? summary.heldCount : value === "achtung" ? summary.attentionCount : null;
+    value === "held"
+      ? summary.heldCount
+      : value === "achtung"
+        ? summary.attentionCount
+        : value === "druck"
+          ? summary.printOpenCount
+          : null;
 
   // Two compact columns — the list rail of the SplitPane is 380 px wide.
   const columns: DataTableColumn<GutscheinRow>[] = [
@@ -232,7 +259,7 @@ export function GutscheineWorkspace({
           <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
             <span className="font-medium tabular-nums">{r.number}</span>
             <StatusBadge tone={voucherStatusTone(r.status)}>{voucherStatusLabel(r.status)}</StatusBadge>
-            {r.attention && <AlertTriangle className="size-3.5 shrink-0 text-warning" aria-label="Achtung" />}
+            {hasAchtung(r.attention) && <AlertTriangle className="size-3.5 shrink-0 text-warning" aria-label="Achtung" />}
           </div>
           <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
             <DeliveryIcon row={r} />
@@ -302,11 +329,13 @@ export function GutscheineWorkspace({
           }
         >
           {g.items.length === 1 ? (
-            g.items[0].text
+            <NoticeText notice={g.items[0]} />
           ) : (
             <ul className="flex list-disc flex-col gap-0.5 pl-4">
               {g.items.map((n) => (
-                <li key={n.key}>{n.text}</li>
+                <li key={n.key}>
+                  <NoticeText notice={n} />
+                </li>
               ))}
             </ul>
           )}
@@ -345,15 +374,23 @@ export function GutscheineWorkspace({
           size="sm"
           label="Zu prüfen"
           value={num(summary.heldCount)}
-          hint={summary.attentionCount > 0 ? `${num(summary.attentionCount)} mit „Achtung“` : undefined}
           href={adminTabHref("gutscheine", { status: "held" })}
           info="Bezahlte Gutscheine, die Mo angehalten hat (z. B. ausgeschaltet, Betrugsrisiko, Tageslimit) — „Ausstellen“ oder „Ablehnen“."
         />
         <Stat
           size="sm"
+          label="Achtung"
+          value={num(summary.attentionCount)}
+          href={adminTabHref("gutscheine", { status: "achtung" })}
+          info="Gutscheine mit einem offenen Hinweis, egal in welchem Status — z. B. erstattet, aber schon eingelöst, Sperren fehlgeschlagen, Premium-Karte ohne Adresse. Im Gutschein steht, was zu tun ist."
+        />
+        <Stat
+          size="sm"
           label="Druckaufträge offen"
           value={num(summary.openPrintJobs)}
-          info="Premium-Karten, die noch nicht verschickt sind: zu prüfen, wartend, übermittelt oder im Druck."
+          hint={summary.printReviewCount > 0 ? `${num(summary.printReviewCount)} zu prüfen` : undefined}
+          href={adminTabHref("gutscheine", { status: "druck" })}
+          info="Premium-Karten, die noch nicht verschickt sind: zu prüfen, wartend, übermittelt oder im Druck. „zu prüfen“ = warten auf „Freigeben“. Der Link zeigt „Druck offen“: die Karten, die auf jemanden warten — zu prüfen, fehlgeschlagen oder von Hand zu drucken."
         />
         <Stat
           size="sm"
@@ -361,7 +398,6 @@ export function GutscheineWorkspace({
           value={num(summary.draftCount30d)}
           hint={draftShare === null ? undefined : `${pct(draftShare, 0)} gekauft`}
           info="Im Gutschein-Designer mit „Jetzt kaufen“ angelegte Entwürfe der letzten 30 Tage. „gekauft“ = verkaufte Gutscheine je Entwurf (grob: ein Entwurf kann mehrere Gutscheine ergeben, abgebrochene Käufe bleiben Entwürfe)."
-          className="col-span-2"
         />
       </div>
 

@@ -56,6 +56,14 @@ export interface GutscheineEnv {
   /** GIFT_VOUCHER_PRINT_PROVIDER as set. */
   configuredPrintProvider: "printone" | "manual";
   printOneConfigured: boolean;
+  /**
+   * Why print.one takes no card right now (lib/gift-voucher-print.ts
+   * giftVoucherPrintGateBlock: the legal gate, keys, provider, an https
+   * PUBLIC_BASE_URL) — null when it does.
+   */
+  printGateBlock: string | null;
+  /** The shop offers the Premium-Karte: printed in-house, or print.one with its gate open. */
+  printOffered: boolean;
   printCountries: string[];
   /** PRINTONE_CARD_COST_CENTS — the estimate shown before printing. */
   cardCostCents: number;

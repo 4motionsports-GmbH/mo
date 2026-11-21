@@ -10,16 +10,16 @@
 // value). The rows and the notices above the list come from the tested
 // gutscheine-core.mjs buildGutscheineSetup. `fresh=1` re-reads the products
 // (otherwise cached 10 minutes per instance). A missing Premium-Karte product
-// is an error while the shop can sell the card (isGiftVoucherPrintOffered,
-// the rule of the page's `features.print`). Read-only; never fails on
-// Shopify (a failed check is a row „nicht prüfbar“).
+// is an error while the shop can sell the card (env.printOffered —
+// gutscheine-core.mjs isPrintOfferedInShop, the rule of the page's
+// `features.print`: in-house, or print.one with its submission gate open).
+// Read-only; never fails on Shopify (a failed check is a row „nicht prüfbar“).
 
 import { guardAdminGet, adminJson, adminJsonError } from "@/lib/admin-api";
 import { isDbConfigured } from "@/lib/db";
 import { reportError } from "@/lib/observability";
 import { getGiftVoucherSettings, giftVoucherSummary, giftVoucherTablesExist } from "@/lib/gift-voucher-store";
-import { isGiftVoucherPrintOffered } from "@/lib/gift-voucher-storefront.mjs";
-import { gutscheineEnv, gutscheineSetup, loadSetupShopify } from "@/app/admin/gutscheine/gutscheine-server";
+import { gutscheineEnv, gutscheineSetup, isPrintOneHeld, loadSetupShopify } from "@/app/admin/gutscheine/gutscheine-server";
 
 export const maxDuration = 30;
 
@@ -29,17 +29,12 @@ export async function GET(req: Request) {
   const fresh = new URL(req.url).searchParams.get("fresh") === "1";
   try {
     const env = gutscheineEnv();
-    const printOffered = isGiftVoucherPrintOffered({
-      printProvider: env.configuredPrintProvider,
-      printOneConfigured: env.printOneConfigured,
-      printSendsApproved: env.printSendsApproved,
-    });
     const dbReady = isDbConfigured();
     const tablesExist = dbReady ? await giftVoucherTablesExist() : false;
     const [settings, summary, shopify] = await Promise.all([
       getGiftVoucherSettings(),
-      tablesExist ? giftVoucherSummary() : Promise.resolve(null),
-      loadSetupShopify({ fresh, printOffered }),
+      tablesExist ? giftVoucherSummary({ printOneHeld: isPrintOneHeld(env) }) : Promise.resolve(null),
+      loadSetupShopify({ fresh, printOffered: env.printOffered }),
     ]);
     return adminJson(
       gutscheineSetup({
@@ -47,7 +42,7 @@ export async function GET(req: Request) {
         dbReady,
         tablesExist,
         salesEnabled: settings.salesEnabled,
-        openPrintJobs: summary?.openPrintJobs ?? 0,
+        print: summary ?? { openPrintJobs: 0, printReviewCount: 0, printOpenCount: 0 },
         shopify,
         checkedAt: new Date().toISOString(),
       })

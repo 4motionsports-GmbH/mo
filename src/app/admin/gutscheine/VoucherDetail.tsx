@@ -1,13 +1,17 @@
 "use client";
 
 // One Geschenkgutschein (right pane of „Gutscheine“): header (number, status,
-// value), the state callouts (Achtung, Zu prüfen, Fehler, Gesperrt), the facts
-// (value, balance + „Abgleichen“, valid until, the code „•••• last4“ +
-// „Code anzeigen“, order, buyer, Für / Von, message, design + photo,
-// delivery, e-mail), the internal note, the Premium-Karte's print job and
-// the actions. Loads itself (GET /api/admin/gutscheine/item, audited); every
-// action goes through POST /api/admin/gutscheine/action and answers the
-// fresh detail. Sends (issue, resend, print) and the irreversible „Sperren“
+// value), the state callouts (Achtung — or a revocation Mo still carries out,
+// or an acknowledged one as a neutral note —, Zu prüfen, Fehler, Gesperrt),
+// the facts (value, balance + „Abgleichen“, valid until, the code „•••• last4“
+// + „Code anzeigen“, order, buyer, Für / Von, message, design + photo,
+// delivery, e-mail), the internal note, the Premium-Karte's print job (with
+// „Adresse eingeben“) and the actions. Loads itself (GET
+// /api/admin/gutscheine/item, audited); every action goes through POST
+// /api/admin/gutscheine/action and answers the fresh detail — after a FAILED
+// action the detail is loaded again (the library may have changed the voucher
+// on the way). Sends (issue, retry, resend, print, release to print.one), the
+// irreversible „Sperren“ and clearing a revoke flag (it may deactivate a card)
 // are confirmed.
 
 import * as React from "react";
@@ -24,6 +28,7 @@ import {
   FileDown,
   Gift,
   Mail,
+  MapPin,
   Printer,
   RefreshCw,
   RotateCcw,
@@ -31,8 +36,9 @@ import {
   X,
 } from "lucide-react";
 import { adminTabHref } from "@/lib/admin-tabs.mjs";
-import { eurFromCents, num } from "@/lib/admin-format.mjs";
+import { eurFromCents, plural } from "@/lib/admin-format.mjs";
 import { ADMIN_DATE, ADMIN_DATE_TIME_SHORT, formatAdmin } from "@/lib/admin-datetime.mjs";
+import { GIFT_VOUCHER_TEXT_LIMITS, validatePostalAddress } from "@/lib/gift-voucher-core.mjs";
 import {
   Button,
   Callout,
@@ -51,22 +57,25 @@ import {
   IconButton,
   InfoTip,
   Input,
+  Select,
   Skeleton,
   StatusBadge,
   Textarea,
   toast,
   useConfirm,
 } from "../ui";
-import { adminFetch, errorMessage } from "../lib/admin-fetch";
+import { AdminApiError, adminFetch, errorMessage } from "../lib/admin-fetch";
 import { useAsyncAction } from "../lib/use-async-action";
 import { downloadFile } from "./download";
 import {
   DEACTIVATION_REASON_MAX,
   NOTE_MAX,
   PRINT_PROVIDER_LABELS,
-  attentionHint,
-  attentionLabel,
+  clearAttentionConfirm,
+  clearAttentionToast,
+  countryName,
   deliveryLabel,
+  hasAchtung,
   holdReasonHint,
   holdReasonLabel,
   mailStatusLabel,
@@ -74,6 +83,7 @@ import {
   printStatusLabel,
   printStatusTone,
   voucherActions,
+  voucherAttentionView,
   voucherOriginLabel,
   voucherStatusLabel,
   voucherStatusTone,
@@ -90,11 +100,13 @@ interface ActionAnswer {
   balanceCents?: number;
 }
 
+// The libraries answer ok only once it happened: retry once the card is
+// issued, resend once Resend took the mail. (clear_attention: clearAttentionToast.)
 const SUCCESS_TITLES: Partial<Record<GutscheinAction, string>> = {
   issue_held: "Gutschein ausgestellt",
   reject: "Gutschein abgelehnt",
-  retry: "Neuer Versuch geplant",
-  resend_mail: "E-Mail wird erneut gesendet",
+  retry: "Gutschein ausgestellt",
+  resend_mail: "E-Mail erneut gesendet",
   deactivate: "Gutschein gesperrt",
   sync_balance: "Restguthaben abgeglichen",
   note: "Notiz gespeichert",
@@ -103,6 +115,7 @@ const SUCCESS_TITLES: Partial<Record<GutscheinAction, string>> = {
   print_submit: "Karte an print.one übergeben",
   print_cancel: "Druckauftrag storniert",
   print_done: "Als versendet markiert",
+  print_address: "Adresse gespeichert",
 };
 
 export function VoucherDetail({
@@ -125,6 +138,8 @@ export function VoucherDetail({
   const [dialog, setDialog] = React.useState<null | "deactivate" | "reject">(null);
   const [busy, setBusy] = React.useState<GutscheinAction | null>(null);
   const [photoMissing, setPhotoMissing] = React.useState(false);
+  const [addressOpen, setAddressOpen] = React.useState(false);
+  const [addressError, setAddressError] = React.useState<{ field: AddressField | "form"; message: string } | null>(null);
   const { confirm, confirmDialog } = useConfirm();
 
   React.useEffect(() => {
@@ -145,25 +160,45 @@ export function VoucherDetail({
     return () => controller.abort();
   }, [id]);
 
+  // After a failed action: the library may have moved the voucher on (held →
+  // failed, a failed deactivation flagged, a mail with a new link pending, a
+  // print error) — show what is stored now.
+  const reload = React.useCallback(async () => {
+    try {
+      setDetail(await adminFetch<GutscheinDetail>(`${ITEM_PATH}?id=${id}`));
+    } catch {
+      // Keep what is shown — the error toast already said what went wrong.
+    }
+  }, [id]);
+
   const action = useAsyncAction(
     async (name: GutscheinAction, extra: Record<string, unknown> = {}) => {
+      const before = detail?.voucher ?? null;
       setBusy(name);
       try {
         const res = await adminFetch<ActionAnswer>(ACTION_PATH, { body: { action: name, id, ...extra } });
-        return { name, res };
+        return { name, res, before };
       } finally {
         setBusy(null);
       }
     },
     {
       errorToast: "Aktion nicht möglich",
-      onSuccess: ({ name, res }) => {
+      onSuccess: ({ name, res, before }) => {
         if (res.detail) {
           setDetail(res.detail);
           if (name === "note") setNote(res.detail.voucher.adminNote ?? "");
         }
-        const title = SUCCESS_TITLES[name];
-        if (title) toast({ variant: "success", title });
+        if (name === "clear_attention" && before) {
+          toast({ variant: "success", ...clearAttentionToast(before, res.detail?.voucher) });
+        } else {
+          const title = SUCCESS_TITLES[name];
+          if (title) toast({ variant: "success", title });
+        }
+        onChanged();
+      },
+      onError: () => {
+        void reload();
         onChanged();
       },
     }
@@ -178,6 +213,24 @@ export function VoucherDetail({
   const download = useAsyncAction(async (path: string, name: string) => downloadFile(path, name), {
     errorToast: "Download nicht möglich",
   });
+  const saveAddress = useAsyncAction(
+    async (address: AddressForm) => adminFetch<ActionAnswer>(ACTION_PATH, { body: { action: "print_address", id, address } }),
+    {
+      errorToast: false,
+      onSuccess: (res) => {
+        if (res.detail) setDetail(res.detail);
+        toast({ variant: "success", title: SUCCESS_TITLES.print_address ?? "Adresse gespeichert" });
+        setAddressOpen(false);
+        onChanged();
+      },
+      onError: (e) => {
+        const details = e instanceof AdminApiError ? (e.details as { error?: { field?: string } } | null) : null;
+        setAddressError({ field: addressField(details?.error?.field), message: errorMessage(e) });
+        void reload();
+        onChanged();
+      },
+    }
+  );
 
   if (loading && !detail) {
     return (
@@ -209,13 +262,13 @@ export function VoucherDetail({
   const v = detail.voucher;
   const job = detail.printJob;
   const acts = voucherActions(v);
-  const jobActs = job
-    ? printJobActions(job, v, { gateOpen: env.printSendsApproved, printOneConfigured: env.printOneConfigured })
-    : null;
+  const attention = voucherAttentionView(v);
+  const jobActs = job ? printJobActions(job, v, { gateBlock: env.printGateBlock, blobConfigured: env.blobConfigured }) : null;
   const mailTarget = v.source === "shop" ? v.buyerEmail : v.delivery === "email" ? v.recipientEmail : null;
   const noteDirty = note.trim() !== (v.adminNote ?? "").trim();
 
-  const issueHeld = async () => {
+  // „Ausstellen“ and „Erneut versuchen“ do the same: create the card, mail the code.
+  const confirmIssue = (name: "issue_held" | "retry") => async () => {
     const ok = await confirm({
       title: `Gutschein über ${eurFromCents(v.amountCents)} jetzt ausstellen?`,
       description: `Die Geschenkkarte wird in Shopify angelegt und ist sofort im Shop einlösbar.${
@@ -223,7 +276,30 @@ export function VoucherDetail({
       }${job ? " Die Premium-Karte folgt über den Druckauftrag." : ""}`,
       confirmLabel: "Ausstellen",
     });
-    if (ok) await run("issue_held");
+    if (ok) await run(name);
+  };
+  const issueHeld = confirmIssue("issue_held");
+  const retryIssue = confirmIssue("retry");
+  const clearAttention = async () => {
+    // A revoke flag is checked live and may deactivate a card (this one or an untouched sibling).
+    const c = clearAttentionConfirm(v);
+    if (c && !(await confirm({ title: c.title, description: c.description, confirmLabel: "Als geklärt markieren" }))) return;
+    await run("clear_attention");
+  };
+  const releasePrint = async (pj: GutscheinPrintJobView) => {
+    // With print.one taking cards, „Freigeben“ is the order: the next run prints and posts it.
+    if (pj.provider === "printone" && !env.printGateBlock) {
+      const a = pj.address;
+      const ok = await confirm({
+        title: "Karte freigeben?",
+        description: `print.one druckt sie mit dem nächsten Lauf${a ? ` und schickt sie an ${a.name}, ${a.postalCode} ${a.city}` : ""} (≈ ${eurFromCents(
+          env.cardCostCents
+        )} für Druck und Porto) — die Adresse geht an print.one.`,
+        confirmLabel: "Freigeben",
+      });
+      if (!ok) return;
+    }
+    await run("print_release");
   };
   const resendMail = async () => {
     if (!mailTarget) return;
@@ -272,7 +348,7 @@ export function VoucherDetail({
             <div className="flex flex-wrap items-center gap-2">
               <h2 className="text-base font-semibold tabular-nums">{v.number}</h2>
               <StatusBadge tone={voucherStatusTone(v.status)}>{voucherStatusLabel(v.status)}</StatusBadge>
-              {v.attention && (
+              {hasAchtung(v.attention) && (
                 <StatusBadge tone="warning" dot={false} icon={<AlertTriangle className="size-3" aria-hidden />}>
                   Achtung
                 </StatusBadge>
@@ -294,17 +370,19 @@ export function VoucherDetail({
         </div>
 
         {/* States */}
-        {v.attention && (
+        {attention && (
           <Callout
-            tone="warning"
-            title={`Achtung: ${attentionLabel(v.attention)}`}
+            tone={attention.kind === "acknowledged" ? "neutral" : "warning"}
+            title={attention.title}
             action={
-              <Button size="xs" variant="outline" onClick={() => void run("clear_attention")} loading={isBusy("clear_attention")}>
-                <CheckCircle2 aria-hidden /> Als geklärt markieren
-              </Button>
+              attention.kind === "achtung" && acts.clearAttention ? (
+                <Button size="xs" variant="outline" onClick={() => void clearAttention()} loading={isBusy("clear_attention")}>
+                  <CheckCircle2 aria-hidden /> Als geklärt markieren
+                </Button>
+              ) : undefined
             }
           >
-            {attentionHint(v.attention)}
+            {attention.text}
           </Callout>
         )}
         {v.status === "held" && (
@@ -315,7 +393,7 @@ export function VoucherDetail({
         {(v.status === "failed" || (v.lastError && v.status !== "issued" && v.status !== "cancelled" && v.status !== "rejected")) && (
           <Callout tone="destructive" title={v.status === "failed" ? "Ausstellen fehlgeschlagen" : "Letzter Fehler"}>
             {v.lastError ?? "Unbekannter Fehler."}
-            {v.attempts > 0 && <> · {num(v.attempts)} Versuche</>}
+            {v.attempts > 0 && <> · {plural(v.attempts, "Versuch", "Versuche")}</>}
             {v.nextAttemptAt && v.status !== "failed" && <> · nächster Versuch {formatAdmin(v.nextAttemptAt, ADMIN_DATE_TIME_SHORT)}</>}
           </Callout>
         )}
@@ -455,7 +533,9 @@ export function VoucherDetail({
           <DescriptionItem label="E-Mail">
             {mailStatusLabel(v.mailStatus)}
             {v.mailedAt && <span className="text-muted-foreground"> · {formatAdmin(v.mailedAt, ADMIN_DATE_TIME_SHORT)}</span>}
-            {v.mailStatus !== "sent" && v.mailAttempts > 0 && <span className="text-muted-foreground"> · {num(v.mailAttempts)} Versuche</span>}
+            {v.mailStatus !== "sent" && v.mailAttempts > 0 && (
+              <span className="text-muted-foreground"> · {plural(v.mailAttempts, "Versuch", "Versuche")}</span>
+            )}
           </DescriptionItem>
           <DescriptionItem label="Ausgestellt">
             {v.issuedAt ? formatAdmin(v.issuedAt, ADMIN_DATE_TIME_SHORT) : "—"}
@@ -482,8 +562,13 @@ export function VoucherDetail({
             acts={jobActs}
             isBusy={isBusy}
             onRun={(name) => void run(name)}
+            onRelease={() => void releasePrint(job)}
             onSubmit={() => void submitPrint(job)}
             onCancel={() => void cancelPrint(job)}
+            onEditAddress={() => {
+              setAddressError(null);
+              setAddressOpen(true);
+            }}
             onDownload={(side) =>
               void download.run(`/api/admin/gutscheine/print-file?id=${v.id}&side=${side}`, `Gutschein-${v.number}-${side === "outside" ? "aussen" : "innen"}.jpg`)
             }
@@ -501,7 +586,7 @@ export function VoucherDetail({
               </Button>
             )}
             {acts.retry && (
-              <Button onClick={() => void run("retry")} loading={isBusy("retry")}>
+              <Button onClick={() => void retryIssue()} loading={isBusy("retry")}>
                 <RotateCcw aria-hidden /> Erneut versuchen
               </Button>
             )}
@@ -570,6 +655,20 @@ export function VoucherDetail({
             if (r) setDialog(null);
           }}
         />
+        {job && (
+          <AddressDialog
+            open={addressOpen}
+            onOpenChange={setAddressOpen}
+            initial={job.address}
+            countries={env.printCountries}
+            pending={saveAddress.pending}
+            serverError={addressError}
+            onSave={(address) => {
+              setAddressError(null);
+              void saveAddress.run(address);
+            }}
+          />
+        )}
         {confirmDialog}
       </CardContent>
     </Card>
@@ -581,8 +680,10 @@ function PrintJobCard({
   acts,
   isBusy,
   onRun,
+  onRelease,
   onSubmit,
   onCancel,
+  onEditAddress,
   onDownload,
   downloading,
   costEstimateCents,
@@ -591,8 +692,10 @@ function PrintJobCard({
   acts: ReturnType<typeof printJobActions>;
   isBusy: (name: GutscheinAction) => boolean;
   onRun: (name: GutscheinAction) => void;
+  onRelease: () => void;
   onSubmit: () => void;
   onCancel: () => void;
+  onEditAddress: () => void;
   onDownload: (side: "outside" | "inside") => void;
   downloading: boolean;
   costEstimateCents: number;
@@ -607,10 +710,11 @@ function PrintJobCard({
         <StatusBadge tone={printStatusTone(job.status)}>{printStatusLabel(job.status)}</StatusBadge>
         <span className="text-xs text-muted-foreground">{PRINT_PROVIDER_LABELS[job.provider]}</span>
         <InfoTip panelClassName="max-w-sm">
-          Gefaltete Karte 14 × 14 cm im Umschlag. „Zu prüfen“: eine Karte mit Kundenfoto wartet auf „Freigeben“. Über
-          print.one geht sie erst mit der Freigabe GIFT_VOUCHER_PRINT_SENDS_APPROVED hinaus (Mo übermittelt wartende
-          Karten alle 5 Minuten, „Jetzt drucken“ sofort); „Von Hand“: Druckdateien herunterladen, drucken, verschicken und
-          „Als versendet markieren“.
+          Gefaltete Karte 14 × 14 cm im Umschlag. „Zu prüfen“: Die Karte wartet auf „Freigeben“ (Kundenfoto) oder auf
+          ihre Adresse. print.one übernimmt wartende Karten alle 5 Minuten („Jetzt drucken“ sofort) — nur mit der Freigabe
+          GIFT_VOUCHER_PRINT_SENDS_APPROVED, einer https-PUBLIC_BASE_URL und dem Datei-Speicher. Solange print.one nicht
+          druckt, und bei „Von Hand“: Druckdateien herunterladen, drucken, verschicken und „Als versendet markieren“. Alle
+          Karten, die auf jemanden warten: Status „Druck offen“.
         </InfoTip>
       </div>
       <div className="grid gap-x-6 gap-y-3 text-sm sm:grid-cols-2">
@@ -633,6 +737,11 @@ function PrintJobCard({
             </address>
           ) : (
             <p className="mt-0.5 text-muted-foreground">Keine Adresse</p>
+          )}
+          {acts.address && (
+            <Button size="xs" variant={a ? "ghost" : "outline"} className="-ml-1 mt-1" onClick={onEditAddress}>
+              <MapPin aria-hidden /> {a ? "Adresse ändern" : "Adresse eingeben"}
+            </Button>
           )}
         </div>
         <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 text-xs">
@@ -677,15 +786,16 @@ function PrintJobCard({
           {job.error}
         </Callout>
       )}
-      {acts.submitBlocked && (
+      {(acts.submitBlocked || acts.held) && (
         <Callout tone="neutral" compact>
-          „Jetzt drucken“ gesperrt: {acts.submitBlocked}
+          {acts.submit ? <>„Jetzt drucken“ gesperrt: {acts.submitBlocked}</> : <>print.one druckt gerade nicht: {acts.held}</>}
+          {acts.held && acts.files && " Bis dahin lässt sich die Karte von Hand drucken: Druckdateien herunterladen, dann „Als versendet markieren“."}
         </Callout>
       )}
       {anyAction && (
         <div className="flex flex-wrap items-center gap-2">
           {acts.release && (
-            <Button size="sm" onClick={() => onRun("print_release")} loading={isBusy("print_release")}>
+            <Button size="sm" onClick={onRelease} loading={isBusy("print_release")}>
               <CheckCircle2 aria-hidden /> Freigeben
             </Button>
           )}
@@ -717,6 +827,130 @@ function PrintJobCard({
         </div>
       )}
     </section>
+  );
+}
+
+type AddressField = "name" | "line1" | "line2" | "postalCode" | "city" | "country";
+type AddressForm = Record<AddressField, string>;
+
+/** The form field of an address error key (address.line1 → line1; anything else → the form). */
+function addressField(field: string | undefined | null): AddressField | "form" {
+  if (!field) return "form";
+  const f = field.startsWith("address.") ? field.slice("address.".length) : field;
+  if (f === "address") return "line1";
+  return f === "name" || f === "line1" || f === "line2" || f === "postalCode" || f === "city" || f === "country" ? f : "form";
+}
+
+/**
+ * „Adresse eingeben“ / „Adresse ändern“ of a waiting Premium-Karte — checked
+ * here with the rule the route repeats (validatePostalAddress for
+ * GIFT_VOUCHER_PRINT_COUNTRIES); the server's refusal shows at its field.
+ */
+function AddressDialog({
+  open,
+  onOpenChange,
+  initial,
+  countries,
+  pending,
+  serverError,
+  onSave,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  initial: GutscheinPrintJobView["address"];
+  countries: string[];
+  pending: boolean;
+  serverError: { field: AddressField | "form"; message: string } | null;
+  onSave: (address: AddressForm) => void;
+}) {
+  const L = GIFT_VOUCHER_TEXT_LIMITS;
+  const fromInitial = React.useCallback(
+    (): AddressForm => ({
+      name: initial?.name ?? "",
+      line1: initial?.addressLine1 ?? "",
+      line2: initial?.addressLine2 ?? "",
+      postalCode: initial?.postalCode ?? "",
+      city: initial?.city ?? "",
+      country: initial?.country ?? countries[0] ?? "DE",
+    }),
+    [initial, countries]
+  );
+  const [form, setForm] = React.useState<AddressForm>(fromInitial);
+  const [errors, setErrors] = React.useState<Partial<Record<AddressField | "form", string>>>({});
+  // Fresh from the stored address each time the dialog opens — never while it
+  // is open (a reload after a refused save must not wipe what was typed).
+  const wasOpen = React.useRef(false);
+  React.useEffect(() => {
+    if (open && !wasOpen.current) {
+      setForm(fromInitial());
+      setErrors({});
+    }
+    wasOpen.current = open;
+  }, [open, fromInitial]);
+  React.useEffect(() => {
+    if (serverError) setErrors({ [serverError.field]: serverError.message });
+  }, [serverError]);
+  const set = (key: AddressField, value: string) => {
+    setForm((f) => ({ ...f, [key]: value }));
+    setErrors((e) => (e[key] || e.form ? { ...e, [key]: undefined, form: undefined } : e));
+  };
+  const submit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const checked = validatePostalAddress(form, { countries, locale: "de" });
+    if (!checked.ok) {
+      setErrors({ [addressField(checked.field)]: checked.message });
+      return;
+    }
+    onSave(form);
+  };
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent size="sm">
+        <DialogHeader>
+          <DialogTitle>{initial ? "Adresse ändern" : "Adresse eingeben"}</DialogTitle>
+          <DialogDescription>Wohin die Premium-Karte geht — nur nach {countries.map(countryName).join(", ")}.</DialogDescription>
+        </DialogHeader>
+        <form className="mt-4 flex flex-col gap-3" onSubmit={submit} noValidate>
+          <Field label="Name" required error={errors.name}>
+            <Input value={form.name} maxLength={L.addressName} onChange={(e) => set("name", e.target.value)} autoComplete="off" data-autofocus="" />
+          </Field>
+          <Field label="Straße und Hausnummer" required error={errors.line1}>
+            <Input value={form.line1} maxLength={L.addressLine} onChange={(e) => set("line1", e.target.value)} autoComplete="off" />
+          </Field>
+          <Field label="Adresszusatz" error={errors.line2}>
+            <Input value={form.line2} maxLength={L.addressLine} onChange={(e) => set("line2", e.target.value)} autoComplete="off" />
+          </Field>
+          <div className="grid grid-cols-[7rem_minmax(0,1fr)] gap-3">
+            <Field label="PLZ" required error={errors.postalCode}>
+              <Input value={form.postalCode} inputMode="numeric" maxLength={10} onChange={(e) => set("postalCode", e.target.value)} autoComplete="off" />
+            </Field>
+            <Field label="Ort" required error={errors.city}>
+              <Input value={form.city} maxLength={L.city} onChange={(e) => set("city", e.target.value)} autoComplete="off" />
+            </Field>
+          </div>
+          {countries.length > 1 && (
+            <Field label="Land" error={errors.country}>
+              <Select value={form.country} onChange={(e) => set("country", e.target.value)}>
+                {countries.map((c) => (
+                  <option key={c} value={c}>
+                    {countryName(c)}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+          )}
+          {errors.form && <Callout tone="destructive">{errors.form}</Callout>}
+          <DialogFooter className="mt-1">
+            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+              Abbrechen
+            </Button>
+            <Button type="submit" loading={pending}>
+              Speichern
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
   );
 }
 
