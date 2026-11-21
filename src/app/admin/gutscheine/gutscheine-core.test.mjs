@@ -876,6 +876,17 @@ test("buildGutscheineSetup: the Shopify row says „Konfiguriert“ until Shopif
   );
   assert.equal(down?.state, "warn");
   assert.equal(down?.detail, "Nicht erreichbar: Zeitüberschreitung");
+  const offline = row(
+    buildGutscheineSetup({
+      ...SETUP_OK,
+      shopify: {
+        scopes: { ok: false, message: "Shopify war nicht erreichbar (Netzwerkfehler)." },
+        products: { ok: false, message: "Shopify war nicht erreichbar (Netzwerkfehler)." },
+        issueLimitCents: null,
+      },
+    })
+  );
+  assert.equal(offline?.detail, "Nicht erreichbar.", "the reason is in the rows below — not said twice");
   // One check answered: Shopify is reachable.
   const partly = row(
     buildGutscheineSetup({ ...SETUP_OK, shopify: { ...SETUP_OK.shopify, scopes: { ok: false, message: "GraphQL-Fehler" } } })

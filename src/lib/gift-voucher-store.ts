@@ -270,8 +270,9 @@ export interface GiftVoucherListFilter {
   attention?: boolean;
   /**
    * Only vouchers whose Premium-Karte waits for an operator („Druck offen“):
-   * print job in review or failed, or queued for printing by hand — of a
-   * voucher that did not end (cancelled, rejected, deactivated).
+   * print job in review or failed, or — once the voucher is issued — queued
+   * for printing by hand; never of a voucher that ended (cancelled, rejected,
+   * deactivated).
    */
   print?: boolean;
   /** With `print`: print.one takes no card right now, so its queued jobs wait for an operator too. */
@@ -1465,8 +1466,9 @@ function likePattern(q: string): string {
  * The admin list, newest first, with filters: status, source, attention
  * only („Achtung“ — an acknowledged revoke flag is no „Achtung“ any more),
  * open print work only („Druck offen“: a print job in review or failed, or
- * queued for printing by hand — the manual provider, or print.one while it
- * takes no card (`printOneHeld`) — of a voucher that did not end), and a
+ * — of an issued voucher — queued for printing by hand: the manual provider,
+ * or print.one while it takes no card (`printOneHeld`); never of a voucher
+ * that ended), and a
  * search over the voucher number (G-2026-00042), the order name, buyer /
  * recipient name and e-mail, and the last four characters of the code.
  * Pages of 1–100 rows; `total` counts every match.
@@ -1507,7 +1509,8 @@ export async function listGiftVouchers(
                   AND EXISTS (SELECT 1 FROM gift_voucher_print_jobs p
                                WHERE p.voucher_id = v.id
                                  AND (p.status IN ('review', 'failed')
-                                      OR (p.status = 'queued' AND (p.provider = 'manual' OR ${printOneHeld}::boolean))))))
+                                      OR (p.status = 'queued' AND v.status = 'issued'
+                                          AND (p.provider = 'manual' OR ${printOneHeld}::boolean))))))
          AND (${pattern}::text IS NULL
               OR v.id = ${numberId}::bigint
               OR v.code_last4 = ${last4}::text
@@ -1531,7 +1534,8 @@ export async function listGiftVouchers(
                   AND EXISTS (SELECT 1 FROM gift_voucher_print_jobs p
                                WHERE p.voucher_id = v.id
                                  AND (p.status IN ('review', 'failed')
-                                      OR (p.status = 'queued' AND (p.provider = 'manual' OR ${printOneHeld}::boolean))))))
+                                      OR (p.status = 'queued' AND v.status = 'issued'
+                                          AND (p.provider = 'manual' OR ${printOneHeld}::boolean))))))
          AND (${pattern}::text IS NULL
               OR v.id = ${numberId}::bigint
               OR v.code_last4 = ${last4}::text
@@ -1606,7 +1610,8 @@ export async function giftVoucherSummary(
            JOIN gift_vouchers g ON g.id = p.voucher_id
           WHERE g.status NOT IN ('cancelled', 'rejected', 'deactivated')
             AND (p.status IN ('review', 'failed')
-                 OR (p.status = 'queued' AND (p.provider = 'manual' OR ${printOneHeld}::boolean))))::int AS print_open_count,
+                 OR (p.status = 'queued' AND g.status = 'issued'
+                     AND (p.provider = 'manual' OR ${printOneHeld}::boolean))))::int AS print_open_count,
         (SELECT count(*) FROM gift_voucher_drafts WHERE created_at >= now() - interval '30 days')::int AS draft_count_30d
       FROM gift_vouchers
     `) as Row[];

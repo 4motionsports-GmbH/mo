@@ -869,6 +869,12 @@ export const MANUAL_REASON_OPTIONS = Object.freeze(
  * }} SetupInput
  */
 
+/** „Nicht erreichbar“ with the reason — unless the reason says just that. @param {string} message */
+function unreachableText(message) {
+  const m = message.trim();
+  return !m || /nicht erreichbar/i.test(m) ? "Nicht erreichbar." : `Nicht erreichbar: ${m}`;
+}
+
 /** German names of the countries a card can go to (else the ISO code). */
 export const COUNTRY_NAMES = Object.freeze({ DE: "Deutschland", AT: "Österreich", CH: "Schweiz", LU: "Luxemburg", NL: "Niederlande" });
 
@@ -984,11 +990,7 @@ export function buildGutscheineSetup(input) {
       "Shopify",
       "Shopify Admin API",
       reachable ? "ok" : "warn",
-      !sh
-        ? "Konfiguriert (SHOPIFY_*)."
-        : reachable
-          ? "Verbunden."
-          : `Nicht erreichbar: ${sh.scopes.ok ? "" : sh.scopes.message}`
+      !sh ? "Konfiguriert (SHOPIFY_*)." : reachable ? "Verbunden." : unreachableText(sh.scopes.ok ? "" : sh.scopes.message)
     );
     if (!sh) {
       check("scope", "Shopify", "Berechtigung write_gift_cards", "pending", "Wird geprüft …");
