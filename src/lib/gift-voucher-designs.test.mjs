@@ -405,6 +405,30 @@ test("photo front: the white eyebrow keeps 4.5 : 1 over a bright photo (legibili
   }
 });
 
+test("small print (number, labels, footer, the back's site line) has ≥ 4.5 : 1 on paper and card", () => {
+  /** @param {{ svg: string } | undefined} e */
+  const fillOf = (e) => /** @type {string} */ (/ fill="(#[0-9a-f]{6})"/.exec(e?.svg ?? "")?.[1]);
+  for (const { key } of GIFT_VOUCHER_DESIGNS) {
+    for (const [layout, panel] of /** @type {const} */ ([["landscape", "inside"], ["square", "inside-info"]])) {
+      const l = layoutOf(key, layout, panel);
+      const paper = fillOf(l.elements.find((e) => e.role === "background"));
+      const card = fillOf(l.elements.find((e) => e.role === "decor" && /^<rect [^>]* rx="[^"]*" fill="#[0-9a-f]{6}" stroke=/.test(e.svg)));
+      // The footer's voucher number is drawn in the small-print colour (as are WERT, GÜLTIG BIS, „Guthaben prüfen“).
+      const label = fillOf(l.elements.find((e) => e.role === "number"));
+      assert.ok(paper && card && label, `${key} ${layout}: colours found`);
+      for (const [surface, bg] of [["paper", paper], ["card", card]]) {
+        assert.ok(contrast(label, bg) >= 4.5, `${key} ${layout}: ${label} on ${surface} ${bg} = ${contrast(label, bg).toFixed(2)} : 1`);
+      }
+      const labels = l.elements.filter((e) => e.role === "text" && fillOf(e) === label);
+      assert.ok(labels.length >= 4, `${key} ${layout}: labels and footer share the small-print colour`);
+    }
+    const back = layoutOf(key, "square", "back");
+    const site = back.elements.filter((e) => e.role === "text").pop();
+    const bg = fillOf(back.elements.find((e) => e.role === "background"));
+    assert.ok(contrast(fillOf(site), bg) >= 4.5, `${key} back: site line ${contrast(fillOf(site), bg).toFixed(2)} : 1`);
+  }
+});
+
 test("a sample carries the watermark, a real voucher does not", () => {
   const sample = layoutOf("christmas", "landscape", "inside", { data: { ...DATA, sample: true, code: null, number: null } });
   assert.ok(sample.elements.some((e) => e.role === "watermark"));

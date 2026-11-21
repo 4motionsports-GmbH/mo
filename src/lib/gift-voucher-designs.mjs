@@ -251,37 +251,37 @@ const NAVY = "#00577f";
 const THEMES = {
   classic: {
     front: { wordmark: BRAND_BLUE, eyebrow: "#d6c398", value: "url(#champagne)", name: "#ece6d8", url: "#8e979f", rule: "#c9b17f" },
-    paper: "#fbfaf6", ink: "#1b1d20", soft: "#4b5157", label: "#80878e", eyebrow: "#9a7f4a",
+    paper: "#fbfaf6", ink: "#1b1d20", soft: "#4b5157", label: "#646b72", eyebrow: "#9a7f4a",
     card: "#ffffff", cardLine: "#e7e1d2", qrDark: "#15171a", script: "#1b1d20", motif: "#15171a", motif2: "#c9b17f",
     back: "#fbfaf6", backWordmark: BRAND_BLUE,
   },
   birthday: {
     front: { wordmark: BRAND_BLUE, eyebrow: BRAND_BLUE, value: NAVY, name: "#1d3646", url: "#6b7f8c", rule: "#f2a33a" },
-    paper: "#ffffff", ink: "#1b1d20", soft: "#46545e", label: "#7a8a96", eyebrow: BRAND_BLUE,
+    paper: "#ffffff", ink: "#1b1d20", soft: "#46545e", label: "#5f6f7b", eyebrow: BRAND_BLUE,
     card: "#f3f9fd", cardLine: "#d8ebf6", qrDark: "#0d2a3b", script: "#14324a", motif: BRAND_BLUE, motif2: "#f2a33a",
     back: "#ffffff", backWordmark: BRAND_BLUE,
   },
   christmas: {
     front: { wordmark: "#ffffff", eyebrow: "#d9b26f", value: "#ffffff", name: "#ead2a0", url: "#9fb3c8", rule: "#d9b26f" },
-    paper: "#fbfaf6", ink: "#0b2440", soft: "#3d5168", label: "#7b8a9a", eyebrow: "#9c7a3c",
+    paper: "#fbfaf6", ink: "#0b2440", soft: "#3d5168", label: "#5f6e7e", eyebrow: "#9c7a3c",
     card: "#ffffff", cardLine: "#e9e1cf", qrDark: "#0b2440", script: "#0b2440", motif: "#c9a15c", motif2: "#0b2440",
     back: "#fbfaf6", backWordmark: "#0b2440",
   },
   thanks: {
     front: { wordmark: BRAND_BLUE, eyebrow: BRAND_BLUE, value: NAVY, name: NAVY, url: "#5f7f93", rule: BRAND_BLUE },
-    paper: "#ffffff", ink: "#1b1d20", soft: "#46545e", label: "#7a8a96", eyebrow: BRAND_BLUE,
+    paper: "#ffffff", ink: "#1b1d20", soft: "#46545e", label: "#5f6f7b", eyebrow: BRAND_BLUE,
     card: "#f2f9fd", cardLine: "#d3e9f5", qrDark: "#0d2a3b", script: "#0f3b57", motif: BRAND_BLUE, motif2: "#7cc6e8",
     back: "#ffffff", backWordmark: BRAND_BLUE,
   },
   training: {
     front: { wordmark: "#ffffff", eyebrow: "#2aa9e6", value: "#ffffff", name: "#ffffff", url: "#8f99a3", rule: BRAND_BLUE },
-    paper: "#ffffff", ink: "#0f1113", soft: "#454c53", label: "#7d868e", eyebrow: BRAND_BLUE,
+    paper: "#ffffff", ink: "#0f1113", soft: "#454c53", label: "#5f676f", eyebrow: BRAND_BLUE,
     card: "#f4f6f7", cardLine: "#e1e5e8", qrDark: "#0f1113", script: "#0f1113", motif: BRAND_BLUE, motif2: "#0f1113",
     back: "#ffffff", backWordmark: "#0f1113",
   },
   photo: {
     front: { wordmark: "#ffffff", eyebrow: "#ffffff", value: "#ffffff", name: "#ffffff", url: "#e6eaee", rule: "#ffffff" },
-    paper: "#fbfaf6", ink: "#1b1d20", soft: "#4b5157", label: "#80878e", eyebrow: BRAND_BLUE,
+    paper: "#fbfaf6", ink: "#1b1d20", soft: "#4b5157", label: "#646b72", eyebrow: BRAND_BLUE,
     card: "#ffffff", cardLine: "#e7e3d8", qrDark: "#15171a", script: "#1b1d20", motif: BRAND_BLUE, motif2: "#9aa3ab",
     back: "#fbfaf6", backWordmark: BRAND_BLUE,
   },
