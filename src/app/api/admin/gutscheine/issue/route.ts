@@ -1,7 +1,7 @@
 // POST /api/admin/gutscheine/issue
 //   { amountCents, reason, designKey, recipientName?, senderName?, message?,
 //     delivery: "pdf" | "email" | "print", recipientEmail?, address?, adminNote? }
-//   → { ok: true, id, number }
+//   → { ok: true, id, number, status, lastError }
 //
 // „Gutschein ausstellen“ — a Geschenkgutschein issued by hand (Kulanz,
 // Marketing, Gewinnspiel, Firmengeschenk, Sonstiges). Checked here with the
@@ -10,10 +10,13 @@
 // e-mail / postal address for GIFT_VOUCHER_PRINT_COUNTRIES, printable texts
 // within their limits); lib/gift-voucher-issue.ts issueManualGiftVoucher
 // checks again, creates the Shopify gift card at once and — per delivery —
-// mails it or creates the print job. A refused input answers 400
-// { error: { code, message, field } } (German); the library's other refusals
-// keep their status (409 / 502 / 503). Audit-logged (gift_voucher.issue,
-// voucher id only — never an address, e-mail or text).
+// mails it or creates the print job. `ok` means the voucher exists; whether
+// the card was created right away is its `status` („issued“ — otherwise the
+// sweep retries and `lastError` says why; the dialog warns, gutscheine-core.mjs
+// issuedToast). A refused input answers 400 { error: { code, message, field } }
+// (German); the library's other refusals get actionErrorStatus (409 / 500 /
+// 502 / 503). Audit-logged (gift_voucher.issue, voucher id only — never an
+// address, e-mail or text).
 
 import { guardAdminPost, adminJson, adminJsonError } from "@/lib/admin-api";
 import { recordAdminAccess } from "@/lib/admin-access-log";
@@ -56,7 +59,13 @@ export async function POST(req: Request) {
     }
     await recordAdminAccess({ action: "gift_voucher.issue", detail: { voucherId: res.id } }, req);
     const voucher = await getGiftVoucher(res.id);
-    return adminJson({ ok: true, id: res.id, number: voucher?.number ?? null });
+    return adminJson({
+      ok: true,
+      id: res.id,
+      number: voucher?.number ?? null,
+      status: voucher?.status ?? null,
+      lastError: voucher?.lastError ?? null,
+    });
   } catch (err) {
     reportError(err, { route: "api/admin/gutscheine/issue" });
     return adminJsonError("internal_error", "Der Gutschein konnte nicht ausgestellt werden.", 500);

@@ -3,12 +3,16 @@
 // routes and the client workspace:
 //
 //   · the list filter in the URL (?status= ?quelle= ?q= ?seite=) and its
-//     mapping to the store filter (listGiftVouchers)
+//     mapping to the store filter (listGiftVouchers), incl. „Druck offen“
 //   · labels and StatusBadge tones of vouchers, print jobs, mails, deliveries
-//   · which actions a voucher and its print job offer
+//   · how an attention flag shows („Achtung“, a revocation Mo still carries
+//     out, an acknowledged one) and the toast after „Als geklärt markieren“
+//   · which actions a voucher and its print job offer, and why print.one
+//     takes no card right now
 //   · the Shopify admin link of an order, the € input of the issue dialog
 //   · the checks of an operator action and of a voucher issued by hand
-//     (the server repeats them; P3's issueManualGiftVoucher checks again)
+//     (the server repeats them; P3's issueManualGiftVoucher checks again),
+//     the HTTP status of a refused action, the toast after issuing by hand
 //   · the setup check („Einrichtung“) and the notices above the list
 //
 // Pure (no I/O, no Node built-ins — client components import it); tested in
@@ -29,7 +33,12 @@ import {
   sanitizeGiftVoucherText,
   validatePostalAddress,
 } from "../../../lib/gift-voucher-core.mjs";
-import { isAcknowledgedRevocation } from "../../../lib/gift-voucher-issue-core.mjs";
+import {
+  isAcknowledgedRevocation,
+  pickRevocationsToResolve,
+  planClearGiftVoucherAttention,
+  revokeReasonOf,
+} from "../../../lib/gift-voucher-issue-core.mjs";
 import { eurFromCents, plural } from "../../../lib/admin-format.mjs";
 
 // ---------------------------------------------------------------------------
@@ -40,17 +49,22 @@ export const GUTSCHEINE_PAGE_SIZE = 25;
 
 /**
  * @typedef {"pending" | "held" | "issuing" | "issued" | "failed" | "rejected" | "cancelled" | "deactivated"} VoucherStatusKey
- * @typedef {"" | VoucherStatusKey | "achtung"} GutscheineStatusFilter
+ * @typedef {"" | VoucherStatusKey | "achtung" | "druck"} GutscheineStatusFilter
  * @typedef {"" | "shop" | "hand"} GutscheineSourceFilter
  * @typedef {{ status: GutscheineStatusFilter, quelle: GutscheineSourceFilter, q: string, page: number }} GutscheineFilter
  */
 
-/** The status filter (?status=): a voucher status, „achtung“ (attention flag) or "" (all). */
+/**
+ * The status filter (?status=): a voucher status, „achtung“ (attention flag),
+ * „druck“ („Druck offen“: a Premium-Karte waits for an operator — in review,
+ * failed, or to be printed by hand) or "" (all).
+ */
 export const GUTSCHEINE_STATUS_FILTERS = Object.freeze(
   /** @type {ReadonlyArray<{ value: GutscheineStatusFilter, label: string }>} */ ([
     { value: "", label: "Alle" },
     { value: "held", label: "Zu prüfen" },
     { value: "achtung", label: "Achtung" },
+    { value: "druck", label: "Druck offen" },
     { value: "issued", label: "Ausgestellt" },
     { value: "pending", label: "Wartet" },
     { value: "issuing", label: "Wird ausgestellt" },
@@ -114,15 +128,22 @@ export function gutscheineFilterParams(filter, extra = {}) {
 
 /**
  * The filter → the store's list filter (lib/gift-voucher-store.ts listGiftVouchers).
+ * `printOneHeld`: print.one takes no card right now (printOneHold) — then
+ * its waiting cards belong to „Druck offen“ too (they can be printed by hand).
  * @param {GutscheineFilter} filter
- * @returns {{ status: VoucherStatusKey | null, source: "shop" | "admin" | null, attention: boolean, q: string | null, page: number, pageSize: number }}
+ * @param {{ printOneHeld?: boolean }} [opts]
+ * @returns {{ status: VoucherStatusKey | null, source: "shop" | "admin" | null, attention: boolean, print: boolean,
+ *   printOneHeld: boolean, q: string | null, page: number, pageSize: number }}
  */
-export function gutscheineStoreFilter(filter) {
-  const status = filter.status && filter.status !== "achtung" ? /** @type {VoucherStatusKey} */ (filter.status) : null;
+export function gutscheineStoreFilter(filter, opts = {}) {
+  const status =
+    filter.status && filter.status !== "achtung" && filter.status !== "druck" ? /** @type {VoucherStatusKey} */ (filter.status) : null;
   return {
     status,
     source: filter.quelle === "shop" ? "shop" : filter.quelle === "hand" ? "admin" : null,
     attention: filter.status === "achtung",
+    print: filter.status === "druck",
+    printOneHeld: opts.printOneHeld === true,
     q: filter.q || null,
     page: filter.page,
     pageSize: GUTSCHEINE_PAGE_SIZE,
@@ -243,7 +264,7 @@ export const ATTENTION_HINTS = Object.freeze({
   print_without_voucher:
     "Die Premium-Karte wurde bezahlt, in der Bestellung ist aber kein Gutschein dazu — die Bestellung in Shopify prüfen (Erstattung).",
   print_without_address:
-    "Für die Premium-Karte fehlt die Adresse — beim Käufer nachfragen, von Hand drucken oder den Druck erstatten.",
+    "Für die Premium-Karte fehlt die Adresse — beim Käufer nachfragen und bei der Premium-Karte „Adresse eingeben“, oder den Druck in Shopify erstatten.",
   deactivate_failed: "Das Sperren in Shopify ist fehlgeschlagen — erneut sperren oder die Geschenkkarte in Shopify prüfen.",
   print_cancel_too_late: "Der Druckauftrag war schon in Produktion und ließ sich nicht mehr stornieren.",
   unknown_product_line:
@@ -260,18 +281,144 @@ export const holdReasonHint = (key) => (typeof key === "string" ? labelOf(HOLD_R
 export const attentionHint = (key) => (typeof key === "string" ? labelOf(ATTENTION_HINTS, key, "") : "");
 
 // ---------------------------------------------------------------------------
+// Attention flags: „Achtung“, a revocation under way, an acknowledged one
+// ---------------------------------------------------------------------------
+
+/**
+ * Is this flag an „Achtung“ (list icon, header badge, the filter and its
+ * count)? Every flag except an acknowledged revocation (refund_after_use_ok /
+ * cancelled_after_use_ok — „geklärt“, kept on the row so the unit stays
+ * revoked). The store's filter and count spell out the same rule.
+ * @param {unknown} attention
+ */
+export function hasAchtung(attention) {
+  return typeof attention === "string" && attention !== "" && !isAcknowledgedRevocation(attention);
+}
+
+/**
+ * Does Mo still carry out this revocation by itself — so there is nothing for
+ * an operator to clear? Mirrors the issue library: a revoke flag on a unit
+ * that never became a known card (pending, held, failed, issuing —
+ * planClearGiftVoucherAttention "revoking": the issuing step looks the card
+ * up), or on an issued card the sweep still resolves (pickRevocationsToResolve:
+ * a card and no stored balance below the value — untouched → deactivated). A
+ * revoke flag on a card found (partly) spent is the operator's.
+ * @param {{ id?: number, status: string, attention: string | null, shopifyGiftCardId: string | null,
+ *   balanceCents: number | null, amountCents: number }} v
+ */
+export function isPendingRevocation(v) {
+  if (!revokeReasonOf(v.attention)) return false;
+  if (planClearGiftVoucherAttention(v) === "revoking") return true;
+  return pickRevocationsToResolve([{ id: v.id ?? 0, ...v }]).length > 0;
+}
+
+/**
+ * How the detail shows a voucher's attention flag (null: none):
+ *   achtung      — „Achtung: …“ with its hint (warning), „Als geklärt
+ *                  markieren“ where voucherActions allows it;
+ *   revoking     — a revocation Mo still carries out (isPendingRevocation):
+ *                  no button, Mo deactivates the card (or cancels a voucher
+ *                  without one) by itself;
+ *   acknowledged — an acknowledged revoke flag: a neutral note, no „Achtung“.
+ * @param {{ id?: number, status: string, attention: string | null, shopifyGiftCardId: string | null,
+ *   balanceCents: number | null, amountCents: number }} v
+ * @returns {null | { kind: "achtung" | "revoking" | "acknowledged", title: string, text: string }}
+ */
+export function voucherAttentionView(v) {
+  if (!v.attention) return null;
+  if (isAcknowledgedRevocation(v.attention)) {
+    return { kind: "acknowledged", title: attentionLabel(v.attention), text: attentionHint(v.attention) };
+  }
+  if (isPendingRevocation(v)) {
+    const what = revokeReasonOf(v.attention) === "cancelled" ? "Bestellung storniert" : "Bestellung erstattet";
+    return v.status === "issued"
+      ? {
+          kind: "revoking",
+          title: "Achtung: Karte wird gesperrt",
+          text: `${what} — Mo sperrt die Karte automatisch, sobald Shopify antwortet.`,
+        }
+      : {
+          kind: "revoking",
+          title: "Achtung: Gutschein wird storniert",
+          text: `${what} — Mo prüft, ob es schon eine Shopify-Karte gibt, und sperrt sie oder storniert den Gutschein automatisch.`,
+        };
+  }
+  return { kind: "achtung", title: `Achtung: ${attentionLabel(v.attention)}`, text: attentionHint(v.attention) };
+}
+
+/**
+ * The confirmation before „Als geklärt markieren“ — only for a revoke flag on
+ * an issued card (the library checks it live and may deactivate one, or
+ * stores the acknowledgement for good); null for any other flag and for a
+ * voucher that ended (both are simply cleared).
+ * @param {{ status: string, attention: string | null }} v
+ * @returns {{ title: string, description: string } | null}
+ */
+export function clearAttentionConfirm(v) {
+  const reason = revokeReasonOf(v.attention);
+  if (!reason || v.status !== "issued") return null;
+  return reason === "refunded"
+    ? {
+        title: "Erstattung als geklärt markieren?",
+        description:
+          "Mo prüft die Karte in Shopify noch einmal. Unbenutzt: Sie wird gesperrt. Schon (teilweise) eingelöst: Eine unbenutzte Karte derselben Bestellposition übernimmt die Erstattung und wird stattdessen gesperrt — gibt es keine, bleibt diese Karte aktiv und Mo meldet sie nicht noch einmal.",
+      }
+    : {
+        title: "Stornierung als geklärt markieren?",
+        description: "Die Karte ist schon (teilweise) eingelöst und bleibt aktiv — Mo meldet den Gutschein bei weiteren Bestelländerungen nicht noch einmal.",
+      };
+}
+
+/**
+ * The toast after „Als geklärt markieren“ — what the library did, read from
+ * the clicked unit before and after (clearGiftVoucherAttention): a card found
+ * untouched is deactivated; a refund on a spent card moves to an untouched
+ * card of the same order line (that one is deactivated; this one stays active
+ * and loses the flag); otherwise the acknowledged key is stored (the card
+ * stays active). Any other flag is simply cleared.
+ * @param {{ status: string, attention: string | null }} before
+ * @param {{ status: string, attention: string | null } | null | undefined} after
+ * @returns {{ title: string, description?: string }}
+ */
+export function clearAttentionToast(before, after) {
+  const reason = revokeReasonOf(before.attention);
+  if (!reason || before.status !== "issued" || !after) return { title: "Als geklärt markiert" };
+  if (after.status === "deactivated") {
+    return {
+      title: "Karte gesperrt",
+      description: `Die Karte war unbenutzt — Mo hat sie wegen der ${reason === "refunded" ? "Erstattung" : "Stornierung"} gesperrt.`,
+    };
+  }
+  if (isAcknowledgedRevocation(after.attention)) {
+    return {
+      title: "Als geklärt markiert",
+      description: "Die Karte ist schon (teilweise) eingelöst und bleibt aktiv — Mo meldet sie nicht noch einmal.",
+    };
+  }
+  if (reason === "refunded" && !after.attention && after.status === "issued") {
+    return {
+      title: "Erstattung verschoben",
+      description: "Eine unbenutzte Karte derselben Bestellposition übernimmt die Erstattung und wird gesperrt — diese Karte bleibt aktiv.",
+    };
+  }
+  return { title: "Als geklärt markiert" };
+}
+
+// ---------------------------------------------------------------------------
 // Which actions are offered
 // ---------------------------------------------------------------------------
 
 /**
  * The actions of the detail for a voucher (the routes and lib/gift-voucher-issue.ts
  * decide again — this only decides which buttons appear).
- * @param {{ status: string, hasCode: boolean, shopifyGiftCardId: string | null, source: string, delivery: string,
- *   buyerEmail: string | null, recipientEmail: string | null, attention: string | null }} v
+ * @param {{ id?: number, status: string, hasCode: boolean, shopifyGiftCardId: string | null, source: string, delivery: string,
+ *   buyerEmail: string | null, recipientEmail: string | null, attention: string | null,
+ *   balanceCents?: number | null, amountCents?: number }} v
  */
 export function voucherActions(v) {
   const issued = v.status === "issued";
   const mailTarget = v.source === "shop" ? v.buyerEmail : v.delivery === "email" ? v.recipientEmail : null;
+  const pending = isPendingRevocation({ ...v, balanceCents: v.balanceCents ?? null, amountCents: v.amountCents ?? 0 });
   return {
     issueHeld: v.status === "held",
     reject: v.status === "held" || v.status === "failed",
@@ -281,42 +428,115 @@ export function voucherActions(v) {
     syncBalance: (issued || v.status === "deactivated") && Boolean(v.shopifyGiftCardId),
     pdf: issued && v.hasCode,
     revealCode: v.hasCode,
-    // An acknowledged revoke flag is „geklärt“ already — it stays (it keeps the unit revoked).
-    clearAttention: v.attention != null && v.attention !== "" && !isAcknowledgedRevocation(v.attention),
+    // An acknowledged revoke flag is „geklärt“ already — it stays (it keeps the
+    // unit revoked); a revocation Mo still carries out is not the operator's.
+    clearAttention: hasAchtung(v.attention) && !pending,
   };
 }
 
+/** Why „Jetzt drucken“ / print.one cannot store the print files (BLOB_READ_WRITE_TOKEN missing). */
+export const PRINT_BLOB_MISSING =
+  "Der Datei-Speicher fehlt (BLOB_READ_WRITE_TOKEN) — Mo kann die Druckdateien für print.one nicht ablegen.";
+
 /**
- * The actions of a voucher's print job. print.one jobs are submitted
- * („Jetzt drucken“, behind the legal gate); jobs printed by hand — the manual
- * provider, or a print.one job that failed — offer the print files and
- * „Als versendet markieren“. `submitBlocked` says why „Jetzt drucken“ is
- * disabled.
- * @param {{ status: string, provider: string }} job
+ * Why print.one takes no card right now — null when it does: first the
+ * submission gate (lib/gift-voucher-print.ts giftVoucherPrintGateBlock: the
+ * legal gate GIFT_VOUCHER_PRINT_SENDS_APPROVED, print.one configured, the
+ * provider, an https PUBLIC_BASE_URL), then the file store the print files go
+ * through. While held, waiting print.one cards can be printed by hand.
+ * @param {{ gateBlock?: string | null, blobConfigured?: boolean }} ctx
+ * @returns {string | null}
+ */
+export function printOneHold(ctx) {
+  if (ctx.gateBlock) return ctx.gateBlock;
+  if (ctx.blobConfigured === false) return PRINT_BLOB_MISSING;
+  return null;
+}
+
+/**
+ * Does the shop offer the Premium-Karte? Only when it can really be fulfilled
+ * — the rule of the storefront's features.print: printed in-house
+ * (GIFT_VOUCHER_PRINT_PROVIDER=manual), or by print.one when its submission
+ * gate is open (approved, configured, https PUBLIC_BASE_URL).
+ * @param {{ configuredPrintProvider: string, printGateBlock: string | null }} input
+ */
+export function isPrintOfferedInShop(input) {
+  return input.configuredPrintProvider === "manual" || !input.printGateBlock;
+}
+
+/**
+ * How a Premium-Karte issued by hand is printed right now (the issue dialog):
+ * `printone` — print.one prints and posts it; `held` — a print.one card that
+ * waits while print.one takes no card (printOneHold; it can be printed by
+ * hand meanwhile); `hand` — the in-house queue (provider manual, or print.one
+ * not configured: the job is created for printing by hand).
+ * @param {{ printProvider: string, printGateBlock: string | null, blobConfigured: boolean, cardCostCents: number }} env
+ * @returns {{ route: "printone" | "held" | "hand", text: string }}
+ */
+export function manualPrintRoute(env) {
+  if (env.printProvider !== "printone") return { route: "hand", text: "Gedruckt wird von Hand (Status „Druck offen“)." };
+  const hold = printOneHold({ gateBlock: env.printGateBlock, blobConfigured: env.blobConfigured });
+  if (hold) {
+    return {
+      route: "held",
+      text: `print.one druckt gerade nicht: ${hold} Die Karte wartet unter „Druck offen“ und lässt sich von Hand drucken.`,
+    };
+  }
+  return { route: "printone", text: `print.one druckt und verschickt sie (≈ ${eurFromCents(env.cardCostCents)} für Druck und Porto).` };
+}
+
+/**
+ * The actions of a voucher's print job. A print.one job is submitted („Jetzt
+ * drucken“) while print.one takes cards (printOneHold); printed in-house are
+ * the manual provider's jobs, a print.one job that failed, and a waiting
+ * print.one job print.one does not take now (gate closed, not configured, no
+ * https PUBLIC_BASE_URL, no file store) or that has no address — they offer
+ * the print files and „Als versendet markieren“ (the library refuses a job
+ * print.one has already). „Freigeben“ needs an address; the address can be
+ * entered or corrected while the card waits (review / queued), for print.one
+ * only before its print files exist. `submitBlocked` says why „Jetzt drucken“
+ * is disabled; `held` why print.one does not take this waiting card now.
+ * @param {{ status: string, provider: string, address?: unknown, hasAssets?: boolean }} job
  * @param {{ status: string }} voucher
- * @param {{ gateOpen: boolean, printOneConfigured: boolean }} ctx
+ * @param {{ gateBlock?: string | null, blobConfigured?: boolean }} ctx
  */
 export function printJobActions(job, voucher, ctx) {
   const issued = voucher.status === "issued";
   const printone = job.provider === "printone";
-  const byHand = !printone || job.status === "failed";
+  const waiting = job.status === "review" || job.status === "queued";
+  const hasAddress = Boolean(job.address);
+  const hold = printone ? printOneHold(ctx) : null;
+  const byHand = !printone || job.status === "failed" || (waiting && (hold !== null || !hasAddress));
   const submit = printone && job.status === "queued";
   /** @type {string | null} */
   let submitBlocked = null;
   if (submit) {
-    if (!ctx.gateOpen) submitBlocked = "Kartendruck ist nicht freigegeben (GIFT_VOUCHER_PRINT_SENDS_APPROVED).";
-    else if (!ctx.printOneConfigured) submitBlocked = "print.one ist nicht eingerichtet (PRINTONE_API_KEY, PRINTONE_TEMPLATE_ID).";
+    if (hold) submitBlocked = hold;
     else if (!issued) submitBlocked = "Der Gutschein ist noch nicht ausgestellt.";
   }
   return {
-    release: job.status === "review",
+    release: job.status === "review" && hasAddress,
     submit,
     submitBlocked,
+    held: waiting ? hold : null,
+    address: waiting && !(printone && job.hasAssets === true),
     files: byHand && issued && job.status !== "cancelled",
     done: byHand && issued && canAdvancePrintJobStatus(job.status, "done"),
     cancel: !isFinalPrintJobStatus(job.status),
   };
 }
+
+/** Why an address could not be stored (store setGiftVoucherPrintJobAddress) → HTTP status and German message. */
+export const PRINT_ADDRESS_REFUSALS = Object.freeze({
+  not_found: { status: 404, message: "Dieser Gutschein hat keinen Druckauftrag." },
+  not_waiting: { status: 409, message: "Die Adresse lässt sich nur ändern, solange die Karte noch wartet." },
+  at_provider: {
+    status: 409,
+    message: "Die Karte war schon auf dem Weg zu print.one — die Adresse lässt sich nicht mehr ändern.",
+  },
+  busy: { status: 409, message: "Die Karte wird gerade an print.one übermittelt — bitte gleich neu laden." },
+  error: { status: 500, message: "Die Adresse konnte nicht gespeichert werden." },
+});
 
 // ---------------------------------------------------------------------------
 // Links and inputs
@@ -379,6 +599,7 @@ export const GUTSCHEIN_ACTIONS = Object.freeze(
     "print_submit",
     "print_cancel",
     "print_done",
+    "print_address",
   ])
 );
 
@@ -395,11 +616,16 @@ function asObject(v) {
 /**
  * Check the body of an operator action (German messages).
  * `note` (actions note, reject): optional text ≤ 1000 characters;
- * `reason` (deactivate): required, 3–200 characters.
+ * `reason` (deactivate): required, 3–200 characters;
+ * `address` (print_address): the card's recipient — validatePostalAddress for
+ * GIFT_VOUCHER_PRINT_COUNTRIES (`printCountries`), normalised to the store's
+ * camelCase shape; a refusal names its `field` (address.<field>).
  * @param {unknown} body
- * @returns {{ ok: true, action: GutscheinAction, id: number, note: string | null, reason: string | null } | { ok: false, message: string }}
+ * @param {{ printCountries?: readonly string[] }} [opts]
+ * @returns {{ ok: true, action: GutscheinAction, id: number, note: string | null, reason: string | null, address: IssueAddress | null }
+ *   | { ok: false, message: string, field?: string }}
  */
-export function parseGutscheinAction(body) {
+export function parseGutscheinAction(body, opts = {}) {
   const b = asObject(body);
   if (!b) return { ok: false, message: "Ungültige Anfrage." };
   const action = typeof b.action === "string" ? b.action : "";
@@ -424,14 +650,23 @@ export function parseGutscheinAction(body) {
     }
     reason = t;
   }
-  return { ok: true, action: /** @type {GutscheinAction} */ (action), id, note, reason };
+  /** @type {IssueAddress | null} */
+  let address = null;
+  if (action === "print_address") {
+    const a = validatePostalAddress(b.address, { countries: opts.printCountries ?? ["DE"], locale: "de" });
+    if (!a.ok) return { ok: false, message: a.message, field: a.field };
+    address = giftVoucherAddressFromJson(a.address);
+    if (!address) return { ok: false, message: "Bitte eine vollständige Adresse angeben.", field: "address" };
+  }
+  return { ok: true, action: /** @type {GutscheinAction} */ (action), id, note, reason, address };
 }
 
 /**
  * HTTP status for a refused action ({ ok: false, code } of the issue / print
- * libraries): not found 404, input 400, missing configuration 503, a failed
- * call to Shopify / print.one 502, everything else (wrong state, too late,
- * Mo still busy) 409.
+ * libraries): not found 404, input 400, missing configuration or an unusable
+ * TOKEN_ENC_KEY 503, a failed call to Shopify / print.one / Resend 502, a
+ * database or internal failure 500, everything else (wrong state, too late,
+ * Mo still busy, refunded, purged) 409.
  * @param {unknown} code
  */
 export function actionErrorStatus(code) {
@@ -453,15 +688,40 @@ export function actionErrorStatus(code) {
     case "no_key":
     case "no_database":
     case "migration_missing":
+    case "code": // the stored code is not readable (TOKEN_ENC_KEY)
       return 503;
     case "failed":
     case "upstream":
+    case "shopify": // a Shopify call failed (order snapshot, lookup, deactivation)
     case "shopify_error":
     case "provider_error":
+    case "send_failed": // Resend did not take the mail
       return 502;
+    case "db": // a write did not go through
+    case "error": // an exception in the library
+    case "internal_error":
+      return 500;
     default:
       return 409;
   }
+}
+
+/**
+ * The toast after „Gutschein ausstellen“ (POST /api/admin/gutscheine/issue
+ * answers the voucher's status and last error): „ausgestellt“ only once the
+ * Shopify card exists; otherwise the voucher was recorded and Mo keeps
+ * trying (the sweep) — a warning with the reason.
+ * @param {{ number: string | null, status: string | null, lastError: string | null }} r
+ * @returns {{ variant: "success" | "warning", title: string, description?: string }}
+ */
+export function issuedToast(r) {
+  const name = r.number ? `Gutschein ${r.number}` : "Gutschein";
+  if (r.status === "issued") return { variant: "success", title: `${name} ausgestellt` };
+  return {
+    variant: "warning",
+    title: `${name} angelegt — Shopify-Karte noch nicht erstellt`,
+    description: r.lastError ?? "Mo versucht es automatisch erneut.",
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -586,7 +846,8 @@ export const MANUAL_REASON_OPTIONS = Object.freeze(
  * @typedef {"ok" | "warn" | "error" | "info" | "pending"} SetupState
  * @typedef {"Grundlagen" | "Shopify" | "Kartendruck" | "Grenzen"} SetupGroup
  * @typedef {{ key: string, group: SetupGroup, label: string, state: SetupState, detail: string }} SetupCheck
- * @typedef {{ key: string, level: "error" | "warning" | "info", text: string }} SetupNotice
+ * @typedef {{ key: string, level: "error" | "warning" | "info", text: string, filter?: GutscheineStatusFilter }} SetupNotice
+ *   `filter`: the list filter that shows what the notice is about (a link „Anzeigen“).
  * @typedef {{ handle: string, title: string, status: string, isGiftCard: boolean,
  *   variants: Array<{ title: string, priceCents: number, taxable: boolean, requiresShipping: boolean }> }} SetupProduct
  * @typedef {{ level: "error" | "warning", product: "voucher" | "print" | "both", message: string }} SetupProductIssue
@@ -600,13 +861,20 @@ export const MANUAL_REASON_OPTIONS = Object.freeze(
  *   enabled: boolean, salesEnabled: boolean,
  *   tokenKeyOk: boolean, emailConfigured: boolean, blobConfigured: boolean, shopifyConfigured: boolean,
  *   printSendsApproved: boolean, printProvider: "printone" | "manual", configuredPrintProvider: "printone" | "manual",
- *   printOneConfigured: boolean, openPrintJobs: number,
+ *   printOneConfigured: boolean, printGateBlock: string | null,
+ *   openPrintJobs: number, printReviewCount: number, printOpenCount: number,
  *   handles: { voucher: string, print: string },
  *   limits: { minCents: number, maxCents: number, dailyLimitCents: number, adminMaxCents: number },
  *   validityYears: number, printCountries: readonly string[], cardCostCents: number,
  *   shopify: SetupShopify | null,
  * }} SetupInput
  */
+
+/** „Nicht erreichbar“ with the reason — unless the reason says just that. @param {string} message */
+function unreachableText(message) {
+  const m = message.trim();
+  return !m || /nicht erreichbar/i.test(m) ? "Nicht erreichbar." : `Nicht erreichbar: ${m}`;
+}
 
 /** German names of the countries a card can go to (else the ISO code). */
 export const COUNTRY_NAMES = Object.freeze({ DE: "Deutschland", AT: "Österreich", CH: "Schweiz", LU: "Luxemburg", NL: "Niederlande" });
@@ -624,7 +892,10 @@ function amountList(cents) {
  * The setup check (rows with ✓ / ✗, grouped) and the notices for the
  * callouts above the list. `shopify: null` = the Shopify checks are still
  * loading (rows „wird geprüft …“, no Shopify notices yet). Never a secret —
- * only whether something is set.
+ * only whether something is set. `printGateBlock` = why print.one takes no
+ * card (lib/gift-voucher-print.ts giftVoucherPrintGateBlock), null when it
+ * does; with print.one as the provider the shop offers the Premium-Karte only
+ * then (isPrintOfferedInShop — the storefront's features.print).
  * @param {SetupInput} input
  * @returns {{ checks: SetupCheck[], notices: SetupNotice[] }}
  */
@@ -635,8 +906,8 @@ export function buildGutscheineSetup(input) {
   const notices = [];
   /** @param {string} key @param {SetupGroup} group @param {string} label @param {SetupState} state @param {string} detail */
   const check = (key, group, label, state, detail) => checks.push({ key, group, label, state, detail });
-  /** @param {string} key @param {SetupNotice["level"]} level @param {string} text */
-  const notice = (key, level, text) => notices.push({ key, level, text });
+  /** @param {string} key @param {SetupNotice["level"]} level @param {string} text @param {GutscheineStatusFilter} [filter] */
+  const notice = (key, level, text, filter) => notices.push(filter ? { key, level, text, filter } : { key, level, text });
 
   // Grundlagen
   if (!input.dbReady) {
@@ -695,8 +966,16 @@ export function buildGutscheineSetup(input) {
     input.blobConfigured ? "ok" : "warn",
     input.blobConfigured ? "Konfiguriert." : "Nicht konfiguriert — keine eigenen Fotos und keine Druckdateien für print.one."
   );
+  const printOneReady = input.configuredPrintProvider === "printone" && !input.printGateBlock;
   if (!input.blobConfigured) {
-    notice("blob", "warning", "Datei-Speicher ist nicht konfiguriert (BLOB_READ_WRITE_TOKEN) — keine eigenen Fotos und keine Druckdateien für print.one.");
+    notice(
+      "blob",
+      "warning",
+      `Datei-Speicher ist nicht konfiguriert (BLOB_READ_WRITE_TOKEN) — keine eigenen Fotos und keine Druckdateien für print.one.${
+        printOneReady ? " Bezahlte Premium-Karten warten, bis er eingerichtet ist (oder von Hand drucken: Status „Druck offen“)." : ""
+      }`,
+      printOneReady && input.printOpenCount > 0 ? "druck" : undefined
+    );
   }
 
   // Shopify
@@ -705,7 +984,15 @@ export function buildGutscheineSetup(input) {
     check("shopify", "Shopify", "Shopify Admin API", "error", "Nicht verbunden (SHOPIFY_*).");
     notice("shopify", "error", "Shopify ist nicht verbunden (SHOPIFY_*) — Gutscheine können nicht ausgestellt werden.");
   } else {
-    check("shopify", "Shopify", "Shopify Admin API", "ok", "Verbunden.");
+    // Configured until the live check answers; „Verbunden“ only once Shopify did.
+    const reachable = !sh || sh.scopes.ok || sh.products.ok;
+    check(
+      "shopify",
+      "Shopify",
+      "Shopify Admin API",
+      reachable ? "ok" : "warn",
+      !sh ? "Konfiguriert (SHOPIFY_*)." : reachable ? "Verbunden." : unreachableText(sh.scopes.ok ? "" : sh.scopes.message)
+    );
     if (!sh) {
       check("scope", "Shopify", "Berechtigung write_gift_cards", "pending", "Wird geprüft …");
       check("voucherProduct", "Shopify", `Gutschein-Produkt „${input.handles.voucher}“`, "pending", "Wird geprüft …");
@@ -782,42 +1069,74 @@ export function buildGutscheineSetup(input) {
     }
   }
 
-  // Kartendruck
-  const printone = input.printProvider === "printone";
+  // Kartendruck. The shop offers the Premium-Karte only when it can really be
+  // fulfilled (isPrintOfferedInShop): printed in-house, or by print.one with
+  // its submission gate open. Waiting cards print.one does not take can be
+  // printed by hand (Status „Druck offen“).
+  const configuredPrintOne = input.configuredPrintProvider === "printone";
+  const approved = input.printSendsApproved;
   check(
     "printGate",
     "Kartendruck",
     "Freigabe (GIFT_VOUCHER_PRINT_SENDS_APPROVED)",
-    input.printSendsApproved ? "ok" : printone ? "warn" : "info",
-    input.printSendsApproved
-      ? "Freigegeben — Empfängeradressen gehen an print.one."
-      : "Gesperrt — es gehen keine Adressen an print.one; Druckaufträge warten hier."
+    approved ? "ok" : configuredPrintOne ? "warn" : "info",
+    approved
+      ? "Freigegeben — Empfängeradressen dürfen an print.one gehen."
+      : configuredPrintOne
+        ? "Gesperrt — es gehen keine Adressen an print.one; wartende Karten lassen sich von Hand drucken (Status „Druck offen“)."
+        : "Gesperrt — es gehen keine Adressen an print.one (gedruckt wird von Hand)."
   );
-  if (printone && !input.printSendsApproved && input.openPrintJobs > 0) {
+  /** @type {[SetupState, string]} */
+  let provider;
+  if (!configuredPrintOne) {
+    provider = [
+      "info",
+      "Von Hand (GIFT_VOUCHER_PRINT_PROVIDER=manual) — Druckdateien im Gutschein, dann „Als versendet markieren“ (Status „Druck offen“).",
+    ];
+  } else if (!input.printOneConfigured) {
+    provider = [
+      "warn",
+      "print.one ist nicht eingerichtet (PRINTONE_API_KEY, PRINTONE_TEMPLATE_ID) — von Hand ausgestellte Karten werden von Hand gedruckt (Status „Druck offen“).",
+    ];
+  } else if (!approved) {
+    provider = ["info", "print.one ist eingerichtet und druckt, sobald der Kartendruck freigegeben ist."];
+  } else if (input.printGateBlock) {
+    provider = ["error", input.printGateBlock];
+  } else if (!input.blobConfigured) {
+    provider = ["error", `${PRINT_BLOB_MISSING} Bezahlte Karten warten (oder von Hand drucken: Status „Druck offen“).`];
+  } else {
+    provider = ["ok", "print.one druckt und verschickt die Karten."];
+  }
+  check("printProvider", "Kartendruck", "Druckpartner", provider[0], provider[1]);
+  const offered = isPrintOfferedInShop(input);
+  check(
+    "printOffer",
+    "Kartendruck",
+    "Premium-Karte im Shop",
+    offered ? "ok" : "warn",
+    offered
+      ? configuredPrintOne
+        ? "Wird angeboten."
+        : "Wird angeboten — gedruckt wird von Hand."
+      : `Wird nicht angeboten: ${input.printGateBlock ?? "print.one druckt gerade nicht."}`
+  );
+  if (!offered) {
+    const waiting = input.printOpenCount;
     notice(
-      "printGate",
+      "printOffer",
       "warning",
-      `Kartendruck ist nicht freigegeben (GIFT_VOUCHER_PRINT_SENDS_APPROVED) — ${plural(input.openPrintJobs, "Druckauftrag wartet", "Druckaufträge warten")}.`
+      `${input.printGateBlock ?? "print.one druckt gerade nicht."} Der Shop bietet die Premium-Karte deshalb nicht an${
+        waiting > 0 ? `; ${plural(waiting, "Karte wartet", "Karten warten")} auf den Druck (von Hand drucken: Status „Druck offen“)` : ""
+      }.`,
+      waiting > 0 ? "druck" : undefined
     );
   }
-  check(
-    "printProvider",
-    "Kartendruck",
-    "Druckpartner",
-    printone ? "ok" : "info",
-    printone
-      ? "print.one druckt und verschickt die Karten."
-      : input.configuredPrintProvider === "printone"
-        ? "print.one ist nicht eingerichtet (PRINTONE_API_KEY, PRINTONE_TEMPLATE_ID) — Druck von Hand über die Druckwarteschlange."
-        : "Druck von Hand über die Druckwarteschlange (GIFT_VOUCHER_PRINT_PROVIDER=manual)."
-  );
-  if (!printone && input.configuredPrintProvider === "printone") {
+  if (input.printReviewCount > 0) {
     notice(
-      "printone",
+      "printReview",
       "info",
-      input.openPrintJobs > 0
-        ? `print.one ist nicht eingerichtet — ${plural(input.openPrintJobs, "Karte wird", "Karten werden")} von Hand gedruckt (Druckdateien im Gutschein).`
-        : "print.one ist nicht eingerichtet (PRINTONE_API_KEY, PRINTONE_TEMPLATE_ID) — Premium-Karten werden von Hand gedruckt."
+      `${plural(input.printReviewCount, "Premium-Karte wartet", "Premium-Karten warten")} auf „Freigeben“.`,
+      "druck"
     );
   }
   check("printCountries", "Kartendruck", "Versand nach", "info", input.printCountries.map(countryName).join(", ") || "Deutschland");
@@ -839,7 +1158,7 @@ export function buildGutscheineSetup(input) {
     "Gültigkeit",
     "info",
     input.validityYears > 0
-      ? `bis 31.12. des ${input.validityYears}. Jahres nach dem Kauf (GIFT_VOUCHER_VALIDITY_YEARS)`
+      ? `bis 31.12. des ${input.validityYears}. Jahres nach der Ausstellung (GIFT_VOUCHER_VALIDITY_YEARS)`
       : "unbegrenzt (GIFT_VOUCHER_VALIDITY_YEARS=0)"
   );
 

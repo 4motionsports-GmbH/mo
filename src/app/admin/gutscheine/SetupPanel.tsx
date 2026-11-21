@@ -30,7 +30,7 @@ const SETTING_INFO: Record<(typeof SETTING_KEYS)[number], string> = {
     "„Mit Mo formulieren“ im Designer: drei KI-Vorschläge für die Nachricht, ohne persönliche Daten (braucht ANTHROPIC_API_KEY).",
   photoUploads: "Das Motiv „Eigenes Foto“: Kund:innen laden ein Foto hoch (braucht BLOB_READ_WRITE_TOKEN).",
   reviewPrintWithPhoto:
-    "Eine Premium-Karte mit Kundenfoto wartet unter „Zu prüfen“, bis sie hier jemand freigibt — erst dann wird sie gedruckt.",
+    "Eine Premium-Karte mit Kundenfoto wartet unter „Druck offen“, bis sie jemand im Gutschein freigibt („Freigeben“) — erst dann wird sie gedruckt.",
 };
 
 const STATE_ICON: Record<SetupCheck["state"], { icon: React.ReactNode; label: string }> = {

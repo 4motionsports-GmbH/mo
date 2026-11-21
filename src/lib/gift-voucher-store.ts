@@ -268,6 +268,15 @@ export interface GiftVoucherListFilter {
   source?: GiftVoucherSource | null;
   /** Only vouchers with an attention flag („Achtung“). */
   attention?: boolean;
+  /**
+   * Only vouchers whose Premium-Karte waits for an operator („Druck offen“):
+   * print job in review or failed, or — once the voucher is issued — queued
+   * for printing by hand; never of a voucher that ended (cancelled, rejected,
+   * deactivated).
+   */
+  print?: boolean;
+  /** With `print`: print.one takes no card right now, so its queued jobs wait for an operator too. */
+  printOneHeld?: boolean;
   q?: string | null;
   page?: number;
   pageSize?: number;
@@ -283,6 +292,10 @@ export interface GiftVoucherSummary {
   heldCount: number;
   attentionCount: number;
   openPrintJobs: number;
+  /** Print jobs waiting for „Freigeben“ (status review) of vouchers that did not end. */
+  printReviewCount: number;
+  /** Vouchers in „Druck offen“ (listGiftVouchers `print`, with the same `printOneHeld`). */
+  printOpenCount: number;
   draftCount30d: number;
 }
 
@@ -1452,9 +1465,13 @@ function likePattern(q: string): string {
 /**
  * The admin list, newest first, with filters: status, source, attention
  * only („Achtung“ — an acknowledged revoke flag is no „Achtung“ any more),
- * and a search over the voucher number (G-2026-00042), the order name,
- * buyer / recipient name and e-mail, and the last four characters of the
- * code. Pages of 1–100 rows; `total` counts every match.
+ * open print work only („Druck offen“: a print job in review or failed, or
+ * — of an issued voucher — queued for printing by hand: the manual provider,
+ * or print.one while it takes no card (`printOneHeld`); never of a voucher
+ * that ended), and a
+ * search over the voucher number (G-2026-00042), the order name, buyer /
+ * recipient name and e-mail, and the last four characters of the code.
+ * Pages of 1–100 rows; `total` counts every match.
  */
 export async function listGiftVouchers(
   filter: GiftVoucherListFilter = {},
@@ -1467,6 +1484,8 @@ export async function listGiftVouchers(
   const status = filter.status && isGiftVoucherStatus(filter.status) ? filter.status : null;
   const source = filter.source === "shop" || filter.source === "admin" ? filter.source : null;
   const attentionOnly = filter.attention === true;
+  const printOpen = filter.print === true;
+  const printOneHeld = filter.printOneHeld === true;
   const q = typeof filter.q === "string" ? filter.q.trim().slice(0, 100) : "";
   const pattern = q ? likePattern(q) : null;
   const numberId = q ? parseGiftVoucherNumber(q) : null;
@@ -1485,6 +1504,13 @@ export async function listGiftVouchers(
          AND (${source}::text IS NULL OR v.source = ${source}::text)
          AND (${attentionOnly}::boolean = false
               OR (v.attention IS NOT NULL AND v.attention NOT IN ('refund_after_use_ok', 'cancelled_after_use_ok')))
+         AND (${printOpen}::boolean = false
+              OR (v.status NOT IN ('cancelled', 'rejected', 'deactivated')
+                  AND EXISTS (SELECT 1 FROM gift_voucher_print_jobs p
+                               WHERE p.voucher_id = v.id
+                                 AND (p.status IN ('review', 'failed')
+                                      OR (p.status = 'queued' AND v.status = 'issued'
+                                          AND (p.provider = 'manual' OR ${printOneHeld}::boolean))))))
          AND (${pattern}::text IS NULL
               OR v.id = ${numberId}::bigint
               OR v.code_last4 = ${last4}::text
@@ -1503,6 +1529,13 @@ export async function listGiftVouchers(
          AND (${source}::text IS NULL OR v.source = ${source}::text)
          AND (${attentionOnly}::boolean = false
               OR (v.attention IS NOT NULL AND v.attention NOT IN ('refund_after_use_ok', 'cancelled_after_use_ok')))
+         AND (${printOpen}::boolean = false
+              OR (v.status NOT IN ('cancelled', 'rejected', 'deactivated')
+                  AND EXISTS (SELECT 1 FROM gift_voucher_print_jobs p
+                               WHERE p.voucher_id = v.id
+                                 AND (p.status IN ('review', 'failed')
+                                      OR (p.status = 'queued' AND v.status = 'issued'
+                                          AND (p.provider = 'manual' OR ${printOneHeld}::boolean))))))
          AND (${pattern}::text IS NULL
               OR v.id = ${numberId}::bigint
               OR v.code_last4 = ${last4}::text
@@ -1529,6 +1562,8 @@ const EMPTY_SUMMARY: GiftVoucherSummary = {
   heldCount: 0,
   attentionCount: 0,
   openPrintJobs: 0,
+  printReviewCount: 0,
+  printOpenCount: 0,
   draftCount30d: 0,
 };
 
@@ -1536,11 +1571,18 @@ const EMPTY_SUMMARY: GiftVoucherSummary = {
  * The figures of the admin stats row. Sold = shop vouchers of the last 30
  * days that were not cancelled or rejected; issued = every voucher that ever
  * became a card; open balance = active, unexpired cards (last known balance);
- * redeemed = what was spent from issued or deactivated cards. Zeros without a
+ * redeemed = what was spent from issued or deactivated cards; open print
+ * jobs = cards not posted yet, of them `printReviewCount` waiting for
+ * „Freigeben“; `printOpenCount` = the vouchers of „Druck offen“
+ * (listGiftVouchers `print` — `printOneHeld` as there). Zeros without a
  * database or before the migration.
  */
-export async function giftVoucherSummary(sql: Sql | null = getSql()): Promise<GiftVoucherSummary> {
+export async function giftVoucherSummary(
+  opts: { printOneHeld?: boolean } = {},
+  sql: Sql | null = getSql()
+): Promise<GiftVoucherSummary> {
   if (!sql) return { ...EMPTY_SUMMARY };
+  const printOneHeld = opts.printOneHeld === true;
   try {
     const rows = (await sql`
       SELECT
@@ -1560,6 +1602,16 @@ export async function giftVoucherSummary(sql: Sql | null = getSql()): Promise<Gi
                            AND attention NOT IN ('refund_after_use_ok', 'cancelled_after_use_ok'))::int AS attention_count,
         (SELECT count(*) FROM gift_voucher_print_jobs
           WHERE status IN ('review', 'queued', 'submitting', 'submitted', 'printing'))::int AS open_print_jobs,
+        (SELECT count(*) FROM gift_voucher_print_jobs p
+           JOIN gift_vouchers g ON g.id = p.voucher_id
+          WHERE p.status = 'review'
+            AND g.status NOT IN ('cancelled', 'rejected', 'deactivated'))::int AS print_review_count,
+        (SELECT count(*) FROM gift_voucher_print_jobs p
+           JOIN gift_vouchers g ON g.id = p.voucher_id
+          WHERE g.status NOT IN ('cancelled', 'rejected', 'deactivated')
+            AND (p.status IN ('review', 'failed')
+                 OR (p.status = 'queued' AND g.status = 'issued'
+                     AND (p.provider = 'manual' OR ${printOneHeld}::boolean))))::int AS print_open_count,
         (SELECT count(*) FROM gift_voucher_drafts WHERE created_at >= now() - interval '30 days')::int AS draft_count_30d
       FROM gift_vouchers
     `) as Row[];
@@ -1574,6 +1626,8 @@ export async function giftVoucherSummary(sql: Sql | null = getSql()): Promise<Gi
       heldCount: Number(r.held_count ?? 0),
       attentionCount: Number(r.attention_count ?? 0),
       openPrintJobs: Number(r.open_print_jobs ?? 0),
+      printReviewCount: Number(r.print_review_count ?? 0),
+      printOpenCount: Number(r.print_open_count ?? 0),
       draftCount30d: Number(r.draft_count_30d ?? 0),
     };
   } catch (err) {
@@ -1736,6 +1790,53 @@ export async function setGiftVoucherPrintJobAssets(
   } catch (err) {
     report(err, "setPrintAssets");
     return false;
+  }
+}
+
+/**
+ * The recipient address an operator enters or corrects („Adresse eingeben“ /
+ * „Adresse ändern“ on the Premium-Karte): only while the card waits — status
+ * review or queued, no submission holding the lease, and for print.one only
+ * before its print files exist (a job with files may be at print.one already
+ * under its Idempotency-Key, with the old address). Clears the job's error
+ * and makes a queued job due at once. Not written: `not_waiting` (the card
+ * is on its way or finished), `at_provider` (print.one files exist), `busy`
+ * (a submission holds the job right now), `not_found`; `error` on a failure.
+ */
+export async function setGiftVoucherPrintJobAddress(
+  id: number,
+  address: GiftVoucherAddressInput,
+  sql: Sql | null = getSql()
+): Promise<"ok" | "not_found" | "not_waiting" | "at_provider" | "busy" | "error"> {
+  if (!sql || !Number.isSafeInteger(id) || id <= 0) return "error";
+  const json = addressJsonText(address);
+  if (!json) return "error";
+  try {
+    const rows = (await sql`
+      UPDATE gift_voucher_print_jobs
+         SET recipient_postal_address = ${json}::jsonb, error = NULL,
+             next_attempt_at = CASE WHEN status = 'queued' THEN now() ELSE next_attempt_at END,
+             updated_at = now()
+       WHERE id = ${id}
+         AND status IN ('review', 'queued')
+         AND (provider = 'manual' OR asset_token IS NULL)
+         AND (locked_until IS NULL OR locked_until < now())
+      RETURNING id
+    `) as Row[];
+    if (rows.length > 0) return "ok";
+    const now = (await sql`
+      SELECT status, provider, (asset_token IS NOT NULL) AS has_assets
+        FROM gift_voucher_print_jobs
+       WHERE id = ${id}
+    `) as Row[];
+    const r = now[0];
+    if (!r) return "not_found";
+    if (r.status !== "review" && r.status !== "queued") return "not_waiting";
+    if (r.provider === "printone" && r.has_assets === true) return "at_provider";
+    return "busy";
+  } catch (err) {
+    report(err, "setPrintAddress");
+    return "error";
   }
 }
 

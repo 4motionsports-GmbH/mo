@@ -1,8 +1,9 @@
 // „Gutscheine“ (server component) — Geschenkgutscheine from the shop and
 // issued by hand (docs/GIFT_VOUCHERS.md; not the newsletter welcome code).
 // Fetches once and hands plain props to the client GutscheineWorkspace:
-//   - the list page for the URL filter (?status= incl. „achtung“, ?quelle=
-//     shop | hand, ?q=, ?seite= — gutscheine-core.mjs), newest first;
+//   - the list page for the URL filter (?status= incl. „achtung“ and „druck“
+//     — „Druck offen“, ?quelle= shop | hand, ?q=, ?seite= — gutscheine-core.mjs),
+//     newest first;
 //   - the stats row (giftVoucherSummary) and the operator settings
 //     (admin_settings 'gift_vouchers');
 //   - the environment (switches, limits, presence of keys — never a value)
@@ -28,6 +29,7 @@ import {
   gutscheinRow,
   gutscheineEnv,
   gutscheineSetup,
+  isPrintOneHeld,
   manualGiftVoucherDesigns,
 } from "./gutscheine/gutscheine-server";
 
@@ -41,6 +43,8 @@ const EMPTY_SUMMARY: GiftVoucherSummary = {
   heldCount: 0,
   attentionCount: 0,
   openPrintJobs: 0,
+  printReviewCount: 0,
+  printOpenCount: 0,
   draftCount30d: 0,
 };
 
@@ -62,10 +66,13 @@ export async function GutscheineTab({
   const filter = parseGutscheineFilter({ status, quelle, q, seite });
   const tablesExist = dbReady ? await giftVoucherTablesExist() : false;
   const ready = dbReady && tablesExist;
+  const env = gutscheineEnv();
+  // While print.one takes no card, its waiting cards are „Druck offen“ too.
+  const printOneHeld = isPrintOneHeld(env);
 
   const [firstPage, summary, settings] = await Promise.all([
-    ready ? listGiftVouchers(gutscheineStoreFilter(filter)) : Promise.resolve({ rows: [], total: 0 }),
-    ready ? giftVoucherSummary() : Promise.resolve({ ...EMPTY_SUMMARY }),
+    ready ? listGiftVouchers(gutscheineStoreFilter(filter, { printOneHeld })) : Promise.resolve({ rows: [], total: 0 }),
+    ready ? giftVoucherSummary({ printOneHeld }) : Promise.resolve({ ...EMPTY_SUMMARY }),
     dbReady ? getGiftVoucherSettings() : Promise.resolve({ ...DEFAULT_GIFT_VOUCHER_SETTINGS }),
   ]);
   // A page past the end (an old link, a narrowed filter) shows page 1 instead of nothing.
@@ -73,16 +80,15 @@ export async function GutscheineTab({
   let shownFilter = filter;
   if (ready && list.rows.length === 0 && list.total > 0 && filter.page > 1) {
     shownFilter = { ...filter, page: 1 };
-    list = await listGiftVouchers(gutscheineStoreFilter(shownFilter));
+    list = await listGiftVouchers(gutscheineStoreFilter(shownFilter, { printOneHeld }));
   }
 
-  const env = gutscheineEnv();
   const initialSetup = gutscheineSetup({
     env,
     dbReady,
     tablesExist,
     salesEnabled: settings.salesEnabled,
-    openPrintJobs: summary.openPrintJobs,
+    print: summary,
     shopify: null,
     checkedAt: null,
   });
