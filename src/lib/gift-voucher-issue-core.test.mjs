@@ -146,6 +146,22 @@ test("revocationSiblingCandidates: issued units of the same line with a card, no
   assert.deepEqual(revocationSiblingCandidates({ ...unit, shopifyLineItemId: null }, units), []);
 });
 
+test("revocationSiblingCandidates: while the unit's card print is open, siblings with an open card on its add-on line first", () => {
+  const unit = { id: 3, status: "issued", attention: "refund_after_use", shopifyGiftCardId: "gc3", shopifyLineItemId: "L1", unitIndex: 2, amountCents: 5000 };
+  const units = [0, 1, 3].map((i) => ({ ...unit, id: i + 1, attention: null, shopifyGiftCardId: `gc${i + 1}`, unitIndex: i }));
+  units.splice(2, 0, unit);
+  const job = (voucherId, status, paidLineItemId = "P1") => ({ id: 100 + voucherId, voucherId, status, paidLineItemId });
+  const ids = (jobs) => revocationSiblingCandidates(unit, units, jobs).map((u) => u.id);
+  // Unit 1's card was cancelled by the order change, unit 3's is posted: unit 0's open card is the one a move frees.
+  assert.deepEqual(ids([job(1, "queued"), job(2, "cancelled"), job(3, "queued"), job(4, "sent")]), [1, 4, 2]);
+  assert.deepEqual(ids([job(1, "queued"), job(2, "review"), job(3, "submitted"), job(4, "failed")]), [2, 1, 4], "open: not sent, done, cancelled or failed");
+  // A sibling's open card on another add-on line frees nothing on this one.
+  assert.deepEqual(ids([job(1, "queued", "P2"), job(2, "review"), job(3, "queued"), job(4, "sent")]), [2, 4, 1]);
+  // Without the prints, or with the unit's own card print no longer open: highest unit first, as before.
+  assert.deepEqual(ids(undefined), [4, 2, 1]);
+  assert.deepEqual(ids([job(1, "queued"), job(2, "cancelled"), job(3, "cancelled"), job(4, "sent")]), [4, 2, 1]);
+});
+
 test("planClearGiftVoucherAttention: what „Als geklärt markieren“ does", () => {
   const issued = { status: "issued", attention: "refund_after_use", balanceCents: 5000, amountCents: 5000 };
   assert.equal(planClearGiftVoucherAttention({ ...issued, attention: null }), "none");
@@ -709,6 +725,104 @@ test("planGiftVoucherOrderChange: nothing waits without a sibling that could sti
   });
   assert.deepEqual(cancelled.cancelJobsLater.sort(), [1, 2]);
 });
+
+test("planGiftVoucherOrderChange: a card waits only on a sibling card the plan keeps — one voucher and both cards refunded (V3-1)", () => {
+  // 2 × (voucher + Premium-Karte); one voucher and BOTH cards refunded; unit 1 (highest) is chosen, its card spent.
+  const facts = refundFacts({ 9001: 1, 9002: 2 }, { 9001: 2, 9002: 2 });
+  const jobs = [
+    { id: 1, voucherId: 1, status: "queued", paidLineItemId: "9002" },
+    { id: 2, voucherId: 2, status: "queued", paidLineItemId: "9002" },
+  ];
+  const u0 = cvc({ id: 1, unitIndex: 0 });
+  const u1 = cvc({ id: 2, unitIndex: 1 });
+  // The add-on line loses both cards — unit 0's among them, so unit 0 taking the refund frees nothing: both go now.
+  const atWebhook = planGiftVoucherOrderChange({ facts, vouchers: [u0, u1], printJobs: jobs });
+  assert.deepEqual([atWebhook.flagIssued, atWebhook.cancelJobsNow, atWebhook.cancelJobsLater], [[2], [], [2, 1]]);
+  // The after() could not read unit 1's card (Shopify down): the flag is unsettled, both cards still go.
+  const replanned = planGiftVoucherOrderChange({ facts, vouchers: [u0, { ...u1, attention: "refund_after_use" }], printJobs: jobs, unsettled: [2] });
+  assert.deepEqual([replanned.revoked, replanned.cancelJobsNow, replanned.cancelJobsLater], [0, [], [2, 1]]);
+  for (const [path, end] of Object.entries(orderChangeEnds({ facts, units: [u0, u1], jobs, flaggedId: 2 }))) {
+    assert.deepEqual(printableCards(end), [], path);
+  }
+});
+
+test("planGiftVoucherOrderChange: 3 units, one voucher and two cards refunded — exactly one card survives every resolution (V3-2)", () => {
+  const facts = refundFacts({ 9001: 1, 9002: 2 }, { 9001: 3, 9002: 3 });
+  const units = [cvc({ id: 1, unitIndex: 0 }), cvc({ id: 2, unitIndex: 1 }), cvc({ id: 3, unitIndex: 2 })];
+  const jobs = units.map((u) => ({ id: 100 + u.id, voucherId: u.id, status: "queued", paidLineItemId: "9002" }));
+  // At the webhook: unit 2 (highest) is revoked; the add-on line loses its card and unit 1's. Unit 0 keeps an
+  // open card this plan does not cancel, so unit 2's card waits for it — unit 1's goes.
+  const atWebhook = planGiftVoucherOrderChange({ facts, vouchers: units, printJobs: jobs });
+  assert.deepEqual([atWebhook.flagIssued, atWebhook.cancelJobsNow, atWebhook.cancelJobsLater], [[3], [], [102]]);
+  const ends = orderChangeEnds({ facts, units, jobs, flaggedId: 3 });
+  for (const [path, end] of Object.entries(ends)) assert.equal(printableCards(end).length, 1, path);
+  // The sweep takes the refund to unit 0 — the sibling whose open card frees unit 2's waiting one —, not to
+  // unit 1, whose card the change cancelled already (taking it there would print two cards).
+  assert.deepEqual(printableCards(ends["spent, moved by the sweep"]), [103]);
+  assert.deepEqual(printableCards(ends["spent, no sibling, the sweep"]), [101], "unit 2's card is held while its flag is open");
+  // One voucher and ONE card refunded (the R6 shape): two of three cards survive every resolution, one of two.
+  const r6 = refundFacts({ 9001: 1, 9002: 1 }, { 9001: 3, 9002: 3 });
+  for (const [path, end] of Object.entries(orderChangeEnds({ facts: r6, units, jobs, flaggedId: 3 }))) {
+    assert.equal(printableCards(end).length, 2, `R6 shape, 3 units: ${path}`);
+  }
+  const r6Two = refundFacts({ 9001: 1, 9002: 1 }, { 9001: 2, 9002: 2 });
+  for (const [path, end] of Object.entries(orderChangeEnds({ facts: r6Two, units: units.slice(0, 2), jobs: jobs.slice(0, 2), flaggedId: 2 }))) {
+    assert.equal(printableCards(end).length, 1, `R6: ${path}`);
+  }
+});
+
+/**
+ * Test model of one refund order change with print add-on lines: the end state (`{ vouchers, jobs }`) of
+ * each way the flagged unit `flaggedId` is settled — its card untouched after all (deactivated, its card
+ * print cancelled with it), spent (the refund moves to the first sibling Mo tries, untouched as its
+ * stored balance says, which is deactivated), spent with every sibling's card spent too (no taker: the
+ * flag stays; Mo stores no sibling's balance) — once by the webhook's after() with Shopify up (settled
+ * first, then the prints planned again on the settled rows), once by the sweep after an after() with
+ * Shopify down (the prints planned again with the flag unsettled; nothing plans them after the sweep).
+ */
+function orderChangeEnds({ facts, units, jobs, flaggedId }) {
+  const flag = planGiftVoucherOrderChange({ facts, vouchers: units, printJobs: jobs });
+  assert.deepEqual(flag.flagIssued, [flaggedId]);
+  const flagged = units.map((u) => (u.id === flaggedId ? { ...u, attention: "refund_after_use" } : u));
+  const replan = (s, unsettled) => {
+    const p = planGiftVoucherOrderChange({ facts, vouchers: s.vouchers, printJobs: s.jobs, unsettled });
+    assert.equal(p.revoked, 0);
+    const ids = [...p.cancelJobsNow, ...p.cancelJobsLater];
+    return { vouchers: s.vouchers, jobs: s.jobs.map((j) => (ids.includes(j.id) ? { ...j, status: "cancelled" } : j)) };
+  };
+  const deactivate = (s, id) => ({
+    vouchers: s.vouchers.map((v) => (v.id === id ? { ...v, status: "deactivated", attention: null } : v)),
+    jobs: s.jobs.map((j) => (j.voucherId === id && j.status === "queued" ? { ...j, status: "cancelled" } : j)),
+  });
+  const settle = {
+    untouched: (s) => deactivate(s, flaggedId),
+    moved: (s) => {
+      const [to] = revocationSiblingCandidates(s.vouchers.find((v) => v.id === flaggedId), s.vouchers, s.jobs);
+      const spent = s.vouchers.map((v) => (v.id === flaggedId ? { ...v, attention: null, balanceCents: 3000 } : v));
+      return deactivate({ vouchers: spent, jobs: s.jobs }, to.id);
+    },
+    kept: (s) => ({ vouchers: s.vouchers.map((v) => (v.id === flaggedId ? { ...v, balanceCents: 3000 } : v)), jobs: s.jobs }),
+  };
+  const atFlag = { vouchers: flagged, jobs };
+  const down = replan(atFlag, [flaggedId]);
+  return {
+    "untouched, Shopify up": replan(settle.untouched(atFlag), null),
+    "untouched, the sweep": settle.untouched(down),
+    "spent, moved in the after()": replan(settle.moved(atFlag), null),
+    "spent, moved by the sweep": settle.moved(down),
+    "spent, no sibling, Shopify up": replan(settle.kept(atFlag), null),
+    "spent, no sibling, the sweep": settle.kept(down),
+  };
+}
+
+/** The cards that still print: an open job whose voucher is issued without a revoke flag (a flag holds the card). */
+function printableCards({ vouchers, jobs }) {
+  return jobs
+    .filter((j) => j.status !== "cancelled" && j.status !== "failed")
+    .filter((j) => vouchers.some((v) => v.id === j.voucherId && v.status === "issued" && !revokeReasonOf(v.attention)))
+    .map((j) => j.id)
+    .sort((a, b) => a - b);
+}
 
 test("planGiftVoucherOrderChange: planned again on fresh rows after a stale write was refused — the rule converges", () => {
   // X1 — one refund delivered twice. Delivery A moved it from the spent unit 1 to the untouched unit 0
