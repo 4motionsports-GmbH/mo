@@ -415,12 +415,15 @@ of [`gift-voucher-designs.mjs`](../src/lib/gift-voucher-designs.mjs) (tested).
 
 - **Six designs** („Motive“, keys fixed): `classic` „Klassisch“, `birthday` „Geburtstag“, `christmas`
   „Weihnachten“, `thanks` „Danke“, `training` „Training“, `photo` „Eigenes Foto“ (the customer's photo full
-  bleed on the front; shop only; a preview without the photo shows `classic`, a delivered voucher never: when
-  the stored photo cannot be read or decoded there is no PDF and no print file — the download routes answer
-  503, the print job retries („Das Kundenfoto ließ sich nicht laden …“), the mail retries and then goes
-  without the attachment). Each has a default line for an empty message („Viel Freude beim Training!“, „Alles
-  Gute zum Geburtstag!“ …). Decorations are vector and seeded — the same input gives the same artwork at every
-  resolution.
+  bleed on the front; shop only). Each has a default line for an empty message („Viel Freude beim Training!“,
+  „Alles Gute zum Geburtstag!“ …). Decorations are vector and seeded — the same input gives the same artwork
+  at every resolution.
+- **A photo voucher without its photo:** a preview shows `classic`, a delivered voucher never. When the stored
+  photo cannot be read (Vercel Blob), there is no PDF and no print file — the download routes answer 503, the
+  print job retries („Das Kundenfoto ließ sich nicht laden …“), the mail retries and then goes without the
+  attachment. When it is read but cannot be decoded, the PDF is the plain text fallback without artwork (the
+  download routes serve it, the mail attaches it at once) and there are no print files — the print job
+  retries („Die Druckdateien konnten nicht erzeugt werden.“).
 - **Every letter is a vector path** from the bundled fonts — no system font on Vercel. Texts are cleaned to
   what the fonts can draw (Basic Latin, Latin-1, Latin Extended-A without ſ, € „ “ ” ‚ ‘ ’ – — … • ‹ ›); emoji and
   other characters are removed, and the page tells the customer (`textRemoved`).
