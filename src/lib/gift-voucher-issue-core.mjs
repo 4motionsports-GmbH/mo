@@ -183,16 +183,26 @@ export function isRevocationLookupConclusive({ updatedAt, now = Date.now() }) {
 /**
  * A refund revoked a unit whose card turned out (partly) spent: which other
  * units of the same order line could take the refund instead? Issued units
- * with a card, no attention and the same value — highest unit first. Mo
- * checks a candidate's live card (untouched?) before it moves the flag.
+ * with a card, no attention and the same value — highest unit first. Given
+ * the order's card prints (`printJobs`) while the unit's own card print is
+ * still open (it may be waiting for the taker's card —
+ * planGiftVoucherOrderChange), the siblings whose own card print on the same
+ * add-on line is still open come first: the deactivation of such a sibling
+ * cancels its card in place of the waiting one. Mo checks a candidate's live
+ * card (untouched?) before it moves the flag.
  * @template {{ id: number, status: string, attention: string | null, shopifyGiftCardId: string | null,
  *   shopifyLineItemId: string | null, unitIndex: number, amountCents: number }} V
  * @param {V} unit
  * @param {readonly V[]} units the order's units
+ * @param {readonly { voucherId: number, status: string, paidLineItemId: string | null }[] | null} [printJobs] the order's card prints
  * @returns {V[]}
  */
-export function revocationSiblingCandidates(unit, units) {
+export function revocationSiblingCandidates(unit, units, printJobs = null) {
   if (!unit.shopifyLineItemId) return [];
+  const openLine = openCardLines(printJobs ?? []);
+  const line = openLine.get(unit.id);
+  /** @param {V} u 0 when its deactivation cancels an open card on the unit's add-on line */
+  const freesCard = (u) => (line && openLine.get(u.id) === line ? 0 : 1);
   return units
     .filter(
       (u) =>
@@ -203,7 +213,20 @@ export function revocationSiblingCandidates(unit, units) {
         Boolean(u.shopifyGiftCardId) &&
         u.amountCents === unit.amountCents
     )
-    .sort((a, b) => b.unitIndex - a.unitIndex || b.id - a.id);
+    .sort((a, b) => freesCard(a) - freesCard(b) || b.unitIndex - a.unitIndex || b.id - a.id);
+}
+
+/**
+ * Voucher → the add-on line of its card print, while that print is still
+ * open (not sent, done, cancelled or failed).
+ * @param {readonly { voucherId: number, status: string, paidLineItemId: string | null }[]} printJobs
+ * @returns {Map<number, string>}
+ */
+function openCardLines(printJobs) {
+  /** @type {Map<number, string>} */
+  const out = new Map();
+  for (const j of printJobs) if (!FINAL_JOB.has(j.status) && j.paidLineItemId) out.set(j.voucherId, j.paidLineItemId);
+  return out;
 }
 
 /**
@@ -590,18 +613,22 @@ export function isLiveGiftVoucherUnit(v) {
  * the Shopify step has not checked: Shopify did not answer, out of time) —
  * may still move to an untouched sibling (issued, a card, no flag, the same
  * value, not revoked by this plan, no stored balance below the value). When
- * such a sibling has its own open card on the same print line, the card of
- * the flagged unit WAITS: it keeps its place among the jobs to cancel (no
- * other card is cancelled for it) but is not cancelled, because the
- * deactivation of whichever unit finally takes the refund cancels that
- * unit's card. Whether the add-on line was refunded is known only to the
- * order change, so a refund that ends on the spent card later (the sweep, no
- * untouched sibling left) cannot cancel its card by itself: a card is not
- * printed while its voucher carries a revoke flag (decideGiftVoucherPrintSubmission,
- * and the admin offers no print files), so the operator decides — „Sperren“
- * cancels it, „Als geklärt markieren“ lets it print. Without such a sibling
- * the card goes now, whatever the outcome. A cancellation revokes
- * everything: nothing waits.
+ * such a sibling has its own open card on the same print line and this plan
+ * does not cancel it (the jobs each add-on line loses are chosen first, as
+ * above — a sibling whose card is among them frees nothing when it takes the
+ * refund), the card of the flagged unit WAITS: it keeps its place among the
+ * jobs to cancel (no other card is cancelled for it) but is not cancelled,
+ * because the deactivation of whichever unit finally takes the refund
+ * cancels that unit's card — the Shopify step tries the siblings with an
+ * open card on that line first (revocationSiblingCandidates). Whether the
+ * add-on line was refunded is known only to the order change, so a refund
+ * that ends on the spent card later (the sweep, no untouched sibling left)
+ * cannot cancel its card by itself: a card is not printed while its voucher
+ * carries a revoke flag (decideGiftVoucherPrintSubmission, and the admin
+ * offers no print files), so the operator decides — „Sperren“ cancels it,
+ * „Als geklärt markieren“ lets it print. Without such a sibling the card
+ * goes now, whatever the outcome. A cancellation revokes everything: nothing
+ * waits.
  * `revokedEarlier`: units this order change revoked in an earlier round (a
  * write found its row changed and the change was planned again on fresh
  * rows) — they count as gone like any revoked unit, and the cards of those
@@ -679,23 +706,6 @@ export function planGiftVoucherOrderChange({ facts, vouchers, printJobs, revoked
   // became a card has its job cancelled as if it were revoked now.
   const earlier = new Set(revokedEarlier ?? []);
   for (const v of vouchers) if (earlier.has(v.id) && !revokedIds.has(v.id) && NEVER_CARDED.has(v.status)) unissued.add(v.id);
-  /** @type {Set<number>} refunds not settled yet that may still move to an untouched sibling — their cards wait */
-  const waiting = new Set();
-  if (reason === "refunded") {
-    /** @type {Map<number, string>} voucher → the print line of its open card */
-    const openCardLine = new Map();
-    for (const j of printJobs) if (!FINAL_JOB.has(j.status) && j.paidLineItemId) openCardLine.set(j.voucherId, j.paidLineItemId);
-    const open = new Set([...plan.flagIssued, ...(unsettled ?? [])]);
-    for (const v of vouchers) {
-      if (!open.has(v.id) || v.status !== "issued") continue;
-      if (!revokedIds.has(v.id) && revokeReasonOf(v.attention) !== "refunded") continue;
-      const line = openCardLine.get(v.id);
-      // Only a sibling whose own card is on the same print line (its deactivation then cancels that
-      // card) and that may still be untouched (a stored balance below the value never comes back).
-      const mayTake = (/** @type {ChangeVoucher} */ s) => !revokedIds.has(s.id) && !isKnownSpent(s) && openCardLine.get(s.id) === line;
-      if (line && revocationSiblingCandidates(v, vouchers).some(mayTake)) waiting.add(v.id);
-    }
-  }
   /** @type {Set<number>} units revoked now or before — their cards are the first to go */
   const gone = new Set(vouchers.filter((v) => revokedIds.has(v.id) || !isLiveGiftVoucherUnit(v)).map((v) => v.id));
 
@@ -723,6 +733,8 @@ export function planGiftVoucherOrderChange({ facts, vouchers, printJobs, revoked
     list.push(j);
     jobsByLine.set(j.paidLineItemId, list);
   }
+  /** @type {ChangePrintJob[]} the jobs the add-on lines lose — chosen before any card waits */
+  const losing = [];
   for (const [lineItemId, list] of jobsByLine) {
     // The voucher lines' rule: the line still pays for quantity − revoked
     // cards; its jobs above that go. A card never created (fewer jobs than
@@ -740,9 +752,30 @@ export function planGiftVoucherOrderChange({ facts, vouchers, printJobs, revoked
       if (ga !== gb) return ga - gb;
       return (unitOf.get(b.voucherId) ?? 0) - (unitOf.get(a.voucherId) ?? 0) || b.id - a.id;
     });
-    // A waiting card keeps its place: whichever unit takes the refund loses its card.
-    for (const j of ordered.slice(0, n)) if (!waiting.has(j.voucherId)) cancelJob(j);
+    losing.push(...ordered.slice(0, n));
   }
+  // A refund not settled yet whose card is among them may still move to an untouched sibling: its
+  // card waits — but only on a sibling card that stays open after this selection (one this plan
+  // cancels frees nothing when its unit takes the refund).
+  /** @type {Set<number>} */
+  const waiting = new Set();
+  if (reason === "refunded") {
+    const openLine = openCardLines(printJobs);
+    const losesCard = new Set(losing.map((j) => j.voucherId));
+    const open = new Set([...plan.flagIssued, ...(unsettled ?? [])]);
+    for (const v of vouchers) {
+      if (!open.has(v.id) || v.status !== "issued" || !losesCard.has(v.id)) continue;
+      if (!revokedIds.has(v.id) && revokeReasonOf(v.attention) !== "refunded") continue;
+      const line = openLine.get(v.id);
+      // Only a sibling whose own open card on the same add-on line this plan keeps (its deactivation
+      // then cancels that card) and that may still be untouched (a stored balance below the value never comes back).
+      const keepsCard = (/** @type {ChangeVoucher} */ s) =>
+        !revokedIds.has(s.id) && !isKnownSpent(s) && openLine.get(s.id) === line && !losesCard.has(s.id);
+      if (line && revocationSiblingCandidates(v, vouchers).some(keepsCard)) waiting.add(v.id);
+    }
+  }
+  // A waiting card keeps its place: whichever unit takes the refund loses its card.
+  for (const j of losing) if (!waiting.has(j.voucherId)) cancelJob(j);
   for (const id of now) later.delete(id);
   plan.cancelJobsNow = [...now];
   plan.cancelJobsLater = [...later];

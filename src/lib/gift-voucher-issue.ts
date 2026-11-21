@@ -63,11 +63,12 @@
 // card was being created), the balance sync or the sweep. The card prints of
 // a refunded add-on line follow the same rule per line and are decided once
 // the flags are resolved; the card of a refund Shopify could not settle yet
-// waits while an untouched sibling with a card on that line may still take
-// the refund (its deactivation then cancels the sibling's card), and no card
-// is printed while its voucher carries a revoke flag — a refund that stays on
-// a spent card leaves its card to the operator („Sperren“ cancels it, „Als
-// geklärt markieren“ lets it print).
+// waits while an untouched sibling with an open card on that line — one the
+// order change does not cancel — may still take the refund (its deactivation
+// then cancels the sibling's card; such siblings are tried first), and no
+// card is printed while its voucher carries a revoke flag — a refund that
+// stays on a spent card leaves its card to the operator („Sperren“ cancels
+// it, „Als geklärt markieren“ lets it print).
 //
 // FAILURE MODES (see also the notes in docs/GIFT_VOUCHERS.md):
 //   · webhook slow / Shopify product list not loaded → recordGiftVoucherOrder
@@ -913,13 +914,17 @@ async function resolveIssuedRevocation(
  * (deactivating it loses nothing): each candidate's LIVE card is read, the
  * flag moves in one conditional statement (several order updates resolve the
  * same flag at once — one wins), then the sibling is resolved (deactivated,
- * reason „Erstattet“). null = no untouched sibling; "retry" = a card was not
- * readable or the move could not be written.
+ * reason „Erstattet“). While this unit's card print is open, a sibling with
+ * an open card print on the same add-on line is tried first: the order change
+ * may have left this unit's card waiting for exactly that card
+ * (planGiftVoucherOrderChange). null = no untouched sibling; "retry" = a card
+ * was not readable or the move could not be written.
  */
 async function moveRefundToUntouchedSibling(v: GiftVoucher): Promise<"deactivated" | "moved" | "retry" | null> {
   if (!v.shopifyOrderId || !v.attention) return null;
   const flag = v.attention;
-  const candidates = revocationSiblingCandidates(v, await listGiftVouchersForOrder(v.shopifyOrderId));
+  const units = await listGiftVouchersForOrder(v.shopifyOrderId);
+  const candidates = revocationSiblingCandidates(v, units, await printJobsOf(units));
   let unreadable = false;
   for (const sibling of candidates) {
     if (!sibling.shopifyGiftCardId) continue;
@@ -1146,12 +1151,12 @@ export async function processGiftVoucherOrderChange(followUp: GiftVoucherOrderCh
  * the Shopify step has still to settle (Shopify did not answer, out of time —
  * what pickRevocationsToResolve still picks, except the flags `settledUsed`
  * just found on a spent card) is passed as unsettled: its card waits while
- * an untouched sibling with a card on the same add-on line may still take
- * the refund (planGiftVoucherOrderChange) — the deactivation of whichever
- * unit takes it cancels that unit's card. The change's own plan is the
- * fallback when the order's units cannot be read again — or when the new
- * plan would revoke a unit itself (the rows moved on in a way only the next
- * order change may act on).
+ * an untouched sibling with an open card on the same add-on line that this
+ * plan keeps may still take the refund (planGiftVoucherOrderChange) — the
+ * deactivation of whichever unit takes it cancels that unit's card. The
+ * change's own plan is the fallback when the order's units cannot be read
+ * again — or when the new plan would revoke a unit itself (the rows moved on
+ * in a way only the next order change may act on).
  */
 async function printJobsToCancel(followUp: GiftVoucherOrderChangeFollowUp, settledUsed: ReadonlySet<number>): Promise<number[]> {
   const vouchers = await listGiftVouchersForOrder(followUp.orderId);
