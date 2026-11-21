@@ -128,21 +128,35 @@ export function giftVoucherRevocationDecision(card) {
  * Issued vouchers whose revocation still has to be checked against Shopify:
  * status issued, a revoke flag, a card, and no stored balance below the
  * value yet (a stored lower balance means the check found the card used —
- * resolved, the flag stays for the operator).
- * @template {{ status: string, attention: string | null, shopifyGiftCardId: string | null, balanceCents: number | null, amountCents: number }} V
+ * resolved, the flag stays for the operator). `recheckIds`: units an order
+ * change flagged just now — checked whatever balance is stored, because a
+ * balance read BEFORE the flag (the daily sync, „Abgleichen“) is no check of
+ * it: the refund may still move to an untouched sibling.
+ * @template {{ id: number, status: string, attention: string | null, shopifyGiftCardId: string | null, balanceCents: number | null, amountCents: number }} V
  * @param {readonly V[]} vouchers
  * @param {number} [limit]
+ * @param {Iterable<number> | null} [recheckIds]
  * @returns {V[]}
  */
-export function pickRevocationsToResolve(vouchers, limit = Infinity) {
+export function pickRevocationsToResolve(vouchers, limit = Infinity, recheckIds = null) {
+  const recheck = new Set(recheckIds ?? []);
   const out = [];
   for (const v of vouchers) {
     if (out.length >= limit) break;
     if (v.status !== "issued" || !revokeReasonOf(v.attention) || !v.shopifyGiftCardId) continue;
-    if (v.balanceCents != null && v.balanceCents < v.amountCents) continue;
+    if (isKnownSpent(v) && !recheck.has(v.id)) continue;
     out.push(v);
   }
   return out;
+}
+
+/**
+ * Does the stored balance say the card was (partly) spent? (A balance is
+ * stored at issue, by the daily sync, „Abgleichen“ and a revocation check.)
+ * @param {{ balanceCents?: number | null, amountCents?: number }} v
+ */
+function isKnownSpent(v) {
+  return typeof v.balanceCents === "number" && typeof v.amountCents === "number" && v.balanceCents < v.amountCents;
 }
 
 /**
@@ -195,21 +209,28 @@ export function revocationSiblingCandidates(unit, units) {
  *                 (pending, held, failed, issuing): Mo still looks the card
  *                 up — refused;
  *   resolve     — a revoke flag on an issued unit not checked against
- *                 Shopify yet: check now (untouched → deactivated, spent →
- *                 acknowledged);
- *   acknowledge — a revoke flag on an issued unit already found (partly)
- *                 spent (stored balance below the value): store the
- *                 acknowledged key.
+ *                 Shopify yet, or any REFUND flag on an issued unit: check
+ *                 now, live (untouched → deactivated; spent → for a refund
+ *                 an untouched sibling takes it over, else acknowledged;
+ *                 deactivated in Shopify meanwhile → recorded). A stored
+ *                 balance that shows the card spent is no reason to skip
+ *                 that for a refund — it may have been read before the
+ *                 refund (daily sync, „Abgleichen“);
+ *   acknowledge — a CANCELLATION flag on an issued unit already found
+ *                 (partly) spent (stored balance below the value; every
+ *                 unit of the order is revoked — no sibling can take it):
+ *                 store the acknowledged key.
  * @param {{ status: string, attention: string | null, balanceCents: number | null, amountCents: number }} v
  * @returns {"none" | "keep" | "clear" | "revoking" | "resolve" | "acknowledge"}
  */
 export function planClearGiftVoucherAttention(v) {
   if (!v.attention) return "none";
   if (isAcknowledgedRevocation(v.attention)) return "keep";
-  if (!revokeReasonOf(v.attention)) return "clear";
+  const reason = revokeReasonOf(v.attention);
+  if (!reason) return "clear";
   if (v.status === "cancelled" || v.status === "rejected" || v.status === "deactivated") return "clear";
   if (v.status !== "issued") return "revoking";
-  return v.balanceCents != null && v.balanceCents < v.amountCents ? "acknowledge" : "resolve";
+  return reason === "cancelled" && isKnownSpent(v) ? "acknowledge" : "resolve";
 }
 
 // ── orders/paid: the quick look ──────────────────────────────────────────────
@@ -475,7 +496,10 @@ export function giftVoucherOrderChangeFacts(payload, topic) {
 }
 
 /**
- * @typedef {{ id: number, status: string, hasCode: boolean, shopifyLineItemId: string | null, unitIndex: number, attention: string | null }} ChangeVoucher
+ * @typedef {{
+ *   id: number, status: string, hasCode: boolean, shopifyLineItemId: string | null, unitIndex: number,
+ *   attention: string | null, amountCents: number, balanceCents: number | null,
+ * }} ChangeVoucher
  * @typedef {{ id: number, voucherId: number, status: string, paidLineItemId: string | null }} ChangePrintJob
  * @typedef {{
  *   reason: GiftVoucherRevokeReason,
@@ -492,6 +516,8 @@ export function giftVoucherOrderChangeFacts(payload, topic) {
 
 const UNSUBMITTED_JOB = new Set(["review", "queued"]);
 const FINAL_JOB = new Set(["sent", "failed", "cancelled", "done"]);
+/** Print jobs whose card is not coming any more (planGiftVoucherFulfilment's „given up“). */
+const GIVEN_UP_JOB = new Set(["cancelled", "failed"]);
 const LIVE_UNIT_STATUSES = new Set(["pending", "held", "failed", "issuing", "issued"]);
 /** Which live units of a line a revocation takes first: no card yet, then being issued, then issued. */
 const REVOKE_ORDER = /** @type {Record<string, number>} */ ({ pending: 0, held: 0, failed: 0, issuing: 1, issued: 2 });
@@ -518,12 +544,15 @@ export function isLiveGiftVoucherUnit(v) {
  * revoked units of the line (facts.revoked: refunds, removals, a full refund;
  * 0 when cancelled), so `live − paidQty` of its live units are revoked
  * (isLiveGiftVoucherUnit) — units without a card first (pending / held /
- * failed), then issuing, then issued; the highest unit first within each
- * group. Units never created (a unit removed before payment) and units
- * revoked earlier therefore count as gone, and a repeated webhook revokes
- * nothing. Which unit of a refunded line is revoked is Mo's choice (Shopify's
- * refund lines carry only a quantity) — should it be a (partly) spent card,
- * the Shopify step moves the refund to an untouched sibling.
+ * failed), then issuing, then issued: among the issued ones those whose
+ * stored balance does not show them (partly) spent first, then the spent
+ * ones; the highest unit first within each group. Units never created (a
+ * unit removed before payment) and units revoked earlier therefore count as
+ * gone, and a repeated webhook revokes nothing. Which unit of a refunded line
+ * is revoked is Mo's choice (Shopify's refund lines carry only a quantity) —
+ * a card known to be spent is the last choice, and should the choice still
+ * be a (partly) spent card (the stored balance is a day old at most), the
+ * Shopify step moves the refund to an untouched sibling.
  * Per revoked unit, by status:
  *   pending / held / failed, no code yet → `cancel` (no card exists);
  *   pending / held / failed WITH a code (an earlier create may have made a
@@ -534,12 +563,18 @@ export function isLiveGiftVoucherUnit(v) {
  *     the flag stays for an operator).
  * `revoked` counts the units revoked by THIS change.
  * Print jobs: the job of every revoked unit that never became a card is
- * cancelled (it was never submitted); a revoked print add-on line cancels
- * that many of its jobs (the jobs of units revoked now or before first, then
- * the highest units). A job is cancelled at once (`cancelJobsNow`, database
- * only) only when its voucher never became a card — the print pipeline takes
- * nothing else; any other job goes through the print provider
- * (`cancelJobsLater`), which knows whether it is with the printer already.
+ * cancelled (it was never submitted). A print add-on line follows the same
+ * rule as a voucher line: it still pays for quantity − revoked cards, so its
+ * jobs above that are cancelled — a card never created (removed before
+ * payment, or paid without a voucher to print it for) counts as gone, and so
+ * does a job given up already. Which jobs: those of units revoked now or
+ * before first (their cards go anyway), then jobs already cancelled or
+ * failed, then the highest units. A job is cancelled at once
+ * (`cancelJobsNow`, database only) only when its voucher never became a card
+ * — the print pipeline takes nothing else; any other job goes through the
+ * print provider (`cancelJobsLater`), which knows whether it is with the
+ * printer already. Run it again once the revocations are resolved (a refund
+ * that moved to an untouched sibling took that sibling's card along).
  *
  * @param {{
  *   facts: { cancelled: boolean, revoked: Map<string, number>, lineQuantities: Map<string, number> },
@@ -570,8 +605,11 @@ export function planGiftVoucherOrderChange({ facts, vouchers, printJobs }) {
     const live = list.filter(isLiveGiftVoucherUnit);
     const n = Math.max(0, live.length - paidQty);
     if (n === 0) continue;
+    // A card known to be spent goes last: deactivating an untouched one loses nothing.
+    const spent = (/** @type {ChangeVoucher} */ v) => (v.status === "issued" && isKnownSpent(v) ? 1 : 0);
     const ordered = [...live].sort(
-      (a, b) => (REVOKE_ORDER[a.status] ?? 0) - (REVOKE_ORDER[b.status] ?? 0) || b.unitIndex - a.unitIndex || b.id - a.id
+      (a, b) =>
+        (REVOKE_ORDER[a.status] ?? 0) - (REVOKE_ORDER[b.status] ?? 0) || spent(a) - spent(b) || b.unitIndex - a.unitIndex || b.id - a.id
     );
     for (const v of ordered.slice(0, n)) revokedIds.add(v.id);
   }
@@ -632,12 +670,20 @@ export function planGiftVoucherOrderChange({ facts, vouchers, printJobs }) {
     jobsByLine.set(j.paidLineItemId, list);
   }
   for (const [lineItemId, list] of jobsByLine) {
-    const n = facts.cancelled ? list.length : Math.min(facts.revoked.get(lineItemId) ?? 0, list.length);
-    if (n <= 0) continue;
+    // The voucher lines' rule: the line still pays for quantity − revoked
+    // cards; its jobs above that go. A card never created (fewer jobs than
+    // the line's quantity) therefore counts as gone already.
+    const quantity = facts.lineQuantities.get(lineItemId) ?? list.length;
+    const paidQty = facts.cancelled ? 0 : Math.max(0, quantity - (facts.revoked.get(lineItemId) ?? 0));
+    const n = Math.max(0, list.length - paidQty);
+    if (n === 0) continue;
     const ordered = [...list].sort((a, b) => {
       const ra = gone.has(a.voucherId) ? 0 : 1;
       const rb = gone.has(b.voucherId) ? 0 : 1;
       if (ra !== rb) return ra - rb;
+      const ga = GIVEN_UP_JOB.has(a.status) ? 0 : 1;
+      const gb = GIVEN_UP_JOB.has(b.status) ? 0 : 1;
+      if (ga !== gb) return ga - gb;
       return (unitOf.get(b.voucherId) ?? 0) - (unitOf.get(a.voucherId) ?? 0) || b.id - a.id;
     });
     for (const j of ordered.slice(0, n)) cancelJob(j);

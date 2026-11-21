@@ -153,8 +153,13 @@ test("planClearGiftVoucherAttention: what „Als geklärt markieren“ does", ()
   assert.equal(planClearGiftVoucherAttention({ ...issued, attention: "deactivate_failed" }), "clear");
   assert.equal(planClearGiftVoucherAttention(issued), "resolve", "not checked against Shopify yet");
   assert.equal(planClearGiftVoucherAttention({ ...issued, balanceCents: null }), "resolve");
-  assert.equal(planClearGiftVoucherAttention({ ...issued, balanceCents: 3000 }), "acknowledge", "found spent already");
+  // A refund found spent already — maybe by a balance read BEFORE the refund:
+  // still checked live (an untouched sibling may take it over; the card may
+  // be deactivated in Shopify meanwhile), else acknowledged.
+  assert.equal(planClearGiftVoucherAttention({ ...issued, balanceCents: 3000 }), "resolve");
+  // A cancellation revokes every unit: no sibling can take it.
   assert.equal(planClearGiftVoucherAttention({ ...issued, attention: "cancelled_after_use", balanceCents: 0 }), "acknowledge");
+  assert.equal(planClearGiftVoucherAttention({ ...issued, attention: "cancelled_after_use", balanceCents: 5000 }), "resolve");
   for (const status of ["pending", "held", "failed", "issuing"]) {
     assert.equal(planClearGiftVoucherAttention({ ...issued, status }), "revoking", status);
   }
@@ -185,6 +190,10 @@ test("pickRevocationsToResolve: issued + revoke flag + card, not yet found used"
   ];
   assert.deepEqual(pickRevocationsToResolve(rows).map((r) => r.id), [1, 2, 7]);
   assert.deepEqual(pickRevocationsToResolve(rows, 2).map((r) => r.id), [1, 2]);
+  // A flag an order change set just now is checked whatever balance is stored:
+  // a balance read before the refund is no check of it.
+  assert.deepEqual(pickRevocationsToResolve(rows, Infinity, [3, 4, 5, 6]).map((r) => r.id), [1, 2, 3, 7]);
+  assert.deepEqual(pickRevocationsToResolve(rows, Infinity, null).map((r) => r.id), [1, 2, 7]);
 });
 
 test("isRevocationLookupConclusive: only two minutes after the last write", () => {
@@ -449,7 +458,7 @@ test("giftVoucherOrderChangeFacts: a refunded or voided order revokes every unit
 
 /** @param {Partial<import("./gift-voucher-issue-core.mjs").ChangeVoucher> & { id: number }} v */
 function cv(v) {
-  return { status: "issued", hasCode: true, shopifyLineItemId: "9001", unitIndex: 0, attention: null, ...v };
+  return { status: "issued", hasCode: true, shopifyLineItemId: "9001", unitIndex: 0, attention: null, amountCents: 5000, balanceCents: null, ...v };
 }
 
 /** Facts of a refund: revoked units per line, ordered quantities. */
@@ -510,6 +519,106 @@ test("planGiftVoucherOrderChange: refund 1 of 2 — one unit, units without a ca
   const mixed = [cv({ id: 1, unitIndex: 0, status: "held", hasCode: false }), cv({ id: 2, unitIndex: 1 }), cv({ id: 3, unitIndex: 2, status: "issuing" })];
   const m = planGiftVoucherOrderChange({ facts: refundFacts({ 9001: 2 }, { 9001: 3 }), vouchers: mixed, printJobs: [] });
   assert.deepEqual([m.cancel, m.flagIssuing, m.flagIssued], [[1], [3], []]);
+});
+
+test("planGiftVoucherOrderChange: a card the stored balance shows spent is revoked last", () => {
+  // The daily balance sync read unit 1's card at 30 € before the refund of one unit.
+  const synced = [cv({ id: 1, unitIndex: 0, balanceCents: 5000 }), cv({ id: 2, unitIndex: 1, balanceCents: 3000 })];
+  const p = planGiftVoucherOrderChange({ facts: refundFacts({ 9001: 1 }, { 9001: 2 }), vouchers: synced, printJobs: [] });
+  assert.deepEqual(p.flagIssued, [1], "the untouched card, not the highest unit");
+  // Not read yet (null) counts as untouched; among the untouched the highest unit.
+  const unread = [cv({ id: 1, unitIndex: 0, balanceCents: null }), cv({ id: 2, unitIndex: 1, balanceCents: 0 }), cv({ id: 3, unitIndex: 2, balanceCents: 5000 })];
+  assert.deepEqual(planGiftVoucherOrderChange({ facts: refundFacts({ 9001: 1 }, { 9001: 3 }), vouchers: unread, printJobs: [] }).flagIssued, [3]);
+  // Two of three: both untouched ones before the spent one.
+  assert.deepEqual(
+    planGiftVoucherOrderChange({ facts: refundFacts({ 9001: 2 }, { 9001: 3 }), vouchers: unread, printJobs: [] }).flagIssued.sort(),
+    [1, 3]
+  );
+  // Every card spent: the highest unit (the Shopify step looks for an untouched sibling live).
+  const allSpent = [cv({ id: 1, unitIndex: 0, balanceCents: 1000 }), cv({ id: 2, unitIndex: 1, balanceCents: 3000 })];
+  assert.deepEqual(planGiftVoucherOrderChange({ facts: refundFacts({ 9001: 1 }, { 9001: 2 }), vouchers: allSpent, printJobs: [] }).flagIssued, [2]);
+  // A unit without a card still goes first — whatever the balances say.
+  const mixed = [cv({ id: 1, unitIndex: 0, balanceCents: 5000 }), cv({ id: 2, unitIndex: 1, status: "held", hasCode: false })];
+  const m = planGiftVoucherOrderChange({ facts: refundFacts({ 9001: 1 }, { 9001: 2 }), vouchers: mixed, printJobs: [] });
+  assert.deepEqual([m.cancel, m.flagIssued], [[2], []]);
+});
+
+test("planGiftVoucherOrderChange: a print line edited before payment — the card never created counts as gone", () => {
+  // 2 vouchers + 2 Premium-Karten ordered, one card removed by an order edit
+  // before payment: orders/paid recorded ONE job (current_quantity 1).
+  const p0 = payload();
+  p0.line_items[0].quantity = 2;
+  p0.line_items[0].current_quantity = 2;
+  p0.line_items[1].quantity = 2;
+  p0.line_items[1].current_quantity = 1;
+  const record = plan({ extract: extract(p0), reviewPrintWithPhoto: false });
+  assert.deepEqual(record.units.map((u) => u.print?.paidLineItemId ?? null), ["9002", null]);
+  const vouchers = [cv({ id: 1, unitIndex: 0 }), cv({ id: 2, unitIndex: 1 })];
+  const jobs = [{ id: 100, voucherId: 1, status: "queued", paidLineItemId: "9002" }];
+  // Any later orders/updated without a refund keeps the one PAID card.
+  const later = planGiftVoucherOrderChange({ facts: giftVoucherOrderChangeFacts({ ...p0, tags: "later" }, "orders/updated"), vouchers, printJobs: jobs });
+  assert.equal(later.revoked, 0);
+  assert.deepEqual([later.cancelJobsNow, later.cancelJobsLater], [[], []]);
+  // The same when a voucher and its card were removed (both lines 2 → 1).
+  p0.line_items[0].current_quantity = 1;
+  const both = planGiftVoucherOrderChange({
+    facts: giftVoucherOrderChangeFacts(p0, "orders/updated"),
+    vouchers: [cv({ id: 1, unitIndex: 0 })],
+    printJobs: jobs,
+  });
+  assert.equal(both.revoked, 0);
+  assert.deepEqual([both.cancelJobsNow, both.cancelJobsLater], [[], []]);
+  // A refund of that card later (current_quantity 0) cancels its job.
+  p0.line_items[0].current_quantity = 2;
+  p0.line_items[1].current_quantity = 0;
+  p0.refunds = [{ refund_line_items: [{ line_item_id: 9002, quantity: 1 }] }];
+  const refunded = planGiftVoucherOrderChange({ facts: giftVoucherOrderChangeFacts(p0, "orders/updated"), vouchers, printJobs: jobs });
+  assert.equal(refunded.revoked, 0, "the vouchers stay");
+  assert.deepEqual(refunded.cancelJobsLater, [100]);
+});
+
+test("planGiftVoucherOrderChange: a card already cancelled or failed counts before a live one", () => {
+  const vouchers = [cv({ id: 1, unitIndex: 0 }), cv({ id: 2, unitIndex: 1 }), cv({ id: 3, unitIndex: 2 })];
+  for (const given of ["cancelled", "failed"]) {
+    // The operator cancelled (or print.one failed) the card of unit 0; then one card is refunded.
+    const jobs = [
+      { id: 31, voucherId: 1, status: given, paidLineItemId: "9002" },
+      { id: 32, voucherId: 2, status: "queued", paidLineItemId: "9002" },
+      { id: 33, voucherId: 3, status: "queued", paidLineItemId: "9002" },
+    ];
+    const p = planGiftVoucherOrderChange({ facts: refundFacts({ 9002: 1 }, { 9001: 3, 9002: 3 }), vouchers, printJobs: jobs });
+    assert.deepEqual([p.cancelJobsNow, p.cancelJobsLater], [[], []], given);
+    // Two refunded: that card and the highest live one.
+    const two = planGiftVoucherOrderChange({ facts: refundFacts({ 9002: 2 }, { 9001: 3, 9002: 3 }), vouchers, printJobs: jobs });
+    assert.deepEqual(two.cancelJobsLater, [33], given);
+  }
+});
+
+test("planGiftVoucherOrderChange: planned again after a refund moved to an untouched sibling, one paid card survives", () => {
+  // 2 × (voucher + Premium-Karte); one voucher and one card refunded.
+  const facts = refundFacts({ 9001: 1, 9002: 1 }, { 9001: 2, 9002: 2 });
+  const jobs = [
+    { id: 1, voucherId: 1, status: "queued", paidLineItemId: "9002" },
+    { id: 2, voucherId: 2, status: "queued", paidLineItemId: "9002" },
+  ];
+  // At the webhook: unit 1 (highest, not known spent) is revoked — with its card.
+  const before = planGiftVoucherOrderChange({ facts, vouchers: [cv({ id: 1, unitIndex: 0 }), cv({ id: 2, unitIndex: 1 })], printJobs: jobs });
+  assert.deepEqual([before.flagIssued, before.cancelJobsLater], [[2], [2]]);
+  // Unit 1's card was spent: the refund moved to unit 0 (deactivated, its card cancelled).
+  const after = planGiftVoucherOrderChange({
+    facts,
+    vouchers: [cv({ id: 1, unitIndex: 0, status: "deactivated" }), cv({ id: 2, unitIndex: 1, balanceCents: 3000 })],
+    printJobs: [{ ...jobs[0], status: "cancelled" }, jobs[1]],
+  });
+  assert.equal(after.revoked, 0);
+  assert.deepEqual([after.cancelJobsNow, after.cancelJobsLater], [[], []], "unit 1 keeps its paid card");
+  // Still flagged (Shopify did not answer): the flagged unit's card stays the one to go.
+  const pending = planGiftVoucherOrderChange({
+    facts,
+    vouchers: [cv({ id: 1, unitIndex: 0 }), cv({ id: 2, unitIndex: 1, attention: "refund_after_use" })],
+    printJobs: jobs,
+  });
+  assert.deepEqual([pending.revoked, pending.cancelJobsLater], [0, [2]]);
 });
 
 test("planGiftVoucherOrderChange: a repeated webhook revokes nothing more", () => {

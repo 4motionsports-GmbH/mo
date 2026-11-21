@@ -40,7 +40,8 @@
 // REVOCATION (order cancelled, a voucher line refunded or removed, the order
 // refunded in full): one rule per line — the order still pays for quantity −
 // revoked units, so the live units above that are revoked, units without a
-// card first (planGiftVoucherOrderChange). A unit that never became a card is
+// card first and cards the stored balance shows spent last
+// (planGiftVoucherOrderChange). A unit that never became a card is
 // cancelled at once; any other unit gets the attention flag
 // `cancelled_after_use` / `refund_after_use` as the DURABLE intent before the
 // webhook is acknowledged. The Shopify step then resolves it — untouched card
@@ -50,9 +51,14 @@
 // never deactivated automatically: the flag stays for an operator, whose
 // „Als geklärt markieren“ stores its acknowledged form (no „Achtung“, never
 // flagged again); a transient Shopify failure keeps the flag for the next
-// try. Whoever comes first finishes it: the webhook's after(), the issuing
-// step (also for a flag that landed while the card was being created) or the
-// sweep.
+// try. A stored balance below the value marks a flag as checked, so for a
+// flagged card only that check writes it (the balance sync resolves the
+// flag instead), and a flag set by an order change is checked by its after()
+// whatever balance was stored before. Whoever comes first finishes it: the
+// webhook's after(), the issuing step (also for a flag that landed while the
+// card was being created), the balance sync or the sweep. The card prints of
+// a refunded add-on line follow the same rule per line and are decided once
+// the flags are resolved.
 //
 // FAILURE MODES (see also the notes in docs/GIFT_VOUCHERS.md):
 //   · webhook slow / Shopify product list not loaded → recordGiftVoucherOrder
@@ -836,34 +842,43 @@ type RevocationOutcome = "deactivated" | "moved" | "used" | "retry" | "error" | 
  * balance marks it checked: "used"); Shopify refused the deactivation →
  * `deactivate_failed` for an operator ("error"); Shopify not reachable, a
  * timeout or a 5xx → "retry", the flag stays for the next try (the sweep,
- * the next order update).
+ * the next order update, the balance sync). `card`: the card just read (the
+ * balance sync) — else it is read here.
  */
-async function resolveIssuedRevocation(v: GiftVoucher, opts: { moveToSibling?: boolean } = {}): Promise<RevocationOutcome> {
+async function resolveIssuedRevocation(
+  v: GiftVoucher,
+  opts: { moveToSibling?: boolean; card?: ShopifyGiftCardInfo } = {}
+): Promise<RevocationOutcome> {
   const reason = revokeReasonOf(v.attention);
   if (!reason || v.status !== "issued" || !v.shopifyGiftCardId) return "none";
-  const r = await getShopifyGiftCard(v.shopifyGiftCardId);
-  if (!r.ok) return "retry";
-  if (!r.card) {
-    report(new Error("revocation: the Shopify card of an issued voucher is missing"), "revokeMissingCard", { voucherId: v.id });
-    await setGiftVoucherAttention(v.id, "deactivate_failed");
-    return "error";
+  let card = opts.card ?? null;
+  if (!card) {
+    const r = await getShopifyGiftCard(v.shopifyGiftCardId);
+    if (!r.ok) return "retry";
+    if (!r.card) {
+      report(new Error("revocation: the Shopify card of an issued voucher is missing"), "revokeMissingCard", { voucherId: v.id });
+      await setGiftVoucherAttention(v.id, "deactivate_failed");
+      return "error";
+    }
+    card = r.card;
   }
-  const decision = giftVoucherRevocationDecision(r.card);
+  const decision = giftVoucherRevocationDecision(card);
   if (decision === "used") {
     if (reason === "refunded" && opts.moveToSibling !== false) {
       const moved = await moveRefundToUntouchedSibling(v);
       // A sibling's card was not readable: try again (no balance stored — the flag stays due).
       if (moved === "retry") return "retry";
       if (moved) {
-        await updateGiftVoucherBalance(v.id, r.card.balanceCents);
+        await updateGiftVoucherBalance(v.id, card.balanceCents);
         return moved;
       }
     }
-    await updateGiftVoucherBalance(v.id, r.card.balanceCents);
+    // The stored lower balance marks the flag as checked (pickRevocationsToResolve).
+    await updateGiftVoucherBalance(v.id, card.balanceCents);
     return "used";
   }
   if (decision === "deactivate") {
-    const d = await deactivateShopifyGiftCard(r.card.id);
+    const d = await deactivateShopifyGiftCard(card.id);
     if (!d.ok) {
       // Transient (timeout, throttle, 5xx): the flag stays and the next try deactivates.
       if (d.retryable) return "retry";
@@ -902,9 +917,10 @@ async function moveRefundToUntouchedSibling(v: GiftVoucher): Promise<"deactivate
     }
     if (!c.card || giftVoucherRevocationDecision(c.card) !== "deactivate") continue;
     if (!(await moveGiftVoucherRevocation(v.id, sibling.id, flag))) {
-      // Another order update moved it first — or the write failed: then later again.
+      // Another worker moved or settled the flag first ("moved") — or the
+      // write, or this read, failed: then later again.
       const now = await getGiftVoucher(v.id);
-      return now && now.attention === flag ? "retry" : "moved";
+      return now && now.attention !== flag ? "moved" : "retry";
     }
     const moved = await getGiftVoucher(sibling.id);
     const r = moved ? await resolveIssuedRevocation(moved, { moveToSibling: false }) : "retry";
@@ -957,9 +973,15 @@ async function flagPrintAttention(voucherId: number, key: string): Promise<void>
 /** The work an order change leaves for after the webhook's answer (processGiftVoucherOrderChange). */
 export interface GiftVoucherOrderChangeFollowUp {
   orderId: string;
-  /** Print jobs to cancel through the print provider (they may be at the printer). */
+  /** The change's facts: the card prints are decided again once the revocations are resolved. */
+  facts: GiftVoucherOrderChangeFacts;
+  /** Units this change revoked: each flagged card is checked against Shopify once, whatever balance is stored. */
+  revokedIds: number[];
+  /** The print jobs the change's own plan cancels through the provider — used when the order cannot be read again. */
   printJobIds: number[];
 }
+
+type GiftVoucherOrderChangeFacts = Pick<ReturnType<typeof giftVoucherOrderChangeFacts>, "cancelled" | "revoked" | "lineQuantities">;
 
 /**
  * orders/cancelled, orders/updated (refunds, removals, a full refund): revoke
@@ -983,10 +1005,7 @@ export async function handleGiftVoucherOrderChange(
     const vouchers = await listGiftVouchersForOrder(facts.orderId);
     if (vouchers.length === 0) return { ok: true, action: "gift_vouchers:none" };
 
-    const jobs = (
-      await Promise.all(vouchers.filter((v) => v.delivery === "print").map((v) => getGiftVoucherPrintJobForVoucher(v.id)))
-    ).filter((j): j is NonNullable<typeof j> => j !== null);
-    const plan = planGiftVoucherOrderChange({ facts, vouchers, printJobs: jobs });
+    const plan = planGiftVoucherOrderChange({ facts, vouchers, printJobs: await printJobsOf(vouchers) });
     if (plan.revoked === 0 && plan.cancelJobsNow.length === 0 && plan.cancelJobsLater.length === 0) {
       return { ok: true, action: "gift_vouchers:unchanged" };
     }
@@ -1025,7 +1044,12 @@ export async function handleGiftVoucherOrderChange(
     return {
       ok: true,
       action: `gift_vouchers:revoked:${plan.revoked}`,
-      followUp: { orderId: facts.orderId, printJobIds: plan.cancelJobsLater },
+      followUp: {
+        orderId: facts.orderId,
+        facts: { cancelled: facts.cancelled, revoked: facts.revoked, lineQuantities: facts.lineQuantities },
+        revokedIds: [...plan.cancel, ...plan.recheck.map((r) => r.id), ...plan.flagIssuing, ...plan.flagIssued],
+        printJobIds: plan.cancelJobsLater,
+      },
     };
   } catch (err) {
     report(err, "orderChange");
@@ -1033,12 +1057,22 @@ export async function handleGiftVoucherOrderChange(
   }
 }
 
+/** The print jobs of an order's units (one per unit with a card ordered). */
+async function printJobsOf(vouchers: readonly GiftVoucher[]) {
+  return (await Promise.all(vouchers.filter((v) => v.delivery === "print").map((v) => getGiftVoucherPrintJobForVoucher(v.id)))).filter(
+    (j): j is NonNullable<typeof j> => j !== null
+  );
+}
+
 /**
  * The Shopify / print.one part of an order change, for the webhook's
- * after(): cancel the named print jobs, resolve the order's revocation flags
- * (deactivate untouched cards), and let the issuing step close the units
- * that never became a card. Never throws; whatever does not finish here is
- * finished by the sweep (the flags persist).
+ * after(): resolve the order's revocation flags (deactivate untouched cards;
+ * a flag this change set is checked whatever balance is stored), then cancel
+ * the card prints the order no longer pays for — decided only now, on the
+ * resolved rows: a refund that moved to an untouched sibling took that
+ * sibling's card along, which then counts for the add-on line — and let the
+ * issuing step close the units that never became a card. Never throws;
+ * whatever does not finish here is finished by the sweep (the flags persist).
  */
 export async function processGiftVoucherOrderChange(followUp: GiftVoucherOrderChangeFollowUp): Promise<void> {
   try {
@@ -1046,11 +1080,11 @@ export async function processGiftVoucherOrderChange(followUp: GiftVoucherOrderCh
     // The money first: deactivate untouched cards (this also cancels their
     // card prints), then the remaining prints of refunded add-on lines.
     const vouchers = await listGiftVouchersForOrder(followUp.orderId);
-    for (const v of pickRevocationsToResolve(vouchers)) {
+    for (const v of pickRevocationsToResolve(vouchers, Infinity, followUp.revokedIds)) {
       if (deadlineMs - Date.now() < MIN_STEP_MS) break;
       await resolveIssuedRevocation(v);
     }
-    for (const jobId of followUp.printJobIds) {
+    for (const jobId of await printJobsToCancel(followUp)) {
       if (deadlineMs - Date.now() < MIN_STEP_MS) break;
       const job = await getGiftVoucherPrintJob(jobId);
       if (job && !isFinalPrintJobStatus(job.status)) await cancelPrintJobViaProvider(job.id, job.voucherId);
@@ -1059,6 +1093,21 @@ export async function processGiftVoucherOrderChange(followUp: GiftVoucherOrderCh
   } catch (err) {
     report(err, "orderChangeAfter");
   }
+}
+
+/**
+ * The card prints an order change cancels, planned again on the rows as they
+ * are after the revocations were resolved (the same facts). The change's own
+ * plan is the fallback when the order's units cannot be read again — or when
+ * the new plan would revoke a unit itself (the rows moved on in a way only
+ * the next order change may act on).
+ */
+async function printJobsToCancel(followUp: GiftVoucherOrderChangeFollowUp): Promise<number[]> {
+  const vouchers = await listGiftVouchersForOrder(followUp.orderId);
+  if (vouchers.length === 0) return followUp.printJobIds;
+  const plan = planGiftVoucherOrderChange({ facts: followUp.facts, vouchers, printJobs: await printJobsOf(vouchers) });
+  if (plan.revoked > 0) return followUp.printJobIds;
+  return [...new Set([...plan.cancelJobsNow, ...plan.cancelJobsLater])];
 }
 
 // ── admin actions ────────────────────────────────────────────────────────────
@@ -1292,11 +1341,14 @@ export async function issueManualGiftVoucher(
 /**
  * „Als geklärt markieren“ (planClearGiftVoucherAttention). A note that is not
  * about money is cleared. A revoke flag never just vanishes: on an issued
- * card it is checked against Shopify first — untouched → deactivated (or the
- * refund moves to an untouched sibling); spent → the ACKNOWLEDGED key is
- * stored, so a later order update never flags the card again and it leaves
- * „Achtung“; Shopify not answering → `busy`. A flag on a unit whose card
- * lookup still runs is refused (`revoking`); an acknowledged key stays.
+ * card it is checked against Shopify first (a refund flag always — also when
+ * the stored balance showed the card spent already: that balance may have
+ * been read before the refund) — untouched → deactivated; spent → for a
+ * refund an untouched sibling of the line takes it over, else the
+ * ACKNOWLEDGED key is stored, so a later order update never flags the card
+ * again and it leaves „Achtung“; Shopify not answering → `busy`. A flag on a
+ * unit whose card lookup still runs is refused (`revoking`); an acknowledged
+ * key stays.
  */
 export async function clearGiftVoucherAttention(id: number): Promise<{ ok: true } | Fail> {
   try {
@@ -1398,18 +1450,30 @@ export async function syncGiftVoucherBalance(id: number): Promise<{ ok: true; ba
   }
 }
 
+/**
+ * Read a card's balance and store it; a card deactivated in Shopify is
+ * recorded. A unit with a pending revocation is resolved with the card just
+ * read (resolveIssuedRevocation): a stored lower balance marks its flag as
+ * checked, so it is written only once a refund had its chance to move to an
+ * untouched sibling — never by a plain balance read.
+ */
 async function syncBalance(v: GiftVoucher): Promise<{ ok: true; balanceCents: number } | { ok: false; message: string }> {
   if (!v.shopifyGiftCardId) return { ok: false, message: "Zu diesem Gutschein gibt es noch keine Shopify-Karte." };
   const r = await getShopifyGiftCard(v.shopifyGiftCardId);
   if (!r.ok) return { ok: false, message: r.message };
   if (!r.card) return { ok: false, message: "Shopify kennt diese Karte nicht (mehr)." };
-  await updateGiftVoucherBalance(v.id, r.card.balanceCents);
-  if (v.status === "issued" && (!r.card.enabled || r.card.deactivatedAt)) {
-    // Deactivated in the Shopify admin: Mo records it (and a pending revocation is settled).
-    const revoke = revokeReasonOf(v.attention);
-    await markGiftVoucherDeactivated(v.id, revoke ? GIFT_VOUCHER_REVOKE_REASON_TEXT[revoke] : "In Shopify gesperrt");
-    if (revoke) await setGiftVoucherAttention(v.id, null);
+  if (v.status === "issued" && revokeReasonOf(v.attention)) {
+    const outcome = await resolveIssuedRevocation(v, { card: r.card });
+    if (outcome === "retry") {
+      return { ok: false, message: "Die Stornierung dieses Gutscheins wartet noch auf Shopify — bitte gleich erneut abgleichen." };
+    }
+    // "used" / "moved" stored the balance already.
+    if (outcome !== "used" && outcome !== "moved") await updateGiftVoucherBalance(v.id, r.card.balanceCents);
+    return { ok: true, balanceCents: r.card.balanceCents };
   }
+  await updateGiftVoucherBalance(v.id, r.card.balanceCents);
+  // Deactivated in the Shopify admin: Mo records it.
+  if (v.status === "issued" && (!r.card.enabled || r.card.deactivatedAt)) await markGiftVoucherDeactivated(v.id, "In Shopify gesperrt");
   return { ok: true, balanceCents: r.card.balanceCents };
 }
 
@@ -1518,12 +1582,15 @@ export async function runGiftVoucherSweep(opts?: { deadlineMs?: number }): Promi
     if (r) result.assetsCleaned = r.deleted;
   }
 
-  // 5) Balances (issued cards not read for 24 h, live ones first).
+  // 5) Balances (issued cards not read for 24 h, live ones first). A card
+  //    with a pending revocation is resolved on the way (its sibling search
+  //    needs the time of a revocation step).
   await guarded("sweepBalances", undefined, async () => {
     if (left() < MIN_STEP_MS) return;
     const rows = await listGiftVouchersForBalanceSync({ limit: SWEEP_BALANCE_LIMIT, olderThanHours: 24 });
     for (const v of rows) {
       if (left() < 4_000) break;
+      if (revokeReasonOf(v.attention) && left() < MIN_STEP_MS) continue;
       if ((await syncBalance(v)).ok) result.balancesSynced++;
     }
   });
