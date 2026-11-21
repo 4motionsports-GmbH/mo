@@ -382,6 +382,50 @@ test("a long issuer line (160 characters) wraps instead of being cut, and the co
   }
 });
 
+test("a „für“ of up to 40 characters is never shortened — a long one breaks onto a second line", () => {
+  const { panelPx, bleedPx, safeMarginMm } = GIFT_VOUCHER_PRINT_SPREAD;
+  const names = [
+    "Lena",
+    "Familie Müller-Lüdenscheidt",
+    "Anna-Katharina von Hohenberg",
+    "Maximiliane Großmann-Schönberger",
+    "Maximiliane Großmann-Schönberger-Wiesen",
+    "Oma Gertrud, Opa Heinz und Tante Marlene",
+    "Maximilianegroßmannschönbergerwiesenthal",
+    "W".repeat(40),
+  ];
+  for (const { key } of GIFT_VOUCHER_DESIGNS) {
+    for (const layout of /** @type {const} */ (["landscape", "square"])) {
+      for (const recipientName of names) {
+        /** @type {import("./gift-voucher-designs.mjs").GiftVoucherPanelLayout | undefined} */
+        let l;
+        const drawn = drawnStrings((fonts) => (l = layoutOf(key, layout, "front", { fonts, data: { ...DATA, recipientName, amountCents: 50000 } })));
+        assert.ok(l);
+        const what = `${key} ${layout} ${JSON.stringify(recipientName)}`;
+        // Semibold: wordmark, site, eyebrow — then the name, one string per line.
+        const nameLines = drawn.semibold.slice(3);
+        assert.ok(nameLines.length >= 1 && nameLines.length <= 2, `${what}: ${JSON.stringify(nameLines)}`);
+        assert.ok(!nameLines.some((s) => s.includes("…")), `${what}: shortened ${JSON.stringify(nameLines)}`);
+        assert.equal(nameLines.join("").replace(/ /g, ""), recipientName.replace(/ /g, ""), what);
+        assert.equal(drawn.regular.filter((s) => s === "für ").length, 1, `${what}: „für“ once`);
+        if (recipientName === "Lena") assert.equal(nameLines.length, 1);
+        // The name sits below the value and stays on the panel (print: in the safe area).
+        const lastValue = l.elements.map((e) => e.role).lastIndexOf("value");
+        const valueBottom = Math.max(...l.elements.filter((e) => e.role === "value" && e.bbox).map((e) => /** @type {{ y2: number }} */ (e.bbox).y2));
+        const nameBoxes = l.elements.slice(lastValue + 1).filter((e) => e.role === "text" && e.bbox).map((e) => /** @type {{ x1: number, y1: number, x2: number, y2: number }} */ (e.bbox));
+        assert.ok(nameBoxes.length >= 2, what);
+        const lo = layout === "square" ? bleedPx + safeMarginMm * l.pxPerMm : 0;
+        const hi = layout === "square" ? panelPx - bleedPx - safeMarginMm * l.pxPerMm : l.widthPx;
+        const hiY = layout === "square" ? hi : l.heightPx;
+        for (const b of nameBoxes) {
+          assert.ok(b.y1 > valueBottom, `${what}: the name runs into the value`);
+          assert.ok(b.x1 >= lo && b.y1 >= lo && b.x2 <= hi && b.y2 <= hiY, `${what}: ${JSON.stringify(b)} outside the panel's safe area`);
+        }
+      }
+    }
+  }
+});
+
 test("the photo design shows the photo, and falls back to classic without one", () => {
   const withPhoto = layoutOf("photo", "landscape", "front");
   assert.ok(withPhoto.elements.some((e) => e.role === "image"));

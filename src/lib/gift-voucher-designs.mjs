@@ -1197,32 +1197,98 @@ function drawValue(c, fonts, d, x, baseline, V, fill, anchor) {
   }
 }
 
+/** Line height of a two-line „für …“ (× its size). */
+const NAME_LH = 1.2;
+
 /**
- * „für Lena“: "für" light, the name semibold; shrinks, then shortens to fit.
+ * @typedef {{ size: number, lines: Array<{ lead: string, name: string, width: number }> }} NameMetrics
+ */
+
+/**
+ * „für Lena“: "für" light, the name semibold, as large as fits `maxW`:
+ *   1. one line, shrunk to no less than 80 %;
+ *   2. else two lines, broken after a space or a hyphen of the name — the
+ *      break that allows the largest size; at equal size after a comma
+ *      before after a space (between first and last name) before after a
+ *      hyphen (inside a double name), then the more even split;
+ *   3. a name without such a break: one line down to 50 %, else two lines
+ *      split between letters.
+ * Only what still does not fit at 50 % (never a core-valid name of ≤ 40
+ * characters) is shortened.
  * @param {Panel} c @param {GiftVoucherFonts} fonts @param {ResolvedData} d @param {number} size @param {number} maxW
+ * @returns {NameMetrics | null}
  */
 function nameMetrics(c, fonts, d, size, maxW) {
   if (!d.recipientName) return null;
   const lead = `${d.copy.forWord} `;
-  let name = printable(fonts.semibold, d.recipientName).replace(/\n/g, " ").trim();
+  const name = printable(fonts.semibold, d.recipientName).replace(/\s+/g, " ").trim();
   if (!name) return null;
-  const emOf = (/** @type {string} */ n) => emWidth(fonts.regular, lead) + emWidth(fonts.semibold, n);
-  let s = size;
-  if (emOf(name) * s > maxW) s = Math.max(size * 0.62, maxW / emOf(name));
-  if (emOf(name) * s > maxW) name = ellipsize(fonts.semibold, name, maxW / s - emWidth(fonts.regular, lead));
-  return { lead, name, size: s, width: emOf(name) * s };
+  const leadEm = emWidth(fonts.regular, lead);
+  const floor = size * 0.5;
+  /** One line at size s, shortened only when it does not fit. @param {string} l @param {string} n @param {number} s */
+  const line = (l, n, s) => {
+    const room = maxW / s - (l ? leadEm : 0);
+    const fitted = emWidth(fonts.semibold, n) <= room * (1 + 1e-9) ? n : ellipsize(fonts.semibold, n, room);
+    return { lead: l, name: fitted, width: ((l ? leadEm : 0) + emWidth(fonts.semibold, fitted)) * s };
+  };
+  const one = Math.min(size, maxW / (leadEm + emWidth(fonts.semibold, name)));
+  if (one >= size * 0.8) return { size: one, lines: [line(lead, name, one)] };
+
+  /**
+   * The best split into two lines; `rank` orders equal sizes (higher first).
+   * @param {(prev: string, before: string) => number | null} rankOf
+   * @returns {{ s: number, rank: number, em: number, first: string, second: string } | null}
+   */
+  const bestSplit = (rankOf) => {
+    /** @type {{ s: number, rank: number, em: number, first: string, second: string } | null} */
+    let best = null;
+    const chars = Array.from(name);
+    for (let i = 1; i < chars.length; i++) {
+      const rank = rankOf(chars[i - 1], chars[i - 2] ?? "");
+      if (rank === null) continue;
+      const first = chars.slice(0, i).join("").trimEnd();
+      const second = chars.slice(i).join("").trimStart();
+      if (!first || !second || first === "-") continue;
+      const em = Math.max(leadEm + emWidth(fonts.semibold, first), emWidth(fonts.semibold, second));
+      const s = Math.min(size, maxW / em);
+      const tie = Math.abs(s - (best?.s ?? 0)) <= 1e-6;
+      if (!best || s > best.s + 1e-6 || (tie && (rank > best.rank || (rank === best.rank && em < best.em)))) {
+        best = { s, rank, em, first, second };
+      }
+    }
+    return best;
+  };
+  /** @param {{ s: number, first: string, second: string }} b @returns {NameMetrics} */
+  const twoLines = (b) => {
+    const s = Math.max(floor, b.s);
+    return { size: s, lines: [line(lead, b.first, s), line("", b.second, s)] };
+  };
+
+  const clean = bestSplit((prev, before) => (prev === " " ? (before === "," ? 2 : 1) : prev === "-" ? 0 : null));
+  if (clean) return twoLines(clean);
+  if (one >= floor) return { size: one, lines: [line(lead, name, one)] };
+  const letters = bestSplit((prev) => (prev === " " ? null : 0));
+  return letters ? twoLines(letters) : { size: floor, lines: [line(lead, name, floor)] };
+}
+
+/** Extra height of the name block beyond its first line (mm). @param {NameMetrics | null} nm */
+function nameExtraHeight(nm) {
+  return nm ? (nm.lines.length - 1) * NAME_LH * nm.size : 0;
 }
 
 /**
  * @param {Panel} c @param {GiftVoucherFonts} fonts @param {ResolvedData} d
- * @param {{ lead: string, name: string, size: number, width: number }} nm
- * @param {number} x @param {number} baseline @param {string} fill @param {"start" | "middle"} anchor
+ * @param {NameMetrics} nm
+ * @param {number} x @param {number} baseline first line @param {string} fill @param {"start" | "middle"} anchor
  */
 function drawName(c, fonts, d, nm, x, baseline, fill, anchor) {
-  const x0 = anchor === "middle" ? x - nm.width / 2 : x;
-  const leadW = emWidth(fonts.regular, nm.lead) * nm.size;
-  c.text("text", fonts.regular, nm.lead, x0, baseline, nm.size, { fill, opacity: 0.86 });
-  c.text("text", fonts.semibold, nm.name, x0 + leadW, baseline, nm.size, { fill });
+  nm.lines.forEach((l, i) => {
+    const y = baseline + i * NAME_LH * nm.size;
+    const x0 = anchor === "middle" ? x - l.width / 2 : x;
+    const leadW = l.lead ? emWidth(fonts.regular, l.lead) * nm.size : 0;
+    if (l.lead) c.text("text", fonts.regular, l.lead, x0, y, nm.size, { fill, opacity: 0.86 });
+    c.text("text", fonts.semibold, l.name, x0 + leadW, y, nm.size, { fill });
+  });
 }
 
 /**
@@ -1272,7 +1338,8 @@ function frontLettering(c, fonts, d, key) {
   const gap1 = Math.max(4.2, V * 0.2);
   const gap2 = Math.max(4.4, V * 0.2);
   const capN = nm ? 0.7 * nm.size : 0;
-  const blockH = capE + gap1 + capV + (nm ? gap2 + capN : 0);
+  // A two-line name adds its second line below (the block is placed by its height).
+  const blockH = capE + gap1 + capV + (nm ? gap2 + capN + nameExtraHeight(nm) : 0);
   let top;
   if (align === "photo") {
     top = c.H - M - (sq ? 8 : 9) - blockH;
