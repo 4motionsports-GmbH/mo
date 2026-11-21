@@ -8,7 +8,7 @@
 // - renderGiftVoucherPreview: JPEG previews for the storefront and the admin
 //   ("MUSTER" watermark when `sample`).
 // - renderGiftVoucherPrintSpreads: the two print.one SQ14 spreads
-//   (3378 × 1724 px, 300 dpi, sRGB, 3 mm bleed).
+//   (3378 × 1724 px, 300 dpi, sRGB, 3 mm bleed, baseline JPEG q 92).
 //
 // Fonts (Montserrat, Caveat — OFL, src/assets/fonts, traced into the routes by
 // next.config outputFileTracingIncludes) are read from disk and parsed once
@@ -197,7 +197,10 @@ interface RasterOptions {
   height: number;
   background: string;
   quality: number;
-  /** Baseline JPEG (for PDF embedding) instead of mozjpeg's progressive scans. */
+  /**
+   * Baseline JPEG (for PDF embedding and the print files — what every RIP
+   * reads) instead of mozjpeg's progressive scans.
+   */
   baseline?: boolean;
   /** Pixel density metadata (dpi) + an sRGB profile (print files). */
   density?: number;
@@ -272,7 +275,7 @@ function fallbackPdf(input: GiftVoucherRenderInput): Buffer {
   y -= 12;
   line("F1", 9, giftVoucherIssuerLine(), 15);
   line("F1", 9, `${en ? "Terms" : "Bedingungen"}: ${giftVoucherTermsUrl().replace(/^https?:\/\//, "")}`, 13);
-  ops.push(footerOp());
+  ops.push(footerOp(input.locale));
   return assemblePdf([ops.join("")]);
 }
 
@@ -418,7 +421,7 @@ export async function renderGiftVoucherPrintSpreads(input: GiftVoucherRenderInpu
         heightPx: G.heightPx,
         bleedPx: G.bleedPx,
       });
-      const raster = { width: G.widthPx, height: G.heightPx, background: "#ffffff", quality: 92, density: G.dpi };
+      const raster = { width: G.widthPx, height: G.heightPx, background: "#ffffff", quality: 92, density: G.dpi, baseline: true };
       const [outside, inside] = await Promise.all([rasterize(outsideSvg, raster), rasterize(insideSvg, raster)]);
       return { outside, inside };
     });

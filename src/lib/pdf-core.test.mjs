@@ -15,6 +15,7 @@ import {
   toLatin1Safe,
   wrapText,
   textOp,
+  footerOp,
   assemblePdf,
   assembleImagePdf,
   jpegInfo,
@@ -69,6 +70,13 @@ test("textOp emits an escaped, positioned text op in the requested font", () => 
   assert.match(op, /^BT \/F2 12 Tf /); // font + size
   assert.match(op, /1 0 0 1 57\.00 700\.00 Tm/); // position matrix
   assert.match(op, /\(Grüße \\\(1\\\)\) Tj ET/); // escaped literal + show + end
+});
+
+test("footerOp: the muted footer line, German unless English is asked for", () => {
+  assert.equal(footerOp(), footerOp("de"));
+  assert.match(footerOp(), /Shop · \xdcber · Kontakt · Impressum\) Tj ET/);
+  assert.match(footerOp("en"), /\(motion sports {2}· {2}www\.motionsports\.de {2}· {2}Shop · About · Contact · Imprint\) Tj ET/);
+  assert.equal(footerOp("fr"), footerOp());
 });
 
 test("assemblePdf produces a structurally valid single-page PDF", () => {
