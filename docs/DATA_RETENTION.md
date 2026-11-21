@@ -349,23 +349,19 @@ no personal data. The gift card itself lives in Shopify; Mo never deletes one.
 
 | Data | Default window | Env var | Action on expiry |
 | --- | --- | --- | --- |
-| A voucher's personal data | **365 days** after the voucher ended: expired (`expires_on`), deactivated (`deactivated_at`), cancelled / rejected / failed (`updated_at`), used up (a balance of 0 read that long ago — see the gap below) | `GIFT_VOUCHER_PERSONAL_RETENTION_DAYS` | Anonymise: Für / Von, message, buyer name and e-mail, recipient e-mail, photo pathname, download-token hash and the operator's free texts (`admin_note`, `deactivation_reason` — they may name the person) cleared, `personal_data_purged_at` set, the print job's address cleared; the photo is deleted from Blob once nothing refers to it. Kept: amounts, status, the encrypted code with its hash and last four, ids. Never a voucher still pending, held or issuing. |
+| A voucher's personal data | **365 days** after the voucher ended: expired (`expires_on`), deactivated (`deactivated_at`), cancelled / rejected / failed (`updated_at`), used up (balance 0 and the row unchanged that long — a balance read that finds the same balance leaves `updated_at` alone, so the daily balance sync does not keep a used-up card „fresh“) | `GIFT_VOUCHER_PERSONAL_RETENTION_DAYS` | Anonymise: Für / Von, message, buyer name and e-mail, recipient e-mail, photo pathname, download-token hash and the operator's free texts (`admin_note`, `deactivation_reason` — they may name the person) cleared, `personal_data_purged_at` set, the print job's address cleared (open or finished); the photo is deleted from Blob once nothing refers to it. Kept: amounts, status, the encrypted code with its hash and last four, ids. Never a voucher still pending, held or issuing — a held one is a paid order whose voucher is still owed — except a held Shopify test order (`hold_reason` `test_order`, no money behind it) unchanged that long; an anonymised voucher is never issued afterwards. |
 | The print job's address | **180 days** after the job finished (`sent`, `done`, `cancelled`, `failed`, by `updated_at`) | `GIFT_VOUCHER_ADDRESS_RETENTION_DAYS` | Cleared. The same window clears the address copy of an ordered draft (by `ordered_at`); an open job keeps it until the paid card is posted. |
 | Drafts | **30 days** by `created_at`, unless a voucher that still keeps its data refers to them | `GIFT_VOUCHER_DRAFT_RETENTION_DAYS` | Hard delete; their photos are deleted from Blob when nothing refers to them. Uploaded photos that never became a draft (a Blob listing) leave after the same window. |
-| Print files (Blob) | once the job is finished, at the latest 14 days after it was created | — (code) | Deleted by the 5-minute gift-voucher sweep (`/api/cron/gift-vouchers`), the asset URL then answers 404. |
+| Print files (Blob) | once the job is finished (`sent`, `done`, `cancelled`, `failed`); an open job keeps them however old it is — its asset token is how Mo finds a print.one order whose answer got lost | — (code) | Deleted by the 5-minute gift-voucher sweep (`/api/cron/gift-vouchers`), the asset URL then answers 404. |
 
-**Known gap (used up):** „used up“ means a balance of 0 whose `balance_checked_at` is older than the window,
-but the gift-voucher sweep re-reads the balance of every issued card once a day and so keeps
-`balance_checked_at` fresh. In practice a used-up card's personal data stays until the expiry clause
-applies (expiry date + 365 days) — and with `GIFT_VOUCHER_VALIDITY_YEARS=0` (never expires) forever.
-
-**Erasure** (`erasePerson`, `ERASURE_PLAN`: `gift_vouchers` and `gift_voucher_print_jobs` *anonymise*,
-`gift_voucher_drafts` *retain* — anonymous): the voucher stays, because the card is money for its recipient,
-but loses the buyer — customer link, Shopify customer id, buyer e-mail and name; where the person was the
-e-mail recipient of a voucher by hand, that e-mail and the recipient name go; finished print jobs of those
-vouchers lose the address. Texts and photo are the recipient's gift: they stay (also in Blob) until the
-voucher retention above — and so do the operator's free texts (`admin_note`, `deactivation_reason`), which
-only the voucher retention clears. A merge repoints `gift_vouchers.customer_id`.
+**Erasure** (`erasePerson`, `ERASURE_PLAN`: `gift_vouchers`, `gift_voucher_print_jobs` and `gift_voucher_drafts`
+*anonymise*): the voucher stays, because the card is money for its recipient, but loses the buyer — customer
+link, Shopify customer id, buyer e-mail and name; where the person was the e-mail recipient of a voucher by hand,
+that e-mail and the recipient name go; finished print jobs of those vouchers lose the address, and so do the
+ordered drafts of the vouchers the person bought (an open print job keeps its own copy until the paid card is
+posted; nothing reads a draft after ordering). Texts and photo are the recipient's gift: they stay (also in Blob)
+until the voucher retention above — and so do the operator's free texts (`admin_note`, `deactivation_reason`),
+which only the voucher retention clears. A merge repoints `gift_vouchers.customer_id`.
 
 ---
 
@@ -572,11 +568,11 @@ step numbers below are the ones in the code. Each run:
    response echoes `options.attributionSessionAnchor` and
    `attributionTokenMaxDays`.
 5j. Geschenkgutscheine (migration `0083`) on their own three windows (section above): anonymises
-   vouchers past `GIFT_VOUCHER_PERSONAL_RETENTION_DAYS` after they ended, clears the address of
-   finished print jobs and ordered drafts past `GIFT_VOUCHER_ADDRESS_RETENTION_DAYS`, deletes drafts
-   past `GIFT_VOUCHER_DRAFT_RETENTION_DAYS`, then deletes from Blob the customer photos no draft or
-   voucher refers to any more, plus uploads older than the draft window that never became a draft
-   (`purgeGiftVoucherData`, `gift-voucher-store.ts`). Counted in `anonymisedGiftVouchers`,
+   vouchers past `GIFT_VOUCHER_PERSONAL_RETENTION_DAYS` after they ended (and held test orders unchanged that
+   long), clears the address of finished print jobs and ordered drafts past
+   `GIFT_VOUCHER_ADDRESS_RETENTION_DAYS`, deletes drafts past `GIFT_VOUCHER_DRAFT_RETENTION_DAYS`, then deletes
+   from Blob the customer photos no draft or voucher refers to any more, plus uploads older than the draft window
+   that never became a draft (`purgeGiftVoucherData`, `gift-voucher-store.ts`). Counted in `anonymisedGiftVouchers`,
    `clearedGiftVoucherAddresses`, `deletedGiftVoucherDrafts`, `deletedGiftVoucherPhotos`. Before the
    migration, or on a Blob error, the step reports and the run goes on.
 6. Purges expired `customer_auth_pending` rows (the short-lived sign-in

@@ -11,7 +11,7 @@ into a personal mail client).
 | Arbeit | Kampagnen | `kampagne` | 2 | All campaigns (overview, editor) and the review desk per campaign, incl. the Einzelansprache; the workspace of a Rundmail | §3.2, [`CAMPAIGNS.md`](./CAMPAIGNS.md) |
 | Arbeit | Vorlagen | `vorlagen` | — | The operator's e-mail templates: free layouts (sections with columns, per-block styling) in the block editor with live preview, the KI-Gestalter (instructions, screenshots and files), import/export; a template starts a Rundmail or becomes the design of Mo's personal mails | §3.12, [`EMAIL_TEMPLATES.md`](./EMAIL_TEMPLATES.md) |
 | Arbeit | Konfigurator | `konfigurator` | — | The Home-Gym-Konfigurator (Men's Health / Women's Health): Mo's assortment and notes for the guided consultation, and its funnel from the first answer to the order | §3.11, [`CONFIGURATOR.md`](./CONFIGURATOR.md) |
-| Arbeit | Gutscheine | `gutscheine` | — | Geschenkgutscheine from the shop and by hand: list, review, issue by hand, resend, deactivate, the Premium-Karte print queue, the setup check (not the newsletter Willkommensgutschein) | §3.13, [`GIFT_VOUCHERS.md`](./GIFT_VOUCHERS.md) |
+| Arbeit | Gutscheine | `gutscheine` | — | Geschenkgutscheine from the shop and by hand: list, review, issue by hand, resend, deactivate, the Premium-Karte's print work („Druck offen“), the setup check (not the newsletter Willkommensgutschein) | §3.13, [`GIFT_VOUCHERS.md`](./GIFT_VOUCHERS.md) |
 | Arbeit | Kunden | `kunden` | 3 | The whole customer base (Shopify mirror + Mo leads), server-side list; one person's figures, activity, orders, chats, consent, correspondence, letter | §3.3, [`CUSTOMERS.md`](./CUSTOMERS.md) |
 | Arbeit | Wissen | `wissen` | 4 | Q&A knowledge queue (gaps → answers → published) | §3.4, [`QA_KNOWLEDGE.md`](./QA_KNOWLEDGE.md) |
 | Einblicke | KPIs | `kpi` | 5 | Pseudonymous analytics + Shopify revenue per period | §3.5, §5 |
@@ -171,7 +171,7 @@ Everything an operator can point a colleague at is in the URL:
 | KPIs | `?kpiRange=7d\|30d\|90d\|custom`, `?kpiFrom=`, `?kpiTo=` | period (validated + clamped by [`kpi-range.mjs`](../src/lib/kpi-range.mjs)) |
 | KPIs | `?kpiFresh=<unix seconds>` | freshness floor for the Shopify cache — set by „Aktualisieren“ (§5.0) |
 | Konfigurator | `?kpiRange=7d\|30d\|90d` | period of „Wirkung“ (presets only; anything else = 30 days) |
-| Gutscheine | `?status=held\|achtung\|issued\|pending\|issuing\|failed\|deactivated\|cancelled\|rejected` | status filter (`achtung` = every voucher with an attention flag; absent = Alle); a server render |
+| Gutscheine | `?status=held\|achtung\|druck\|issued\|pending\|issuing\|failed\|deactivated\|cancelled\|rejected` | status filter (`achtung` = every voucher with an open attention flag — not an acknowledged revocation; `druck` = „Druck offen“, the Premium-Karten waiting for someone, [`GIFT_VOUCHERS.md`](./GIFT_VOUCHERS.md) §5.5; absent = Alle); a server render |
 | Gutscheine | `?quelle=shop\|hand`, `?q=`, `?seite=` | Quelle (Shop / Von Hand), search (number, order, name, e-mail, last four characters of the code; ≤ 100 characters), 1-based page (25 per page; a page past the end renders page 1) — parsed by [`gutscheine-core.mjs`](../src/app/admin/gutscheine/gutscheine-core.mjs) |
 | Gutscheine | `?gutschein=<id>` | the selected voucher (kept in sync; opened by id, also off the current page) |
 | Gutscheine | `#einrichtung` | opens the „Einrichtung“ panel and scrolls to it |
@@ -219,7 +219,7 @@ src/app/admin/
 ├── vorlagen/             # VorlagenWorkspace (list + editor), BlockEditor + SectionEditor/BlockSettings/BlockStyleFields/DocStyleFields (shared with the Rundmail), LivePreview, DesignerPanel (KI-Gestalter)
 ├── kunden/               # KundenWorkspace, CustomerDetail, badges, useCustomerDetail, tabs/{Ueberblick (+Profil), Aktivitaet, Kaeufe, Beratungen („Gespräche“), Marketing (+OptOutControl), Korrespondenz, Brief}, BundleComposer
 ├── konfigurator/         # KonfiguratorWorkspace (settings + Sortiment), KonfiguratorKpis („Wirkung“, server), KonfiguratorRange, types
-├── gutscheine/           # GutscheineWorkspace (stats, list, notices), VoucherDetail (+ print job card), IssueDialog, SetupPanel („Einrichtung“), download, gutscheine-core.mjs (+ test), gutscheine-server.ts, types
+├── gutscheine/           # GutscheineWorkspace (stats, list, notices), VoucherDetail (+ print job card, address dialog), IssueDialog, SetupPanel („Einrichtung“), download, gutscheine-core.mjs (+ test), gutscheine-server.ts, types
 ├── kpi/                  # KpiToolbar, KpiSection, KpiTile (+ DeltaPill), FunnelBars, Sparkline, RevenueOrders (the drill-down), revenue-view (+ revenue-colors, revenue-series), groups, KpiTopQuestions, charts (next/dynamic) → charts-recharts + chart-geometry, sections/* (one file per section, §3.5)
 ├── gespraeche/           # GespraecheWorkspace, ConversationFilters, StatsPanel, ConversationList, ConversationDetail, ReportPanel, badges
 ├── wissen/               # WissenWorkspace, QaEntryEditor, ProductField, badges, useQaQueue
@@ -1749,56 +1749,87 @@ workspace [`gutscheine/GutscheineWorkspace.tsx`](../src/app/admin/gutscheine/Gut
 `Gift`, no digit shortcut, migration 0083.
 
 - **Notices** above the list, grouped into at most three `Callout`s — „Ausstellen nicht möglich“ (no
-  database, migration 0083 missing, `TOKEN_ENC_KEY`, Shopify, the scope `write_gift_cards`, a product error),
-  „Einrichtung unvollständig“ (switched off, „Verkauf im Shop“ off, Resend, Blob, product warnings, the
-  print gate closed with open jobs, Shopify's issue limit below Mo's limits) and an info (print.one not set
-  up → cards printed by hand); only the first carries the button „Einrichtung“. The toolbar always stays.
-- **Stats** (`Stat`, each with an `InfoTip`): Verkauft (30 Tage) — count + value of shop vouchers, not
+  database, migration 0083 missing, `TOKEN_ENC_KEY`, Shopify, the scope `write_gift_cards`, a product error —
+  e.g. the add-on product missing while the shop offers the card), „Einrichtung unvollständig“ (switched off,
+  „Verkauf im Shop“ off, Resend, Blob, product warnings, Shopify's issue limit below Mo's limits, the shop not
+  offering the Premium-Karte because print.one takes no card — with the reason and how many cards wait) and an
+  info („n Premium-Karten warten auf „Freigeben““); a notice about waiting cards ends with the link „Anzeigen“
+  to „Druck offen“; only the first callout carries the button „Einrichtung“. The toolbar always stays.
+- **Stats** (eight `Stat`s, each with an `InfoTip`): Verkauft (30 Tage) — count + value of shop vouchers, not
   cancelled or rejected; Ausgestellt gesamt — value + count of everything that became a card; Offenes
   Guthaben — active, unexpired cards at their last synced balance; Eingelöst — share of the issued value
-  already spent (+ €); Zu prüfen — held vouchers (+ „n mit „Achtung““, links `?status=held`); Druckaufträge
-  offen; Entwürfe (30 Tage) — drafts with the rough share bought (`giftVoucherSummary`).
+  already spent (+ €); Zu prüfen — held vouchers only (links `?status=held`); Achtung — vouchers with an open
+  attention flag in any status (links `?status=achtung`); Druckaufträge offen — cards not posted yet, with
+  „n zu prüfen“ (waiting for „Freigeben“; links „Druck offen“, `?status=druck`); Entwürfe (30 Tage) — drafts
+  with the rough share bought (`giftVoucherSummary`).
 - **Toolbar** (`FilterBar`): search (Nr., Name, E-Mail, Bestellung, the last four characters of the code),
-  Status (Alle, Zu prüfen, Achtung, Ausgestellt, Wartet, Wird ausgestellt, Fehler, Gesperrt, Storniert,
-  Abgelehnt — „Zu prüfen“ and „Achtung“ with their counts), Quelle (`SegmentedControl` Alle · Shop · Von
+  Status (Alle, Zu prüfen, Achtung, Druck offen, Ausgestellt, Wartet, Wird ausgestellt, Fehler, Gesperrt,
+  Storniert, Abgelehnt — „Zu prüfen“, „Achtung“ and „Druck offen“ with their counts; what „Druck offen“ lists:
+  [`GIFT_VOUCHERS.md`](./GIFT_VOUCHERS.md) §5.5), Quelle (`SegmentedControl` Alle · Shop · Von
   Hand), „Zurücksetzen“, the count, **„Gutschein ausstellen“** (disabled without the database or
   migration). Every filter is a `router.push` (§2.2).
 - **List** (`SplitPane`, `DataTable` + `Pagination`, 25 per page, newest first, server-sorted): column
-  „Gutschein“ — number, status badge, attention icon; below a delivery icon (PDF / E-Mail / Karte, coloured by
-  the print job's state, tooltip), the date, Shop or the Anlass, „für <Name>“ —, column „Wert“ — the amount
-  and „Rest“ for cards. A row click selects (`?gutschein=`, `history.replaceState`); the detail loads on
+  „Gutschein“ — number, status badge, the „Achtung“ icon (not for an acknowledged revocation); below a delivery
+  icon (PDF / E-Mail / Karte, coloured by the print job's state, tooltip), the date, Shop or the Anlass, „für
+  <Name>“ —, column „Wert“ — the amount and „Rest“ for cards. A row click selects (`?gutschein=`, `history.replaceState`); the detail loads on
   demand (`gutscheine/item`), also for a voucher off the current page.
-- **Detail:** header (number, status badge, value); a callout for „Zu prüfen“ (hold reason + what to do),
-  „Achtung“ (the flag + what to do, „Als geklärt markieren“), an error („Ausstellen fehlgeschlagen“ /
-  „Letzter Fehler“ with tries and the next try) or the deactivation; `DescriptionList`: Wert, Restguthaben +
-  „Abgleichen“, Gültig bis, Code „•••• NPQR“ + **„Code anzeigen“** (decrypted on request, audited
+- **Detail:** header (number, status badge, the badge „Achtung“ for a real Achtung, value); the attention
+  callout in one of three forms — „Achtung: …“ (warning: the flag's label + what to do, „Als geklärt markieren“),
+  a revocation Mo still carries out („Achtung: Karte wird gesperrt“ / „Achtung: Gutschein wird storniert“ — no
+  button: Mo deactivates the card, or cancels a voucher without one, once Shopify answers) or an acknowledged
+  revocation as a neutral note (label + hint, no button); a callout for „Zu prüfen“ (hold reason + what to do),
+  an error („Ausstellen fehlgeschlagen“ / „Letzter Fehler“ with tries and the next try) or the deactivation;
+  `DescriptionList`: Wert, Restguthaben + „Abgleichen“, Gültig bis, Code „•••• NPQR“ + **„Code anzeigen“** (decrypted on request, audited
   `gift_voucher.code_reveal`, with copy and hide buttons), Bestellung (link into the Shopify admin when
   `SHOPIFY_STORE_DOMAIN` is a `*.myshopify.com` domain) or Anlass, Käufer (shop vouchers), Für, Von,
   Nachricht, Motiv (+ the photo, `gutscheine/photo`), Versand, E-Mail (status, time, tries), Ausgestellt;
-  „Interne Notiz“ („Speichern“ appears once it changed). **Actions:** „Ausstellen“ + „Ablehnen“ (held; „Ablehnen“ also for
-  failed, with an optional note), „Erneut versuchen“ (failed), „PDF herunterladen“ (issued),
-  „E-Mail erneut senden“ (confirmed; a new download link), „Sperren“ (issued; confirmed, destructive, a
-  reason of 3–200 characters — irreversible in Shopify).
+  „Interne Notiz“ („Speichern“ appears once it changed). **Actions:** „Ausstellen“ + „Ablehnen“ (held;
+  „Ablehnen“ also for failed, with an optional note), „Erneut versuchen“ (failed) — both confirmed with the
+  same text (value, the mail's recipient, the card; toast „Gutschein ausgestellt“ once the card exists) —,
+  „PDF herunterladen“ (issued), „E-Mail erneut senden“ (confirmed; a new download link; toast „E-Mail erneut
+  gesendet“ once Resend took it), „Sperren“ (issued; confirmed, destructive, a reason of 3–200 characters —
+  irreversible in Shopify). **„Als geklärt markieren“** on a revocation flag of an issued card asks first
+  („Erstattung als geklärt markieren?“ / „Stornierung als geklärt markieren?“ — Mo checks the card live and may
+  deactivate it or, for a refund, an untouched card of the same order line; [`GIFT_VOUCHERS.md`](./GIFT_VOUCHERS.md)
+  §4.4); the toast says what happened — „Karte gesperrt“, „Erstattung verschoben“ (an untouched card of the line
+  took the refund and was deactivated; this one stays active) or „Als geklärt markiert“; any other flag is just
+  cleared. After a failed action the detail is loaded again (the library may have moved the voucher on) and the
+  list refreshed.
 - **Premium-Karte** card (when the voucher has a print job): status badge, provider (print.one / Von Hand),
-  the recipient's address, Kosten (the job's, or „≈“ `PRINTONE_CARD_COST_CENTS` while print.one has
-  none), order id, print.one status, Übermittelt, Versendet, the error; actions „Freigeben“ (`review`),
-  „Jetzt drucken“ (print.one, `queued`; confirmed with the address and the cost; disabled with the reason while the gate,
-  print.one or the voucher is not ready), „Druckdateien herunterladen“ (Außenseite / Innenseite as
-  `Gutschein-G-…-aussen.jpg` / `-innen.jpg` — manual jobs and failed print.one jobs), „Als versendet markieren“ (the same jobs)
-  and „Stornieren“ (any unfinished job; confirmed).
+  the recipient's address with **„Adresse eingeben“ / „Adresse ändern“** (a dialog, validated like the shop's
+  address for `GIFT_VOUCHER_PRINT_COUNTRIES`; while the card waits — `review` or `queued`, for print.one only
+  before its print files exist; action `print_address`, which clears „Druck bezahlt, aber keine Adresse“),
+  Kosten (the job's, or „≈“ `PRINTONE_CARD_COST_CENTS` while print.one has none), order id, print.one status,
+  Übermittelt, Versendet, the error, and why print.one takes no card right now; actions „Freigeben“ (`review`
+  with an address; confirmed with the cost and „die Adresse geht an print.one“ while print.one's gate is open),
+  „Jetzt drucken“ (print.one, `queued`; confirmed with the address and the cost; disabled with the reason while
+  print.one takes no card — gate, keys, an https `PUBLIC_BASE_URL`, the file store — or the voucher is not
+  issued), „Druckdateien herunterladen“ (Außenseite / Innenseite as `Gutschein-G-…-aussen.jpg` / `-innen.jpg`)
+  and „Als versendet markieren“ — both, once the voucher is issued, for manual jobs, failed print.one jobs and
+  waiting print.one jobs while print.one takes no card or the job has no address — and „Stornieren“ (any
+  unfinished job; confirmed).
 - **„Gutschein ausstellen“** (`Dialog`, [`IssueDialog.tsx`](../src/app/admin/gutscheine/IssueDialog.tsx)):
   Wert (€, up to `GIFT_VOUCHER_ADMIN_MAX_EUR`), Anlass, Motiv (no „Eigenes Foto“), Für, Von (default „Dein
   motion sports Team“), Nachricht, Versand (`SegmentedControl` PDF · E-Mail · Premium-Karte — Marketing allows
   only PDF, explained in an `InfoTip`), the e-mail address or the address fields (no „Land“ while only one
-  country is allowed), Interne Notiz → a confirmation naming value and delivery → issued at once; the new
-  voucher is selected. A refused field is marked with the server's German message.
+  country is allowed), Interne Notiz → a confirmation naming value and delivery — for a card how it is printed
+  right now: by print.one (with the cost), waiting under „Druck offen“ while print.one takes no card (printable
+  by hand meanwhile), or in-house; Versand's `InfoTip` says the same → issued at once; the toast says „Gutschein
+  G-… ausgestellt“ only once the Shopify card exists, else a warning „Gutschein G-… angelegt — Shopify-Karte noch
+  nicht erstellt“ with the reason (the sweep keeps trying); the new voucher is selected. A refused field is
+  marked with the server's German message.
 - **„Einrichtung“** (`Disclosure` at the bottom, `#einrichtung`;
   [`SetupPanel.tsx`](../src/app/admin/gutscheine/SetupPanel.tsx)): the setup check in groups Grundlagen
   (database + migration, `GIFT_VOUCHERS_ENABLED`, „Verkauf im Shop“, `TOKEN_ENC_KEY`, Resend, Blob), Shopify
-  (connection, the scope `write_gift_cards`, optional scopes, both products with their findings, Shopify's
-  issue limit — loaded in the browser from `gutscheine/setup`, rows „Wird geprüft …“ meanwhile, so a slow
-  Shopify never holds up the screen), Kartendruck (gate, partner, countries, cost estimate) and Grenzen (shop,
-  by hand, validity) — presence only, never a value; then the four settings (Verkauf im Shop,
+  (the connection — „Konfiguriert (SHOPIFY_*)“ until Shopify answered, then „Verbunden“, or „Nicht erreichbar“
+  as a warning when no check got through —, the scope `write_gift_cards`, optional scopes, both products with
+  their findings — the add-on product missing is an error while the shop offers the card —, Shopify's issue
+  limit — loaded in the browser from `gutscheine/setup`, rows „Wird geprüft …“ meanwhile, so a slow Shopify
+  never holds up the screen), Kartendruck (gate; partner — an error when print.one is released but
+  `PUBLIC_BASE_URL` is no https address or the file store is missing; „Premium-Karte im Shop“ — „Wird
+  angeboten“ (in-house: „… gedruckt wird von Hand“) or „Wird nicht angeboten“ with the reason, the rule of the
+  storefront's `features.print`; countries; cost estimate) and Grenzen (shop, by hand, validity „bis 31.12. des
+  n. Jahres nach der Ausstellung“) — presence only, never a value; then the four settings (Verkauf im Shop,
   KI-Textvorschläge, Eigene Fotos, Druck mit eigenem Foto prüfen) with „Speichern“
   (`gutscheine/settings`; admin_settings key `gift_vouchers`, 0078 — no migration of its own).
 - **Without a database or before migration 0083** an `EmptyState` / `Callout` in the list area („Migration
@@ -3080,11 +3111,11 @@ them. Actions that read or act on one person's data write the admin access log
 | Konfigurator | `POST konfigurator/settings { enabled, tag, extraProductIds, focus, notes }` | „Mo im Konfigurator“: store the configurator settings (`admin_settings` key `configurator`, 0078) → `{ ok, settings }`; German 400 on invalid input, 503 without a database or before 0078; audit `settings.configurator` |
 | Konfigurator | `POST konfigurator/showroom { handles }` (2026-10-27) | „Sortiment“ → „Showroom“ → „Liste speichern“: the manual list of products on display (≤ 60 handles, `validateManualShowroomInput`; `admin_settings` key `showroom`, 0078) → `{ ok, showroom }` (the card's data); German 400 on invalid input, 503 without a database or before 0078; audit `settings.showroom` |
 | Konfigurator | `POST konfigurator/showroom/refresh` (2026-10-27) | „Jetzt aktualisieren“: read the showroom list from the live theme now (scope `read_themes`; a failure keeps the last good list and is recorded) → `{ ok, result: { ok, count, error }, showroom }`; 503 without a database; audit `showroom.refresh`; `maxDuration` 60 |
-| Gutscheine | `GET gutscheine/list?status=&quelle=&q=&page=` (2026-11-20, 0083) | one page of the list (25, newest first; `page` or `seite`, the filter of §2.2) → `{ rows, total, page, pageSize }`; no audit |
+| Gutscheine | `GET gutscheine/list?status=&quelle=&q=&page=` (2026-11-20, 0083) | one page of the list (25, newest first; `page` or `seite`, the filter of §2.2 — `status` also `achtung` and `druck`) → `{ rows, total, page, pageSize }`; no audit |
 | | `GET gutscheine/item?id=` | one voucher for the detail → `{ voucher, printJob, orderUrl, designName }` — never the code, the asset token or file paths; audit `gift_voucher.view` |
-| | `POST gutscheine/action { action, id, note?, reason? }` | the detail's actions → `{ ok, detail }`: `reveal_code` (→ `{ ok, code }`, formatted, `no-store`; audit `gift_voucher.code_reveal`), `issue_held`, `reject { note? }`, `retry`, `resend_mail`, `deactivate { reason }` (3–200 characters), `sync_balance` (+ `balanceCents`), `note { note }` (≤ 1,000; empty clears), `clear_attention`, `print_release`, `print_submit`, `print_cancel`, `print_done` — every successful action audited as `gift_voucher.<action>` with ids only (voucher, print job, the buyer's customer id). A refusal keeps the library's German message (`actionErrorStatus`): 404 unknown, 400 input, 503 not configured (also `reveal_code` when `TOKEN_ENC_KEY` cannot decrypt), 502 for the code `failed` (an issuing try, a balance read or a print.one call that failed), 500 internal, 409 for everything else (wrong state, Shopify refused, too late); `maxDuration` 60 |
-| | `POST gutscheine/issue { amountCents, reason, designKey, recipientName?, senderName?, message?, delivery, recipientEmail?, address?, adminNote? }` | „Gutschein ausstellen“ → `{ ok, id, number }`; 400 `{ error: { code, message, field } }` for refused input (`validateIssueInput`, then `issueManualGiftVoucher`); audit `gift_voucher.issue`; `maxDuration` 60 |
-| | `GET gutscheine/pdf?id=` | „PDF herunterladen“: rendered on demand, attachment `Gutschein-G-….pdf`, `no-store`; 409 unless issued; audit `gift_voucher.pdf` |
+| | `POST gutscheine/action { action, id, note?, reason?, address? }` | the detail's actions → `{ ok, detail }`: `reveal_code` (→ `{ ok, code }`, formatted, `no-store`; audit `gift_voucher.code_reveal`), `issue_held`, `reject { note? }`, `retry`, `resend_mail`, `deactivate { reason }` (3–200 characters), `sync_balance` (+ `balanceCents`), `note { note }` (≤ 1,000; empty clears), `clear_attention`, `print_release`, `print_submit`, `print_cancel`, `print_done`, `print_address { address }` (the card's recipient, validated for `GIFT_VOUCHER_PRINT_COUNTRIES` — 400 with `field`; only while the card waits, else 409; clears `print_without_address`) — every successful action audited as `gift_voucher.<action>` with ids only (voucher, print job, the buyer's customer id; never a note, reason or address). A refusal keeps the library's German message (`actionErrorStatus`): 404 unknown, 400 input, 503 not configured or a stored code that cannot be read (`code`; also `reveal_code` when `TOKEN_ENC_KEY` cannot decrypt), 502 a failed call to Shopify, print.one or Resend (`failed`, `shopify`, `send_failed`), 500 a database or internal failure (`db`, `error`, `internal_error`), 409 everything else — wrong state, too late, Mo still busy (`busy`, `revoking`), `refunded`, `purged`; `maxDuration` 60 |
+| | `POST gutscheine/issue { amountCents, reason, designKey, recipientName?, senderName?, message?, delivery, recipientEmail?, address?, adminNote? }` | „Gutschein ausstellen“ → `{ ok, id, number, status, lastError }` (`ok` = the voucher exists; `status` `issued` once the Shopify card exists, else `lastError` says why and the sweep keeps trying); 400 `{ error: { code, message, field } }` for refused input (`validateIssueInput`, then `issueManualGiftVoucher`), the library's other refusals by `actionErrorStatus`; audit `gift_voucher.issue`; `maxDuration` 60 |
+| | `GET gutscheine/pdf?id=` | „PDF herunterladen“: rendered on demand, attachment `Gutschein-G-….pdf`, `no-store`; 409 unless issued; 503 when the code cannot be decrypted or the photo of an „Eigenes Foto“ voucher cannot be read (never the classic look in its place); audit `gift_voucher.pdf` |
 | | `GET gutscheine/photo?id=` | the customer photo of the detail (private Blob, `no-store`); 404 without one |
 | | `GET gutscheine/print-file?id=&side=outside\|inside` | „Druckdateien herunterladen“: a print spread (JPEG 3378 × 1724, attachment `…-aussen.jpg` / `…-innen.jpg`); 409 unless issued with a job that is not cancelled, 503 when it cannot be made; audit `gift_voucher.print_file` (the inside carries the code); `maxDuration` 60 |
 | | `GET gutscheine/settings`, `POST gutscheine/settings { salesEnabled, aiSuggestions, photoUploads, reviewPrintWithPhoto }` | the four settings of „Einrichtung“ (`admin_settings` key `gift_vouchers`, 0078; every switch a boolean, German 400); audit `settings.gift_vouchers` |

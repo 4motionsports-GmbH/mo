@@ -6,8 +6,8 @@ Shopify checkout. For every paid voucher Mo creates a **real Shopify gift card**
 renders the voucher (an A4 PDF), mails it to the buyer and, for the „Premium-Karte per Post“, has a folded
 14 × 14 cm card printed and posted by print.one (or printed in-house). The admin screen **„Gutscheine“**
 lists every voucher, issues vouchers by hand (Kulanz, Marketing, Gewinnspiel, Firmengeschenk, Sonstiges),
-decides held ones, resends, deactivates („Sperren“) and runs the print queue. Not the newsletter
-„Willkommensgutschein“ (a discount code, `CONSENT_REWARD_*`, [`WELCOME_VOUCHER_TODO.md`](./WELCOME_VOUCHER_TODO.md)).
+decides held ones, resends, deactivates („Sperren“) and lists the cards waiting for print („Druck offen“). Not
+the newsletter „Willkommensgutschein“ (a discount code, `CONSENT_REWARD_*`, [`WELCOME_VOUCHER_TODO.md`](./WELCOME_VOUCHER_TODO.md)).
 
 This document owns the feature. Elsewhere, linked rather than repeated: the wire shapes of the storefront
 routes — [`frontend/API_CONTRACT.md`](./frontend/API_CONTRACT.md) §3d; the screen in detail —
@@ -22,9 +22,9 @@ erasure rules — [`DATA_RETENTION.md`](./DATA_RETENTION.md) „Geschenkgutschei
 - **The voucher is a regular Shopify product** (handle `designgutschein`, `GIFT_VOUCHER_PRODUCT_HANDLE`) with
   one variant per amount; the Premium-Karte is a separate add-on product (`gutschein-premiumkarte`,
   `GIFT_VOUCHER_PRINT_PRODUCT_HANDLE`). Mo recognises order lines by the **product ids** of these two handles
-  (Admin API `productByIdentifier`, cached 10 minutes per instance). The private line property `_mo_gv`
-  only links a line to the design the customer made; the amount always comes from the line's price, never
-  from the design.
+  (Admin API `productByIdentifier`, cached 10 minutes per instance; the last good lookup is kept for the webhook
+  while Shopify does not answer, §4.1). The private line property `_mo_gv` only links a line to the design the
+  customer made; the amount always comes from the line's price, never from the design.
 - **Why not Shopify's gift-card product:** Shopify never returns the full code of a card it issues itself
   (only the last four characters), so Mo could not print it — and such a product would issue (and mail) a
   second card of its own. If the voucher product is a gift-card product, Mo issues nothing (reported; the
@@ -66,8 +66,8 @@ sequenceDiagram
   S->>M: orders/paid webhook → one row per voucher unit (+ print job), 200
   M->>S: after(): re-read the order, giftCardCreate with Mo's code
   M->>C: mail to the buyer: code, PDF attached, download link
-  M->>O: the card (behind the legal gate) — or it waits in the admin print queue
-  Note over M: cron every 5 min: retries, mails, print queue, print.one status, balances
+  M->>O: the card (behind the legal gate) — printed in-house, it waits under „Druck offen“
+  Note over M: cron every 5 min: retries, mails, print jobs, print.one status, balances
 ```
 
 The amounts and the add-on's price are the variants of the two products, rendered by Liquid — Mo serves
@@ -81,12 +81,13 @@ Foto“), Für, Von (default „Dein motion sports Team“), Nachricht, Versand 
 
 - **PDF** — „PDF herunterladen“ in the admin; no mail.
 - **E-Mail** — Mo mails the voucher to the given address (the recipient mail of §4.5).
-- **Premium-Karte** — a print job (`queued`) with the given address.
+- **Premium-Karte** — a print job (`queued`) with the given address: print.one prints it while it takes cards
+  (§5.2), else it waits under „Druck offen“ and can be printed in-house (§5.5).
 
 A **Marketing** voucher is PDF only — Mo neither mails nor posts advertising without a consent. The voucher
-is created leased to the request and issued at once; whether the card exists shows on its status (a failed
-try is retried by the sweep). A voucher by hand is German, skips the order checks, the shop's price limits
-and the daily limit, and works while the master switch is off.
+is created leased to the request and issued at once; whether the card exists shows on its status and in the
+dialog's toast (a failed try is retried by the sweep). A voucher by hand is German, skips the order checks, the
+shop's price limits and the daily limit, and works while the master switch is off.
 
 ### 2.3 Balance check
 
@@ -108,7 +109,7 @@ One row per voucher **unit** (an order line with quantity 2 is two vouchers). La
 | `issuing` | Wird ausgestellt | The code is stored, the Shopify card is being created — or its answer got lost; the next try adopts the card by its code. |
 | `issued` | Ausgestellt | The Shopify card exists. |
 | `failed` | Fehler | Shopify refused for good (`invalid`, above the issue limit), the order is gone, a card found by the code does not match, or an operator's try failed — „Erneut versuchen“ or „Ablehnen“. |
-| `rejected` | Abgelehnt | An operator rejected it; a card an earlier try may have made is deactivated first. |
+| `rejected` | Abgelehnt | An operator rejected it; a card an earlier try may have made is looked up by the code and deactivated first (a lookup that finds nothing within two minutes of the last write is not trusted yet — „Ablehnen“ asks to try again). |
 | `cancelled` | Storniert | The order was cancelled or refunded before a card existed. |
 | `deactivated` | Gesperrt | The card is deactivated in Shopify (irreversible): „Sperren“, the revocation of an untouched card (§4.4), or found deactivated in Shopify by the balance sync („Abgleichen“ or the daily sync). |
 
@@ -119,24 +120,28 @@ starts `held`); the issuing step checks again with Shopify's current view of the
 | --- | --- | --- |
 | `disabled` | Gutscheine sind ausgeschaltet | `GIFT_VOUCHERS_ENABLED` is off. |
 | `test_order` | Testbestellung | A Shopify test order and `GIFT_VOUCHER_ALLOW_TEST_ORDERS` is off. |
-| `currency` | Fremdwährung | Not paid in EUR. |
+| `currency` | Fremdwährung | Paid in another currency and the ordered variant is unknown, so the face value cannot be told (a known variant gives the unit its own price, §4.1) — or a shop currency other than EUR. |
 | `discounted` | Rabatt auf den Gutschein angewendet | A discount reached the voucher line (allocations or the line's total discount). |
 | `amount` | Betrag außerhalb der Grenzen | The unit price is outside `GIFT_VOUCHER_MIN_EUR` … `GIFT_VOUCHER_MAX_EUR`. |
 | `risk` | Shopify meldet ein Betrugsrisiko | Shopify's risk level HIGH, or its recommendation CANCEL / INVESTIGATE. |
-| `daily_limit` | Tageslimit erreicht | Shop vouchers issued today (Berlin) plus this one exceed `GIFT_VOUCHER_DAILY_LIMIT_EUR`. |
-| `not_paid` | Nicht vollständig bezahlt | Not fully paid after 24 h, or refunded / voided before the card existed. |
+| `daily_limit` | Tageslimit erreicht | Shop vouchers issued or being issued today (Berlin) plus this one exceed `GIFT_VOUCHER_DAILY_LIMIT_EUR` — a hard cap (§4.2). |
+| `not_paid` | Nicht vollständig bezahlt | Not fully paid after 24 h. |
+| `refunded` | Bestellung (teilweise) erstattet | Refunded, partly refunded or voided before the card existed. „Ausstellen“ issues a partly refunded order (the refund may concern another line), never a refunded or voided one. |
 | `attempts` | Zu viele Fehlversuche | The eleventh failed try — the one after the plan's last wait (§4.3). |
 
-**Attention flags** — one column `attention`, „Achtung“ in the list; a revocation or a failed deactivation
-is never overwritten by a print note. „Als geklärt markieren“ clears a flag.
+**Attention flags** — one column `attention`, „Achtung“ in the list (every key but the two acknowledged ones); a
+revocation, its acknowledged form or a failed deactivation is never overwritten by a print note. „Als geklärt
+markieren“ clears a note — a revocation flag it checks against Shopify first (§4.4).
 
 | Key | Label | Meaning |
 | --- | --- | --- |
-| `cancelled_after_use` / `refund_after_use` | Storniert / Erstattet, aber schon (teilweise) eingelöst | The revocation intent of §4.4 — resolved within minutes for an untouched card; it stays when the card was (partly) spent. |
-| `deactivate_failed` | Sperren in Shopify fehlgeschlagen | Shopify refused the deactivation. |
+| `cancelled_after_use` / `refund_after_use` | Storniert / Erstattet, aber schon (teilweise) eingelöst | The revocation intent of §4.4 — resolved within minutes for an untouched card (a refund on a spent card first moves to an untouched card of the same line); it stays when the card was (partly) spent. |
+| `cancelled_after_use_ok` / `refund_after_use_ok` | Storniert / Erstattet, eingelöst — geklärt | Acknowledged with „Als geklärt markieren“ on a (partly) spent card: no „Achtung“, the card stays active and its mail may go out; the unit counts as revoked for good — a later order change never flags it again. |
+| `deactivate_failed` | Sperren in Shopify fehlgeschlagen | Shopify refused the deactivation — at „Sperren“, or a revocation's for good (userErrors, a 4xx; a timeout, a throttle or a 5xx is retried) — or the issued card is missing in Shopify. |
 | `print_without_voucher` | Druck bezahlt, aber kein Gutschein in der Bestellung | A paid add-on line matched no voucher unit (flag on the order's first unit) — refund in Shopify. |
-| `print_without_address` | Druck bezahlt, aber keine Adresse | The card was paid, the design had no address; the job waits „Zu prüfen“. |
+| `print_without_address` | Druck bezahlt, aber keine Adresse | The card was paid, the design had no address; the job waits „Zu prüfen“ — „Adresse eingeben“ on the card clears the flag (§5.5). |
 | `print_cancel_too_late` | Druckauftrag ließ sich nicht mehr stornieren | The card was already in production when the voucher was revoked. |
+| `unknown_product_line` | Bestellzeile mit Gutschein-Entwurf auf unbekanntem Produkt | A paid line carries a voucher draft but is neither of the two products (another product picked in the theme, a product re-created under its handle) — it never becomes a voucher; the flag sits on the order's first unit without one (§4.1). Print or refund that line by hand, then align the handles and the theme's product picker. |
 
 **Mail status** (`mail_status`): `none` „Keine E-Mail“ (by hand, PDF or card), `pending` „Wartet auf
 Versand“, `sent` „Gesendet“, `failed` „Fehlgeschlagen“, `skipped` „Keine Adresse“ (no usable address, or
@@ -159,22 +164,33 @@ In the order branch of `/api/webhooks/shopify`, after the order ledger and the a
 **independent of `SHOPIFY_CUSTOMER_SYNC_ENABLED`**, `recordGiftVoucherOrder` runs synchronously — Shopify
 counts an answer slower than 5 s as failed:
 
-- **Products** by handle (cached; a cold lookup waits at most 2.5 s). Not resolvable while a line carries a
-  valid `_mo_gv` → the delivery answers 500, is forgotten and Shopify redelivers. Not resolvable without
-  such a line → the order is acknowledged unchecked (every order of the shop passes here). The voucher
-  product missing while a line carries `_mo_gv` → 500 + report; a gift-card product → nothing recorded,
-  reported.
-- **One row per unit**, unique per (order, line item, unit) — a redelivery never adds a voucher. Amount =
-  the line's shop-currency unit price (a unit without a price is skipped and reported). Design, texts and
-  photo come from the draft of the line's token; without a known draft (bought from the product URL) the
-  design `classic` without texts. Buyer e-mail (order, contact or customer e-mail), buyer name, the Shopify
-  customer id and Mo's customer row when the customer is mirrored; the language from the order's
-  `customer_locale` (`en…` → an English voucher and mail, else German); delivery `print` for a unit an
-  add-on line with the same token pays for, else `pdf`. Mail `pending`, or `skipped` without an address.
+- **Products** by handle (cached; a cold lookup waits at most 2.5 s). While Shopify does not answer, the last good
+  lookup stands in — kept in `admin_settings` (`gift_voucher_products`: product and variant ids, variant prices;
+  written when it changed) and used only for the handles configured now. With neither: a line carrying a valid
+  `_mo_gv` → the delivery answers 500, is forgotten and Shopify redelivers; without such a line → the order is
+  acknowledged unchecked and reported (every order of the shop passes here). The voucher product missing while a
+  line carries `_mo_gv` → 500 + report; a gift-card product → nothing recorded, reported.
+- **A draft on another product** — a line with a valid `_mo_gv` that is neither of the two products (the theme
+  sells another product, or one was re-created under its handle) → one fresh lookup (1.5 s), then reported. Such a
+  line never becomes a voucher (its price is no voucher price): an order without any voucher → 500, and Shopify
+  redelivers for hours (time to align the handle or the theme's product picker); otherwise the vouchers are
+  recorded and the first unit without a flag gets `unknown_product_line`.
+- **One row per unit**, unique per (order, line item, unit) — a redelivery never adds a voucher. The units are
+  the line's `quantity`, or its `current_quantity` when smaller (a unit removed before payment was never paid; a
+  line with none left is skipped). Amount = the line's shop-currency unit price (a unit without a price is skipped
+  and reported); paid in another currency, the ordered variant's own price — the face value the page sold
+  (Shopify back-converts shop money at the live rate) —, and for a variant Mo does not know held `currency` with
+  the shop money. Design, texts and photo come from the draft of the line's token; without a known draft (bought
+  from the product URL, a deleted draft) the design `classic` without texts (reported); drafts that cannot be read
+  → 500 before anything is written, so the redelivery records the full design. Buyer e-mail (order, contact or
+  customer e-mail), buyer name, the Shopify customer id and Mo's customer row when the customer is mirrored; the
+  language from the order's `customer_locale` (`en…` → an English voucher and mail, else German); delivery
+  `print` for a unit an add-on line with the same token pays for, else `pdf`. Mail `pending`, or `skipped`
+  without an address.
 - **Print jobs** for the `print` units: the effective provider (§5.2), the address copied from the draft,
   status `review` when the design has a customer photo and „Druck mit eigenem Foto prüfen“ is on or when the
-  address is missing (+ `print_without_address`), else `queued`. Add-on lines that pay for no voucher flag
-  the order's first unit (`print_without_voucher`).
+  address is missing (+ `print_without_address`; both wait under „Druck offen“), else `queued`. Add-on lines that
+  pay for no voucher flag the order's first unit (`print_without_voucher`).
 - The drafts are stamped ordered; then the webhook's `after()` issues the order's units
   (`processGiftVoucherOrder`, 45-s budget).
 
@@ -186,17 +202,22 @@ counts an answer slower than 5 s as failed:
    so the webhook's `after()`, the cron sweep and an operator's click never work on the same voucher. A
    worker that dies leaves the row to the sweep once the lease ran out.
 2. **The order (shop units).** Shopify's current view (one read per order and run): cancelled → revoke
-   (§4.4); refunded, partly refunded or voided before the card exists → held `not_paid`; then the decision
-   — master switch, test order, paid, currency, amount, fraud risk, daily limit. Units by hand skip this.
+   (§4.4); refunded, partly refunded or voided before the card exists → held `refunded`; then the decision
+   — master switch, test order, paid, currency, amount, fraud risk, daily limit (today's issued sum read right
+   before, without this unit). Units by hand skip this.
 3. **The code** is generated and stored encrypted with status `issuing` **before** Shopify sees it; a
    stored code is never replaced. Without a usable `TOKEN_ENC_KEY` no code is generated (retry, then held).
+   For a shop unit this write is the daily limit's **hard cap**: one reservation at a time (a database advisory
+   lock, across instances), refused while this unit plus every shop voucher issued or being issued today
+   (Berlin) would exceed `GIFT_VOUCHER_DAILY_LIMIT_EUR` → held `daily_limit`. A voucher by hand and an
+   operator's override reserve without a cap.
 4. **`giftCardCreate`.** A lost answer (transport error) or `TAKEN` → the card is looked up by its code and
    adopted when it is active and of exactly the voucher's value — never a second card; not found yet → retry.
    `denied` (scope `write_gift_cards` missing) or Shopify not configured → retry; `invalid` or above Shopify's
    issue limit → `failed`.
-5. **`issued`** with the balance and a fresh download-token hash (the plain token lives only in memory, for
-   the mail); then the mail (§4.5) and the print submission (§5). Their failures never undo the card — the
-   sweep retries them.
+5. **`issued`** with the balance and the hash of the first mail attempt's download token (derived — the mail
+   rebuilds the same link, §4.5); then the mail (§4.5) and the print submission (§5). Their failures never undo
+   the card — the sweep retries them.
 
 ### 4.3 Retries and deferrals
 
@@ -207,26 +228,49 @@ counts an answer slower than 5 s as failed:
   CANCEL and INVESTIGATE always hold.
 - **Not fully paid** → every 30 minutes; held `not_paid` after 24 hours.
 - **The operator overrides:** „Ausstellen“ (held) and „Erneut versuchen“ (failed) skip the automatic
-  decision — only a cancelled or unpaid order still refuses. A try that fails then stays „Fehler“ for the
-  next click, without automatic retries.
+  decision — only a cancelled, unpaid, refunded or voided order still refuses (`refunded` for the last two; a
+  partly refunded one is the operator's call), and so does a voucher whose data the retention removed
+  (`purged` — „Ablehnen“ it). A try that fails then stays „Fehler“ for the next click, without automatic
+  retries.
 
 ### 4.4 Revocation — cancellation and refund
 
-`orders/cancelled` and `orders/updated` (refunds) run `handleGiftVoucherOrderChange`, again synchronous and
-database-only: every unit of a cancelled order, else the refunded units of each voucher line (the highest
-unit first).
+`orders/cancelled` and `orders/updated` run `handleGiftVoucherOrderChange`, again synchronous and database-only,
+with **one rule per voucher line**: the order still pays for the line's quantity minus its revoked units — the
+larger of the units refunded so far and the units the line no longer holds (`quantity − current_quantity`: removed
+by an order edit, or refunded); every unit when the order is cancelled or its financial status is `refunded` /
+`voided` (a refund entered as an amount lists no lines). The line's live units above that are revoked: units
+without a card first, then `issuing`, then `issued` ones — among these, cards the stored balance shows spent last
+—, the highest unit first. Units revoked earlier and units never created count as gone, so a repeated delivery
+revokes nothing (`gift_vouchers:unchanged`).
 
 - A unit that never became a card and has no code → `cancelled` at once (its unsent print job cancelled, a
   pending mail `skipped`). One with a stored code (an earlier try may have made the card) → back to
   `pending` with the revocation flag; the issuing step looks the card up by its code.
 - An `issuing` or `issued` unit gets the flag `cancelled_after_use` / `refund_after_use` — the **durable
-  intent**, written before the webhook answers. A refunded add-on line cancels that many print jobs.
-- After the answer (`after()`), the issuing step and the sweep resolve the flag against Shopify, whoever
-  comes first: an **untouched card** (balance = initial value) is deactivated (irreversible; reason
-  „Bestellung storniert“ / „Erstattet“), the flag cleared and its card print cancelled at print.one when
-  still possible; a card already deactivated in Shopify is recorded. **A (partly) spent card is never
-  deactivated automatically** — the flag stays („… aber schon (teilweise) eingelöst“) and an operator
-  decides with the customer whether to „Sperren“. Shopify refusing the deactivation → `deactivate_failed`.
+  intent**, written before the webhook answers.
+- After the answer, the `after()` (it checks every flag this change set live, whatever balance is stored), the
+  issuing step, the balance sync („Abgleichen“ and the sweep's daily step resolve a pending flag with the card they
+  just read) and the sweep resolve the flag against Shopify, whoever comes first: an **untouched card** (balance =
+  initial value) is deactivated (irreversible; reason „Bestellung storniert“ / „Erstattet“), the flag cleared and
+  its card print cancelled at print.one when still possible; a card already deactivated in Shopify is recorded.
+  **A (partly) spent card is never deactivated automatically.** Which unit of a line a refund concerns is Mo's
+  choice (Shopify's refund lines carry only a quantity), so a refund that landed on a spent card moves to an
+  untouched card of the same line (same value, no flag; its live card read first, the flag moved in one
+  conditional write — one winner), which is deactivated instead. Without one the flag stays („… aber schon
+  (teilweise) eingelöst“) and an operator decides with the customer whether to „Sperren“. Shopify refusing the
+  deactivation for good (userErrors, a 4xx) → `deactivate_failed`; a timeout, a throttle or a 5xx keeps the flag
+  for the next try.
+- **The card prints of an add-on line** follow the same rule: the line still pays for its quantity minus the
+  revoked cards, the jobs above that are cancelled — those of revoked units first, then jobs already cancelled or
+  failed, then the highest units —, decided once the flags are resolved (a refund that moved took the sibling's
+  card print along).
+- **„Als geklärt markieren“** on a revocation flag (confirmed in the admin): an issued card is checked live first —
+  untouched → deactivated; a refund on a spent card → moved to an untouched card of the line as above; else the
+  acknowledged key `*_after_use_ok` is stored (the card stays active, no „Achtung“, never flagged again). A
+  cancellation flag on a card already found spent is acknowledged without asking Shopify. Shopify not answering →
+  refused (`busy`); a unit whose card lookup still runs (pending, held, failed, issuing) → refused (`revoking`); on a
+  voucher that ended the flag is just cleared.
 - A revoked voucher's code is never mailed.
 
 ### 4.5 The voucher mail
@@ -248,15 +292,23 @@ unit first).
   gedruckt und an … geschickt — meist in 3–6 Werktagen“, links „Guthaben prüfen“ (`GIFT_VOUCHER_PAGE_URL`
   + `#guthaben`) and „Gutscheinbedingungen“ (`GIFT_VOUCHER_TERMS_URL`). The personal message is not repeated
   (it is on the voucher); every typed string is escaped.
-- **Never twice:** the Resend idempotency key is `gift-voucher-mail-<id>-<mail_attempts>`. A repeat of the
-  same try (a worker died after Resend took the mail) is refused by Resend (409) and recorded as sent.
+- **Never twice:** the Resend idempotency key is `gift-voucher-mail-<id>-<created ms>-<mail_attempts>` (the
+  voucher's creation time keeps it unique across databases sharing the Resend account). A repeat of the same try
+  (a worker died after Resend took the mail) is refused by Resend (409) and recorded as sent.
 - **Failures:** retried on the plan of §4.3, `failed` after the eleventh failed try; a mail Resend refuses as
   invalid (the address, the payload) → `failed` at once. A PDF that cannot be rendered is retried twice, then
-  the mail goes without the attachment (code and link are the delivery).
-- **The link rotates:** „E-Mail erneut senden“ and every retry create a new download token; an older link
-  stops working (404). Only the token's sha256 is stored.
+  the mail goes without the attachment (code and link are the delivery). „Letzter Fehler“ says in German what
+  failed, Resend's own message in brackets („E-Mail nicht gesendet: Resend war nicht erreichbar (…)“).
+- **The link belongs to the attempt:** the download token is derived — an HMAC-SHA256 under a key from
+  `TOKEN_ENC_KEY` over the voucher, `mail_attempts` and the code (`giftVoucherDownloadToken`, 32 characters) —, so
+  a repeat of the same try rebuilds the link the delivered mail carries, while every new attempt („E-Mail erneut
+  senden“, a retry after a concluded try) rotates it; an older link stops working (404). Only the token's sha256
+  is stored.
 - **The mail log** (`email_messages`, the Korrespondenz — also read by the AI customer profile) gets a
-  **redacted** copy: the code masked to its last four characters („•••• •••• •••• NPQR“), no download link.
+  **redacted** copy: the code masked to its last four characters („•••• •••• •••• NPQR“), no download link. A
+  received reply is stored redacted too (`redactGiftVoucherSecrets`, `email-inbound-core.mjs`): a quoted code
+  keeps its last group, a download link — also inside a rewritten Safe-Links URL — loses its token; this holds
+  for the Korrespondenz, the Eingang and the AI prompts (a code typed without separators is not recognised).
 
 ### 4.6 The sweep — `/api/cron/gift-vouchers`
 
@@ -264,27 +316,31 @@ Every 5 minutes (`vercel.json`), `CRON_SECRET`, `maxDuration` 120 s with a 100-s
 0083 it answers `{ ok: true, skipped: "migration_missing" }`. In this order, each step only while time
 is left: due units (≤ 20 — issue, retries, revocations of units without a card) → revocation flags of
 issued cards (≤ 10) → due mails (≤ 20) → print: submit (≤ 10), poll print.one (≤ 20), delete print files
-of finished jobs (≤ 20 jobs) → balances not read for 24 h (≤ 15, live cards first) → fulfilment. Answer:
+of finished jobs (≤ 20 jobs) → balances not read for 24 h (≤ 15, live cards first; a pending revocation is
+resolved on the way, §4.4) → fulfilment. Answer:
 `{ ok, issued, held, deferred, failed, mailed, printSubmitted, printPolled, assetsCleaned, balancesSynced,
 fulfilled }` (`assetsCleaned` counts files, two per job).
 
 **Fulfilment** (`GIFT_VOUCHER_FULFILL_ORDERS`, default off; scope
 `write_merchant_managed_fulfillment_orders`): a voucher line is marked fulfilled once every unit became a
-card, an add-on line once its jobs are with the printer or done — without notifying the customer; at most
-five orders per run; an order whose fulfilment fails for good is skipped for six hours on that instance.
+card, an add-on line once its jobs are with the printer or done — without notifying the customer. The
+candidates are the orders with issued, unfulfilled shop vouchers whose cards do not wait for the printer, most
+recently ready first (≤ 50 read, at most five Shopify calls per run — an old order is never starved by newer
+ones); an order whose fulfilment fails for good is skipped for six hours on that instance.
 
 ### 4.7 Failure modes
 
 | What happens | How it ends |
 | --- | --- |
-| The webhook is slow, or the products cannot be loaded while a line carries `_mo_gv` | 500 → Shopify redelivers; the insert is idempotent per order line unit, print jobs per voucher. |
+| The webhook is slow; the products cannot be loaded (and no good lookup is stored) while a line carries `_mo_gv`; the drafts cannot be read; a draft sits on another product and the order holds no voucher | 500 → Shopify redelivers; the insert is idempotent per order line unit, print jobs per voucher. |
 | A worker dies anywhere | The 3-minute lease runs out, the sweep continues from the stored state; a stored code is reused. |
 | Death after the code was stored or after the card was created | The next try gets `TAKEN`, finds the card by its code and adopts it — if it is active and of the voucher's value, else `failed`. |
 | Shopify errors (transport, denied, not configured, order not readable) | Retry plan, held `attempts` after the eleventh failed try; `invalid` / above the issue limit → `failed`. |
 | `TOKEN_ENC_KEY` missing | No code is generated (retry, then held); stored codes cannot be read (reveal, PDF, mail, print fail with „TOKEN_ENC_KEY prüfen“). |
 | Resend refuses or times out | Mail retry plan with a new key per concluded try; a repeat of the same try is a 409 → recorded as sent. |
 | Cancellation lands while the card is being created | The issuing step re-reads the row after `issued` and resolves the flag at once — the code is never mailed. |
-| An admin „E-Mail erneut senden“ races a sweep mail | Can send twice (the same code) — the one known small window. |
+| An admin „E-Mail erneut senden“ races a sweep mail | Can send twice (the same code) — a known small window. |
+| Voucher and card refunded together, the refund lands on a spent card, and Shopify's card read fails in the webhook's `after()` | The flagged unit's card print is cancelled at once; when the sweep later moves the refund to an untouched card of the line, that card's print is cancelled too — two card prints for one refunded add-on (the vouchers are right). Print one in-house or refund it — a known small window. |
 
 ## 5. The Premium-Karte
 
@@ -313,16 +369,19 @@ five orders per run; an order whose fulfilment fails for good is skipped for six
 
 ### 5.2 Providers and the legal gate
 
-- **`GIFT_VOUCHER_PRINT_PROVIDER`** `printone` (default) or `manual` (the in-house print queue: download the
-  print files, print, post, „Als versendet markieren“). The **effective** provider falls back to `manual`
-  while `PRINTONE_API_KEY` / `PRINTONE_TEMPLATE_ID` are missing; a job keeps the provider it was created with.
+- **`GIFT_VOUCHER_PRINT_PROVIDER`** `printone` (default) or `manual` (printed in-house: the cards wait under the
+  status „Druck offen“ — download the print files, print, post, „Als versendet markieren“). The **effective**
+  provider falls back to `manual` while `PRINTONE_API_KEY` / `PRINTONE_TEMPLATE_ID` are missing; a job keeps the
+  provider it was created with.
 - **print.one gets an address only when all of these hold:** `GIFT_VOUCHER_PRINT_SENDS_APPROVED` (the
   **legal gate**, default off, fail-closed — print.one is a new processor and needs its own AV-Vertrag /
   DPA first), print.one configured, provider `printone`, an https `PUBLIC_BASE_URL`; and for the job: status
   `queued`, voucher issued (not deactivated, cancelled or rejected), an address valid for
   `GIFT_VOUCHER_PRINT_COUNTRIES` (default `DE`). A blocked job stays `queued`: the job card names the block
   („Jetzt drucken“ is disabled with the reason); a job blocked by its own data carries the reason as its error
-  and is looked at again hourly. Separate from `PHYSICAL_MAIL_SENDS_APPROVED` (Pingen letters).
+  and is looked at again hourly. While print.one takes no card at all (one of the conditions above, or no file
+  store for the print files), its waiting cards show under „Druck offen“ and can be printed in-house (§5.5).
+  Separate from `PHYSICAL_MAIL_SENDS_APPROVED` (Pingen letters).
 - **The page offers the card only when it can be fulfilled:** `GIFT_VOUCHER_PRINT_PROVIDER=manual`, or print.one
   when the sweep would really submit the card — its own gate above: approved, configured and an https
   `PUBLIC_BASE_URL` (`isGiftVoucherPrintOffered` over `giftVoucherPrintGlobalBlock`) — never while the shop does
@@ -336,8 +395,9 @@ five orders per run; an order whose fulfilment fails for good is skipped for six
 2. **Files** are rendered once per job and recorded only after both uploads succeeded — the URLs, and with
    them the request body, stay the same for every attempt.
 3. **`POST /v2/orders`** (one card per call, header `x-api-key`) with the `Idempotency-Key`
-   `gift-voucher-print-<jobId>` (print.one keeps it 24 h) and a body built only from the job row
-   (`recipient`, `mergeVariables`, `templateId`, `finish`, `billingId` = `PRINTONE_BILLING_ID`).
+   `gift-voucher-print-<jobId>-<created ms>` (the same for every attempt of the job; the job's creation time keeps
+   it unique across databases sharing the print.one account; print.one keeps it 24 h) and a body built only from
+   the job row (`recipient`, `mergeVariables`, `templateId`, `finish`, `billingId` = `PRINTONE_BILLING_ID`).
 4. **Before any repeat** Mo searches print.one's newest orders (≤ 300) for its asset token and adopts the
    order it finds; when print.one cannot be asked (no answer, 5xx / 429, 401/403), nothing is posted — only a
    search print.one refuses outright (another 4xx) lets the POST go ahead, still guarded by its Idempotency-Key.
@@ -364,15 +424,19 @@ unanswered attempt is unknown, and `failed` can only move on to `done`. A job bl
 
 ### 5.5 What the operator does with a job
 
-„Freigeben“ (`review` → `queued`; needs a valid address), „Jetzt drucken“ (submit now, confirmed with the
-cost), „Stornieren“ (not at print.one yet → cancelled in Mo; at print.one → cancelled there first, too late
-once in production), „Druckdateien herunterladen“ (manual jobs and failed print.one jobs: the two spreads
-as JPEG — the stored files while they exist, else rendered anew) and „Als versendet markieren“ (`done`;
-manual jobs and failed print.one jobs; refused while print.one has the order). A print.one job that waits
-for the gate stays in the queue until the gate opens — the screen offers „Stornieren“ for it, not the
-in-house actions. The sweep deletes the print files of finished jobs and of jobs
-older than 14 days (never while submitting) and forgets their token — the asset URL then answers 404; a job
-that is submitted later renders its files again.
+**„Druck offen“** — a status filter of the list — shows every card that waits for someone: its job in `review` or
+`failed`, or `queued` for printing in-house — a manual job, or print.one's while print.one takes no card (§5.2) —
+of an issued voucher; never the card of a voucher that ended. On the job card: „Adresse eingeben“ / „Adresse
+ändern“ (while the card waits — `review` or `queued`, for print.one only before its print files exist; validated
+like the shop's address; clears `print_without_address` and the job's error), „Freigeben“ (`review` → `queued`;
+needs a valid address; confirmed with the cost while print.one's gate is open — the address then goes to
+print.one), „Jetzt drucken“ (submit now, confirmed with the cost), „Stornieren“ (not at print.one yet → cancelled
+in Mo; at print.one → cancelled there first, too late once in production), „Druckdateien herunterladen“ (the two
+spreads as JPEG — the stored files while they exist, else rendered anew) and „Als versendet markieren“ (`done`;
+refused while print.one has the order) — these two, once the voucher is issued, for manual jobs, failed print.one
+jobs and waiting print.one jobs while print.one takes no card or the job has no address. The sweep deletes the print files of finished jobs
+only and forgets their token — the asset URL then answers 404; an open job keeps its files however old it is (its
+asset token is how Mo finds a print.one order whose answer got lost).
 
 ### 5.6 `npm run verify:printone`
 
@@ -404,9 +468,8 @@ variables, two pages). One option at a time:
    mirrored; page 2: LINKS = message, RECHTS = code. If the circle sits off-centre, the back layout
    (`gift-voucher-designs.mjs`) must move its keep-out area.
 5. The same with real voucher spreads, while the gate is still closed: issue a 1 € voucher by hand with
-   Versand „Premium-Karte“ (a real card), take its two spreads — „Druckdateien herunterladen“ when its job is
-   a manual one, else, signed in to the admin, `/api/admin/gutscheine/print-file?id=<voucher id>&side=outside`
-   and `…&side=inside` —, upload them like the test patterns and place one more `--test-order`. Then
+   Versand „Premium-Karte“ (a real card), take its two spreads with „Druckdateien herunterladen“ (offered while
+   print.one takes no card), upload them like the test patterns and place one more `--test-order`. Then
    „Sperren“ that voucher: its print job is cancelled with it, so opening the gate later never prints it.
    Last, one `--live` proof card to the shop to judge paper, colours and the envelope.
 
@@ -421,9 +484,9 @@ of [`gift-voucher-designs.mjs`](../src/lib/gift-voucher-designs.mjs) (tested).
   „Alles Gute zum Geburtstag!“ …). Decorations are vector and seeded — the same input gives the same artwork
   at every resolution.
 - **A photo voucher without its photo:** a preview shows `classic`, a delivered voucher never. When the stored
-  photo cannot be read (Vercel Blob), there is no PDF and no print file — the download routes answer 503, the
-  print job retries („Das Kundenfoto ließ sich nicht laden …“), the mail retries and then goes without the
-  attachment. When it is read but cannot be decoded, the PDF is the plain text fallback without artwork (the
+  photo cannot be read (Vercel Blob — missing, unreadable or an empty body), there is no PDF and no print file —
+  the download routes answer 503, the print job retries („Das Kundenfoto ließ sich nicht laden …“), the mail
+  retries and then goes without the attachment. When it is read but cannot be decoded, the PDF is the plain text fallback without artwork (the
   download routes serve it, the mail attaches it at once) and there are no print files — the print job
   retries („Die Druckdateien konnten nicht erzeugt werden.“).
 - **Every letter is a vector path** from the bundled fonts — no system font on Vercel. Texts are cleaned to
@@ -473,8 +536,9 @@ Buckets (`src/lib/rate-limit.ts`, Upstash): `gift-voucher` 40 / 10 min per sessi
 guard; 80-bit codes), `gift-voucher-render` 30 / 10 min. Without KV the routes answer 500 — rate limiting
 never silently switches off. Availability: `GIFT_VOUCHERS_ENABLED` and „Verkauf im Shop“ (else
 `disabled`), Shopify, the database and migration 0083 (else `not_configured`); while the shop does not
-sell, the writing routes answer 409 and the page shows its fallback. Features: AI texts need
-`ANTHROPIC_API_KEY` and „KI-Textvorschläge“, photos the Blob store and „Eigene Fotos“, the card §5.2.
+sell, the writing routes answer 409 and the page shows its fallback (also when that happens mid-visit).
+Features: AI texts need `ANTHROPIC_API_KEY` and „KI-Textvorschläge“, photos the Blob store and „Eigene Fotos“,
+the card §5.2.
 
 **„Mit Mo formulieren“ sends no personal data to the model:** only the occasion (Geburtstag, Weihnachten,
 Danke, Sport & Training, Einfach so), the tone (Herzlich, Witzig, Sportlich, Kurz & knapp) and the language.
@@ -486,14 +550,16 @@ no signature line) and the page labels each text „KI-Vorschlag“.
 ## 8. The admin screen „Gutscheine“
 
 Group Arbeit, no digit shortcut, icon `Gift`; in full: [`ADMIN_DASHBOARD.md`](./ADMIN_DASHBOARD.md) §3.13.
-Stats (Verkauft (30 Tage), Ausgestellt gesamt, Offenes Guthaben, Eingelöst, Zu prüfen, Druckaufträge
-offen, Entwürfe (30 Tage)); the list with search, status (incl. „Achtung“) and Quelle (Shop / Von Hand);
-the detail with „Code anzeigen“ (audited), PDF, „E-Mail erneut senden“, „Ausstellen“ / „Ablehnen“,
-„Erneut versuchen“, „Sperren“ (irreversible, with a reason), „Abgleichen“, the note and the print job;
-„Gutschein ausstellen“ (§2.2); and **„Einrichtung“** (`#einrichtung`): the setup check (database and
-migration, switches, which keys are set, the Shopify scope, both products with their findings — not found,
-a gift-card product, taxable or shipping variants, several add-on variants —, Shopify's issue limit against
-Mo's limits, print gate and provider, limits, validity) and the operator settings below.
+Stats (Verkauft (30 Tage), Ausgestellt gesamt, Offenes Guthaben, Eingelöst, Zu prüfen, Achtung, Druckaufträge
+offen, Entwürfe (30 Tage)); the list with search, status (incl. „Achtung“ and „Druck offen“, §5.5) and Quelle
+(Shop / Von Hand); the detail with „Code anzeigen“ (audited), PDF, „E-Mail erneut senden“, „Ausstellen“ /
+„Ablehnen“, „Erneut versuchen“, „Sperren“ (irreversible, with a reason), „Abgleichen“, „Als geklärt markieren“,
+the note and the print job (with its address); „Gutschein ausstellen“ (§2.2); and **„Einrichtung“**
+(`#einrichtung`): the setup check (database and migration, switches, which keys are set, the Shopify scope, both
+products with their findings — not found (the add-on product an error while the shop offers the card), a
+gift-card product, taxable or shipping variants, several add-on variants —, Shopify's issue limit against Mo's
+limits, print gate and provider, whether the shop offers the Premium-Karte, limits, validity) and the operator
+settings below.
 
 **Settings** (`admin_settings` key `gift_vouchers`, no migration of their own; read with a 60-s cache per
 instance; audit `settings.gift_vouchers`):
@@ -503,7 +569,7 @@ instance; audit `settings.gift_vouchers`):
 | Verkauf im Shop | an | The page sells (together with `GIFT_VOUCHERS_ENABLED`). |
 | KI-Textvorschläge | an | „Mit Mo formulieren“ on the page. |
 | Eigene Fotos | an | The design „Eigenes Foto“. |
-| Druck mit eigenem Foto prüfen | an | A card with a customer photo waits in „Zu prüfen“ for „Freigeben“ before it is printed. |
+| Druck mit eigenem Foto prüfen | an | A card with a customer photo waits (job status „Zu prüfen“, listed under „Druck offen“) for „Freigeben“ before it is printed. |
 
 ## 9. Configuration
 
@@ -518,7 +584,7 @@ vouchers“; the readers are [`gift-voucher-flags.mjs`](../src/lib/gift-voucher-
 | `GIFT_VOUCHER_PRODUCT_HANDLE` / `GIFT_VOUCHER_PRINT_PRODUCT_HANDLE` | `designgutschein` / `gutschein-premiumkarte` | The two products (regular products, not gift-card products). |
 | `GIFT_VOUCHER_VALIDITY_YEARS` | `3` | Valid until 31.12. of the issuing year + n; `0` = never expires; at most 10. |
 | `GIFT_VOUCHER_MIN_EUR` / `GIFT_VOUCHER_MAX_EUR` | `5` / `500` | Shop vouchers outside are held („Betrag außerhalb der Grenzen“). |
-| `GIFT_VOUCHER_DAILY_LIMIT_EUR` | `2500` | Fraud brake: shop vouchers issued per Berlin day; beyond it they are held; `0` = no limit. |
+| `GIFT_VOUCHER_DAILY_LIMIT_EUR` | `2500` | Fraud brake: shop vouchers issued per Berlin day, a hard cap (§4.2); beyond it they are held; `0` = no limit. |
 | `GIFT_VOUCHER_ADMIN_MAX_EUR` | `250` | The highest voucher by hand. |
 | `GIFT_VOUCHER_ALLOW_TEST_ORDERS` | `false` | Issue real, spendable cards for Shopify test orders — only while testing. |
 | `GIFT_VOUCHER_RISK_WAIT_MINUTES` | `30` | Wait for a PENDING fraud check, then issue; `0` = no wait; at most 1440. |
@@ -540,9 +606,10 @@ vouchers“; the readers are [`gift-voucher-flags.mjs`](../src/lib/gift-voucher-
 | `PRINTONE_FRONT_SIDE` | `right` | Which half of the outside spread is the front — check it (§5.6). |
 | `PRINTONE_API_BASE` | `https://api.print.one` | Only for a local test server. |
 
-Reused, nothing new to set: `TOKEN_ENC_KEY` (code encryption — **never rotate it**: stored codes would
-become unreadable), `BLOB_READ_WRITE_TOKEN` (photos, print files), `RESEND_API_KEY` + `CONTACT_FROM_EMAIL`
-(the mail), `PUBLIC_BASE_URL` (download links, print files — https), `ANTHROPIC_API_KEY` (text suggestions),
+Reused, nothing new to set: `TOKEN_ENC_KEY` (code encryption and the download links — **never rotate it**:
+stored codes would become unreadable), `BLOB_READ_WRITE_TOKEN` (photos, print files), `RESEND_API_KEY` +
+`CONTACT_FROM_EMAIL` (the mail), `PUBLIC_BASE_URL` (download links, print files — https), `ANTHROPIC_API_KEY` (text
+suggestions),
 `CHAT_SHARED_SECRET` + `ALLOWED_ORIGINS` (the storefront routes), `KV_REST_API_*` (rate limits),
 `CRON_SECRET` (the sweep).
 
@@ -556,8 +623,8 @@ Everything else has a working default.
 
 ## 10. Data model — migration `0083_gift_vouchers.sql`
 
-Three tables, all data (wiped by `npm run db:reset`); the settings live in `admin_settings`
-([`DATABASE.md`](./DATABASE.md) table index).
+Three tables, all data (wiped by `npm run db:reset`); the settings and the last good product lookup live in
+`admin_settings` (keys `gift_vouchers`, `gift_voucher_products`; [`DATABASE.md`](./DATABASE.md) table index).
 
 - **`gift_voucher_drafts`** — what a customer designed before paying, anonymous (no customer, e-mail or
   session; the cart lines carry only the opaque `token`): `token` (unique), `design_key`, `amount_cents`
@@ -596,18 +663,24 @@ the migration before the products are on sale.
   the recipient's address. Customer photos lie in the **private** Blob store (`gift-voucher-photos/`, EXIF
   stripped), print files under `gift-voucher-print/` only while needed.
 - **Retention:** the three windows of §9 (`0` disables a step), enforced by step 5j of `/api/cron/retention` —
-  drafts, the address of finished print jobs, and a voucher's personal data once it ended; amounts, status, the
-  encrypted code with its hash / last four and ids stay. What each step deletes, and the known gap of „used
-  up“ (the daily balance sync keeps that clause from ever firing): [`DATA_RETENTION.md`](./DATA_RETENTION.md)
-  „Geschenkgutscheine“.
+  drafts, the address of finished print jobs, and a voucher's personal data (the team's note and block reason
+  with it) once it ended — used up included — or, for a held test order, once untouched that long; amounts,
+  status, the encrypted code with its hash / last four and ids stay. What each step deletes and when a voucher
+  counts as ended: [`DATA_RETENTION.md`](./DATA_RETENTION.md) „Geschenkgutscheine“.
 - **Erasure** (`erasePerson`) keeps the voucher — the card is money for its recipient — and removes the buyer;
-  texts and photo leave with the retention, drafts are anonymous; a merge repoints `gift_vouchers.customer_id`.
-  The rules: [`DATA_RETENTION.md`](./DATA_RETENTION.md) „Geschenkgutscheine“.
+  the ordered drafts of the person's vouchers lose the card's address; texts and photo leave with the retention; a
+  merge repoints `gift_vouchers.customer_id`. The rules: [`DATA_RETENTION.md`](./DATA_RETENTION.md)
+  „Geschenkgutscheine“.
+- **Access (Art. 15 / 20):** the signed-in customer's data export lists the person's vouchers — bought, or e-mailed
+  to them — with the Premium-Karte's status and address; of the code only its last four, never the code itself, its
+  hash, the download link or the team's note (`account-export.ts`, key `giftVouchers`;
+  [`frontend/ACCOUNT_CONTRACT.md`](./frontend/ACCOUNT_CONTRACT.md) §7.7).
 - **Codes and tokens are bearer value:** never logged, never in `reportError` contexts, KPI events, audit
   details or URLs (except the mail's download token and the print files' asset token); the mail log keeps a
-  redacted copy (§4.5); revealing a code in the admin is audited (`gift_voucher.code_reveal`). The balance
-  check finds a code only by its hash; a download token is stored only as its sha256, a print-asset token is
-  a random 192-bit value that dies with the job's files.
+  redacted copy, of a reply quoting the mail too (§4.5); revealing a code in the admin is audited
+  (`gift_voucher.code_reveal`). The balance check finds a code only by its hash; a download token is derived per
+  mail attempt and stored only as its sha256, a print-asset token is a random 192-bit value that dies with the
+  job's files.
 - **Processors:** Shopify (the cards), Resend (the mail), Vercel Blob (photos, print files), Anthropic (text
   suggestions — occasion and tone only, no personal data), **print.one** (new — Print.one B.V., Netherlands,
   printed there and posted through PostNL: recipient name and address plus the card's artwork, which carries
@@ -629,9 +702,12 @@ In the theme repo `ms_shopify_clone` (the upload list, the after-upload steps an
   settings, the locale, the two products' variants from Liquid. The design state stays in the tab's
   sessionStorage (`ms-gv-draft`); names, messages and addresses never go into a URL.
 - **Cart lines:** the voucher variant with the visible properties „Gutschein für“, „Motiv“, „Versand“ and
-  the private `_mo_gv=<token>`; for the card the add-on variant with „Für Gutschein an“ and `_mo_gv`.
-- Fallback (AI Advisor off, Mo unreachable, `available: false`, no amount, a gift-card product picked): a
-  note with a link to the old gift card product.
+  the private `_mo_gv=<token>`; for the card the add-on variant with „Für Gutschein an“ and `_mo_gv`. A design
+  changed after „In den Warenkorb“ replaces its earlier lines (the new ones are added first, then the old ones
+  removed by their line keys) instead of adding a second voucher; „Noch einen Gutschein gestalten“ adds one.
+- Fallback (AI Advisor off, Mo unreachable, `available: false` — also a 409 mid-visit —, no amount, a gift-card
+  product picked): a note with a link to the old gift card product. How the page shows Mo's errors:
+  [`frontend/API_CONTRACT.md`](./frontend/API_CONTRACT.md) §3d.
 
 ## 13. Go-live checklist
 
@@ -691,9 +767,9 @@ Status of each step: [`ROLLOUT_TODO.md`](./ROLLOUT_TODO.md) item 28.
    — §5.2 — one with the Premium-Karte): the mail with the PDF arrives (at the latest after
    `GIFT_VOUCHER_RISK_WAIT_MINUTES` while Shopify's fraud check is pending), Gutscheine lists it as
    „Ausgestellt“, the code works in the checkout, „Guthaben prüfen“ shows 25,00 €, the print job appears — a
-   job „Von Hand“ in the queue with `GIFT_VOUCHER_PRINT_PROVIDER=manual`; with print.one, the gate open and a
-   LIVE key print.one really prints and posts it to the address entered. Then „Sperren“ the test vouchers and
-   set `GIFT_VOUCHER_ALLOW_TEST_ORDERS=false` again.
+   job „Von Hand“ under „Druck offen“ with `GIFT_VOUCHER_PRINT_PROVIDER=manual`; with print.one, the gate open
+   and a LIVE key print.one really prints and posts it to the address entered. Then „Sperren“ the test vouchers
+   and set `GIFT_VOUCHER_ALLOW_TEST_ORDERS=false` again.
 9. **Switch-on:** `GIFT_VOUCHERS_ENABLED=true` stays on; „Verkauf im Shop“ on. Orders paid while the switch
    was off wait in „Zu prüfen“ — „Ausstellen“ or „Ablehnen“ each.
 
@@ -702,13 +778,15 @@ Status of each step: [`ROLLOUT_TODO.md`](./ROLLOUT_TODO.md) item 28.
 | Symptom | Where | What to do |
 | --- | --- | --- |
 | The page shows the fallback | `GET /api/gift-vouchers/config` → `unavailableReason` | `disabled`: `GIFT_VOUCHERS_ENABLED` or „Verkauf im Shop“; `not_configured`: Shopify, database or migration 0083. AI / photo / card missing: the `features` and §7. |
-| A paid voucher is not in the list | Shopify → the order's webhook deliveries; Vercel logs of `/api/webhooks/shopify` | A 500 is redelivered by Shopify. A voucher bought **without** the designer (no `_mo_gv`) is recognised only when the product lookup answers within 2.5 s — otherwise it is acknowledged unchecked and no voucher exists: issue one by hand. A gift-card product as voucher product: Einrichtung shows it. |
+| A paid voucher is not in the list | Shopify → the order's webhook deliveries; Vercel logs of `/api/webhooks/shopify` | A 500 is redelivered by Shopify. A voucher bought **without** the designer (no `_mo_gv`) is recognised only when the product lookup answers within 2.5 s or a good lookup is stored — otherwise the order is acknowledged unchecked (reported) and no voucher exists: issue one by hand. A design on a product that is neither of the two (the theme's product picker, a re-created product): „Achtung“ `unknown_product_line` on the order's vouchers, or — with no voucher in the order — a 500 until the handles match. A gift-card product as voucher product: Einrichtung shows it. |
 | „Zu prüfen“ | the detail's callout (reason + hint) | „Ausstellen“ or „Ablehnen“ (§3). |
 | „Fehler“, or „Zu prüfen“ with „Zu viele Fehlversuche“ | „Letzter Fehler“ in the detail | „Shopify-Berechtigung write_gift_cards fehlt“ → the scope (§13.2); „TOKEN_ENC_KEY …“ → the key; above Shopify's issue limit or a card with another value under the code → check in Shopify (Einrichtung shows the limit). Then „Erneut versuchen“ / „Ausstellen“ — or „Ablehnen“. |
 | Stuck „Wird ausgestellt“ / „Wartet“ | `next_attempt_at` / „Letzter Fehler“ | The sweep retries by the plan; cron runs in Vercel → Cron Jobs (401 = `CRON_SECRET`). |
-| The mail did not arrive | the detail's row „E-Mail“ (status, tries); Resend → Emails (tag `kind=gift_voucher`) | „E-Mail erneut senden“ (a new link; a failure names Resend's error). „Keine Adresse“: the order had none — PDF from the admin. |
-| „Achtung“ | the detail's callout | §3 attention flags; „Als geklärt markieren“ once handled. |
-| A card print waits | the job card: status and error; „Jetzt drucken“ names the block | print.one job: gate, print.one configuration, https `PUBLIC_BASE_URL`, address („Freigeben“ for `review`); „Das Kundenfoto ließ sich nicht laden“ = Vercel Blob (the job retries by itself, never without the photo). Manual job: „Druckdateien herunterladen“, print, „Als versendet markieren“. |
+| „Gutschein ausstellen“ warns „… angelegt — Shopify-Karte noch nicht erstellt“ | the toast's reason, „Letzter Fehler“ in the detail | The voucher exists, its card not yet: fix the cause (scope, `TOKEN_ENC_KEY`, Shopify) — the sweep keeps trying (§4.3). |
+| An action is refused (409) | the error toast; the detail shows the voucher as it is now | „… erstattet …“ (`refunded`): check the refund in Shopify, then „Ablehnen“; „… nach Ablauf der Aufbewahrungsfrist gelöscht“ (`purged`): „Ablehnen“; „Mo prüft …“, „Der Gutschein wird gerade bearbeitet …“ or „Die Stornierung läuft noch …“ (`busy`, `revoking`): Shopify's search lags behind a create, another worker holds the voucher, or Shopify did not answer — try again in a few minutes. |
+| The mail did not arrive | the detail's row „E-Mail“ (status, tries); „Letzter Fehler“; Resend → Emails (tag `kind=gift_voucher`) | „E-Mail erneut senden“ (a new link). „Letzter Fehler“ names the failure in German, Resend's message in brackets („Resend-Zugang oder Absender ungültig“ → `RESEND_API_KEY` / `CONTACT_FROM_EMAIL`). „Keine Adresse“: the order had none — PDF from the admin. |
+| „Achtung“ | the detail's callout | §3 attention flags; „Als geklärt markieren“ once handled — on a revocation it asks first and may deactivate this card or an untouched one of the same order line (§4.4). „Achtung: Karte wird gesperrt“ / „… Gutschein wird storniert“ has no button: Mo finishes it once Shopify answers. |
+| A card print waits | Gutscheine → status „Druck offen“; the job card: status, error, why print.one takes no card | print.one job: gate, print.one configuration, https `PUBLIC_BASE_URL`, file store („Jetzt drucken“ names the block — meanwhile print it in-house), address („Adresse eingeben“, then „Freigeben“ for `review`); „Das Kundenfoto ließ sich nicht laden“ = Vercel Blob (the job retries by itself, never without the photo). Manual job: „Druckdateien herunterladen“, print, „Als versendet markieren“. |
 | A print job „Fehler“ | the job's error (print.one's refusal) | A failed job is final: print it in-house („Druckdateien herunterladen“, „Als versendet markieren“) or refund the add-on line in Shopify (the voucher itself stays valid). |
 | print.one statuses do not move | Vercel logs of `/api/webhooks/printone` (401 = secret, 503 = none set) | Polling still moves them (jobs unchanged for 60 min, 180 min while a webhook secret is set). |
 | Everything else | Sentry / `reportError` with `route` `lib/gift-voucher-*`, `lib/printone`, `lib/shopify-gift-cards` and a phase — ids only, never a code, name or address | `npm run verify:gift-vouchers`, `npm run verify:printone`. |
@@ -720,12 +798,12 @@ Status of each step: [`ROLLOUT_TODO.md`](./ROLLOUT_TODO.md) item 28.
 | Rules (pure, tested) | `src/lib/gift-voucher-core.mjs`, `gift-voucher-flags.mjs`, `gift-voucher-settings.mjs`, `gift-voucher-issue-core.mjs`, `gift-voucher-mail-core.mjs`, `gift-voucher-storefront.mjs`, `gift-voucher-designs.mjs`, `shopify-gift-cards-core.mjs`, `printone-core.mjs`, `printone-webhook.mjs`, `pdf-core.mjs` (`assembleImagePdf`), `src/app/admin/gutscheine/gutscheine-core.mjs` |
 | Data | `migrations/0083_gift_vouchers.sql`, `src/lib/gift-voucher-store.ts`, `gift-voucher-blob.ts` |
 | Issuing, mail | `src/lib/gift-voucher-issue.ts`, `gift-voucher-mail.ts`, `shopify-gift-cards.ts`, `email.ts` (attachments, idempotency key) |
-| Rendering | `src/lib/gift-voucher-render.ts`, `src/assets/fonts/`, `next.config.ts` |
+| Rendering | `src/lib/gift-voucher-render.ts`, `slot-limiter.mjs` (two renders at a time), `src/assets/fonts/`, `next.config.ts` |
 | Print | `src/lib/gift-voucher-print.ts`, `printone.ts` |
 | Storefront | `src/app/api/gift-vouchers/*`, `src/lib/gift-voucher-storefront-io.ts`, `gift-voucher-message.ts`, `gift-voucher-photo.ts`, `rate-limit.ts` |
 | Webhooks, cron | `src/app/api/webhooks/shopify/route.ts` (`giftVoucherOrderStep`), `src/app/api/webhooks/printone/route.ts`, `src/app/api/cron/gift-vouchers/route.ts`, `vercel.json` |
 | Admin | `src/app/admin/GutscheineTab.tsx`, `src/app/admin/gutscheine/*`, `src/app/api/admin/gutscheine/*`, `src/lib/admin-tabs.mjs`; wired in `src/app/admin/page.tsx`, `lazy.tsx`, `tabs.tsx` (icon), `AdminShell.tsx` (shortcut sheet) |
 | Elsewhere | `src/lib/token-crypto.ts` (the code's encryption), `src/app/admin/einstellungen/SystemStatusCard.tsx` + `EinstellungenTab.tsx` (Systemstatus rows), `business-snapshot.ts` / `-core.mjs` (switches), `ai-call-sites.mjs` + `ai-usage-store.ts` (call site `gift_voucher_message`), `scripts/register-shopify-webhooks.mjs` (scope `write_gift_cards`) |
-| Privacy | `customer-erasure.ts` / `-core.mjs`, `customer-fk-plan.mjs`, `customer-merge-store.ts`, `retention.ts` (step 5j), `retention-options.mjs` |
+| Privacy | `customer-erasure.ts` / `-core.mjs`, `customer-fk-plan.mjs`, `customer-merge-store.ts`, `retention.ts` (step 5j), `retention-options.mjs`, `account-export.ts` / `account-export-core.mjs` (the export), `email-inbound-core.mjs` (`redactGiftVoucherSecrets`) |
 | Catalog | `catalog-mapping.ts`, `scripts/convert-catalog.mjs` — both voucher products stay out of Mo's chat catalog |
 | Scripts | `scripts/verify-gift-vouchers.mjs` (`npm run verify:gift-vouchers`), `scripts/verify-printone.mjs` (`npm run verify:printone`) |
