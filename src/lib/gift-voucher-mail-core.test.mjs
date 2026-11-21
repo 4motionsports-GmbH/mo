@@ -261,16 +261,21 @@ test("a redacted flag on raw params still masks the code", () => {
 
 const NOW = Date.parse("2026-11-20T10:00:00Z");
 
-test("planGiftVoucherMailFailure: not configured → retry by plan, failed after the tenth", () => {
+test("planGiftVoucherMailFailure: not configured → retry by plan, failed on the eleventh try", () => {
   const first = planGiftVoucherMailFailure({ skipped: true, attempts: 0, now: NOW });
   assert.equal(first.status, "pending");
   assert.equal(first.outcome, "skipped");
   assert.equal(first.countAttempt, true);
   assert.equal(first.nextAttemptAt?.getTime(), NOW + 60_000);
   assert.match(first.error, /RESEND_API_KEY/);
+  // The tenth failed try still waits 720 minutes; the eleventh gives up.
+  const tenth = planGiftVoucherMailFailure({ skipped: true, attempts: 9, now: NOW });
+  assert.equal(tenth.status, "pending");
+  assert.equal(tenth.nextAttemptAt?.getTime(), NOW + 720 * 60_000);
   const last = planGiftVoucherMailFailure({ skipped: true, attempts: 10, now: NOW });
   assert.equal(last.status, "failed");
   assert.equal(last.nextAttemptAt, null);
+  assert.match(last.error, /Aufgegeben nach 11 Versuchen/);
 });
 
 test("planGiftVoucherMailFailure: transient, rate limit, configuration → retry; invalid → failed", () => {

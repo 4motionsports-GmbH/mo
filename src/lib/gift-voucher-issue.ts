@@ -72,7 +72,8 @@
 //   · a worker dies anywhere → its lease runs out after 3 minutes and the
 //     sweep continues from the stored state (a stored code is reused);
 //   · Shopify errors → retry by planGiftVoucherRetry (1 … 720 minutes), held
-//     `attempts` after the tenth try; `invalid` / `limit` → failed;
+//     `attempts` on the eleventh failed try (after ten retries); `invalid` /
+//     `limit` → failed;
 //   · TOKEN_ENC_KEY missing → no code is ever generated (retry, then held);
 //   · mail / print failures → their own retry state (mail_*, print job).
 //
@@ -712,9 +713,10 @@ async function ensureCode(
 }
 
 /**
- * A failed try. The pipeline retries by the plan (held `attempts` after the
- * tenth); an operator's „Ausstellen“ / „Erneut versuchen“ never falls back
- * into the automatic decision — the voucher stays „Fehler“ for the next click.
+ * A failed try. The pipeline retries by the plan (held `attempts` on the
+ * eleventh failed try); an operator's „Ausstellen“ / „Erneut versuchen“
+ * never falls back into the automatic decision — the voucher stays „Fehler“
+ * for the next click.
  */
 async function failIssue(v: GiftVoucher, message: string, mode: IssueMode): Promise<IssueResult> {
   if (mode === "override") {

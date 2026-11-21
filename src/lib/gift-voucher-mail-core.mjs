@@ -448,8 +448,8 @@ const MAIL_CONCURRENT = "Ein anderer Versand dieser E-Mail lief gerade — Mo pr
  *     minutes with the SAME key (no attempt counted);
  *   · refused as invalid (address, payload) → failed (an operator resends);
  *   · everything else (rate limit, quota, configuration, network, 5xx) →
- *     retry by planGiftVoucherRetry (1, 2, 5 … 720 minutes), failed after
- *     the tenth try.
+ *     retry by planGiftVoucherRetry (1, 2, 5 … 720 minutes); the eleventh
+ *     failed try (after ten retries) marks the mail failed.
  *
  * @param {{ skipped?: boolean, error?: unknown, attempts: number, now?: number }} input
  * @returns {{ status: "sent" | "pending" | "failed", countAttempt: boolean, nextAttemptAt: Date | null, error: string, outcome: "sent" | "skipped" | "failed" }}

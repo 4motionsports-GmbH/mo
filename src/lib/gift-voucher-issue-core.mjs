@@ -698,7 +698,8 @@ export function planGiftVoucherOrderChange({ facts, vouchers, printJobs }) {
 
 /**
  * After a failed try (attempts = failed tries so far, before this one): the
- * next due time by planGiftVoucherRetry, or hold `attempts` after the tenth.
+ * next due time by planGiftVoucherRetry, or hold `attempts` when this was the
+ * eleventh failed try (attempts 10 before it).
  * @param {{ attempts: number, now?: number }} input
  * @returns {{ action: "retry", at: Date } | { action: "hold", reason: "attempts" }}
  */

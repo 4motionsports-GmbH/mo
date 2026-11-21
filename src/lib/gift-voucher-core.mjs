@@ -859,9 +859,11 @@ export function decideManualGiftVoucher(input) {
 const RETRY_PLAN_MINUTES = Object.freeze([1, 2, 5, 15, 30, 60, 120, 240, 480, 720]);
 
 /**
- * Minutes until the next try after `attempts` failed tries: 1, 2, 5, 15, 30,
- * 60, 120, 240, 480, 720 — null after the tenth (the voucher is held with
- * reason `attempts`, a mail turns `failed`).
+ * Minutes until the next try after `attempts` failed tries (counting the one
+ * that just failed): 1, 2, 5, 15, 30, 60, 120, 240, 480, 720 for the first
+ * ten — null from the eleventh on, so after ten retries the eleventh failed
+ * try is the last (the voucher is held with reason `attempts`, a mail turns
+ * `failed`).
  * @param {number} attempts
  * @returns {number | null}
  */

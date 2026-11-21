@@ -12,7 +12,7 @@
 //     never a name or any other personal data) and the clean-up of the
 //     model's answer
 //   · the photo upload checks, the balance answer, the download file name
-// The I/O halves: lib/gift-voucher-storefront.ts (state, body reading),
+// The I/O halves: lib/gift-voucher-storefront-io.ts (state, body reading),
 // lib/gift-voucher-message.ts (the model call), lib/gift-voucher-photo.ts
 // (sharp + Blob). Like gift-voucher-core.mjs this module imports no Node
 // built-ins.
