@@ -783,28 +783,36 @@ test("parseGiftCardConfiguration: limits in cents and the default expiry", () =>
 
 test("scopes: write grants read; required and optional evaluated separately", () => {
   assert.deepEqual([...GIFT_VOUCHER_REQUIRED_SCOPES], ["write_gift_cards"]);
-  assert.deepEqual([...GIFT_VOUCHER_OPTIONAL_SCOPES], ["read_gift_card_transactions", "write_merchant_managed_fulfillment_orders"]);
+  // Nothing reads gift-card transactions — that scope is not asked for.
+  assert.deepEqual([...GIFT_VOUCHER_OPTIONAL_SCOPES], ["write_merchant_managed_fulfillment_orders"]);
   assert.equal(hasScope(new Set(["write_gift_cards"]), "read_gift_cards"), true);
   assert.equal(hasScope(new Set(["read_gift_cards"]), "write_gift_cards"), false);
-  assert.equal(hasScope(new Set(["write_gift_card_transactions"]), "read_gift_card_transactions"), true);
+  assert.equal(
+    hasScope(new Set(["write_merchant_managed_fulfillment_orders"]), "read_merchant_managed_fulfillment_orders"),
+    true
+  );
 
   assert.deepEqual(
     evaluateGiftVoucherScopes([{ handle: "read_products" }, { handle: "write_gift_cards" }, { handle: "read_orders" }, { handle: "write_gift_cards" }]),
     {
       granted: ["read_orders", "read_products", "write_gift_cards"],
       missing: [],
-      optionalMissing: ["read_gift_card_transactions", "write_merchant_managed_fulfillment_orders"],
+      optionalMissing: ["write_merchant_managed_fulfillment_orders"],
     }
   );
-  assert.deepEqual(evaluateGiftVoucherScopes(["read_gift_cards", "write_merchant_managed_fulfillment_orders", "read_gift_card_transactions"]), {
-    granted: ["read_gift_card_transactions", "read_gift_cards", "write_merchant_managed_fulfillment_orders"],
+  assert.deepEqual(evaluateGiftVoucherScopes(["read_gift_cards", "write_merchant_managed_fulfillment_orders"]), {
+    granted: ["read_gift_cards", "write_merchant_managed_fulfillment_orders"],
     missing: ["write_gift_cards"],
     optionalMissing: [],
   });
+  // A granted transactions scope is simply another granted scope.
+  assert.deepEqual(evaluateGiftVoucherScopes(["write_gift_cards", "read_gift_card_transactions"]).optionalMissing, [
+    "write_merchant_managed_fulfillment_orders",
+  ]);
   assert.deepEqual(evaluateGiftVoucherScopes(null), {
     granted: [],
     missing: ["write_gift_cards"],
-    optionalMissing: ["read_gift_card_transactions", "write_merchant_managed_fulfillment_orders"],
+    optionalMissing: ["write_merchant_managed_fulfillment_orders"],
   });
 });
 

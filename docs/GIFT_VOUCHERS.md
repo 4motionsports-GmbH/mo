@@ -649,7 +649,7 @@ Status of each step: [`ROLLOUT_TODO.md`](./ROLLOUT_TODO.md) item 28.
      Kollektionen“ → that collection. Otherwise a voucher can be bought below its value (Mo would hold it as
      `discounted`).
 2. **App scope `write_gift_cards`** (optional: `write_merchant_managed_fulfillment_orders` for
-   `GIFT_VOUCHER_FULFILL_ORDERS`, `read_gift_card_transactions`). Client-credentials tokens carry only the
+   `GIFT_VOUCHER_FULFILL_ORDERS`). Client-credentials tokens carry only the
    scopes granted at install, so the app must be re-authorised: add the scope to `[access_scopes]` in
    `shopify.app.toml`, `shopify app deploy`, then accept the updated permissions in the Shopify admin (or
    reinstall the app) — the procedure of [`ROLLOUT_TODO.md`](./ROLLOUT_TODO.md) item 16.3 (steps 1 and 3–6:

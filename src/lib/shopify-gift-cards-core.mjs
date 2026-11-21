@@ -36,11 +36,12 @@ export const GIFT_CARD_CODE_RE = /^[A-Z0-9]{8,20}$/;
 /** Issue, read and deactivate cards — `write_gift_cards` also grants `read_gift_cards`. */
 export const GIFT_VOUCHER_REQUIRED_SCOPES = Object.freeze(["write_gift_cards"]);
 
-/** Nice to have: the redemption history, and marking voucher lines fulfilled. */
-export const GIFT_VOUCHER_OPTIONAL_SCOPES = Object.freeze([
-  "read_gift_card_transactions",
-  "write_merchant_managed_fulfillment_orders",
-]);
+/**
+ * Nice to have: marking voucher lines fulfilled (GIFT_VOUCHER_FULFILL_ORDERS).
+ * Nothing reads a card's transactions (the balance is the card's own field),
+ * so read_gift_card_transactions is not asked for.
+ */
+export const GIFT_VOUCHER_OPTIONAL_SCOPES = Object.freeze(["write_merchant_managed_fulfillment_orders"]);
 
 // ── GraphQL documents ────────────────────────────────────────────────────────
 // Every mutation starts with the `mutation` keyword: adminGraphql (shopify-retry.mjs

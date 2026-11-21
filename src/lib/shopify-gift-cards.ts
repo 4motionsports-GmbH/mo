@@ -18,7 +18,7 @@
 // variables in some errors, so calls that carry a code never copy Shopify's raw texts).
 //
 // Scopes: write_gift_cards (also grants read_gift_cards) is required;
-// read_gift_card_transactions and write_merchant_managed_fulfillment_orders are optional.
+// write_merchant_managed_fulfillment_orders (GIFT_VOUCHER_FULFILL_ORDERS) is optional.
 // A new scope needs a new app version and a REINSTALL (client-credentials tokens only
 // carry the scopes granted at install).
 
@@ -594,7 +594,7 @@ function rememberGiftVoucherProducts(
 
 /**
  * Which access scopes the app's token carries and which of the voucher scopes are missing:
- * `missing` = required (write_gift_cards), `optionalMissing` = read_gift_card_transactions /
+ * `missing` = required (write_gift_cards), `optionalMissing` =
  * write_merchant_managed_fulfillment_orders. A write scope counts as its read scope too.
  */
 export async function checkGiftVoucherScopes(): Promise<
