@@ -41,6 +41,8 @@ const EMPTY_SUMMARY: GiftVoucherSummary = {
   heldCount: 0,
   attentionCount: 0,
   openPrintJobs: 0,
+  printReviewCount: 0,
+  printOpenCount: 0,
   draftCount30d: 0,
 };
 
