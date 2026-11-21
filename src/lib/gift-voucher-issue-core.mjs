@@ -202,6 +202,9 @@ export function giftVoucherOrderHint(payload) {
  * }} GiftVoucherOrderRecordPlan
  */
 
+/** Hold reasons the documented decision order puts before `currency`. */
+const HOLDS_BEFORE_CURRENCY = new Set(["disabled", "test_order"]);
+
 /**
  * The rows to record for a paid order (spec §9): one per voucher unit, with
  * the draft's design data (or the design defaults when the line carries no
@@ -214,7 +217,17 @@ export function giftVoucherOrderHint(payload) {
  * reason; the Shopify re-read at issue time decides the rest (cancelled,
  * paid, fraud risk, daily limit). A unit without a price cannot be a voucher
  * (amount > 0) and is skipped. Print lines that pay for no voucher flag the
- * order's first unit (`print_without_voucher`).
+ * order's first unit (`print_without_voucher`); lines with a voucher draft
+ * on an unknown product (extract.unmatchedDraftLines) flag the first unit
+ * without a flag (`unknown_product_line`).
+ *
+ * Another presentment currency (the buyer paid in CHF …): Shopify
+ * back-converts shop money at the live rate, so the line's shop price is
+ * rarely the face value the page sold. The unit's value is then the ordered
+ * variant's own price (`variantPriceCents`: variant numeric id → its
+ * shop-currency price in cents); an unknown variant is recorded held
+ * `currency` with the shop-money amount — an operator decides. Orders paid
+ * in the shop currency keep the line's shop price.
  *
  * @param {{
  *   extract: import("./gift-voucher-core.mjs").GiftVoucherOrderExtract,
@@ -223,6 +236,7 @@ export function giftVoucherOrderHint(payload) {
  *   allowTestOrders: boolean,
  *   limits: { minCents: number, maxCents: number },
  *   reviewPrintWithPhoto: boolean,
+ *   variantPriceCents?: ReadonlyMap<string, number>,
  * }} input
  * @returns {GiftVoucherOrderRecordPlan}
  */
@@ -232,6 +246,7 @@ export function planGiftVoucherOrderRecord(input) {
   const draftsByToken = new Map(input.drafts.map((d) => [d.token, d]));
   const linesById = new Map(extract.vouchers.map((l) => [l.lineItemId, l]));
   const pairing = pairPrintLines(extract.vouchers, extract.prints);
+  const foreign = Boolean(order.presentmentCurrency && order.currency && order.presentmentCurrency !== order.currency);
 
   /** @type {GiftVoucherOrderRecordPlan["units"]} */
   const units = [];
@@ -242,11 +257,14 @@ export function planGiftVoucherOrderRecord(input) {
   for (const u of pairing.units) {
     const line = linesById.get(u.lineItemId);
     if (!line) continue;
-    const unitCents = line.unitCents;
-    if (typeof unitCents !== "number" || !Number.isSafeInteger(unitCents) || unitCents <= 0) {
+    const shopCents = line.unitCents;
+    if (typeof shopCents !== "number" || !Number.isSafeInteger(shopCents) || shopCents <= 0) {
       skipped.push({ lineItemId: u.lineItemId, unitIndex: u.unitIndex, reason: "no_price" });
       continue;
     }
+    const variantCents = foreign && line.variantId ? input.variantPriceCents?.get(line.variantId) : undefined;
+    const faceKnown = typeof variantCents === "number" && Number.isSafeInteger(variantCents) && variantCents > 0;
+    const unitCents = foreign && faceKnown ? /** @type {number} */ (variantCents) : shopCents;
     const draft = line.draftToken ? draftsByToken.get(line.draftToken) ?? null : null;
     if (draft) draftIds.add(draft.id);
 
@@ -261,7 +279,13 @@ export function planGiftVoucherOrderRecord(input) {
       issuedTodayCents: 0,
       riskWaitExpired: true,
     });
-    const held = decision.action === "hold";
+    let held = decision.action === "hold";
+    /** @type {string | null} */
+    let holdReason = held ? decision.reason : null;
+    if (foreign && !faceKnown && !(held && HOLDS_BEFORE_CURRENCY.has(String(holdReason)))) {
+      held = true;
+      holdReason = "currency";
+    }
 
     const photoPathname = draft?.photoPathname ?? null;
     /** @type {PlannedGiftVoucherPrintJob | null} */
@@ -298,7 +322,7 @@ export function planGiftVoucherOrderRecord(input) {
         delivery: u.printLineItemId ? "print" : "pdf",
         locale: order.locale === "en" ? "en" : "de",
         status: held ? "held" : "pending",
-        holdReason: held ? decision.reason : null,
+        holdReason: held ? holdReason : null,
         attention,
         mailStatus: order.email ? "pending" : "skipped",
       },
@@ -309,6 +333,13 @@ export function planGiftVoucherOrderRecord(input) {
   if (pairing.unmatchedPrints.length > 0 && units.length > 0) {
     const target = units.find((x) => x.row.attention === null) ?? units[0];
     target.row.attention = "print_without_voucher";
+  }
+  if ((extract.unmatchedDraftLines?.length ?? 0) > 0) {
+    // Never over another flag (attention is ONE column): when every unit is
+    // flagged already, the order is under „Achtung“ anyway and the caller
+    // reports the line.
+    const target = units.find((x) => x.row.attention === null);
+    if (target) target.row.attention = "unknown_product_line";
   }
 
   return { units, skipped, unmatchedPrints: pairing.unmatchedPrints, draftIds: [...draftIds] };

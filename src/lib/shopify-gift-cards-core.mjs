@@ -934,6 +934,73 @@ export function describeGiftVoucherProductIssues({ voucher, print, handles }) {
   return issues;
 }
 
+// ── The last good product lookup (orders/paid falls back on it) ─────────────
+
+/** admin_settings key of the last good voucher-product lookup (gift-voucher-store.ts). */
+export const GIFT_VOUCHER_PRODUCTS_SNAPSHOT_KEY = "gift_voucher_products";
+
+/**
+ * What orders/paid needs of the two products (a live lookup or the stored snapshot).
+ * @typedef {object} GiftVoucherKnownProducts
+ * @property {{ numericId: string, isGiftCard: boolean, variants: Array<{ numericId: string, priceCents: number }> } | null} voucher
+ * @property {{ numericId: string } | null} print
+ */
+
+/**
+ * The stored form of a good lookup: { voucherHandle, printHandle, voucher: { id, numericId,
+ * isGiftCard, variants: [{ numericId, priceCents }] }, print: { id, numericId } | null } —
+ * only what orders/paid needs, no titles. Null without a voucher product (nothing to fall
+ * back on). Handles are stored normalised.
+ * @param {{ handles: { voucher: string, print: string },
+ *   voucher: GiftVoucherProductInfo | null, print: GiftVoucherProductInfo | null }} input
+ */
+export function giftVoucherProductsSnapshot({ handles, voucher, print }) {
+  if (!voucher) return null;
+  return {
+    voucherHandle: normalizeProductHandle(handles?.voucher),
+    printHandle: normalizeProductHandle(handles?.print),
+    voucher: {
+      id: voucher.gid,
+      numericId: voucher.numericId,
+      isGiftCard: voucher.isGiftCard === true,
+      variants: voucher.variants.map((v) => ({ numericId: v.numericId, priceCents: v.priceCents })),
+    },
+    print: print ? { id: print.gid, numericId: print.numericId } : null,
+  };
+}
+
+/** @param {unknown} v */
+const digitsOrNull = (v) => (typeof v === "string" && /^\d{1,20}$/.test(v) ? v : null);
+
+/**
+ * A stored snapshot back as GiftVoucherKnownProducts — only when it is well formed and was
+ * taken for the handles configured NOW (a changed GIFT_VOUCHER_*_PRODUCT_HANDLE never falls
+ * back on the old products). Null otherwise.
+ * @param {unknown} value
+ * @param {{ voucher: string, print: string }} handles
+ * @returns {GiftVoucherKnownProducts | null}
+ */
+export function giftVoucherProductsFromSnapshot(value, handles) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const s = /** @type {Record<string, any>} */ (value);
+  if (normalizeProductHandle(s.voucherHandle) !== normalizeProductHandle(handles?.voucher)) return null;
+  if (normalizeProductHandle(s.printHandle) !== normalizeProductHandle(handles?.print)) return null;
+  const voucherId = digitsOrNull(s.voucher?.numericId);
+  if (!voucherId) return null;
+  /** @type {Array<{ numericId: string, priceCents: number }>} */
+  const variants = [];
+  for (const v of Array.isArray(s.voucher.variants) ? s.voucher.variants : []) {
+    const id = digitsOrNull(v?.numericId);
+    if (id && Number.isSafeInteger(v.priceCents) && v.priceCents >= 0) variants.push({ numericId: id, priceCents: v.priceCents });
+  }
+  const printId = s.print ? digitsOrNull(s.print.numericId) : null;
+  if (s.print && !printId) return null;
+  return {
+    voucher: { numericId: voucherId, isGiftCard: s.voucher.isGiftCard === true, variants },
+    print: printId ? { numericId: printId } : null,
+  };
+}
+
 /**
  * giftCardConfiguration → cents and the default expiry (null when unreadable).
  * @param {unknown} config

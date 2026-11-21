@@ -109,6 +109,7 @@ test("labels and tones fall back instead of throwing", () => {
   assert.equal(attentionHint("unknown_key"), "unknown_key");
   assert.equal(attentionHint(null), "");
   assert.match(holdReasonHint("risk"), /riskant/);
+  assert.match(attentionHint("unknown_product_line"), /GIFT_VOUCHER_PRODUCT_HANDLE \/ GIFT_VOUCHER_PRINT_PRODUCT_HANDLE/);
   assert.equal(MANUAL_REASON_OPTIONS.map((o) => o.value).join(","), "kulanz,marketing,gewinnspiel,firmengeschenk,sonstiges");
   assert.equal(MANUAL_REASON_OPTIONS[0].label, "Kulanz");
 });

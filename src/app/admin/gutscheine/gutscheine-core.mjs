@@ -243,6 +243,8 @@ export const ATTENTION_HINTS = Object.freeze({
     "Für die Premium-Karte fehlt die Adresse — beim Käufer nachfragen, von Hand drucken oder den Druck erstatten.",
   deactivate_failed: "Das Sperren in Shopify ist fehlgeschlagen — erneut sperren oder die Geschenkkarte in Shopify prüfen.",
   print_cancel_too_late: "Der Druckauftrag war schon in Produktion und ließ sich nicht mehr stornieren.",
+  unknown_product_line:
+    "Eine bezahlte Bestellzeile trägt einen Gutschein-Entwurf, liegt aber weder auf dem Gutschein- noch auf dem Druck-Zusatzprodukt — meist eine bezahlte Premium-Karte auf einem anderen Produkt. Die Karte von Hand drucken oder erstatten, dann GIFT_VOUCHER_PRODUCT_HANDLE / GIFT_VOUCHER_PRINT_PRODUCT_HANDLE und die Produktauswahl im Theme abgleichen.",
 });
 
 /** @param {unknown} key */

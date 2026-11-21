@@ -44,9 +44,13 @@
 //
 // FAILURE MODES (see also the notes in docs/GIFT_VOUCHERS.md):
 //   · webhook slow / Shopify product list not loaded → recordGiftVoucherOrder
-//     answers ok:false when a line carries a voucher draft: the route forgets
-//     the delivery, Shopify redelivers, the insert is idempotent per
-//     (order, line, unit);
+//     uses the last good lookup stored for the same handles; with none it
+//     answers ok:false when a line carries a voucher draft (the route forgets
+//     the delivery, Shopify redelivers, the insert is idempotent per (order,
+//     line, unit)) and reports every other order as not checked;
+//   · a draft on a product Mo does not know → one fresh lookup, then reported
+//     (no voucher matched → ok:false, Shopify redelivers); the drafts not
+//     readable → ok:false before anything is written;
 //   · a worker dies anywhere → its lease runs out after 3 minutes and the
 //     sweep continues from the stored state (a stored code is reused);
 //   · Shopify errors → retry by planGiftVoucherRetry (1 … 720 minutes), held
@@ -66,6 +70,7 @@ import {
   getGiftVoucher,
   getGiftVoucherCode,
   getGiftVoucherDraftsByTokens,
+  getGiftVoucherProductsSnapshot,
   getGiftVoucherPrintJob,
   getGiftVoucherPrintJobForVoucher,
   insertAdminGiftVoucher,
@@ -107,6 +112,7 @@ import {
   resolveGiftVoucherProducts,
   type ShopifyGiftCardInfo,
 } from "./shopify-gift-cards";
+import { giftVoucherProductsFromSnapshot, type GiftVoucherKnownProducts } from "./shopify-gift-cards-core.mjs";
 import {
   GIFT_VOUCHER_HOLD_REASON_LABELS,
   GIFT_VOUCHER_TEXT_LIMITS,
@@ -124,6 +130,7 @@ import {
 import {
   giftVoucherLimits,
   giftVoucherPrintCountries,
+  giftVoucherProductHandles,
   giftVoucherRiskWaitMinutes,
   giftVoucherValidityYears,
   isGiftVoucherFulfillOrdersEnabled,
@@ -165,6 +172,8 @@ const ROUTE = "lib/gift-voucher-issue";
 
 /** How long the orders/paid webhook waits for a cold product lookup (Shopify fails a delivery after 5 s). */
 const PRODUCTS_TIMEOUT_MS = 2_500;
+/** The second, fresh look when a draft sits on an unknown product (part of the 5 s is spent already). */
+const FRESH_PRODUCTS_TIMEOUT_MS = 1_500;
 /** The webhook's after() work (route maxDuration 60 s, the answer already took up to 5 s). */
 const AFTER_BUDGET_MS = 45_000;
 /** An admin click that issues right away (snappy; the sweep finishes what does not fit). */
@@ -215,12 +224,27 @@ const CONFLICT = () => fail("conflict", "Der Gutschein wurde inzwischen geänder
 
 // ── orders/paid ──────────────────────────────────────────────────────────────
 
+/** The product ids extractGiftVoucherOrder recognises lines by. */
+function productIdsOf(products: GiftVoucherKnownProducts) {
+  return {
+    voucherProductIds: products.voucher ? [products.voucher.numericId] : [],
+    printProductIds: products.print ? [products.print.numericId] : [],
+  };
+}
+
+/** The last good product lookup, stored for the handles configured NOW — or null. */
+async function storedGiftVoucherProducts(): Promise<GiftVoucherKnownProducts | null> {
+  return giftVoucherProductsFromSnapshot(await getGiftVoucherProductsSnapshot(), giftVoucherProductHandles());
+}
+
 /**
  * orders/paid: record the voucher units of a paid order — fast (the webhook
  * must answer within 5 s) and never throws. `ok: false` makes the route
  * forget the delivery so Shopify redelivers (products not resolvable while a
- * line carries a voucher draft, database error); the insert is idempotent per
- * (order, line item, unit). `created` = units of the order now recorded.
+ * line carries a voucher draft, a draft on an unknown product with no
+ * voucher matched, the drafts not readable, a database error); the insert is
+ * idempotent per (order, line item, unit). `created` = units of the order now
+ * recorded.
  */
 export async function recordGiftVoucherOrder(
   payload: unknown
@@ -230,16 +254,20 @@ export async function recordGiftVoucherOrder(
     if (!hint.orderId) return { ok: true, action: "gift_vouchers:no-order", orderId: null, created: 0 };
     const orderId = hint.orderId;
 
-    // The voucher products (cached 10 minutes per instance; a cold cache
-    // waits PRODUCTS_TIMEOUT_MS, the load keeps warming the cache).
-    const products = await resolveGiftVoucherProducts({ timeoutMs: PRODUCTS_TIMEOUT_MS });
-    if (!products.ok) {
+    // 1) The voucher products: the live lookup (cached 10 minutes per
+    //    instance; a cold cache waits PRODUCTS_TIMEOUT_MS, the load keeps
+    //    warming the cache) — while Shopify does not answer, the last good
+    //    lookup stored for the same handles, exactly like a live one.
+    const live = await resolveGiftVoucherProducts({ timeoutMs: PRODUCTS_TIMEOUT_MS });
+    let products: GiftVoucherKnownProducts | null = live.ok ? live : await storedGiftVoucherProducts();
+    if (!products) {
       // A voucher was (probably) bought: Shopify's redelivery tries again.
       // Without a draft token nothing points to a voucher — every order of
-      // the shop passes here, so an unreachable Shopify must not fail them.
-      return hint.hasDraftProperty
-        ? { ok: false, action: "gift_vouchers:products-unavailable" }
-        : { ok: true, action: "gift_vouchers:unchecked", orderId, created: 0 };
+      // the shop passes here, so an unreachable Shopify must not fail them;
+      // the order is reported so an operator can check it.
+      if (hint.hasDraftProperty) return { ok: false, action: "gift_vouchers:products-unavailable" };
+      report(new Error("orders/paid: voucher products not resolvable — order not checked"), "unchecked", { orderId });
+      return { ok: true, action: "gift_vouchers:unchecked", orderId, created: 0 };
     }
     if (!products.voucher) {
       if (hint.hasDraftProperty) {
@@ -259,18 +287,51 @@ export async function recordGiftVoucherOrder(
       return { ok: true, action: "gift_vouchers:gift-card-product", orderId, created: 0 };
     }
 
-    const extract = extractGiftVoucherOrder(payload, {
-      voucherProductIds: [products.voucher.numericId],
-      printProductIds: products.print ? [products.print.numericId] : [],
-    });
-    if (!extract || (extract.vouchers.length === 0 && extract.prints.length === 0)) {
+    // 2) The lines. A voucher draft on a product Mo does not know — the
+    //    theme sells another product than Mo's handles name, or the ids are
+    //    stale (a product re-created under its handle): one fresh look, then
+    //    it is reported. Such a line never becomes a voucher (its price is no
+    //    voucher price).
+    let extract = extractGiftVoucherOrder(payload, productIdsOf(products));
+    if (!extract) return { ok: true, action: "gift_vouchers:none", orderId, created: 0 };
+    if (extract.unmatchedDraftLines.length > 0) {
+      const fresh = await resolveGiftVoucherProducts({ fresh: true, timeoutMs: FRESH_PRODUCTS_TIMEOUT_MS });
+      if (fresh.ok && fresh.voucher && !fresh.voucher.isGiftCard) {
+        products = fresh;
+        extract = extractGiftVoucherOrder(payload, productIdsOf(fresh)) ?? extract;
+      }
+      if (extract.unmatchedDraftLines.length > 0) {
+        report(
+          new Error("orders/paid: a line carries a voucher draft, but its product is neither the voucher nor the print product"),
+          "unmatchedDraftLine",
+          { orderId }
+        );
+        // No voucher matched: Shopify redelivers for hours — time to align
+        // the handle or the theme's product picker. With vouchers, they are
+        // recorded (a redelivery could not add the line to the existing
+        // units) and the order is flagged (unknown_product_line).
+        if (extract.vouchers.length === 0) return { ok: false, action: "gift_vouchers:unmatched-draft" };
+      }
+    }
+    if (extract.vouchers.length === 0 && extract.prints.length === 0) {
       return { ok: true, action: "gift_vouchers:none", orderId, created: 0 };
     }
 
-    const tokens = [...extract.vouchers, ...extract.prints]
-      .map((l) => l.draftToken)
-      .filter((t): t is string => typeof t === "string");
-    const drafts = tokens.length > 0 ? await getGiftVoucherDraftsByTokens([...new Set(tokens)]) : [];
+    // 3) The drafts (design, texts, card address). Not readable → Shopify
+    //    redelivers (nothing is written yet) instead of recording the design
+    //    defaults for good; a token without a draft (unknown, purged) → the
+    //    defaults, reported.
+    const tokens = [
+      ...new Set(
+        [...extract.vouchers, ...extract.prints].map((l) => l.draftToken).filter((t): t is string => typeof t === "string")
+      ),
+    ];
+    const drafts = tokens.length > 0 ? await getGiftVoucherDraftsByTokens(tokens) : [];
+    if (drafts === null) return { ok: false, action: "gift_vouchers:drafts-unavailable" };
+    const found = new Set(drafts.map((d) => d.token));
+    if (tokens.some((t) => !found.has(t))) {
+      report(new Error("orders/paid: a voucher line's draft was not found — design defaults used"), "draftMissing", { orderId });
+    }
     const settings = extract.prints.length > 0 ? await getCachedGiftVoucherSettings() : null;
     const plan = planGiftVoucherOrderRecord({
       extract,
@@ -279,6 +340,8 @@ export async function recordGiftVoucherOrder(
       allowTestOrders: isGiftVoucherTestOrdersAllowed(),
       limits: giftVoucherLimits(),
       reviewPrintWithPhoto: settings?.reviewPrintWithPhoto ?? true,
+      // Paid in another currency: the face value is the ordered variant's own price.
+      variantPriceCents: new Map((products.voucher?.variants ?? []).map((x) => [x.numericId, x.priceCents])),
     });
     if (plan.skipped.length > 0) {
       report(new Error("orders/paid: a voucher line has no price — its units are not recorded"), "noPrice", { orderId });

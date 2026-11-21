@@ -291,6 +291,68 @@ test("planGiftVoucherOrderRecord: a print line without a voucher flags the first
   assert.deepEqual(q.unmatchedPrints, [{ lineItemId: "9002", missing: 1 }]);
 });
 
+/** A CHF purchase of the 50 € voucher (variant 31): shop money back-converted at the live rate. */
+function chfPayload(over = {}) {
+  const p0 = payload({ presentment_currency: "CHF", ...over });
+  p0.line_items[0].price = "46.90";
+  p0.line_items[0].price_set = {
+    shop_money: { amount: "50.14", currency_code: "EUR" },
+    presentment_money: { amount: "46.90", currency_code: "CHF" },
+  };
+  return p0;
+}
+const VARIANT_PRICES = new Map([["31", 5000], ["99", 2500]]);
+
+test("planGiftVoucherOrderRecord: another presentment currency → the variant's own price (the face value)", () => {
+  const p = plan({ extract: extract(chfPayload()), variantPriceCents: VARIANT_PRICES, reviewPrintWithPhoto: false });
+  assert.equal(p.units[0].row.amountCents, 5000, "not the back-converted 50,14 €");
+  assert.equal(p.units[0].row.currency, "EUR");
+  assert.deepEqual(holdOf(p), ["pending", null]);
+  // The variant is not known (no map, or another variant): held `currency` with the shop money.
+  for (const variantPriceCents of [undefined, new Map([["99", 2500]])]) {
+    const q = plan({ extract: extract(chfPayload()), variantPriceCents });
+    assert.deepEqual(holdOf(q), ["held", "currency"]);
+    assert.equal(q.units[0].row.amountCents, 5014, "the operator decides on the shop money");
+  }
+  // The documented order holds before `currency` stay; later ones are replaced by it.
+  assert.deepEqual(holdOf(plan({ extract: extract(chfPayload({ test: true })) })), ["held", "test_order"]);
+  assert.deepEqual(holdOf(plan({ extract: extract(chfPayload()), enabled: false })), ["held", "disabled"]);
+  assert.deepEqual(holdOf(plan({ extract: extract(chfPayload()), limits: { minCents: 500, maxCents: 2500 } })), ["held", "currency"]);
+  // With the face value known, the limits judge the face value.
+  assert.deepEqual(
+    holdOf(plan({ extract: extract(chfPayload()), variantPriceCents: VARIANT_PRICES, limits: { minCents: 500, maxCents: 2500 } })),
+    ["held", "amount"]
+  );
+  // Paid in the shop currency: shop money, the variant map is not used.
+  const eur = plan({ extract: extract(payload({ presentment_currency: "EUR" })), variantPriceCents: new Map([["31", 9900]]) });
+  assert.equal(eur.units[0].row.amountCents, 5000);
+  assert.deepEqual(holdOf(eur), ["pending", null]);
+});
+
+test("planGiftVoucherOrderRecord: a draft line on an unknown product flags the first unit without a flag", () => {
+  // The paid Premium-Karte sits on another add-on product.
+  const p0 = payload();
+  p0.line_items[0].quantity = 2;
+  p0.line_items[1].product_id = 2099;
+  const p = plan({ extract: extract(p0), reviewPrintWithPhoto: false });
+  assert.equal(p.units.length, 2);
+  assert.deepEqual(p.units.map((u) => [u.row.delivery, u.row.attention]), [
+    ["pdf", "unknown_product_line"],
+    ["pdf", null],
+  ]);
+  // A unit that is flagged already keeps its flag; the next one takes the note.
+  const q0 = payload();
+  q0.line_items[0].quantity = 2;
+  q0.line_items.push({ id: 9009, product_id: 2099, quantity: 1, price: "4.90", properties: [{ name: "_mo_gv", value: TOKEN_A }] });
+  const q = plan({ extract: extract(q0), drafts: [draft({ address: null })] });
+  assert.deepEqual(q.units.map((u) => u.row.attention), ["print_without_address", "unknown_product_line"]);
+  // Every unit flagged: nothing is overwritten (the caller reports the line).
+  const r0 = payload();
+  r0.line_items.push({ id: 9009, product_id: 2099, quantity: 1, price: "4.90", properties: [{ name: "_mo_gv", value: TOKEN_A }] });
+  const r = plan({ extract: extract(r0), drafts: [draft({ address: null })] });
+  assert.deepEqual(r.units.map((u) => u.row.attention), ["print_without_address"]);
+});
+
 // ── order changes ────────────────────────────────────────────────────────────
 
 test("giftVoucherOrderChangeFacts: id, cancellation, refunds, quantities", () => {

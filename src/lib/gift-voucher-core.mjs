@@ -127,6 +127,7 @@ export const GIFT_VOUCHER_ATTENTION_LABELS = Object.freeze({
   print_without_address: "Druck bezahlt, aber keine Adresse",
   deactivate_failed: "Sperren in Shopify fehlgeschlagen",
   print_cancel_too_late: "Druckauftrag ließ sich nicht mehr stornieren",
+  unknown_product_line: "Bestellzeile mit Gutschein-Entwurf auf unbekanntem Produkt",
 });
 
 /** @param {unknown} v @returns {v is GiftVoucherStatusKey} */
@@ -519,7 +520,7 @@ function idSet(ids) {
  * @typedef {{
  *   id: string, gid: string, name: string | null, email: string | null, test: boolean,
  *   financialStatus: string | null, cancelledAt: string | null, shopifyCustomerId: string | null,
- *   customerName: string | null, currency: string | null, locale: "de" | "en",
+ *   customerName: string | null, currency: string | null, presentmentCurrency: string | null, locale: "de" | "en",
  * }} GiftVoucherOrderInfo
  * @typedef {{
  *   lineItemId: string, productId: string, variantId: string | null, title: string | null,
@@ -527,17 +528,40 @@ function idSet(ids) {
  *   draftToken: string | null,
  * }} GiftVoucherOrderLine
  * @typedef {{ lineItemId: string, quantity: number, unitCents: number | null, draftToken: string | null }} GiftVoucherPrintLine
- * @typedef {{ order: GiftVoucherOrderInfo, vouchers: GiftVoucherOrderLine[], prints: GiftVoucherPrintLine[] }} GiftVoucherOrderExtract
+ * @typedef {{
+ *   order: GiftVoucherOrderInfo, vouchers: GiftVoucherOrderLine[], prints: GiftVoucherPrintLine[],
+ *   unmatchedDraftLines: string[],
+ * }} GiftVoucherOrderExtract
  */
+
+/**
+ * The units a line still holds: its `quantity`, or `current_quantity` when
+ * that is smaller (Shopify: the quantity minus the units removed by an order
+ * edit — at orders/paid time a unit removed before payment was never paid).
+ * @param {Record<string, unknown>} li
+ * @returns {number}
+ */
+function lineUnits(li) {
+  const quantity = typeof li.quantity === "number" && Number.isSafeInteger(li.quantity) ? li.quantity : 0;
+  const current = li.current_quantity;
+  return typeof current === "number" && Number.isSafeInteger(current) && current >= 0 ? Math.min(quantity, current) : quantity;
+}
 
 /**
  * The voucher-relevant part of an orders/paid (REST) payload. Lines are
  * recognised by PRODUCT id (resolved from the product handles); the _mo_gv
  * property only links a line to its draft. Amounts come from the line's
- * shop-currency price — never from a property. `quantity` is the ordered
- * quantity (refunds are handled separately, refundedQuantities). Ids are
- * read from the GraphQL ids where present (exact digits; a JSON number above
- * 2^53 would lose them). Null when the payload has no order id.
+ * shop-currency price — never from a property. `quantity` is the number of
+ * units the line still holds (lineUnits: never more than current_quantity;
+ * refunds are handled separately, refundedQuantities); a line with none is
+ * skipped. A paid line that carries a valid draft token but is neither the
+ * voucher nor the print product (the theme sells another product than Mo's
+ * handles name, or a stale product id) is listed in `unmatchedDraftLines` —
+ * it is never treated as a voucher (its price is no voucher price). The
+ * order's `presentmentCurrency` is the currency the buyer paid in (shop
+ * money is back-converted from it). Ids are read from the GraphQL ids where
+ * present (exact digits; a JSON number above 2^53 would lose them). Null
+ * when the payload has no order id.
  *
  * @param {unknown} payload
  * @param {{ voucherProductIds?: Iterable<unknown> | null, printProductIds?: Iterable<unknown> | null }} [productIds]
@@ -567,6 +591,7 @@ export function extractGiftVoucherOrder(payload, { voucherProductIds = [], print
     shopifyCustomerId: customer ? numericId(customer.admin_graphql_api_id) ?? numericId(customer.id) : null,
     customerName: fullName(customer) ?? str(billing?.name) ?? fullName(billing),
     currency: str(p.currency)?.toUpperCase() ?? null,
+    presentmentCurrency: str(p.presentment_currency)?.toUpperCase() ?? null,
     locale,
   };
 
@@ -576,19 +601,25 @@ export function extractGiftVoucherOrder(payload, { voucherProductIds = [], print
   const vouchers = [];
   /** @type {GiftVoucherPrintLine[]} */
   const prints = [];
+  /** @type {string[]} */
+  const unmatchedDraftLines = [];
   for (const raw of Array.isArray(p.line_items) ? p.line_items : []) {
     const li = asObject(raw);
     if (!li) continue;
-    const productId = numericId(li.product_id);
-    if (!productId) continue;
-    const isVoucher = voucherIds.has(productId);
-    const isPrint = !isVoucher && printIds.has(productId);
-    if (!isVoucher && !isPrint) continue;
     const lineItemId = numericId(li.admin_graphql_api_id) ?? numericId(li.id);
-    const quantity = typeof li.quantity === "number" && Number.isSafeInteger(li.quantity) ? li.quantity : 0;
-    if (!lineItemId || quantity <= 0) continue;
-    const unitCents = shopMoneyCents(li.price_set, li.price);
+    const quantity = lineUnits(li);
+    if (quantity <= 0) continue;
+    // The token first: a draft on a product Mo does not know must not vanish.
     const draftToken = draftTokenOf(li.properties);
+    const productId = numericId(li.product_id);
+    const isVoucher = productId !== null && voucherIds.has(productId);
+    const isPrint = !isVoucher && productId !== null && printIds.has(productId);
+    if (!isVoucher && !isPrint) {
+      if (draftToken) unmatchedDraftLines.push(lineItemId ?? "?");
+      continue;
+    }
+    if (!lineItemId || !productId) continue;
+    const unitCents = shopMoneyCents(li.price_set, li.price);
     if (isPrint) {
       prints.push({ lineItemId, quantity, unitCents, draftToken });
       continue;
@@ -615,7 +646,7 @@ export function extractGiftVoucherOrder(payload, { voucherProductIds = [], print
       draftToken,
     });
   }
-  return { order, vouchers, prints };
+  return { order, vouchers, prints, unmatchedDraftLines };
 }
 
 /**

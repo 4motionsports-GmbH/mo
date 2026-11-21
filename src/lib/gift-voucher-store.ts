@@ -4,7 +4,9 @@
 // Tables: gift_voucher_drafts (what a customer designed before paying),
 // gift_vouchers (one row per voucher unit, shop or admin), and
 // gift_voucher_print_jobs (the Premium-Karte of a voucher). Settings live in
-// admin_settings key 'gift_vouchers' (no migration of their own).
+// admin_settings key 'gift_vouchers', the last good voucher-product lookup
+// (orders/paid's fallback) in key 'gift_voucher_products' (no migration of
+// their own).
 //
 // House rules, as in every store:
 //   · every function takes `sql = getSql()` last, answers a null-safe fallback
@@ -59,6 +61,7 @@ import {
   parseGiftVoucherSettings,
   type GiftVoucherSettings,
 } from "./gift-voucher-settings.mjs";
+import { GIFT_VOUCHER_PRODUCTS_SNAPSHOT_KEY } from "./shopify-gift-cards-core.mjs";
 
 export type { GiftVoucherSettings };
 
@@ -593,10 +596,19 @@ export async function getGiftVoucherDraftByToken(token: string, sql: Sql | null 
   }
 }
 
-/** The drafts of the given tokens (invalid tokens are ignored, at most 100). */
-export async function getGiftVoucherDraftsByTokens(tokens: readonly string[], sql: Sql | null = getSql()): Promise<GiftVoucherDraft[]> {
+/**
+ * The drafts of the given tokens (invalid tokens are ignored, at most 100).
+ * `[]` when no token is given; NULL when they could not be read (no
+ * database, a read error) — never mistaken for „no drafts“, so orders/paid
+ * can ask Shopify to redeliver instead of recording the design defaults.
+ */
+export async function getGiftVoucherDraftsByTokens(
+  tokens: readonly string[],
+  sql: Sql | null = getSql()
+): Promise<GiftVoucherDraft[] | null> {
   const list = [...new Set(tokens.filter(isValidDraftToken))].slice(0, 100);
-  if (!sql || list.length === 0) return [];
+  if (list.length === 0) return [];
+  if (!sql) return null;
   try {
     const rows = (await sql`
       SELECT to_jsonb(d) AS j FROM gift_voucher_drafts d WHERE d.token = ANY(${list}::text[])
@@ -604,7 +616,7 @@ export async function getGiftVoucherDraftsByTokens(tokens: readonly string[], sq
     return rows.map(mapDraft);
   } catch (err) {
     reportRead(err, "getDrafts");
-    return [];
+    return null;
   }
 }
 
@@ -1814,6 +1826,47 @@ export async function setGiftVoucherSettings(
     if (isMissingTable(err)) return { ok: false, reason: "missing_table" };
     report(err, "setSettings");
     return { ok: false, reason: "failed" };
+  }
+}
+
+// ── the last good voucher-product lookup (admin_settings 'gift_voucher_products') ──
+
+/**
+ * The stored snapshot of the last good product lookup (shopify-gift-cards-core
+ * giftVoucherProductsSnapshot) as stored — the caller validates it
+ * (giftVoucherProductsFromSnapshot). Null when there is none, without a
+ * database or on an error.
+ */
+export async function getGiftVoucherProductsSnapshot(sql: Sql | null = getSql()): Promise<unknown> {
+  if (!sql) return null;
+  try {
+    const rows = (await sql`
+      SELECT value FROM admin_settings WHERE key = ${GIFT_VOUCHER_PRODUCTS_SNAPSHOT_KEY}
+    `) as Array<{ value: unknown }>;
+    return rows[0]?.value ?? null;
+  } catch (err) {
+    reportRead(err, "getProductsSnapshot");
+    return null;
+  }
+}
+
+/**
+ * Store the last good product lookup — the row only changes when the
+ * snapshot did (jsonb comparison). True when stored or unchanged.
+ */
+export async function saveGiftVoucherProductsSnapshot(snapshot: object, sql: Sql | null = getSql()): Promise<boolean> {
+  if (!sql) return false;
+  try {
+    await sql`
+      INSERT INTO admin_settings (key, value, updated_at)
+      VALUES (${GIFT_VOUCHER_PRODUCTS_SNAPSHOT_KEY}, ${JSON.stringify(snapshot)}::jsonb, now())
+      ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()
+       WHERE admin_settings.value IS DISTINCT FROM EXCLUDED.value
+    `;
+    return true;
+  } catch (err) {
+    reportRead(err, "saveProductsSnapshot");
+    return false;
   }
 }
 

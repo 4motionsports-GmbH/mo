@@ -27,6 +27,7 @@ import { isThrottleGateActive } from "./shopify-throttle-gate";
 import { reportError } from "./observability";
 import { TtlCache } from "./ttl-cache.mjs";
 import { giftVoucherProductHandles } from "./gift-voucher-flags.mjs";
+import { saveGiftVoucherProductsSnapshot } from "./gift-voucher-store";
 import {
   ACCESS_SCOPES_QUERY,
   FULFILLMENT_CREATE_MUTATION,
@@ -50,6 +51,7 @@ import {
   giftCardLastFour,
   giftCardMutationFailure,
   giftCardSearchQuery,
+  giftVoucherProductsSnapshot,
   isIsoCalendarDate,
   isRetryableAdminError,
   isTemporaryFulfillmentBlock,
@@ -226,6 +228,8 @@ function reportUnexpected(phase: string, err: unknown): string {
 interface CacheStore {
   cache: TtlCache;
   inflight: Map<string, Promise<unknown>>;
+  /** The product snapshot this instance stored last (saved again only when it changed). */
+  storedProducts?: string;
 }
 
 // One store per process; on globalThis so dev HMR keeps it across module reloads.
@@ -515,7 +519,9 @@ export async function getGiftVoucherOrderSnapshot(
  * with productByIdentifier. A product that does not exist is `null`. Cached 10 minutes per
  * instance with one shared in-flight load; `fresh` re-reads (setup check). `timeoutMs`
  * bounds the WAIT of a request path (the orders/paid webhook must answer within 5 s) —
- * the load itself keeps running and warms the cache for Shopify's redelivery.
+ * the load itself keeps running and warms the cache for Shopify's redelivery. A good load
+ * is also stored (admin_settings 'gift_voucher_products'): orders/paid falls back on it
+ * while Shopify does not answer.
  */
 export async function resolveGiftVoucherProducts(
   opts: { fresh?: boolean; timeoutMs?: number } = {}
@@ -550,7 +556,29 @@ async function loadGiftVoucherProducts(voucher: string, print: string): Promise<
     if (r.error.kind !== "unconfigured") report("resolveGiftVoucherProducts", r.error);
     return { ok: false, message: r.error.message };
   }
-  return { ok: true, voucher: parseGiftVoucherProduct(r.data.voucher), print: parseGiftVoucherProduct(r.data.print) };
+  const result = { ok: true as const, voucher: parseGiftVoucherProduct(r.data.voucher), print: parseGiftVoucherProduct(r.data.print) };
+  rememberGiftVoucherProducts({ voucher, print }, result.voucher, result.print);
+  return result;
+}
+
+/**
+ * Keep the last good lookup for orders/paid (giftVoucherProductsSnapshot): written only when
+ * it changed, never awaited by the answer, fail-soft (the store reports). A lookup without a
+ * voucher product is no good one — the last good one stays.
+ */
+function rememberGiftVoucherProducts(
+  handles: { voucher: string; print: string },
+  voucher: GiftVoucherProductInfo | null,
+  print: GiftVoucherProductInfo | null
+): void {
+  const snapshot = giftVoucherProductsSnapshot({ handles, voucher, print });
+  if (!snapshot) return;
+  const json = JSON.stringify(snapshot);
+  const s = cacheStore();
+  if (s.storedProducts === json) return;
+  void saveGiftVoucherProductsSnapshot(snapshot).then((stored) => {
+    if (stored) s.storedProducts = json;
+  });
 }
 
 // ── Scopes ───────────────────────────────────────────────────────────────────
