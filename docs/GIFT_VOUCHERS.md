@@ -298,7 +298,7 @@ five orders per run; an order whose fulfilment fails for good is skipped for six
   `PRINTONE_FINISH` (`MATTE`, or `GLOSSY`). Front: the design; back: wordmark and „motionsports.de“ at the
   bottom, the central area empty — print.one prints the recipient's address in a Ø 77 mm circle there (Mo
   keeps Ø 95 mm free); inside: the message on the left, the code panel on the right. The customer pays the
-  add-on product; Mo shows `PRINTONE_CARD_COST_CENTS` (384 ≈ 3,19 € net + VAT) as the cost per card.
+  add-on product; Mo shows `PRINTONE_CARD_COST_CENTS` (380 = 3,19 € net + 19 % VAT) as the cost per card.
 - **One print.one template, Mo's own images.** The template (`PRINTONE_TEMPLATE_ID`) has two pages holding
   nothing but a full-bleed `<img src="{{outside_url}}">` / `<img src="{{inside_url}}">`;
   `npm run verify:printone -- --create-template` creates it and prints its id. Mo renders both spreads itself
@@ -534,7 +534,7 @@ vouchers“; the readers are [`gift-voucher-flags.mjs`](../src/lib/gift-voucher-
 | `PRINTONE_TEST_API_KEY` | — | Only `verify:printone --test-order` (falls back to `PRINTONE_API_KEY`). |
 | `PRINTONE_FINISH` | `MATTE` | `MATTE` or `GLOSSY`. |
 | `PRINTONE_BILLING_ID` | `Gutscheine` | Cost centre on print.one's invoice. |
-| `PRINTONE_CARD_COST_CENTS` | `384` | Cost estimate per card shown in the admin. |
+| `PRINTONE_CARD_COST_CENTS` | `380` | Cost estimate per card shown in the admin (3,19 € net + 19 % VAT). |
 | `PRINTONE_FRONT_SIDE` | `right` | Which half of the outside spread is the front — check it (§5.6). |
 | `PRINTONE_API_BASE` | `https://api.print.one` | Only for a local test server. |
 

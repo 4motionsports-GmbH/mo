@@ -284,12 +284,12 @@ export function printOneBillingId(env = process.env) {
 }
 
 /**
- * PRINTONE_CARD_COST_CENTS (default 384 ≈ 3.19 € net + VAT): the cost
- * estimate per card the admin shows before printing.
+ * PRINTONE_CARD_COST_CENTS (default 380 = 3.19 € net + 19 % VAT, rounded):
+ * the cost estimate per card the admin shows before printing.
  * @param {Env} [env]
  */
 export function printOneCardCostCents(env = process.env) {
-  return intInRange(env.PRINTONE_CARD_COST_CENTS, 384, 0, 100000);
+  return intInRange(env.PRINTONE_CARD_COST_CENTS, 380, 0, 100000);
 }
 
 /**
