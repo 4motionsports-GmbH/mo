@@ -7,7 +7,10 @@
 // marketing vouchers are PDF only) and an internal note. Checked in the
 // browser with the route's own rules (gutscheine-core.mjs validateIssueInput),
 // confirmed with value and delivery cost, then POST /api/admin/gutscheine/issue
-// — the gift card exists in Shopify at once; the new voucher gets selected.
+// — the gift card is created in Shopify at once; the new voucher gets
+// selected. The toast says what really happened (issuedToast): „ausgestellt“
+// only once the card exists, else a warning „angelegt — Shopify-Karte noch
+// nicht erstellt“ with the reason (the sweep keeps trying).
 
 import * as React from "react";
 import { Gift } from "lucide-react";
@@ -27,6 +30,7 @@ import {
   SegmentedControl,
   Select,
   Textarea,
+  toast,
   useConfirm,
 } from "../ui";
 import { AdminApiError, adminFetch, errorMessage } from "../lib/admin-fetch";
@@ -36,6 +40,8 @@ import {
   MANUAL_REASON_OPTIONS,
   NOTE_MAX,
   countryName,
+  issuedToast,
+  manualPrintRoute,
   parseEuroInput,
   validateIssueInput,
   type IssueValue,
@@ -159,15 +165,18 @@ export function IssueDialog({
 
   const submit = useAsyncAction(
     async (body: ReturnType<typeof requestBody>) =>
-      adminFetch<{ ok: true; id: number; number: string | null }>("/api/admin/gutscheine/issue", { body }),
+      adminFetch<{ ok: true; id: number; number: string | null; status: string | null; lastError: string | null }>(
+        "/api/admin/gutscheine/issue",
+        { body }
+      ),
     {
       errorToast: false,
-      successToast: (r) => (r.number ? `Gutschein ${r.number} ausgestellt` : "Gutschein ausgestellt"),
       onError: (e) => {
         const details = e instanceof AdminApiError ? (e.details as { error?: { field?: string } } | null) : null;
         setErrors({ [formField(details?.error?.field)]: errorMessage(e) });
       },
       onSuccess: (r) => {
+        toast(issuedToast(r));
         setForm(emptyForm(env, designs));
         onIssued(r.id);
       },
@@ -176,6 +185,8 @@ export function IssueDialog({
 
   const marketing = form.reason === "marketing";
   const maxEuro = eurFromCents(env.limits.adminMaxCents);
+  // How a card issued here is printed right now (print.one, waiting for it, or in-house).
+  const printRoute = manualPrintRoute(env);
 
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -196,7 +207,13 @@ export function IssueDialog({
       value.delivery === "email"
         ? `E-Mail an ${value.recipientEmail}`
         : value.delivery === "print" && value.address
-          ? `Premium-Karte an ${value.address.name}, ${value.address.postalCode} ${value.address.city} — Druck und Porto ≈ ${eurFromCents(env.cardCostCents)}`
+          ? `Premium-Karte an ${value.address.name}, ${value.address.postalCode} ${value.address.city} — ${
+              printRoute.route === "printone"
+                ? `print.one druckt sie, Druck und Porto ≈ ${eurFromCents(env.cardCostCents)}`
+                : printRoute.route === "held"
+                  ? "print.one druckt gerade nicht, die Karte wartet unter „Druck offen“ (von Hand drucken möglich)"
+                  : "von Hand zu drucken (Status „Druck offen“)"
+            }`
           : "PDF zum Herunterladen hier im Admin";
     const ok = await confirm({
       title: `Gutschein über ${eurFromCents(value.amountCents)} ausstellen?`,
@@ -280,9 +297,9 @@ export function IssueDialog({
           <Field
             label="Versand"
             error={errors.delivery}
-            info={`PDF: zum Herunterladen hier im Admin. E-Mail: Mo schickt den Gutschein mit PDF an die angegebene Adresse. Premium-Karte: gedruckt und per Post (≈ ${eurFromCents(
-              env.cardCostCents
-            )} je Karte; nur nach ${env.printCountries.map(countryName).join(", ")}). Marketing-Gutscheine gibt es nur als PDF — Mo verschickt Werbung nicht ohne Einwilligung per E-Mail oder Post.`}
+            info={`PDF: zum Herunterladen hier im Admin. E-Mail: Mo schickt den Gutschein mit PDF an die angegebene Adresse. Premium-Karte: gedruckt und per Post, nur nach ${env.printCountries
+              .map(countryName)
+              .join(", ")} — ${printRoute.text} Marketing-Gutscheine gibt es nur als PDF — Mo verschickt Werbung nicht ohne Einwilligung per E-Mail oder Post.`}
           >
             <SegmentedControl<Delivery>
               label="Versand"
