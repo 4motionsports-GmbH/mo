@@ -415,9 +415,12 @@ of [`gift-voucher-designs.mjs`](../src/lib/gift-voucher-designs.mjs) (tested).
 
 - **Six designs** („Motive“, keys fixed): `classic` „Klassisch“, `birthday` „Geburtstag“, `christmas`
   „Weihnachten“, `thanks` „Danke“, `training` „Training“, `photo` „Eigenes Foto“ (the customer's photo full
-  bleed on the front; shop only; without the photo the front falls back to `classic`). Each has a default
-  line for an empty message („Viel Freude beim Training!“, „Alles Gute zum Geburtstag!“ …). Decorations are
-  vector and seeded — the same input gives the same artwork at every resolution.
+  bleed on the front; shop only; a preview without the photo shows `classic`, a delivered voucher never: when
+  the stored photo cannot be read or decoded there is no PDF and no print file — the download routes answer
+  503, the print job retries („Das Kundenfoto ließ sich nicht laden …“), the mail retries and then goes
+  without the attachment). Each has a default line for an empty message („Viel Freude beim Training!“, „Alles
+  Gute zum Geburtstag!“ …). Decorations are vector and seeded — the same input gives the same artwork at every
+  resolution.
 - **Every letter is a vector path** from the bundled fonts — no system font on Vercel. Texts are cleaned to
   what the fonts can draw (Basic Latin, Latin-1, Latin Extended-A without ſ, € „ “ ” ‚ ‘ ’ – — … • ‹ ›); emoji and
   other characters are removed, and the page tells the customer (`textRemoved`).
@@ -435,8 +438,9 @@ of [`gift-voucher-designs.mjs`](../src/lib/gift-voucher-designs.mjs) (tested).
   twice as wide). A sample carries a diagonal „MUSTER“ and the code „XXXX XXXX XXXX XXXX“.
 - **Inside panel:** „Dein Gutscheincode“ in groups of four, Wert, Gültig bis (or „unbegrenzt gültig“), a QR
   code to `GIFT_VOUCHER_PAGE_URL#guthaben` (never the code), how to redeem, and the footer
-  `GIFT_VOUCHER_ISSUER_LINE` · Gutschein-Nr. · „Bedingungen: <terms URL>“. English vouchers (`en`) have
-  English texts and dates („31 Dec 2029“).
+  `GIFT_VOUCHER_ISSUER_LINE` · Gutschein-Nr. · „Bedingungen: <terms URL>“ (a long issuer line wraps at its own
+  „ · “; message, „Von“ and „Für“ shrink or break onto a second line — nothing printed is cut off at the
+  limits of the storefront). English vouchers (`en`) have English texts and dates („31 Dec 2029“).
 - **Never throws:** a failed PDF becomes a plain text PDF with the same facts, code included (reported); a
   failed preview or print file is empty — the routes answer 503, the print pipeline retries. At most two
   renders at a time per instance; fonts are parsed once per instance.
@@ -451,7 +455,7 @@ origin allowlist + `x-ms-chat-key`, `origin` = origin allowlist only.
 | --- | --- | --- | --- |
 | `GET /api/gift-vouchers/config` | origin | `products` | availability, designs with their backgrounds, features, limits, occasions and tones; cached 60 s |
 | `GET /api/gift-vouchers/fonts/<file>` | origin | `products` | the Caveat font of the live preview (allowlist of two files), cached a year |
-| `POST /api/gift-vouchers/photo` | secret | `gift-voucher` + `gift-voucher-ip` | „Eigenes Foto“: raw JPEG / PNG / WebP ≤ 4 MB, ≥ 500 px on the shorter side → upright, sRGB, ≤ 2400 px, JPEG without metadata (EXIF, GPS dropped) → `photoId` |
+| `POST /api/gift-vouchers/photo` | secret | `gift-voucher` + `gift-voucher-ip` | „Eigenes Foto“: raw JPEG / PNG / WebP ≤ 4 MB, ≥ 500 px on the shorter side (under 1000 px the page warns that the Premium-Karte prints soft — config `limits.photoPrintMinSide`) → upright, sRGB, ≤ 2400 px, JPEG without metadata (EXIF, GPS dropped) → `photoId` |
 | `POST /api/gift-vouchers/suggest` | secret | `gift-voucher-ai` + `gift-voucher-ip` | „Mit Mo formulieren“: 1–3 card texts with `{{fuer}}` / `{{von}}` |
 | `POST /api/gift-vouchers/preview` | secret | `gift-voucher-render` + `gift-voucher-ip` | step 5: Mo's exact images with „MUSTER“ |
 | `POST /api/gift-vouchers/drafts` | secret | `gift-voucher` + `gift-voucher-ip` | the design → `token` for the cart lines |
@@ -698,7 +702,7 @@ Status of each step: [`ROLLOUT_TODO.md`](./ROLLOUT_TODO.md) item 28.
 | Stuck „Wird ausgestellt“ / „Wartet“ | `next_attempt_at` / „Letzter Fehler“ | The sweep retries by the plan; cron runs in Vercel → Cron Jobs (401 = `CRON_SECRET`). |
 | The mail did not arrive | the detail's row „E-Mail“ (status, tries); Resend → Emails (tag `kind=gift_voucher`) | „E-Mail erneut senden“ (a new link; a failure names Resend's error). „Keine Adresse“: the order had none — PDF from the admin. |
 | „Achtung“ | the detail's callout | §3 attention flags; „Als geklärt markieren“ once handled. |
-| A card print waits | the job card: status and error; „Jetzt drucken“ names the block | print.one job: gate, print.one configuration, https `PUBLIC_BASE_URL`, address („Freigeben“ for `review`). Manual job: „Druckdateien herunterladen“, print, „Als versendet markieren“. |
+| A card print waits | the job card: status and error; „Jetzt drucken“ names the block | print.one job: gate, print.one configuration, https `PUBLIC_BASE_URL`, address („Freigeben“ for `review`); „Das Kundenfoto ließ sich nicht laden“ = Vercel Blob (the job retries by itself, never without the photo). Manual job: „Druckdateien herunterladen“, print, „Als versendet markieren“. |
 | A print job „Fehler“ | the job's error (print.one's refusal) | A failed job is final: print it in-house („Druckdateien herunterladen“, „Als versendet markieren“) or refund the add-on line in Shopify (the voucher itself stays valid). |
 | print.one statuses do not move | Vercel logs of `/api/webhooks/printone` (401 = secret, 503 = none set) | Polling still moves them (jobs unchanged for 60 min, 180 min while a webhook secret is set). |
 | Everything else | Sentry / `reportError` with `route` `lib/gift-voucher-*`, `lib/printone`, `lib/shopify-gift-cards` and a phase — ids only, never a code, name or address | `npm run verify:gift-vouchers`, `npm run verify:printone`. |
