@@ -20,7 +20,8 @@
 //
 // Geschenkgutscheine (0083) the person bought stay — the gift card is money
 // for its recipient — but lose the buyer: customer link, Shopify id, buyer
-// e-mail and name; a finished print job loses the recipient address. Where
+// e-mail and name; a finished print job and the ordered draft lose the
+// recipient address (an open job keeps it until the paid card is posted). Where
 // the person was the e-mail recipient of an admin voucher, that address and
 // name go. The texts and the photo of a voucher are the recipient's gift:
 // they stay (and are not deleted from Blob) until the voucher retention
@@ -261,9 +262,10 @@ export async function erasePerson(
       // Open Shopify writes for the person are moot (a pending create carries the e-mail).
       sql`DELETE FROM shopify_outbox WHERE customer_id = ${cid} AND status <> 'done'`,
       // Geschenkgutscheine (0083): the card stays valid for its recipient; the
-      // buyer goes. The finished print jobs' addresses first (found through
-      // the buyer link that the next statement removes); an open job keeps
-      // the address until the paid card is posted.
+      // buyer goes. The finished print jobs' addresses and the address copy
+      // of the ordered drafts first (both found through the buyer link that
+      // the next statement removes); an open job keeps its own copy until
+      // the paid card is posted — nothing reads a draft after ordering.
       ...(hasGiftVouchers
         ? [
             sql`UPDATE gift_voucher_print_jobs SET recipient_postal_address = NULL, updated_at = now()
@@ -275,6 +277,14 @@ export async function erasePerson(
                          OR (shopify_customer_id IS NOT NULL AND shopify_customer_id = ${shopifyCustomerId}::text)
                          OR lower(buyer_email) = ANY(${emailList}::text[])
                          OR lower(recipient_email) = ANY(${emailList}::text[]))`,
+            sql`UPDATE gift_voucher_drafts SET recipient_postal_address = NULL, updated_at = now()
+                 WHERE recipient_postal_address IS NOT NULL
+                   AND id IN (
+                     SELECT draft_id FROM gift_vouchers
+                      WHERE draft_id IS NOT NULL
+                        AND (customer_id = ${cid}
+                             OR (shopify_customer_id IS NOT NULL AND shopify_customer_id = ${shopifyCustomerId}::text)
+                             OR lower(buyer_email) = ANY(${emailList}::text[])))`,
             sql`UPDATE gift_vouchers
                    SET customer_id = NULL, shopify_customer_id = NULL, buyer_email = NULL, buyer_name = NULL,
                        updated_at = now()

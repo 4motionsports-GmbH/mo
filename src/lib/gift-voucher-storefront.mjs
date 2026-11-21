@@ -377,8 +377,10 @@ function bodyLocale(body, fallback) {
 /**
  * A draft or preview body with its `locale` settled — the body's ("en-GB" →
  * "en"), else the request's — before the core validators read it (they know
- * only "de" | "en"; the draft's locale decides the language of the voucher,
- * its mail and its PDF). Anything that is not an object stays as it is.
+ * only "de" | "en"). The body's locale decides the language of the preview
+ * and of the validation messages; the issued voucher, its mail and its PDF
+ * follow the order's customer_locale (spec §9). Anything that is not an
+ * object stays as it is.
  * @param {unknown} body
  * @param {unknown} [fallbackLocale]
  * @returns {unknown}

@@ -9,10 +9,17 @@
 // Each section is best-effort but the whole returns null on a hard failure so
 // the route can 503 honestly rather than hand back a partial export that looks
 // complete.
+//
+// Geschenkgutscheine (0083) are in it once the migration created their tables:
+// the vouchers the person bought or was e-mailed, with the Premium-Karte's
+// status and address — never the code, its hash, the download-link token or
+// the operators' note (account-export-core.mjs).
 
 import { getSql, type Sql } from "./db";
 import { getCustomerById } from "./customer-store";
+import { giftVoucherTablesExist } from "./gift-voucher-store";
 import { reportError } from "./observability";
+import { giftVoucherExportEntry } from "./account-export-core.mjs";
 
 const MAX_CONVERSATIONS = 500;
 const MAX_MESSAGES_PER_CONVERSATION = 1000;
@@ -42,6 +49,12 @@ export interface CustomerDataExport {
     letters: Array<Record<string, unknown>>;
   };
   suppression: { marketing: Array<Record<string, unknown>> };
+  /**
+   * Geschenkgutscheine (0083) bought by the person (customer link, Shopify id
+   * or buyer e-mail) or e-mailed to them, each with its number and the
+   * Premium-Karte's status, address and posting date; [] before 0083.
+   */
+  giftVouchers: Array<Record<string, unknown>>;
 }
 
 /**
@@ -169,6 +182,30 @@ export async function buildCustomerDataExport(
        ORDER BY l.added_at DESC LIMIT ${MAX_ROWS}
     `) as Array<Record<string, unknown>>;
 
+    // Geschenkgutscheine, matched as the erasure matches them: customer link,
+    // Shopify id, buyer or recipient e-mail (any case). Only once migration
+    // 0083 created the tables (an unknown answer counts as yes, so a real
+    // database failure still ends in the honest null).
+    const giftVouchers = (await giftVoucherTablesExist(sql))
+      ? (
+          (await sql`
+            SELECT v.id, v.source, v.reason, v.status, v.amount_cents, v.currency, v.expires_on, v.code_last4,
+                   v.shopify_order_name, v.buyer_email, v.buyer_name, v.design_key, v.recipient_name, v.sender_name,
+                   v.message, v.delivery, v.recipient_email, v.locale, v.mail_status, v.mailed_at, v.balance_cents,
+                   v.issued_at, v.deactivated_at, v.created_at, (v.photo_pathname IS NOT NULL) AS has_photo,
+                   j.status AS print_status, j.recipient_postal_address AS print_address, j.sent_at AS print_sent_at
+              FROM gift_vouchers v
+              LEFT JOIN gift_voucher_print_jobs j ON j.voucher_id = v.id
+             WHERE v.customer_id = ${customerId}
+                OR (v.shopify_customer_id IS NOT NULL AND v.shopify_customer_id = ${customer.shopifyCustomerId}::text)
+                OR lower(v.buyer_email) = lower(${email}::text)
+                OR lower(v.recipient_email) = lower(${email}::text)
+             ORDER BY v.created_at DESC, v.id DESC
+             LIMIT ${MAX_ROWS}
+          `) as Array<Record<string, unknown>>
+        ).map(giftVoucherExportEntry)
+      : [];
+
     const suppMarketing = (await sql`
       SELECT email, reason, added_at FROM suppression_list WHERE email = ${email}
     `) as Array<Record<string, unknown>>;
@@ -190,6 +227,7 @@ export async function buildCustomerDataExport(
       facts: factsRows[0] ?? null,
       campaign: { contacts: campaignContacts, sends: campaignSends, letters: campaignLetters },
       suppression: { marketing: suppMarketing },
+      giftVouchers,
     };
   } catch (err) {
     reportError(err, { route: "lib/account-export", phase: "buildCustomerDataExport" });

@@ -93,10 +93,12 @@ export const ERASURE_PLAN = {
       "clears it. Not a cascade: the voucher row stays.",
   },
   gift_voucher_drafts: {
-    treatment: "retain",
+    treatment: "anonymise",
     why:
-      "Gutschein-Designer drafts are anonymous (no customer, e-mail or session — an opaque token only); deleted after " +
-      "GIFT_VOUCHER_DRAFT_RETENTION_DAYS, an ordered one once its vouchers are anonymised.",
+      "Gutschein-Designer drafts are anonymous until ordered; an ordered draft of the person's vouchers loses the " +
+      "recipient address at erasure (the print job keeps its own copy until the paid card is posted); texts stay with " +
+      "the voucher until GIFT_VOUCHER_PERSONAL_RETENTION_DAYS; unordered drafts leave after " +
+      "GIFT_VOUCHER_DRAFT_RETENTION_DAYS.",
   },
 };
 
