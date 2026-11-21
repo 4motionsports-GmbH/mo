@@ -1116,13 +1116,15 @@ function decorPhotoPlaceholder(c) {
  * Legibility shades over a photo: the lower part (from 36 % of the height,
  * already half dark where the eyebrow sits) and a top band for the
  * wordmark — white lettering stays readable on a bright photo (snow, sky,
- * a white wall: eyebrow ≥ 4.5 : 1).
- * @param {Panel} c
+ * a white wall: eyebrow ≥ 4.5 : 1). `lift` (mm) moves the whole lower shade
+ * up with the lettering: a two-line „für“ raises the bottom-anchored block
+ * by one name line, and the eyebrow keeps its place in the gradient.
+ * @param {Panel} c @param {number} [lift]
  */
-function photoShade(c) {
-  const from = c.H * 0.36;
+function photoShade(c, lift = 0) {
+  const from = c.H * 0.36 - lift;
   c.def(
-    `<linearGradient id="${c.id("shade-b")}" gradientUnits="userSpaceOnUse" x1="0" y1="${n2(c.p(from))}" x2="0" y2="${n2(c.heightPx)}">` +
+    `<linearGradient id="${c.id("shade-b")}" gradientUnits="userSpaceOnUse" x1="0" y1="${n2(c.p(from))}" x2="0" y2="${n2(c.heightPx - c.len(lift))}">` +
       `<stop offset="0" stop-color="#000" stop-opacity="0"/><stop offset="0.28" stop-color="#000" stop-opacity="0.52"/>` +
       `<stop offset="1" stop-color="#000" stop-opacity="0.82"/></linearGradient>` +
       `<linearGradient id="${c.id("shade-t")}" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="0" y2="${n2(c.p(c.H * 0.3))}">` +
@@ -1137,7 +1139,11 @@ function safeDataUri(uri) {
   return typeof uri === "string" && /^data:image\/(?:jpeg|png|webp);base64,[A-Za-z0-9+/]+=*$/.test(uri) ? uri : null;
 }
 
-/** @param {Panel} c @param {string} uri */
+/**
+ * The customer's photo, full bleed. Its legibility shade is laid by
+ * frontLettering, which knows the height of the lettering block.
+ * @param {Panel} c @param {string} uri
+ */
 function decorPhoto(c, uri) {
   c.fill("#1b1d20");
   c.add(
@@ -1145,7 +1151,6 @@ function decorPhoto(c, uri) {
     `<image x="0" y="0" width="${n2(c.widthPx)}" height="${n2(c.heightPx)}" preserveAspectRatio="xMidYMid slice" xlink:href="${escAttr(uri)}"/>`,
     c.box(-c.B, -c.B, c.W + c.B, c.H + c.B)
   );
-  photoShade(c);
 }
 
 /** @type {Record<string, (c: Panel) => void>} */
@@ -1309,6 +1314,22 @@ function frontLettering(c, fonts, d, key) {
   const anchor = center ? "middle" : "start";
   const xText = center ? c.W / 2 : M;
 
+  // Middle block: eyebrow — value — „für Lena“, measured first.
+  const maxW = (() => {
+    if (center) return c.W - 2 * M - 8;
+    if (key === "training") return sq ? c.W * 0.52 : c.W * 0.42;
+    if (key === "classic") return sq ? c.W * 0.62 : c.W * 0.5;
+    if (key === "thanks") return sq ? c.W * 0.6 : c.W * 0.45;
+    return c.W * 0.62; // photo
+  })();
+  const vm = valueMetrics(c, fonts, d);
+  const valueMax = align === "photo" ? (sq ? 30 : 34) : sizes.valueMax;
+  const V = Math.min(valueMax, maxW / vm.em);
+  const nm = nameMetrics(c, fonts, d, sizes.name, center ? c.W - 2 * M : maxW + (key === "training" ? 0 : 16));
+  // On a photo the shade goes under all lettering; it rises with a two-line
+  // name, which lifts the block (it stands on the bottom margin).
+  if (align === "photo") photoShade(c, nameExtraHeight(nm));
+
   // Wordmark (top) and site (bottom).
   const wmBase = M + 0.74 * sizes.wordmark;
   if (align === "photo") {
@@ -1322,18 +1343,6 @@ function frontLettering(c, fonts, d, key) {
   const urlX = align === "photo" || urlTop ? c.W - M : xText;
   c.text("text", fonts.semibold, SITE, urlX, urlTop ? wmBase : urlBase, sizes.url, { fill: col.url, anchor: urlAnchor, tracking: 0.08 });
 
-  // Middle block: eyebrow — value — „für Lena“.
-  const maxW = (() => {
-    if (center) return c.W - 2 * M - 8;
-    if (key === "training") return sq ? c.W * 0.52 : c.W * 0.42;
-    if (key === "classic") return sq ? c.W * 0.62 : c.W * 0.5;
-    if (key === "thanks") return sq ? c.W * 0.6 : c.W * 0.45;
-    return c.W * 0.62; // photo
-  })();
-  const vm = valueMetrics(c, fonts, d);
-  const valueMax = align === "photo" ? (sq ? 30 : 34) : sizes.valueMax;
-  const V = Math.min(valueMax, maxW / vm.em);
-  const nm = nameMetrics(c, fonts, d, sizes.name, center ? c.W - 2 * M : maxW + (key === "training" ? 0 : 16));
   const capE = 0.7 * sizes.eyebrow;
   const capV = 0.7 * V;
   const gap1 = Math.max(4.2, V * 0.2);

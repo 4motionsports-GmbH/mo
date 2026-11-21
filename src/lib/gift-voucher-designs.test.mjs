@@ -468,31 +468,44 @@ function contrast(a, b) {
   return (hi + 0.05) / (lo + 0.05);
 }
 
-test("photo front: the white eyebrow keeps 4.5 : 1 over a bright photo (legibility shade)", () => {
+test("photo front: the white eyebrow keeps 4.5 : 1 over a bright photo, also above a two-line „für“ (legibility shade)", () => {
+  const names = [null, "Lena", "Maximiliane Großmann-Schönberger", "Oma Gertrud, Opa Heinz und Tante Marlene", "W".repeat(40)];
   for (const layout of /** @type {const} */ (["landscape", "square"])) {
-    const l = layoutOf("photo", layout, "front");
-    const m = /<linearGradient id="[^"]*shade-b" [^>]*y1="([\d.]+)" x2="0" y2="([\d.]+)">(.*?)<\/linearGradient>/.exec(l.svg);
-    assert.ok(m, "the lower shade");
-    const [y1, y2] = [Number(m[1]), Number(m[2])];
-    const stops = [...m[3].matchAll(/offset="([\d.]+)"[^>]*stop-opacity="([\d.]+)"/g)].map((s) => [Number(s[1]), Number(s[2])]);
-    /** @param {number} y px */
-    const opacityAt = (y) => {
-      const t = Math.min(1, Math.max(0, (y - y1) / (y2 - y1)));
-      for (let i = 1; i < stops.length; i++) {
-        const [t0, a0] = stops[i - 1];
-        const [t1, a1] = stops[i];
-        if (t <= t1) return a0 + ((a1 - a0) * (t - t0)) / (t1 - t0);
+    let twoLine = 0;
+    for (const recipientName of names) {
+      for (const amountCents of [500, 5000, 50000]) {
+        /** @type {import("./gift-voucher-designs.mjs").GiftVoucherPanelLayout | undefined} */
+        let l;
+        const drawn = drawnStrings((fonts) => (l = layoutOf("photo", layout, "front", { fonts, data: { ...DATA, recipientName, amountCents } })));
+        assert.ok(l);
+        // Semibold: wordmark, site, eyebrow — then one string per line of the name.
+        if (drawn.semibold.length === 5) twoLine++;
+        const what = `${layout} ${amountCents} ${JSON.stringify(recipientName)}`;
+        const m = /<linearGradient id="[^"]*shade-b" [^>]*y1="([\d.]+)" x2="0" y2="([\d.]+)">(.*?)<\/linearGradient>/.exec(l.svg);
+        assert.ok(m, `${what}: the lower shade`);
+        const [y1, y2] = [Number(m[1]), Number(m[2])];
+        const stops = [...m[3].matchAll(/offset="([\d.]+)"[^>]*stop-opacity="([\d.]+)"/g)].map((s) => [Number(s[1]), Number(s[2])]);
+        /** @param {number} y px */
+        const opacityAt = (y) => {
+          const t = Math.min(1, Math.max(0, (y - y1) / (y2 - y1)));
+          for (let i = 1; i < stops.length; i++) {
+            const [t0, a0] = stops[i - 1];
+            const [t1, a1] = stops[i];
+            if (t <= t1) return a0 + ((a1 - a0) * (t - t0)) / (t1 - t0);
+          }
+          return stops[stops.length - 1][1];
+        };
+        // The eyebrow is the last text before the value; its cap line is the lightest spot behind it.
+        const firstValue = l.elements.findIndex((e) => e.role === "value");
+        const eyebrow = l.elements.slice(0, firstValue).filter((e) => e.role === "text").pop();
+        assert.ok(eyebrow?.bbox);
+        const photo = 0xf2; // an almost white photo (#f2f2f2)
+        const grey = Math.round(photo * (1 - opacityAt(eyebrow.bbox.y1)));
+        const behind = `#${grey.toString(16).padStart(2, "0").repeat(3)}`;
+        assert.ok(contrast("#ffffff", behind) >= 4.5, `${what}: white on ${behind} = ${contrast("#ffffff", behind).toFixed(2)} : 1`);
       }
-      return stops[stops.length - 1][1];
-    };
-    // The eyebrow is the last text before the value; its cap line is the lightest spot behind it.
-    const firstValue = l.elements.findIndex((e) => e.role === "value");
-    const eyebrow = l.elements.slice(0, firstValue).filter((e) => e.role === "text").pop();
-    assert.ok(eyebrow?.bbox);
-    const photo = 0xf2; // an almost white photo (#f2f2f2)
-    const grey = Math.round(photo * (1 - opacityAt(eyebrow.bbox.y1)));
-    const behind = `#${grey.toString(16).padStart(2, "0").repeat(3)}`;
-    assert.ok(contrast("#ffffff", behind) >= 4.5, `${layout}: white on ${behind} = ${contrast("#ffffff", behind).toFixed(2)} : 1`);
+    }
+    assert.ok(twoLine >= 3, `${layout}: ${twoLine} two-line names checked`);
   }
 });
 
