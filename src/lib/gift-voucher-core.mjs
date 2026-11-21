@@ -799,6 +799,20 @@ export function decideGiftVoucherIssue(input) {
 }
 
 /**
+ * The daily limit as the hard cap of the issuing reservation
+ * (markGiftVoucherIssuing): the limit in cents when it is a positive safe
+ * integer, else 0 = no cap (an operator's voucher, an override, no limit).
+ * Any limit GIFT_VOUCHER_DAILY_LIMIT_EUR can express is passed on unchanged
+ * — 99 999 999 € (9 999 999 900 cents, "practically none") is far beyond the
+ * int4 range, so the database compares the cap as BIGINT, never as int.
+ * @param {unknown} dailyLimitCents
+ * @returns {number}
+ */
+export function giftVoucherReservationCapCents(dailyLimitCents) {
+  return typeof dailyLimitCents === "number" && Number.isSafeInteger(dailyLimitCents) && dailyLimitCents > 0 ? dailyLimitCents : 0;
+}
+
+/**
  * Check a voucher an operator issues by hand (German messages). Marketing
  * vouchers are PDF only — Mo neither mails nor posts advertising without a
  * consent; e-mail delivery needs an address, the card a printable address.

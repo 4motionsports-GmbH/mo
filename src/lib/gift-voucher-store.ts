@@ -49,6 +49,7 @@ import {
   giftVoucherCodeLast4,
   giftVoucherPhotoIdFromPathname,
   giftVoucherPhotoPathname,
+  giftVoucherReservationCapCents,
   isGiftVoucherStatus,
   isValidDraftToken,
   newOpaqueToken,
@@ -853,6 +854,9 @@ export async function releaseGiftVoucherLock(id: number, sql: Sql | null = getSq
  * 'written' = stored; 'limit' = refused by the cap (the row is still pending
  * or failed without a code); 'not_written' = the row changed meanwhile (a
  * revocation, a code from an earlier attempt) or the database failed.
+ * The cap (giftVoucherReservationCapCents) is compared as BIGINT: any euro
+ * limit is valid (GIFT_VOUCHER_DAILY_LIMIT_EUR=99999999 is "practically
+ * none", far beyond the int range), and the day's sum is a bigint anyway.
  */
 export async function markGiftVoucherIssuing(
   id: number,
@@ -862,7 +866,7 @@ export async function markGiftVoucherIssuing(
 ): Promise<"written" | "limit" | "not_written"> {
   if (!sql) return "not_written";
   const expiresOn = input.expiresOn && /^\d{4}-\d{2}-\d{2}$/.test(input.expiresOn) ? input.expiresOn : null;
-  const cap = Number.isSafeInteger(dailyLimitCents) && dailyLimitCents > 0 ? dailyLimitCents : 0;
+  const cap = giftVoucherReservationCapCents(dailyLimitCents);
   try {
     const results = (await sql.transaction([
       // 830083: the gift-voucher reservation lock (held until this transaction ends).
@@ -872,14 +876,14 @@ export async function markGiftVoucherIssuing(
            SET status = 'issuing', code_enc = decode(${input.codeEncB64}, 'base64'), code_hash = ${input.codeHash},
                code_last4 = ${input.codeLast4}, expires_on = ${expiresOn}::date, updated_at = now()
          WHERE v.id = ${id} AND v.status IN ('pending', 'failed') AND v.code_enc IS NULL
-           AND (${cap}::int = 0
+           AND (${cap}::bigint = 0
                 OR v.amount_cents + (SELECT COALESCE(SUM(g.amount_cents), 0)
                                        FROM gift_vouchers g
                                       WHERE g.source = 'shop' AND g.id <> ${id}
                                         AND (g.issued_at >= (date_trunc('day', now() AT TIME ZONE 'Europe/Berlin') AT TIME ZONE 'Europe/Berlin')
                                              OR (g.status = 'issuing' AND g.issued_at IS NULL
                                                  AND g.updated_at >= (date_trunc('day', now() AT TIME ZONE 'Europe/Berlin') AT TIME ZONE 'Europe/Berlin')))
-                                    ) <= ${cap}::int)
+                                    ) <= ${cap}::bigint)
         RETURNING v.id
       `,
       sql`SELECT status, (code_enc IS NULL) AS no_code FROM gift_vouchers WHERE id = ${id}`,

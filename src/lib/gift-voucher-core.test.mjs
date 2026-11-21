@@ -1,6 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createHash, createHmac } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { giftVoucherLimits } from "./gift-voucher-flags.mjs";
 import { isValidGiftVoucherDownloadToken } from "./gift-voucher-storefront.mjs";
 import {
   GIFT_VOUCHER_STATUSES,
@@ -44,6 +46,7 @@ import {
   pairPrintLines,
   refundedQuantities,
   decideGiftVoucherIssue,
+  giftVoucherReservationCapCents,
   decideManualGiftVoucher,
   planGiftVoucherRetry,
   PRINT_JOB_STATUS_RANK,
@@ -816,6 +819,35 @@ test("decideGiftVoucherIssue: payment state falls back to the financial status; 
   assert.deepEqual(d({ financialStatus: "pending" }), { action: "defer", reason: "not_paid" });
   assert.deepEqual(d({ financialStatus: null }), { action: "defer", reason: "not_paid" });
   assert.deepEqual(decideGiftVoucherIssue(undefined), { action: "hold", reason: "disabled" });
+});
+
+test("giftVoucherReservationCapCents: every configurable daily limit reaches the reservation unchanged — compared as BIGINT", () => {
+  const cap = giftVoucherReservationCapCents;
+  assert.equal(cap(250000), 250000);
+  // "Practically no limit": 99 999 999 € is far beyond the int4 range (2 147 483 647 cents).
+  const huge = giftVoucherLimits({ GIFT_VOUCHER_DAILY_LIMIT_EUR: "99999999" }).dailyLimitCents;
+  assert.equal(huge, 9_999_999_900);
+  assert.equal(cap(huge), 9_999_999_900);
+  assert.equal(cap(giftVoucherLimits({ GIFT_VOUCHER_DAILY_LIMIT_EUR: "21474837" }).dailyLimitCents), 2_147_483_700);
+  assert.ok(cap(huge) > 2_147_483_647);
+  // 0 = no cap: no limit configured, an operator's voucher, an override — and anything that is no amount.
+  for (const v of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY, 2 ** 53, "250000", null, undefined]) {
+    assert.equal(cap(v), 0, String(v));
+  }
+  // The soft decision agrees: such a limit holds nothing.
+  assert.deepEqual(
+    decideGiftVoucherIssue(issueInput({ limits: { dailyLimitCents: huge }, issuedTodayCents: 5_000_000_000 })),
+    { action: "issue", reason: null }
+  );
+  // The reservation's SQL compares the cap as BIGINT: an ::int cast overflowed above 21 474 836 €
+  // ("value out of range for type integer") and every automatic shop voucher failed to store its code.
+  const src = readFileSync(new URL("./gift-voucher-store.ts", import.meta.url), "utf8");
+  const start = src.indexOf("export async function markGiftVoucherIssuing(");
+  const fn = src.slice(start, src.indexOf("export async function markGiftVoucherIssued(", start));
+  assert.ok(start > 0 && fn.length > 0, "markGiftVoucherIssuing found");
+  assert.match(fn, /const cap = giftVoucherReservationCapCents\(dailyLimitCents\);/);
+  assert.equal((fn.match(/\$\{cap\}::bigint/g) ?? []).length, 2);
+  assert.doesNotMatch(fn, /\$\{cap\}::(?:int|integer|int4)\b/);
 });
 
 test("decideManualGiftVoucher: amounts, reasons, deliveries", () => {
