@@ -1213,14 +1213,15 @@ const NAME_LH = 1.2;
  * „für Lena“: "für" light, the name semibold, as large as fits `maxW`:
  *   1. one line, shrunk to no less than 80 %;
  *   2. else two lines, broken after a space or a hyphen of the name — the
- *      break that allows the largest size. At equal size a break after a
- *      comma wins over one after another space (between first and last
- *      name), which wins over one after a hyphen (inside a double name);
- *      then the more even split;
- *   3. a name without such a break: one line down to 50 %, else two lines
- *      split between letters.
+ *      break that allows the largest size, if that is at least 50 %. At
+ *      equal size a break after a comma wins over one after another space
+ *      (between first and last name), which wins over one after a hyphen
+ *      (inside a double name); then the more even split;
+ *   3. else (no such break, or only one that leaves a long run that does
+ *      not fit at 50 %, like „Jo “ + 37 letters): one line down to 50 %,
+ *      else two lines split between letters.
  * Only what still does not fit at 50 % (never a core-valid name of ≤ 40
- * characters) is shortened.
+ * characters) is shortened — at the split that allows the larger size.
  * @param {Panel} c @param {GiftVoucherFonts} fonts @param {ResolvedData} d @param {number} size @param {number} maxW
  * @returns {NameMetrics | null}
  */
@@ -1271,10 +1272,11 @@ function nameMetrics(c, fonts, d, size, maxW) {
   };
 
   const clean = bestSplit((prev, before) => (prev === " " ? (before === "," ? 2 : 1) : prev === "-" ? 0 : null));
-  if (clean) return twoLines(clean);
+  if (clean && clean.s >= floor * (1 - 1e-9)) return twoLines(clean);
   if (one >= floor) return { size: one, lines: [line(lead, name, one)] };
   const letters = bestSplit((prev) => (prev === " " ? null : 0));
-  return letters ? twoLines(letters) : { size: floor, lines: [line(lead, name, floor)] };
+  const best = clean && (!letters || clean.s >= letters.s) ? clean : letters;
+  return best ? twoLines(best) : { size: floor, lines: [line(lead, name, floor)] };
 }
 
 /** Extra height of the name block beyond its first line (mm). @param {NameMetrics | null} nm */

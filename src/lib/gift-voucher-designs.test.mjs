@@ -409,6 +409,11 @@ test("a „für“ of up to 40 characters is never shortened — a long one brea
     "Oma Gertrud, Opa Heinz und Tante Marlene",
     "Maximilianegroßmannschönbergerwiesenthal",
     "W".repeat(40),
+    // One break next to a run that does not fit even at 50 %: split between letters instead.
+    "W " + "W".repeat(38),
+    "Jo " + "W".repeat(37),
+    "W".repeat(37) + " Jo",
+    "W-" + "W".repeat(38),
   ];
   for (const { key } of GIFT_VOUCHER_DESIGNS) {
     for (const layout of /** @type {const} */ (["landscape", "square"])) {
