@@ -251,37 +251,37 @@ const NAVY = "#00577f";
 const THEMES = {
   classic: {
     front: { wordmark: BRAND_BLUE, eyebrow: "#d6c398", value: "url(#champagne)", name: "#ece6d8", url: "#8e979f", rule: "#c9b17f" },
-    paper: "#fbfaf6", ink: "#1b1d20", soft: "#4b5157", label: "#80878e", eyebrow: "#9a7f4a",
+    paper: "#fbfaf6", ink: "#1b1d20", soft: "#4b5157", label: "#646b72", eyebrow: "#9a7f4a",
     card: "#ffffff", cardLine: "#e7e1d2", qrDark: "#15171a", script: "#1b1d20", motif: "#15171a", motif2: "#c9b17f",
     back: "#fbfaf6", backWordmark: BRAND_BLUE,
   },
   birthday: {
     front: { wordmark: BRAND_BLUE, eyebrow: BRAND_BLUE, value: NAVY, name: "#1d3646", url: "#6b7f8c", rule: "#f2a33a" },
-    paper: "#ffffff", ink: "#1b1d20", soft: "#46545e", label: "#7a8a96", eyebrow: BRAND_BLUE,
+    paper: "#ffffff", ink: "#1b1d20", soft: "#46545e", label: "#5f6f7b", eyebrow: BRAND_BLUE,
     card: "#f3f9fd", cardLine: "#d8ebf6", qrDark: "#0d2a3b", script: "#14324a", motif: BRAND_BLUE, motif2: "#f2a33a",
     back: "#ffffff", backWordmark: BRAND_BLUE,
   },
   christmas: {
     front: { wordmark: "#ffffff", eyebrow: "#d9b26f", value: "#ffffff", name: "#ead2a0", url: "#9fb3c8", rule: "#d9b26f" },
-    paper: "#fbfaf6", ink: "#0b2440", soft: "#3d5168", label: "#7b8a9a", eyebrow: "#9c7a3c",
+    paper: "#fbfaf6", ink: "#0b2440", soft: "#3d5168", label: "#5f6e7e", eyebrow: "#9c7a3c",
     card: "#ffffff", cardLine: "#e9e1cf", qrDark: "#0b2440", script: "#0b2440", motif: "#c9a15c", motif2: "#0b2440",
     back: "#fbfaf6", backWordmark: "#0b2440",
   },
   thanks: {
     front: { wordmark: BRAND_BLUE, eyebrow: BRAND_BLUE, value: NAVY, name: NAVY, url: "#5f7f93", rule: BRAND_BLUE },
-    paper: "#ffffff", ink: "#1b1d20", soft: "#46545e", label: "#7a8a96", eyebrow: BRAND_BLUE,
+    paper: "#ffffff", ink: "#1b1d20", soft: "#46545e", label: "#5f6f7b", eyebrow: BRAND_BLUE,
     card: "#f2f9fd", cardLine: "#d3e9f5", qrDark: "#0d2a3b", script: "#0f3b57", motif: BRAND_BLUE, motif2: "#7cc6e8",
     back: "#ffffff", backWordmark: BRAND_BLUE,
   },
   training: {
     front: { wordmark: "#ffffff", eyebrow: "#2aa9e6", value: "#ffffff", name: "#ffffff", url: "#8f99a3", rule: BRAND_BLUE },
-    paper: "#ffffff", ink: "#0f1113", soft: "#454c53", label: "#7d868e", eyebrow: BRAND_BLUE,
+    paper: "#ffffff", ink: "#0f1113", soft: "#454c53", label: "#5f676f", eyebrow: BRAND_BLUE,
     card: "#f4f6f7", cardLine: "#e1e5e8", qrDark: "#0f1113", script: "#0f1113", motif: BRAND_BLUE, motif2: "#0f1113",
     back: "#ffffff", backWordmark: "#0f1113",
   },
   photo: {
     front: { wordmark: "#ffffff", eyebrow: "#ffffff", value: "#ffffff", name: "#ffffff", url: "#e6eaee", rule: "#ffffff" },
-    paper: "#fbfaf6", ink: "#1b1d20", soft: "#4b5157", label: "#80878e", eyebrow: BRAND_BLUE,
+    paper: "#fbfaf6", ink: "#1b1d20", soft: "#4b5157", label: "#646b72", eyebrow: BRAND_BLUE,
     card: "#ffffff", cardLine: "#e7e3d8", qrDark: "#15171a", script: "#1b1d20", motif: BRAND_BLUE, motif2: "#9aa3ab",
     back: "#fbfaf6", backWordmark: BRAND_BLUE,
   },
@@ -1112,16 +1112,25 @@ function decorPhotoPlaceholder(c) {
   photoShade(c);
 }
 
-/** Legibility shades over a photo: bottom third and a light top band. @param {Panel} c */
-function photoShade(c) {
+/**
+ * Legibility shades over a photo: the lower part (from 36 % of the height,
+ * already half dark where the eyebrow sits) and a top band for the
+ * wordmark — white lettering stays readable on a bright photo (snow, sky,
+ * a white wall: eyebrow ≥ 4.5 : 1). `lift` (mm) moves the whole lower shade
+ * up with the lettering: a two-line „für“ raises the bottom-anchored block
+ * by one name line, and the eyebrow keeps its place in the gradient.
+ * @param {Panel} c @param {number} [lift]
+ */
+function photoShade(c, lift = 0) {
+  const from = c.H * 0.36 - lift;
   c.def(
-    `<linearGradient id="${c.id("shade-b")}" gradientUnits="userSpaceOnUse" x1="0" y1="${n2(c.p(c.H * 0.42))}" x2="0" y2="${n2(c.heightPx)}">` +
-      `<stop offset="0" stop-color="#000" stop-opacity="0"/><stop offset="0.45" stop-color="#000" stop-opacity="0.38"/>` +
-      `<stop offset="1" stop-color="#000" stop-opacity="0.78"/></linearGradient>` +
+    `<linearGradient id="${c.id("shade-b")}" gradientUnits="userSpaceOnUse" x1="0" y1="${n2(c.p(from))}" x2="0" y2="${n2(c.heightPx - c.len(lift))}">` +
+      `<stop offset="0" stop-color="#000" stop-opacity="0"/><stop offset="0.28" stop-color="#000" stop-opacity="0.52"/>` +
+      `<stop offset="1" stop-color="#000" stop-opacity="0.82"/></linearGradient>` +
       `<linearGradient id="${c.id("shade-t")}" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="0" y2="${n2(c.p(c.H * 0.3))}">` +
-      `<stop offset="0" stop-color="#000" stop-opacity="0.5"/><stop offset="1" stop-color="#000" stop-opacity="0"/></linearGradient>`
+      `<stop offset="0" stop-color="#000" stop-opacity="0.62"/><stop offset="1" stop-color="#000" stop-opacity="0"/></linearGradient>`
   );
-  c.add("decor", `<rect x="0" y="${n2(c.p(c.H * 0.42))}" width="${n2(c.widthPx)}" height="${n2(c.heightPx - c.p(c.H * 0.42))}" fill="url(#${c.id("shade-b")})"/>`, c.box(-c.B, c.H * 0.42, c.W + c.B, c.H + c.B));
+  c.add("decor", `<rect x="0" y="${n2(c.p(from))}" width="${n2(c.widthPx)}" height="${n2(c.heightPx - c.p(from))}" fill="url(#${c.id("shade-b")})"/>`, c.box(-c.B, from, c.W + c.B, c.H + c.B));
   c.add("decor", `<rect x="0" y="0" width="${n2(c.widthPx)}" height="${n2(c.p(c.H * 0.3))}" fill="url(#${c.id("shade-t")})"/>`, c.box(-c.B, -c.B, c.W + c.B, c.H * 0.3));
 }
 
@@ -1130,7 +1139,11 @@ function safeDataUri(uri) {
   return typeof uri === "string" && /^data:image\/(?:jpeg|png|webp);base64,[A-Za-z0-9+/]+=*$/.test(uri) ? uri : null;
 }
 
-/** @param {Panel} c @param {string} uri */
+/**
+ * The customer's photo, full bleed. Its legibility shade is laid by
+ * frontLettering, which knows the height of the lettering block.
+ * @param {Panel} c @param {string} uri
+ */
 function decorPhoto(c, uri) {
   c.fill("#1b1d20");
   c.add(
@@ -1138,7 +1151,6 @@ function decorPhoto(c, uri) {
     `<image x="0" y="0" width="${n2(c.widthPx)}" height="${n2(c.heightPx)}" preserveAspectRatio="xMidYMid slice" xlink:href="${escAttr(uri)}"/>`,
     c.box(-c.B, -c.B, c.W + c.B, c.H + c.B)
   );
-  photoShade(c);
 }
 
 /** @type {Record<string, (c: Panel) => void>} */
@@ -1190,32 +1202,101 @@ function drawValue(c, fonts, d, x, baseline, V, fill, anchor) {
   }
 }
 
+/** Line height of a two-line „für …“ (× its size). */
+const NAME_LH = 1.2;
+
 /**
- * „für Lena“: "für" light, the name semibold; shrinks, then shortens to fit.
+ * @typedef {{ size: number, lines: Array<{ lead: string, name: string, width: number }> }} NameMetrics
+ */
+
+/**
+ * „für Lena“: "für" light, the name semibold, as large as fits `maxW`:
+ *   1. one line, shrunk to no less than 80 %;
+ *   2. else two lines, broken after a space or a hyphen of the name — the
+ *      break that allows the largest size, if that is at least 50 %. At
+ *      equal size a break after a comma wins over one after another space
+ *      (between first and last name), which wins over one after a hyphen
+ *      (inside a double name); then the more even split;
+ *   3. else (no such break, or only one that leaves a long run that does
+ *      not fit at 50 %, like „Jo “ + 37 letters): one line down to 50 %,
+ *      else two lines split between letters.
+ * Only what still does not fit at 50 % (never a core-valid name of ≤ 40
+ * characters) is shortened — at the split that allows the larger size.
  * @param {Panel} c @param {GiftVoucherFonts} fonts @param {ResolvedData} d @param {number} size @param {number} maxW
+ * @returns {NameMetrics | null}
  */
 function nameMetrics(c, fonts, d, size, maxW) {
   if (!d.recipientName) return null;
   const lead = `${d.copy.forWord} `;
-  let name = printable(fonts.semibold, d.recipientName).replace(/\n/g, " ").trim();
+  const name = printable(fonts.semibold, d.recipientName).replace(/\s+/g, " ").trim();
   if (!name) return null;
-  const emOf = (/** @type {string} */ n) => emWidth(fonts.regular, lead) + emWidth(fonts.semibold, n);
-  let s = size;
-  if (emOf(name) * s > maxW) s = Math.max(size * 0.62, maxW / emOf(name));
-  if (emOf(name) * s > maxW) name = ellipsize(fonts.semibold, name, maxW / s - emWidth(fonts.regular, lead));
-  return { lead, name, size: s, width: emOf(name) * s };
+  const leadEm = emWidth(fonts.regular, lead);
+  const floor = size * 0.5;
+  /** One line at size s, shortened only when it does not fit. @param {string} l @param {string} n @param {number} s */
+  const line = (l, n, s) => {
+    const room = maxW / s - (l ? leadEm : 0);
+    const fitted = emWidth(fonts.semibold, n) <= room * (1 + 1e-9) ? n : ellipsize(fonts.semibold, n, room);
+    return { lead: l, name: fitted, width: ((l ? leadEm : 0) + emWidth(fonts.semibold, fitted)) * s };
+  };
+  const one = Math.min(size, maxW / (leadEm + emWidth(fonts.semibold, name)));
+  if (one >= size * 0.8) return { size: one, lines: [line(lead, name, one)] };
+
+  /**
+   * The best split into two lines; `rank` orders equal sizes (higher first).
+   * @param {(prev: string, before: string) => number | null} rankOf
+   * @returns {{ s: number, rank: number, em: number, first: string, second: string } | null}
+   */
+  const bestSplit = (rankOf) => {
+    /** @type {{ s: number, rank: number, em: number, first: string, second: string } | null} */
+    let best = null;
+    const chars = Array.from(name);
+    for (let i = 1; i < chars.length; i++) {
+      const rank = rankOf(chars[i - 1], chars[i - 2] ?? "");
+      if (rank === null) continue;
+      const first = chars.slice(0, i).join("").trimEnd();
+      const second = chars.slice(i).join("").trimStart();
+      if (!first || !second || first === "-") continue;
+      const em = Math.max(leadEm + emWidth(fonts.semibold, first), emWidth(fonts.semibold, second));
+      const s = Math.min(size, maxW / em);
+      const tie = Math.abs(s - (best?.s ?? 0)) <= 1e-6;
+      if (!best || s > best.s + 1e-6 || (tie && (rank > best.rank || (rank === best.rank && em < best.em)))) {
+        best = { s, rank, em, first, second };
+      }
+    }
+    return best;
+  };
+  /** @param {{ s: number, first: string, second: string }} b @returns {NameMetrics} */
+  const twoLines = (b) => {
+    const s = Math.max(floor, b.s);
+    return { size: s, lines: [line(lead, b.first, s), line("", b.second, s)] };
+  };
+
+  const clean = bestSplit((prev, before) => (prev === " " ? (before === "," ? 2 : 1) : prev === "-" ? 0 : null));
+  if (clean && clean.s >= floor * (1 - 1e-9)) return twoLines(clean);
+  if (one >= floor) return { size: one, lines: [line(lead, name, one)] };
+  const letters = bestSplit((prev) => (prev === " " ? null : 0));
+  const best = clean && (!letters || clean.s >= letters.s) ? clean : letters;
+  return best ? twoLines(best) : { size: floor, lines: [line(lead, name, floor)] };
+}
+
+/** Extra height of the name block beyond its first line (mm). @param {NameMetrics | null} nm */
+function nameExtraHeight(nm) {
+  return nm ? (nm.lines.length - 1) * NAME_LH * nm.size : 0;
 }
 
 /**
  * @param {Panel} c @param {GiftVoucherFonts} fonts @param {ResolvedData} d
- * @param {{ lead: string, name: string, size: number, width: number }} nm
- * @param {number} x @param {number} baseline @param {string} fill @param {"start" | "middle"} anchor
+ * @param {NameMetrics} nm
+ * @param {number} x @param {number} baseline first line @param {string} fill @param {"start" | "middle"} anchor
  */
 function drawName(c, fonts, d, nm, x, baseline, fill, anchor) {
-  const x0 = anchor === "middle" ? x - nm.width / 2 : x;
-  const leadW = emWidth(fonts.regular, nm.lead) * nm.size;
-  c.text("text", fonts.regular, nm.lead, x0, baseline, nm.size, { fill, opacity: 0.86 });
-  c.text("text", fonts.semibold, nm.name, x0 + leadW, baseline, nm.size, { fill });
+  nm.lines.forEach((l, i) => {
+    const y = baseline + i * NAME_LH * nm.size;
+    const x0 = anchor === "middle" ? x - l.width / 2 : x;
+    const leadW = l.lead ? emWidth(fonts.regular, l.lead) * nm.size : 0;
+    if (l.lead) c.text("text", fonts.regular, l.lead, x0, y, nm.size, { fill, opacity: 0.86 });
+    c.text("text", fonts.semibold, l.name, x0 + leadW, y, nm.size, { fill });
+  });
 }
 
 /**
@@ -1235,6 +1316,22 @@ function frontLettering(c, fonts, d, key) {
   const anchor = center ? "middle" : "start";
   const xText = center ? c.W / 2 : M;
 
+  // Middle block: eyebrow — value — „für Lena“, measured first.
+  const maxW = (() => {
+    if (center) return c.W - 2 * M - 8;
+    if (key === "training") return sq ? c.W * 0.52 : c.W * 0.42;
+    if (key === "classic") return sq ? c.W * 0.62 : c.W * 0.5;
+    if (key === "thanks") return sq ? c.W * 0.6 : c.W * 0.45;
+    return c.W * 0.62; // photo
+  })();
+  const vm = valueMetrics(c, fonts, d);
+  const valueMax = align === "photo" ? (sq ? 30 : 34) : sizes.valueMax;
+  const V = Math.min(valueMax, maxW / vm.em);
+  const nm = nameMetrics(c, fonts, d, sizes.name, center ? c.W - 2 * M : maxW + (key === "training" ? 0 : 16));
+  // On a photo the shade goes under all lettering; it rises with a two-line
+  // name, which lifts the block (it stands on the bottom margin).
+  if (align === "photo") photoShade(c, nameExtraHeight(nm));
+
   // Wordmark (top) and site (bottom).
   const wmBase = M + 0.74 * sizes.wordmark;
   if (align === "photo") {
@@ -1248,24 +1345,13 @@ function frontLettering(c, fonts, d, key) {
   const urlX = align === "photo" || urlTop ? c.W - M : xText;
   c.text("text", fonts.semibold, SITE, urlX, urlTop ? wmBase : urlBase, sizes.url, { fill: col.url, anchor: urlAnchor, tracking: 0.08 });
 
-  // Middle block: eyebrow — value — „für Lena“.
-  const maxW = (() => {
-    if (center) return c.W - 2 * M - 8;
-    if (key === "training") return sq ? c.W * 0.52 : c.W * 0.42;
-    if (key === "classic") return sq ? c.W * 0.62 : c.W * 0.5;
-    if (key === "thanks") return sq ? c.W * 0.6 : c.W * 0.45;
-    return c.W * 0.62; // photo
-  })();
-  const vm = valueMetrics(c, fonts, d);
-  const valueMax = align === "photo" ? (sq ? 30 : 34) : sizes.valueMax;
-  const V = Math.min(valueMax, maxW / vm.em);
-  const nm = nameMetrics(c, fonts, d, sizes.name, center ? c.W - 2 * M : maxW + (key === "training" ? 0 : 16));
   const capE = 0.7 * sizes.eyebrow;
   const capV = 0.7 * V;
   const gap1 = Math.max(4.2, V * 0.2);
   const gap2 = Math.max(4.4, V * 0.2);
   const capN = nm ? 0.7 * nm.size : 0;
-  const blockH = capE + gap1 + capV + (nm ? gap2 + capN : 0);
+  // A two-line name adds its second line below (the block is placed by its height).
+  const blockH = capE + gap1 + capV + (nm ? gap2 + capN + nameExtraHeight(nm) : 0);
   let top;
   if (align === "photo") {
     top = c.H - M - (sq ? 8 : 9) - blockH;
@@ -1394,8 +1480,14 @@ function drawMessage(c, fonts, d, key, box, sizes) {
     isDefault = true;
   }
   const sender = d.senderName ? printable(fonts.scriptBold, d.senderName).replace(/\n/g, " ").trim() : "";
+  const senderLabel = sender ? `— ${sender}` : "";
   const LH = 1.2;
   const blank = 0.5;
+  // The sender line shrinks to the column, so a „Von“ within the core's 40
+  // characters is never shortened: a realistic one prints at 10 pt or more
+  // in the narrowest column (landscape / PDF), 40 of the widest glyphs
+  // (¼ ½ ¾ Æ Œ) at about 6.5 pt. The ellipsis below is only a safety net.
+  const senderFit = sender ? box.w / emWidth(fonts.scriptBold, senderLabel) : Infinity;
   /** @param {number} s */
   const layout = (s) => {
     const lines = wrapEm(font, text, box.w / s);
@@ -1404,7 +1496,7 @@ function drawMessage(c, fonts, d, key, box, sizes) {
       if (i > 0) h += (l === "" ? blank : 1) * LH * s;
     });
     h += 0.95 * s;
-    const ss = Math.min(s * 0.92, sizes.maxSize * 0.8);
+    const ss = Math.min(s * 0.92, sizes.maxSize * 0.8, senderFit);
     const senderH = sender ? 0.62 * s + 0.95 * ss : 0;
     return { lines, h: h + senderH, ss };
   };
@@ -1420,14 +1512,25 @@ function drawMessage(c, fonts, d, key, box, sizes) {
   }
   const s = lo;
   const { lines: rawLines, ss } = layout(s);
-  // Never more lines than fit at the minimum size: cut with an ellipsis.
+  // The lines that fit, counted the way layout() measures them (an empty line
+  // is half a line) — all of them unless even the minimum size is too big.
+  // Only that last case is cut, with an ellipsis (a safety net: the core's
+  // limits of 350 characters and 8 lines always fit).
   let lines = rawLines;
-  const maxLines = Math.max(1, Math.floor((box.h - 0.95 * s - (sender ? 0.62 * s + 0.95 * ss : 0)) / (LH * s)) + 1);
+  const room = box.h - 0.95 * s - (sender ? 0.62 * s + 0.95 * ss : 0);
+  let maxLines = 1;
+  for (let i = 1, used = 0; i < rawLines.length; i++) {
+    used += (rawLines[i] === "" ? blank : 1) * LH * s;
+    if (used > room + 1e-6) break;
+    maxLines = i + 1;
+  }
+  // A cut never ends on an empty line (the ellipsis goes onto words).
+  while (maxLines > 1 && rawLines.length > maxLines && rawLines[maxLines - 1] === "") maxLines--;
   if (lines.length > maxLines) {
     lines = lines.slice(0, maxLines);
     lines[maxLines - 1] = ellipsize(font, `${lines[maxLines - 1]}…`, box.w / s);
   }
-  const widest = Math.max(...lines.map((l) => emWidth(font, l) * s), sender ? emWidth(fonts.scriptBold, `— ${sender}`) * ss : 0);
+  const widest = Math.max(...lines.map((l) => emWidth(font, l) * s), sender ? emWidth(fonts.scriptBold, senderLabel) * ss : 0);
   const blockW = Math.min(box.w, widest);
   // Height of the block as laid out → vertical centre.
   let h = 0;
@@ -1453,9 +1556,9 @@ function drawMessage(c, fonts, d, key, box, sizes) {
   if (dPath) c.add("text", `<path d="${dPath}" fill="${th.script}"/>`, bbox);
   if (sender) {
     const sy = y + 0.3 * s + 0.95 * ss;
-    const label = `— ${sender}`;
-    const maxEm = box.w / ss;
-    c.text("text", fonts.scriptBold, ellipsize(fonts.scriptBold, label, maxEm), x0 + blockW, sy, ss, { fill: th.script, anchor: "end" });
+    // (1 + 1e-9: ss may be exactly the column's width — no cut for rounding.)
+    const maxEm = (box.w / ss) * (1 + 1e-9);
+    c.text("text", fonts.scriptBold, ellipsize(fonts.scriptBold, senderLabel, maxEm), x0 + blockW, sy, ss, { fill: th.script, anchor: "end" });
   }
   return { top: box.y + (box.h - total) / 2, cx: x0 + blockW / 2 };
 }
@@ -1597,10 +1700,42 @@ function drawRuns(c, wrapped, x, y, size, lineH, fill, anchor = "start", boxW = 
 }
 
 const FOOTER_SEP = "  ·  ";
+/** The separator inside one footer item (GIFT_VOUCHER_ISSUER_LINE's own „ · “). */
+const ITEM_SEP = " · ";
 
 /**
- * Footer items joined with „ · “ into as few lines as fit (an item longer
- * than a line is shortened).
+ * One footer item that is wider than a line, wrapped: at its own „ · “
+ * first (the issuer line with register court and VAT id breaks between
+ * those), between words only inside a part that alone is too wide.
+ * @param {Panel} c @param {GiftVoucherFonts} fonts @param {string} item @param {number} size @param {number} maxW
+ * @returns {string[]}
+ */
+function wrapFooterItem(c, fonts, item, size, maxW) {
+  const fits = (/** @type {string} */ s) => c.measure(fonts.regular, s, size) <= maxW;
+  /** @type {string[]} */
+  const out = [];
+  let line = "";
+  for (const part of item.split(ITEM_SEP).map((p) => p.trim()).filter(Boolean)) {
+    const cand = line ? `${line}${ITEM_SEP}${part}` : part;
+    if (fits(cand)) {
+      line = cand;
+      continue;
+    }
+    if (line) out.push(line);
+    line = part;
+    if (!fits(part)) {
+      const words = wrapEm(fonts.regular, printable(fonts.regular, part), maxW / size);
+      out.push(...words.slice(0, -1));
+      line = words[words.length - 1] ?? "";
+    }
+  }
+  if (line) out.push(line);
+  return out;
+}
+
+/**
+ * Footer items joined with „ · “ into as few lines as fit. An item longer
+ * than a line wraps (wrapFooterItem); its last line can take the next items.
  * @param {Panel} c @param {GiftVoucherFonts} fonts @param {string[]} items @param {number} size @param {number} maxW
  * @returns {string[][]}
  */
@@ -1610,12 +1745,18 @@ function packFooter(c, fonts, items, size, maxW) {
   /** @type {string[]} */
   let cur = [];
   for (const raw of items) {
-    const it = c.measure(fonts.regular, raw, size) > maxW ? ellipsize(fonts.regular, raw, maxW / size) : raw;
-    if (cur.length && c.measure(fonts.regular, [...cur, it].join(FOOTER_SEP), size) > maxW) {
+    if (c.measure(fonts.regular, raw, size) > maxW) {
+      const parts = wrapFooterItem(c, fonts, raw, size, maxW);
+      if (cur.length) lines.push(cur);
+      for (const part of parts.slice(0, -1)) lines.push([part]);
+      cur = parts.length ? [parts[parts.length - 1]] : [];
+      continue;
+    }
+    if (cur.length && c.measure(fonts.regular, [...cur, raw].join(FOOTER_SEP), size) > maxW) {
       lines.push(cur);
       cur = [];
     }
-    cur.push(it);
+    cur.push(raw);
   }
   if (cur.length) lines.push(cur);
   return lines;

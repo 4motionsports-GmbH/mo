@@ -8,7 +8,9 @@
 // cancelled or not (yet) issued ones answer the same plain 404 as an unknown
 // token, without any detail. The PDF is rendered on demand with the
 // decrypted code (lib/gift-voucher-render.ts renderGiftVoucherPdf) and is
-// never cached (no-store, private) or indexed.
+// never cached (no-store, private) or indexed. 503 when the code cannot be
+// decrypted or the photo of an „Eigenes Foto“ voucher cannot be read (never
+// the „Klassisch“ look in its place).
 //
 // No origin guard and no secret: the link is opened from a mail client. The
 // IP-keyed bucket `gift-voucher-ip` caps guessing and rendering; without the
@@ -71,6 +73,11 @@ export async function GET(req: Request) {
     const code = await getGiftVoucherCode(voucher.id);
     if (!code) return text(503, "download_unavailable");
     const photo = voucher.photoPathname ? await loadGiftVoucherPhoto(voucher.photoPathname) : null;
+    // A photo voucher is never served in the „Klassisch“ look: no photo, no PDF (try again later).
+    if (voucher.designKey === "photo" && voucher.photoPathname && !photo) {
+      reportError(new Error("gift voucher photo unavailable"), { route: "api/gift-vouchers/download", phase: "photo", voucherId: voucher.id });
+      return text(503, "download_unavailable");
+    }
 
     let pdf: Buffer | null = null;
     try {

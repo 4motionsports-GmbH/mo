@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import {
   GIFT_VOUCHER_FONT_FILES,
   GIFT_VOUCHER_PHOTO_MAX_BYTES,
+  GIFT_VOUCHER_PHOTO_MIN_SIDE,
+  GIFT_VOUCHER_PHOTO_PRINT_MIN_SIDE,
   GIFT_VOUCHER_PREVIEW_BOXES,
   GIFT_VOUCHER_OCCASION_LABELS,
   GIFT_VOUCHER_TONE_LABELS,
@@ -32,6 +34,7 @@ import {
   newOpaqueToken,
   validateGiftVoucherDraftInput,
 } from "./gift-voucher-core.mjs";
+import { GIFT_VOUCHER_DESIGNS } from "./gift-voucher-designs.mjs";
 
 // ── availability ─────────────────────────────────────────────────────────────
 
@@ -108,6 +111,7 @@ const DESIGNS = [
     description: { de: "Dunkel", en: "Dark" },
     photo: false,
     colors: { background: "#15171a", ink: "#f3e7c6" },
+    defaultMessage: { de: "Viel Freude beim Training!", en: "Enjoy your training!" },
   },
   {
     key: "photo",
@@ -115,6 +119,7 @@ const DESIGNS = [
     description: { de: "Dein Bild", en: "Your picture" },
     photo: true,
     colors: { background: "#000000", ink: "#ffffff" },
+    defaultMessage: { de: "Viel Freude damit!", en: "Enjoy!" },
   },
 ];
 
@@ -139,7 +144,14 @@ test("config: the documented shape (spec §8.1)", () => {
   assert.equal(c.available, true);
   assert.equal(c.unavailableReason, null);
   assert.deepEqual(c.features, { ai: true, photo: true, print: true });
-  assert.deepEqual(c.limits, { recipientName: 40, senderName: 40, message: 350, messageLines: 8, photoMaxBytes: 4_000_000 });
+  assert.deepEqual(c.limits, {
+    recipientName: 40,
+    senderName: 40,
+    message: 350,
+    messageLines: 8,
+    photoMaxBytes: 4_000_000,
+    photoPrintMinSide: 1000,
+  });
   assert.deepEqual(c.print, { countries: ["DE"], deliveryNote: "3–6 Werktage" });
   assert.deepEqual(c.validity, { years: 3, untilExample: "31.12.2029" });
   assert.equal(c.termsUrl, "https://www.motionsports.de/pages/gutscheinbedingungen");
@@ -148,6 +160,7 @@ test("config: the documented shape (spec §8.1)", () => {
     key: "classic",
     name: "Klassisch",
     description: "Dunkel",
+    defaultMessage: "Viel Freude beim Training!",
     photo: false,
     colors: { background: "#15171a", ink: "#f3e7c6" },
     previewSvg: {
@@ -174,12 +187,27 @@ test("config: English texts for the /en shop", () => {
   const c = config({ locale: "en" });
   assert.equal(c.designs[0].name, "Classic");
   assert.equal(c.designs[1].description, "Your picture");
+  assert.equal(c.designs[0].defaultMessage, "Enjoy your training!");
+  assert.equal(c.designs[1].defaultMessage, "Enjoy!");
   assert.equal(c.occasions[4].label, "Just because");
   assert.equal(c.tones[3].label, "Short & sweet");
   assert.equal(c.print.deliveryNote, "3–6 working days");
   assert.equal(c.validity.untilExample, "31 December 2029");
   // Unknown locales are German.
   assert.equal(config({ locale: "fr" }).designs[0].name, "Klassisch");
+});
+
+test("config: every real design carries the line an empty message prints, and the card's photo size", () => {
+  for (const locale of /** @type {const} */ (["de", "en"])) {
+    const c = config({ locale, designs: GIFT_VOUCHER_DESIGNS });
+    assert.deepEqual(
+      c.designs.map((d) => [d.key, d.defaultMessage]),
+      GIFT_VOUCHER_DESIGNS.map((d) => [d.key, d.defaultMessage[locale]])
+    );
+    assert.equal(c.designs.find((d) => d.key === "birthday")?.defaultMessage, locale === "en" ? "Happy birthday!" : "Alles Gute zum Geburtstag!");
+  }
+  assert.equal(config().limits.photoPrintMinSide, GIFT_VOUCHER_PHOTO_PRINT_MIN_SIDE);
+  assert.ok(GIFT_VOUCHER_PHOTO_PRINT_MIN_SIDE > GIFT_VOUCHER_PHOTO_MIN_SIDE, "the card's wish is above the hard minimum");
 });
 
 test("config: no expiry, unavailable state and a failing background", () => {

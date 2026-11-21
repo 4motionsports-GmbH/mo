@@ -32,6 +32,8 @@ const RULE_Y = BRAND_Y - 10;
 const FOOTER_Y = 40;
 const FOOTER_TEXT =
   "motion sports  ·  www.motionsports.de  ·  Shop · Über · Kontakt · Impressum";
+const FOOTER_TEXT_EN =
+  "motion sports  ·  www.motionsports.de  ·  Shop · About · Contact · Imprint";
 
 /** Escape the three characters that are special inside a PDF literal string. */
 export function escapePdfText(s) {
@@ -137,9 +139,13 @@ export function brandHeaderOps() {
   );
 }
 
-/** The muted footer line, repeated on every page (the email's menu bar echo). */
-export function footerOp() {
-  return textOp("F1", MARGIN_X, FOOTER_Y, 7.5, FOOTER_TEXT, MUTED_RGB);
+/**
+ * The muted footer line, repeated on every page (the email's menu bar echo);
+ * German unless `locale` is "en".
+ * @param {unknown} [locale]
+ */
+export function footerOp(locale) {
+  return textOp("F1", MARGIN_X, FOOTER_Y, 7.5, locale === "en" ? FOOTER_TEXT_EN : FOOTER_TEXT, MUTED_RGB);
 }
 
 /**

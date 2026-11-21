@@ -1452,11 +1452,13 @@ two minutes). No amounts or prices — those are the voucher product's variants 
   "designs": [{
     "key": "classic",               // classic | birthday | christmas | thanks | training | photo („Eigenes Foto“)
     "name": "Klassisch", "description": "…", "photo": false,
+    "defaultMessage": "Viel Freude beim Training!",   // what the card and the PDF print when the message is left empty
     "colors": { "background": "#15171a", "ink": "#f3e7c6", "accent": "#008ccb", "muted": "#9aa3ab", "insideBackground": "#fbfaf6", "insideInk": "#1b1d20" },
     "previewSvg": { "landscape": "<svg …>", "square": "<svg …>" }  // the decorative background only (no text); "" when it could not be built
   }],
   "features": { "ai": true, "photo": true, "print": true },        // all false while not available
-  "limits": { "recipientName": 40, "senderName": 40, "message": 350, "messageLines": 8, "photoMaxBytes": 4000000 },
+  "limits": { "recipientName": 40, "senderName": 40, "message": 350, "messageLines": 8, "photoMaxBytes": 4000000,
+              "photoPrintMinSide": 1000 },                       // px: a shorter photo side is accepted (≥ 500) but prints soft on the Premium-Karte — warn
   "occasions": [{ "key": "geburtstag", "label": "Geburtstag" }],    // geburtstag, weihnachten, danke, sport, einfach_so
   "tones": [{ "key": "herzlich", "label": "Herzlich" }],           // herzlich, witzig, sportlich, kurz
   "print": { "countries": ["DE"], "deliveryNote": "3–6 Werktage" },

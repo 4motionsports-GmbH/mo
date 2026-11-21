@@ -842,8 +842,17 @@ test("sanitizeGiftVoucherText: emoji are removed and reported", () => {
 });
 
 test("sanitizeGiftVoucherText: the printable repertoire stays untouched", () => {
-  const ok = "Für Jürgen & Zoë — „50 €“ ‚danke‘, l’été… • ½ · ß ŁŚŻ ‹ok› «ja» ©";
+  const ok = "Für Jürgen & Zoë — „50 €“ ‚danke‘, l’été… • ½ · ß ŁŚŻ ‹ok› «ja» © Žižek";
   assert.deepEqual(sanitizeGiftVoucherText(ok, { max: 350 }), { text: ok, removed: false, truncated: false });
+});
+
+test("sanitizeGiftVoucherText: the long s ſ (U+017F, no glyph in Caveat) is removed and reported", () => {
+  assert.deepEqual(sanitizeGiftVoucherText("Waſſer", { max: 40 }), { text: "Waer", removed: true, truncated: false });
+  assert.deepEqual(sanitizeGiftVoucherText("Liebe Grüße\nDein ſtefan", { max: 350, maxLines: 8 }), {
+    text: "Liebe Grüße\nDein tefan",
+    removed: true,
+    truncated: false,
+  });
 });
 
 test("sanitizeGiftVoucherText: controls and invisible characters go silently; look-alikes map", () => {

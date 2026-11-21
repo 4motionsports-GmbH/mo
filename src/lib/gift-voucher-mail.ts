@@ -214,10 +214,19 @@ function shell(c: GiftVoucherMailContent, locale: "de" | "en"): string {
   });
 }
 
-/** The PDF of a voucher, or null (render failed — reported, never thrown). */
+/**
+ * The PDF of a voucher, or null (render failed, or the photo of a photo
+ * voucher could not be read — reported, never thrown; the caller retries,
+ * then mails code and link without the attachment).
+ */
 async function renderPdf(v: GiftVoucher, code: string): Promise<Buffer | null> {
   try {
     const photo = v.photoPathname ? await loadGiftVoucherPhoto(v.photoPathname) : null;
+    // Never the „Klassisch“ look in place of the customer's photo.
+    if (v.designKey === "photo" && v.photoPathname && !photo) {
+      reportError(new Error("gift voucher photo unavailable"), { route: ROUTE, phase: "photo", voucherId: v.id });
+      return null;
+    }
     const pdf = await renderGiftVoucherPdf(giftVoucherRenderInputFromVoucher(v, code, photo));
     return pdf && pdf.length > 0 ? pdf : null;
   } catch (err) {

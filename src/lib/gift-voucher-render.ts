@@ -8,7 +8,7 @@
 // - renderGiftVoucherPreview: JPEG previews for the storefront and the admin
 //   ("MUSTER" watermark when `sample`).
 // - renderGiftVoucherPrintSpreads: the two print.one SQ14 spreads
-//   (3378 × 1724 px, 300 dpi, sRGB, 3 mm bleed).
+//   (3378 × 1724 px, 300 dpi, sRGB, 3 mm bleed, baseline JPEG q 92).
 //
 // Fonts (Montserrat, Caveat — OFL, src/assets/fonts, traced into the routes by
 // next.config outputFileTracingIncludes) are read from disk and parsed once
@@ -48,6 +48,7 @@ import { getGiftVoucherBlob } from "./gift-voucher-blob";
 import type { GiftVoucher } from "./gift-voucher-store";
 import { reportError } from "./observability";
 import { MARGIN_X, PAGE_H, PAGE_W, assembleImagePdf, assemblePdf, brandHeaderOps, footerOp, textOp, wrapText } from "./pdf-core.mjs";
+import { createSlotLimiter } from "./slot-limiter.mjs";
 
 export interface GiftVoucherRenderInput {
   designKey: string;
@@ -115,19 +116,15 @@ export function loadGiftVoucherFonts(): Promise<GiftVoucherFonts> {
 // Helpers
 // ---------------------------------------------------------------------------
 
-let activeRenders = 0;
-const waiting: Array<() => void> = [];
+const renderSlots = createSlotLimiter(MAX_CONCURRENT_RENDERS);
 
-/** At most MAX_CONCURRENT_RENDERS rasterisations at a time per instance (memory, CPU). */
-async function withRenderSlot<T>(fn: () => Promise<T>): Promise<T> {
-  if (activeRenders >= MAX_CONCURRENT_RENDERS) await new Promise<void>((resolve) => waiting.push(resolve));
-  activeRenders++;
-  try {
-    return await fn();
-  } finally {
-    activeRenders--;
-    waiting.shift()?.();
-  }
+/**
+ * At most MAX_CONCURRENT_RENDERS rasterisations at a time per instance
+ * (memory, CPU) — a finished render hands its slot to the next waiter, so
+ * the limit holds under any interleaving (slot-limiter.mjs).
+ */
+function withRenderSlot<T>(fn: () => Promise<T>): Promise<T> {
+  return renderSlots.run(fn);
 }
 
 function designOf(key: string): Readonly<GiftVoucherDesign> {
@@ -183,12 +180,27 @@ async function photoDataUri(input: GiftVoucherRenderInput, width: number, height
   }
 }
 
+/**
+ * A delivered voucher (PDF, print file) of a photo design whose photo was
+ * given but could not be prepared fails instead of printing the „Klassisch“
+ * look in its place. (Previews keep the fallback; a photo that could not be
+ * READ is refused by the callers before they render.)
+ */
+function requirePreparedPhoto(input: GiftVoucherRenderInput, photo: string | null): void {
+  if (designOf(input.designKey).photo && input.photo && input.photo.length > 0 && !photo) {
+    throw new Error("gift voucher photo could not be prepared");
+  }
+}
+
 interface RasterOptions {
   width: number;
   height: number;
   background: string;
   quality: number;
-  /** Baseline JPEG (for PDF embedding) instead of mozjpeg's progressive scans. */
+  /**
+   * Baseline JPEG (for PDF embedding and the print files — what every RIP
+   * reads) instead of mozjpeg's progressive scans.
+   */
   baseline?: boolean;
   /** Pixel density metadata (dpi) + an sRGB profile (print files). */
   density?: number;
@@ -263,7 +275,7 @@ function fallbackPdf(input: GiftVoucherRenderInput): Buffer {
   y -= 12;
   line("F1", 9, giftVoucherIssuerLine(), 15);
   line("F1", 9, `${en ? "Terms" : "Bedingungen"}: ${giftVoucherTermsUrl().replace(/^https?:\/\//, "")}`, 13);
-  ops.push(footerOp());
+  ops.push(footerOp(input.locale));
   return assemblePdf([ops.join("")]);
 }
 
@@ -278,6 +290,7 @@ export async function renderGiftVoucherPdf(input: GiftVoucherRenderInput): Promi
       const fonts = await loadGiftVoucherFonts();
       const qr = qrMatrix();
       const photo = await photoDataUri(input, A4_W_PX, A4_HALF_PX);
+      requirePreparedPhoto(input, photo);
       const dims = { layout: "landscape" as const, widthPx: A4_W_PX, heightPx: A4_HALF_PX };
       const front = layoutPanel(input, fonts, { ...dims, panel: "front" }, photo, qr);
       const inside = layoutPanel(input, fonts, { ...dims, panel: "inside" }, null, qr);
@@ -389,6 +402,7 @@ export async function renderGiftVoucherPrintSpreads(input: GiftVoucherRenderInpu
       const fonts = await loadGiftVoucherFonts();
       const qr = qrMatrix();
       const photo = await photoDataUri(input, G.panelPx, G.panelPx);
+      requirePreparedPhoto(input, photo);
       const dims = { layout: "square" as const, widthPx: G.panelPx, heightPx: G.heightPx, bleedPx: G.bleedPx };
       const front = layoutPanel(input, fonts, { ...dims, panel: "front" }, photo, qr);
       const back = layoutPanel(input, fonts, { ...dims, panel: "back" }, null, qr);
@@ -407,7 +421,7 @@ export async function renderGiftVoucherPrintSpreads(input: GiftVoucherRenderInpu
         heightPx: G.heightPx,
         bleedPx: G.bleedPx,
       });
-      const raster = { width: G.widthPx, height: G.heightPx, background: "#ffffff", quality: 92, density: G.dpi };
+      const raster = { width: G.widthPx, height: G.heightPx, background: "#ffffff", quality: 92, density: G.dpi, baseline: true };
       const [outside, inside] = await Promise.all([rasterize(outsideSvg, raster), rasterize(insideSvg, raster)]);
       return { outside, inside };
     });

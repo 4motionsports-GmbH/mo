@@ -11,7 +11,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import opentype from "opentype.js";
 import QRCode from "qrcode";
-import { GIFT_VOUCHER_DESIGN_KEYS } from "./gift-voucher-core.mjs";
+import { GIFT_VOUCHER_DESIGN_KEYS, sanitizeGiftVoucherText } from "./gift-voucher-core.mjs";
 import {
   GIFT_VOUCHER_DESIGNS,
   GIFT_VOUCHER_PRINT_SPREAD,
@@ -132,6 +132,49 @@ function layoutOf(key, layout, panel, extra = {}) {
   });
 }
 
+/**
+ * The strings a layout draws, per font (every getPath call), with wrapped
+ * copies of the fonts so the shared FONTS stay untouched. `sizes`, when
+ * given, receives the size (px of the em) of each drawn string, per font.
+ * @param {(fonts: typeof FONTS) => unknown} run
+ * @param {Record<string, number[]>} [sizes]
+ * @returns {Record<string, string[]>}
+ */
+function drawnStrings(run, sizes) {
+  /** @type {Record<string, string[]>} */
+  const drawn = {};
+  const fonts = /** @type {typeof FONTS} */ (
+    Object.fromEntries(
+      Object.entries(FONTS).map(([key, f]) => {
+        drawn[key] = [];
+        if (sizes) sizes[key] = [];
+        const wrapped = Object.create(f, {
+          getPath: {
+            /** @param {string} text @param {number} x @param {number} y @param {number} fontSize @param {...any} rest */
+            value(text, x, y, fontSize, ...rest) {
+              drawn[key].push(text);
+              sizes?.[key].push(fontSize);
+              return f.getPath.call(this, text, x, y, fontSize, ...rest);
+            },
+          },
+        });
+        return [key, wrapped];
+      })
+    )
+  );
+  run(fonts);
+  return drawn;
+}
+
+/** @param {string} s */
+const words = (s) => s.replace(/\s+/g, " ").trim();
+
+/** Inside panels with the personal message: landscape (PDF size) and the card's left panel. */
+const MESSAGE_PANELS = /** @type {const} */ ([
+  ["landscape", "inside"],
+  ["square", "inside-message"],
+]);
+
 test("the designs are exactly GIFT_VOUCHER_DESIGN_KEYS, complete and frozen", () => {
   assert.deepEqual(
     GIFT_VOUCHER_DESIGNS.map((d) => d.key),
@@ -219,6 +262,22 @@ test("the artwork is deterministic", () => {
   }
 });
 
+test("every character the core lets through has a glyph in all six fonts", () => {
+  const candidates = [];
+  for (let cp = 0x21; cp <= 0x24f; cp++) candidates.push(cp);
+  for (let cp = 0x2000; cp <= 0x20cf; cp++) candidates.push(cp);
+  let kept = 0;
+  for (const cp of candidates) {
+    const ch = String.fromCodePoint(cp);
+    if (sanitizeGiftVoucherText(ch, { max: 5 }).text !== ch) continue;
+    kept++;
+    for (const [name, f] of Object.entries(FONTS)) {
+      assert.ok(f.charToGlyphIndex(ch) > 0, `U+${cp.toString(16).padStart(4, "0")} ${ch} passes the core but ${name} has no glyph`);
+    }
+  }
+  assert.ok(kept > 300, `${kept} printable characters checked`);
+});
+
 test("characters the fonts lack are dropped, not drawn as boxes, and nothing breaks", () => {
   const l = layoutOf("birthday", "landscape", "inside", {
     data: { ...DATA, message: "Hallo 😀 Welt\u0007 ✨", recipientName: "Zoë 🎉", senderName: "Jo" },
@@ -234,6 +293,186 @@ test("characters the fonts lack are dropped, not drawn as boxes, and nothing bre
   );
 });
 
+test("a message with paragraph breaks prints every line — nothing cut, no ellipsis", () => {
+  const lena =
+    "Liebe Lena,\n\nalles Liebe zum Geburtstag! Such dir etwas Schönes aus, das dich beim Training begleitet – ob neue Hanteln oder eine Matte.\n\nDein Jonas";
+  const papa =
+    "Hallo Papa,\n\ndanke für alles, was du für uns tust. Jetzt bist du mal dran: gönn dir was Gutes für dein Home-Gym!\n\nFrohe Weihnachten\nAnna & Tom";
+  for (const [layout, panel] of MESSAGE_PANELS) {
+    for (const message of [lena, papa]) {
+      const drawn = drawnStrings((fonts) => layoutOf("classic", layout, panel, { fonts, data: { ...DATA, message } }));
+      assert.equal(drawn.script.join(" "), words(message), `${layout}: ${JSON.stringify(drawn.script.slice(-2))}`);
+      assert.deepEqual(drawn.scriptBold, ["— Jonas"]);
+    }
+  }
+});
+
+test("every message the core accepts fits whole (a sweep with blank lines and long senders)", () => {
+  const vocab = (
+    "Liebe Lieber Hallo alles Gute zum Geburtstag viel Freude beim Training mit deinen neuen Hanteln oder einer Matte " +
+    "herzlichen Glückwunsch Gesundheit Energie bleib so sportlich wie du bist genieße deinen Tag Deine Familie Freunde"
+  ).split(" ");
+  let seed = 11;
+  const rnd = () => (seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648;
+  let checked = 0;
+  for (let i = 0; i < 24; i++) {
+    const paragraphs = 2 + (i % 4);
+    const target = 70 + ((i * 53) % 270);
+    const paras = [];
+    for (let p = 0; p < paragraphs; p++) {
+      let t = "";
+      while (t.length < target / paragraphs) t += (t ? " " : "") + vocab[Math.floor(rnd() * vocab.length)];
+      paras.push(t);
+    }
+    const s = sanitizeGiftVoucherText(paras.join(i % 3 ? "\n\n" : "\n"), { max: 350, maxLines: 8 });
+    if (s.truncated || !s.text) continue;
+    const senderName = i % 2 ? "Familie Schönberger-Wiesenthal & Freunde" : "Jonas";
+    for (const [layout, panel] of MESSAGE_PANELS) {
+      const drawn = drawnStrings((fonts) => layoutOf("birthday", layout, panel, { fonts, data: { ...DATA, message: s.text, senderName } }));
+      assert.equal(drawn.script.join(" "), words(s.text), `${layout} #${i}`);
+      assert.deepEqual(drawn.scriptBold, [`— ${senderName}`], `${layout} #${i}`);
+      checked++;
+    }
+  }
+  assert.ok(checked >= 40, `${checked} layouts checked`);
+});
+
+test("only a message beyond the core's limits is cut, with an ellipsis", () => {
+  const huge = Array.from({ length: 40 }, (_, i) => `Zeile ${i + 1} mit etwas mehr Text darin`).join("\n\n");
+  for (const [layout, panel] of MESSAGE_PANELS) {
+    const drawn = drawnStrings((fonts) => layoutOf("thanks", layout, panel, { fonts, data: { ...DATA, message: huge } }));
+    assert.ok(drawn.script.length > 3 && drawn.script.length < 40, `${layout}: ${drawn.script.length} lines`);
+    assert.match(drawn.script[drawn.script.length - 1], /…$/);
+    // Lettering stays on the panel.
+    const l = layoutOf("thanks", layout, panel, { data: { ...DATA, message: huge } });
+    for (const e of l.elements) {
+      if (e.role !== "text" || !e.bbox) continue;
+      assert.ok(e.bbox.y1 >= 0 && e.bbox.y2 <= l.heightPx, `${layout}: ${JSON.stringify(e.bbox)}`);
+    }
+  }
+});
+
+test("a sender of up to 40 characters shrinks to the column instead of being shortened", () => {
+  const senders = [
+    "Deine Freunde vom Lauftreff",
+    "Deine Kolleginnen und Kollegen",
+    "Familie Müller-Lüdenscheidt & Co.",
+    "Familie Schönberger-Wiesenthal & Freunde",
+    "Oma Gertrud, Opa Heinz und Tante Marlene",
+    "M".repeat(40),
+    // The widest glyphs Caveat has (0.8 em): the core lets 40 of them through.
+    "¼".repeat(40),
+    "Æ".repeat(40),
+  ];
+  const ptPerMm = 72 / 25.4;
+  for (const [layout, panel] of MESSAGE_PANELS) {
+    for (const message of ["Alles Gute!", DATA.message]) {
+      for (const senderName of senders) {
+        /** @type {Record<string, number[]>} */
+        const sizes = {};
+        /** @type {import("./gift-voucher-designs.mjs").GiftVoucherPanelLayout | undefined} */
+        let l;
+        const drawn = drawnStrings((fonts) => (l = layoutOf("classic", layout, panel, { fonts, data: { ...DATA, message, senderName } })), sizes);
+        assert.ok(l);
+        const what = `${layout}: ${senderName}`;
+        assert.deepEqual(drawn.scriptBold, [`— ${senderName}`], what);
+        // Still legible: even 40 of the widest glyphs stay at 6 pt or more in the narrowest column.
+        assert.ok((sizes.scriptBold[0] / l.pxPerMm) * ptPerMm >= 6, `${what}: ${((sizes.scriptBold[0] / l.pxPerMm) * ptPerMm).toFixed(1)} pt`);
+        // The sender (the last lettering of the panel) stays in the message column: left of the code
+        // card on the landscape inside, inside the safe area on the card.
+        const sender = /** @type {{ x1: number, x2: number }} */ (l.elements.filter((e) => e.role === "text").pop()?.bbox);
+        if (layout === "landscape") {
+          const card = l.elements.find((e) => e.role === "decor" && /^<rect [^>]* rx="[^"]*" fill="#[0-9a-f]{6}" stroke=/.test(e.svg));
+          assert.ok(card?.bbox && sender.x2 < card.bbox.x1, `${what}: the sender runs into the code card`);
+        } else {
+          const safe = l.bleedPx + GIFT_VOUCHER_PRINT_SPREAD.safeMarginMm * l.pxPerMm;
+          assert.ok(sender.x1 >= safe && sender.x2 <= l.widthPx - safe, `${what}: the sender leaves the safe area`);
+        }
+      }
+    }
+  }
+});
+
+test("a long issuer line (160 characters) wraps instead of being cut, and the code card stays above the footer", () => {
+  const issuerLine =
+    "4motionsports GmbH · Am Weidegrund 1 · 82194 Gröbenzell · Geschäftsführerin: Dr. Maximiliane Mustermann · " +
+    "Amtsgericht München HRB 123456 · USt-IdNr. DE123456789";
+  assert.equal(issuerLine.length, 160);
+  const tokens = (/** @type {string} */ s) => words(s).split(" ").filter((t) => t !== "·");
+  const wanted = tokens(issuerLine).join(" ");
+  for (const { key } of GIFT_VOUCHER_DESIGNS) {
+    for (const [layout, panel, sizes] of /** @type {const} */ ([
+      ["landscape", "inside", {}],
+      ["square", "inside-info", {}],
+      ["square", "inside-info", { widthPx: 800, heightPx: 800, bleedPx: 0 }],
+    ])) {
+      /** @type {import("./gift-voucher-designs.mjs").GiftVoucherPanelLayout | undefined} */
+      let l;
+      const drawn = drawnStrings((fonts) => (l = layoutOf(key, layout, panel, { fonts, ...sizes, data: { ...DATA, issuerLine } })));
+      assert.ok(l);
+      assert.ok(!drawn.regular.some((s) => s.includes("…")), `${key} ${layout}: nothing shortened`);
+      assert.ok(tokens(drawn.regular.join(" ")).join(" ").includes(wanted), `${key} ${layout}: the whole issuer line is printed`);
+      const card = l.elements.find((e) => e.role === "decor" && /^<rect [^>]* rx="[^"]*" fill="#[0-9a-f]{6}" stroke=/.test(e.svg));
+      assert.ok(card?.bbox);
+      const cardBottom = card.bbox.y2;
+      const footer = l.elements.filter((e) => (e.role === "text" || e.role === "number") && e.bbox && e.bbox.y1 > cardBottom);
+      assert.ok(footer.length >= 3, `${key} ${layout}: the footer sits below the card`);
+      assert.ok(Math.min(...footer.map((e) => /** @type {{ y1: number }} */ (e.bbox).y1)) - cardBottom > 3 * l.pxPerMm, `${key} ${layout}: gap card → footer`);
+      assert.ok(Math.max(...footer.map((e) => /** @type {{ y2: number }} */ (e.bbox).y2)) <= l.heightPx - l.bleedPx - 5 * l.pxPerMm, `${key} ${layout}: footer inside the safe area`);
+      assert.ok(footer.some((e) => e.role === "number"), `${key} ${layout}: the voucher number is still its own element`);
+    }
+  }
+});
+
+test("a „für“ of up to 40 characters is never shortened — a long one breaks onto a second line", () => {
+  const { panelPx, bleedPx, safeMarginMm } = GIFT_VOUCHER_PRINT_SPREAD;
+  const names = [
+    "Lena",
+    "Familie Müller-Lüdenscheidt",
+    "Anna-Katharina von Hohenberg",
+    "Maximiliane Großmann-Schönberger",
+    "Maximiliane Großmann-Schönberger-Wiesen",
+    "Oma Gertrud, Opa Heinz und Tante Marlene",
+    "Maximilianegroßmannschönbergerwiesenthal",
+    "W".repeat(40),
+    // One break next to a run that does not fit even at 50 %: split between letters instead.
+    "W " + "W".repeat(38),
+    "Jo " + "W".repeat(37),
+    "W".repeat(37) + " Jo",
+    "W-" + "W".repeat(38),
+  ];
+  for (const { key } of GIFT_VOUCHER_DESIGNS) {
+    for (const layout of /** @type {const} */ (["landscape", "square"])) {
+      for (const recipientName of names) {
+        /** @type {import("./gift-voucher-designs.mjs").GiftVoucherPanelLayout | undefined} */
+        let l;
+        const drawn = drawnStrings((fonts) => (l = layoutOf(key, layout, "front", { fonts, data: { ...DATA, recipientName, amountCents: 50000 } })));
+        assert.ok(l);
+        const what = `${key} ${layout} ${JSON.stringify(recipientName)}`;
+        // Semibold: wordmark, site, eyebrow — then the name, one string per line.
+        const nameLines = drawn.semibold.slice(3);
+        assert.ok(nameLines.length >= 1 && nameLines.length <= 2, `${what}: ${JSON.stringify(nameLines)}`);
+        assert.ok(!nameLines.some((s) => s.includes("…")), `${what}: shortened ${JSON.stringify(nameLines)}`);
+        assert.equal(nameLines.join("").replace(/ /g, ""), recipientName.replace(/ /g, ""), what);
+        assert.equal(drawn.regular.filter((s) => s === "für ").length, 1, `${what}: „für“ once`);
+        if (recipientName === "Lena") assert.equal(nameLines.length, 1);
+        // The name sits below the value and stays on the panel (print: in the safe area).
+        const lastValue = l.elements.map((e) => e.role).lastIndexOf("value");
+        const valueBottom = Math.max(...l.elements.filter((e) => e.role === "value" && e.bbox).map((e) => /** @type {{ y2: number }} */ (e.bbox).y2));
+        const nameBoxes = l.elements.slice(lastValue + 1).filter((e) => e.role === "text" && e.bbox).map((e) => /** @type {{ x1: number, y1: number, x2: number, y2: number }} */ (e.bbox));
+        assert.ok(nameBoxes.length >= 2, what);
+        const lo = layout === "square" ? bleedPx + safeMarginMm * l.pxPerMm : 0;
+        const hi = layout === "square" ? panelPx - bleedPx - safeMarginMm * l.pxPerMm : l.widthPx;
+        const hiY = layout === "square" ? hi : l.heightPx;
+        for (const b of nameBoxes) {
+          assert.ok(b.y1 > valueBottom, `${what}: the name runs into the value`);
+          assert.ok(b.x1 >= lo && b.y1 >= lo && b.x2 <= hi && b.y2 <= hiY, `${what}: ${JSON.stringify(b)} outside the panel's safe area`);
+        }
+      }
+    }
+  }
+});
+
 test("the photo design shows the photo, and falls back to classic without one", () => {
   const withPhoto = layoutOf("photo", "landscape", "front");
   assert.ok(withPhoto.elements.some((e) => e.role === "image"));
@@ -243,6 +482,86 @@ test("the photo design shows the photo, and falls back to classic without one", 
   assert.match(without.svg, /-knurl"/, "classic's knurl pattern");
   const injected = layoutOf("photo", "landscape", "front", { photoDataUri: 'data:image/jpeg;base64,AAAA" onload="x' });
   assert.ok(!injected.svg.includes("onload"), "an odd data URI is never embedded");
+});
+
+/** WCAG relative luminance of a "#rrggbb" colour. @param {string} hex */
+function luminance(hex) {
+  const [r, g, b] = [1, 3, 5].map((i) => {
+    const v = parseInt(hex.slice(i, i + 2), 16) / 255;
+    return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+  });
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
+
+/** WCAG contrast ratio of two "#rrggbb" colours. @param {string} a @param {string} b */
+function contrast(a, b) {
+  const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x);
+  return (hi + 0.05) / (lo + 0.05);
+}
+
+test("photo front: the white eyebrow keeps 4.5 : 1 over a bright photo, also above a two-line „für“ (legibility shade)", () => {
+  const names = [null, "Lena", "Maximiliane Großmann-Schönberger", "Oma Gertrud, Opa Heinz und Tante Marlene", "W".repeat(40)];
+  for (const layout of /** @type {const} */ (["landscape", "square"])) {
+    let twoLine = 0;
+    for (const recipientName of names) {
+      for (const amountCents of [500, 5000, 50000]) {
+        /** @type {import("./gift-voucher-designs.mjs").GiftVoucherPanelLayout | undefined} */
+        let l;
+        const drawn = drawnStrings((fonts) => (l = layoutOf("photo", layout, "front", { fonts, data: { ...DATA, recipientName, amountCents } })));
+        assert.ok(l);
+        // Semibold: wordmark, site, eyebrow — then one string per line of the name.
+        if (drawn.semibold.length === 5) twoLine++;
+        const what = `${layout} ${amountCents} ${JSON.stringify(recipientName)}`;
+        const m = /<linearGradient id="[^"]*shade-b" [^>]*y1="([\d.]+)" x2="0" y2="([\d.]+)">(.*?)<\/linearGradient>/.exec(l.svg);
+        assert.ok(m, `${what}: the lower shade`);
+        const [y1, y2] = [Number(m[1]), Number(m[2])];
+        const stops = [...m[3].matchAll(/offset="([\d.]+)"[^>]*stop-opacity="([\d.]+)"/g)].map((s) => [Number(s[1]), Number(s[2])]);
+        /** @param {number} y px */
+        const opacityAt = (y) => {
+          const t = Math.min(1, Math.max(0, (y - y1) / (y2 - y1)));
+          for (let i = 1; i < stops.length; i++) {
+            const [t0, a0] = stops[i - 1];
+            const [t1, a1] = stops[i];
+            if (t <= t1) return a0 + ((a1 - a0) * (t - t0)) / (t1 - t0);
+          }
+          return stops[stops.length - 1][1];
+        };
+        // The eyebrow is the last text before the value; its cap line is the lightest spot behind it.
+        const firstValue = l.elements.findIndex((e) => e.role === "value");
+        const eyebrow = l.elements.slice(0, firstValue).filter((e) => e.role === "text").pop();
+        assert.ok(eyebrow?.bbox);
+        const photo = 0xf2; // an almost white photo (#f2f2f2)
+        const grey = Math.round(photo * (1 - opacityAt(eyebrow.bbox.y1)));
+        const behind = `#${grey.toString(16).padStart(2, "0").repeat(3)}`;
+        assert.ok(contrast("#ffffff", behind) >= 4.5, `${what}: white on ${behind} = ${contrast("#ffffff", behind).toFixed(2)} : 1`);
+      }
+    }
+    assert.ok(twoLine >= 3, `${layout}: ${twoLine} two-line names checked`);
+  }
+});
+
+test("small print (number, labels, footer, the back's site line) has ≥ 4.5 : 1 on paper and card", () => {
+  /** @param {{ svg: string } | undefined} e */
+  const fillOf = (e) => /** @type {string} */ (/ fill="(#[0-9a-f]{6})"/.exec(e?.svg ?? "")?.[1]);
+  for (const { key } of GIFT_VOUCHER_DESIGNS) {
+    for (const [layout, panel] of /** @type {const} */ ([["landscape", "inside"], ["square", "inside-info"]])) {
+      const l = layoutOf(key, layout, panel);
+      const paper = fillOf(l.elements.find((e) => e.role === "background"));
+      const card = fillOf(l.elements.find((e) => e.role === "decor" && /^<rect [^>]* rx="[^"]*" fill="#[0-9a-f]{6}" stroke=/.test(e.svg)));
+      // The footer's voucher number is drawn in the small-print colour (as are WERT, GÜLTIG BIS, „Guthaben prüfen“).
+      const label = fillOf(l.elements.find((e) => e.role === "number"));
+      assert.ok(paper && card && label, `${key} ${layout}: colours found`);
+      for (const [surface, bg] of [["paper", paper], ["card", card]]) {
+        assert.ok(contrast(label, bg) >= 4.5, `${key} ${layout}: ${label} on ${surface} ${bg} = ${contrast(label, bg).toFixed(2)} : 1`);
+      }
+      const labels = l.elements.filter((e) => e.role === "text" && fillOf(e) === label);
+      assert.ok(labels.length >= 4, `${key} ${layout}: labels and footer share the small-print colour`);
+    }
+    const back = layoutOf(key, "square", "back");
+    const site = back.elements.filter((e) => e.role === "text").pop();
+    const bg = fillOf(back.elements.find((e) => e.role === "background"));
+    assert.ok(contrast(fillOf(site), bg) >= 4.5, `${key} back: site line ${contrast(fillOf(site), bg).toFixed(2)} : 1`);
+  }
 });
 
 test("a sample carries the watermark, a real voucher does not", () => {
