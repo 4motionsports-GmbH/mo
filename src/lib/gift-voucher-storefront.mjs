@@ -43,6 +43,12 @@ export const GIFT_VOUCHER_PHOTO_FORMATS = Object.freeze(/** @type {const} */ (["
 export const GIFT_VOUCHER_PHOTO_MAX_PIXELS = 40_000_000;
 /** Shortest side a photo needs — anything smaller would print as a blur. */
 export const GIFT_VOUCHER_PHOTO_MIN_SIDE = 500;
+/**
+ * Shortest side the Premium-Karte wants (about 174 ppi on its 146 mm front
+ * incl. bleed): a photo between GIFT_VOUCHER_PHOTO_MIN_SIDE and this is
+ * accepted but prints soft — the page warns when the card is chosen.
+ */
+export const GIFT_VOUCHER_PHOTO_PRINT_MIN_SIDE = 1000;
 /** Longest side of the stored photo (px); larger photos are scaled down, never up. */
 export const GIFT_VOUCHER_PHOTO_MAX_SIDE = 2400;
 /** Largest JSON body of the storefront routes (a draft is well under 2 KB). */
@@ -274,13 +280,15 @@ export function formatGiftVoucherDate(isoDate, locale) {
  *   description: { de: string, en: string },
  *   photo: boolean,
  *   colors: Readonly<Record<string, string>>,
+ *   defaultMessage: { de: string, en: string },
  * }} GiftVoucherDesignLike
  */
 
 /**
  * The config the voucher page loads (GET /api/gift-vouchers/config, spec
- * §8.1): availability, the designs with their decorative backgrounds for
- * the live preview, features, text limits, occasions and tones for „Mit Mo
+ * §8.1): availability, the designs with their decorative backgrounds and
+ * default lines (what an empty message prints) for the live preview,
+ * features, text and photo limits, occasions and tones for „Mit Mo
  * formulieren“, the print countries, the validity and the font URL. Public
  * shop data only. A design whose background fails to build gets empty
  * previews instead of breaking the page.
@@ -319,6 +327,7 @@ export function buildGiftVoucherConfig(input) {
       key: d.key,
       name: pick(locale, d.name),
       description: pick(locale, d.description),
+      defaultMessage: pick(locale, d.defaultMessage),
       photo: d.photo === true,
       colors: { ...d.colors },
       previewSvg: {
@@ -333,6 +342,7 @@ export function buildGiftVoucherConfig(input) {
       message: L.message,
       messageLines: L.messageLines,
       photoMaxBytes: GIFT_VOUCHER_PHOTO_MAX_BYTES,
+      photoPrintMinSide: GIFT_VOUCHER_PHOTO_PRINT_MIN_SIDE,
     },
     occasions: GIFT_VOUCHER_OCCASIONS.map((key) => ({ key, label: pick(locale, GIFT_VOUCHER_OCCASION_LABELS[key]) })),
     tones: GIFT_VOUCHER_TONES.map((key) => ({ key, label: pick(locale, GIFT_VOUCHER_TONE_LABELS[key]) })),
