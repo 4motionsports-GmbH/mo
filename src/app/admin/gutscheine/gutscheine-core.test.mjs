@@ -111,6 +111,8 @@ test("labels and tones fall back instead of throwing", () => {
   assert.match(holdReasonHint("risk"), /riskant/);
   assert.match(holdReasonHint("refunded"), /erstattet, bevor der Gutschein ausgestellt war/);
   assert.match(attentionHint("unknown_product_line"), /GIFT_VOUCHER_PRODUCT_HANDLE \/ GIFT_VOUCHER_PRINT_PRODUCT_HANDLE/);
+  assert.equal(attentionLabel("refund_after_use_ok"), "Erstattet, eingelöst — geklärt");
+  assert.match(attentionHint("cancelled_after_use_ok"), /als geklärt markiert/);
   assert.equal(MANUAL_REASON_OPTIONS.map((o) => o.value).join(","), "kulanz,marketing,gewinnspiel,firmengeschenk,sonstiges");
   assert.equal(MANUAL_REASON_OPTIONS[0].label, "Kulanz");
 });
@@ -280,6 +282,12 @@ test("parseGutscheinAction validates action, id, note and reason", () => {
   assert.equal(other.ok && other.note, null);
   assert.equal(other.ok && other.reason, null);
   assert.equal(GUTSCHEIN_ACTIONS.includes("reveal_code"), true);
+
+  // „Als geklärt markieren“: any flag — except an acknowledged revocation (it is „geklärt“ and must stay).
+  assert.equal(voucherActions({ ...base, attention: "refund_after_use" }).clearAttention, true);
+  assert.equal(voucherActions({ ...base, attention: "print_without_address" }).clearAttention, true);
+  assert.equal(voucherActions({ ...base, attention: "refund_after_use_ok" }).clearAttention, false);
+  assert.equal(voucherActions({ ...base, attention: "cancelled_after_use_ok" }).clearAttention, false);
 });
 
 test("actionErrorStatus maps library codes to HTTP statuses", () => {

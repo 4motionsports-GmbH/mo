@@ -29,6 +29,7 @@ import {
   sanitizeGiftVoucherText,
   validatePostalAddress,
 } from "../../../lib/gift-voucher-core.mjs";
+import { isAcknowledgedRevocation } from "../../../lib/gift-voucher-issue-core.mjs";
 import { eurFromCents, plural } from "../../../lib/admin-format.mjs";
 
 // ---------------------------------------------------------------------------
@@ -247,6 +248,10 @@ export const ATTENTION_HINTS = Object.freeze({
   print_cancel_too_late: "Der Druckauftrag war schon in Produktion und ließ sich nicht mehr stornieren.",
   unknown_product_line:
     "Eine bezahlte Bestellzeile trägt einen Gutschein-Entwurf, liegt aber weder auf dem Gutschein- noch auf dem Druck-Zusatzprodukt — meist eine bezahlte Premium-Karte auf einem anderen Produkt. Die Karte von Hand drucken oder erstatten, dann GIFT_VOUCHER_PRODUCT_HANDLE / GIFT_VOUCHER_PRINT_PRODUCT_HANDLE und die Produktauswahl im Theme abgleichen.",
+  refund_after_use_ok:
+    "Erstattet, aber schon (teilweise) eingelöst — als geklärt markiert. Die Karte bleibt aktiv; Mo meldet den Gutschein bei weiteren Bestelländerungen nicht noch einmal.",
+  cancelled_after_use_ok:
+    "Storniert, aber schon (teilweise) eingelöst — als geklärt markiert. Die Karte bleibt aktiv; Mo meldet den Gutschein bei weiteren Bestelländerungen nicht noch einmal.",
 });
 
 /** @param {unknown} key */
@@ -276,7 +281,8 @@ export function voucherActions(v) {
     syncBalance: (issued || v.status === "deactivated") && Boolean(v.shopifyGiftCardId),
     pdf: issued && v.hasCode,
     revealCode: v.hasCode,
-    clearAttention: v.attention != null && v.attention !== "",
+    // An acknowledged revoke flag is „geklärt“ already — it stays (it keeps the unit revoked).
+    clearAttention: v.attention != null && v.attention !== "" && !isAcknowledgedRevocation(v.attention),
   };
 }
 

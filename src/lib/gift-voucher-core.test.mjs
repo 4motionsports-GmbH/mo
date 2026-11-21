@@ -43,7 +43,6 @@ import {
   extractGiftVoucherOrder,
   pairPrintLines,
   refundedQuantities,
-  unitsToRevoke,
   decideGiftVoucherIssue,
   decideManualGiftVoucher,
   planGiftVoucherRetry,
@@ -93,9 +92,10 @@ test("vocabulary: every status, reason and print status has a German label", () 
   assert.equal(GIFT_VOUCHER_HOLD_REASON_LABELS.refunded, "Bestellung (teilweise) erstattet");
   assert.deepEqual(Object.keys(GIFT_VOUCHER_ATTENTION_LABELS), [
     "refund_after_use", "cancelled_after_use", "print_without_voucher", "print_without_address", "deactivate_failed", "print_cancel_too_late",
-    "unknown_product_line",
+    "unknown_product_line", "refund_after_use_ok", "cancelled_after_use_ok",
   ]);
   assert.equal(GIFT_VOUCHER_ATTENTION_LABELS.unknown_product_line, "Bestellzeile mit Gutschein-Entwurf auf unbekanntem Produkt");
+  assert.equal(GIFT_VOUCHER_ATTENTION_LABELS.refund_after_use_ok, "Erstattet, eingelöst — geklärt");
   assert.ok(isGiftVoucherStatus("issued"));
   assert.ok(!isGiftVoucherStatus("ISSUED"));
   assert.ok(isPrintJobStatus("printing"));
@@ -727,17 +727,6 @@ test("refundedQuantities: sums refund_line_items per line over every refund", ()
   assert.equal(m.size, 2);
   assert.equal(refundedQuantities(null).size, 0);
   assert.equal(refundedQuantities({ refunds: "x" }).size, 0);
-});
-
-test("unitsToRevoke: highest units first; all when cancelled; never more than the quantity", () => {
-  assert.deepEqual(unitsToRevoke({ lineItemId: "v", quantity: 3, refundedQty: 1, cancelled: false }), [2]);
-  assert.deepEqual(unitsToRevoke({ lineItemId: "v", quantity: 3, refundedQty: 2 }), [2, 1]);
-  assert.deepEqual(unitsToRevoke({ lineItemId: "v", quantity: 3, refundedQty: 5 }), [2, 1, 0]);
-  assert.deepEqual(unitsToRevoke({ lineItemId: "v", quantity: 3, refundedQty: 0, cancelled: true }), [2, 1, 0]);
-  assert.deepEqual(unitsToRevoke({ lineItemId: "v", quantity: 2, refundedQty: 0 }), []);
-  assert.deepEqual(unitsToRevoke({ lineItemId: "v", quantity: 0, cancelled: true }), []);
-  assert.deepEqual(unitsToRevoke({ lineItemId: "v", quantity: 2, refundedQty: -1 }), []);
-  assert.deepEqual(unitsToRevoke({ lineItemId: "v", quantity: 1.5, cancelled: true }), []);
 });
 
 // ── decisions ────────────────────────────────────────────────────────────────

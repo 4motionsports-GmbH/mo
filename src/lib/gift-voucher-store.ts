@@ -1151,6 +1151,67 @@ export async function setGiftVoucherAttention(id: number, key: string | null, sq
   }
 }
 
+/**
+ * Change the attention flag only while it is still `expected` (an operator
+ * acknowledging a revoke flag — never over a flag that moved on meanwhile).
+ * True when changed.
+ */
+export async function replaceGiftVoucherAttention(
+  id: number,
+  expected: string,
+  key: string | null,
+  sql: Sql | null = getSql()
+): Promise<boolean> {
+  if (!sql) return false;
+  try {
+    const rows = (await sql`
+      UPDATE gift_vouchers SET attention = ${cut(key, 100)}, updated_at = now()
+       WHERE id = ${id} AND attention = ${expected}
+      RETURNING id
+    `) as Row[];
+    return rows.length > 0;
+  } catch (err) {
+    report(err, "replaceAttention");
+    return false;
+  }
+}
+
+/**
+ * Move a refund's revocation flag from a (partly) spent unit to an untouched
+ * sibling of the same line — single winner: one transaction locks both rows,
+ * then moves the flag only while `fromId` still carries it and `toId` is
+ * issued with a card and no attention. When several order updates resolve
+ * the same flag at once, the first moves it and the others find it gone.
+ * True when moved.
+ */
+export async function moveGiftVoucherRevocation(
+  fromId: number,
+  toId: number,
+  flag: string,
+  sql: Sql | null = getSql()
+): Promise<boolean> {
+  if (!sql || fromId === toId) return false;
+  try {
+    const results = (await sql.transaction([
+      sql`SELECT id FROM gift_vouchers WHERE id IN (${fromId}, ${toId}) ORDER BY id FOR UPDATE`,
+      sql`
+        UPDATE gift_vouchers g
+           SET attention = CASE WHEN g.id = ${toId} THEN ${flag}::text ELSE NULL END, updated_at = now()
+         WHERE g.id IN (${fromId}, ${toId})
+           AND EXISTS (SELECT 1 FROM gift_vouchers f WHERE f.id = ${fromId} AND f.attention = ${flag}::text)
+           AND EXISTS (SELECT 1 FROM gift_vouchers t
+                        WHERE t.id = ${toId} AND t.status = 'issued' AND t.attention IS NULL
+                          AND t.shopify_gift_card_id IS NOT NULL)
+        RETURNING g.id
+      `,
+    ])) as Row[][];
+    return (results[1] ?? []).length === 2;
+  } catch (err) {
+    report(err, "moveRevocation");
+    return false;
+  }
+}
+
 /** The operator's internal note (trimmed, at most 1000 characters; empty clears). */
 export async function setGiftVoucherAdminNote(id: number, note: string | null, sql: Sql | null = getSql()): Promise<boolean> {
   if (!sql) return false;
@@ -1382,7 +1443,8 @@ function likePattern(q: string): string {
 
 /**
  * The admin list, newest first, with filters: status, source, attention
- * only, and a search over the voucher number (G-2026-00042), the order name,
+ * only („Achtung“ — an acknowledged revoke flag is no „Achtung“ any more),
+ * and a search over the voucher number (G-2026-00042), the order name,
  * buyer / recipient name and e-mail, and the last four characters of the
  * code. Pages of 1–100 rows; `total` counts every match.
  */
@@ -1413,7 +1475,8 @@ export async function listGiftVouchers(
         LEFT JOIN gift_voucher_print_jobs pj ON pj.voucher_id = v.id
        WHERE (${status}::text IS NULL OR v.status = ${status}::text)
          AND (${source}::text IS NULL OR v.source = ${source}::text)
-         AND (${attentionOnly}::boolean = false OR v.attention IS NOT NULL)
+         AND (${attentionOnly}::boolean = false
+              OR (v.attention IS NOT NULL AND v.attention NOT IN ('refund_after_use_ok', 'cancelled_after_use_ok')))
          AND (${pattern}::text IS NULL
               OR v.id = ${numberId}::bigint
               OR v.code_last4 = ${last4}::text
@@ -1430,7 +1493,8 @@ export async function listGiftVouchers(
         FROM gift_vouchers v
        WHERE (${status}::text IS NULL OR v.status = ${status}::text)
          AND (${source}::text IS NULL OR v.source = ${source}::text)
-         AND (${attentionOnly}::boolean = false OR v.attention IS NOT NULL)
+         AND (${attentionOnly}::boolean = false
+              OR (v.attention IS NOT NULL AND v.attention NOT IN ('refund_after_use_ok', 'cancelled_after_use_ok')))
          AND (${pattern}::text IS NULL
               OR v.id = ${numberId}::bigint
               OR v.code_last4 = ${last4}::text
@@ -1484,7 +1548,8 @@ export async function giftVoucherSummary(sql: Sql | null = getSql()): Promise<Gi
         COALESCE(SUM(GREATEST(amount_cents - balance_cents, 0)) FILTER (
           WHERE status IN ('issued', 'deactivated') AND balance_cents IS NOT NULL), 0)::bigint AS redeemed_cents,
         count(*) FILTER (WHERE status = 'held')::int AS held_count,
-        count(*) FILTER (WHERE attention IS NOT NULL)::int AS attention_count,
+        count(*) FILTER (WHERE attention IS NOT NULL
+                           AND attention NOT IN ('refund_after_use_ok', 'cancelled_after_use_ok'))::int AS attention_count,
         (SELECT count(*) FROM gift_voucher_print_jobs
           WHERE status IN ('review', 'queued', 'submitting', 'submitted', 'printing'))::int AS open_print_jobs,
         (SELECT count(*) FROM gift_voucher_drafts WHERE created_at >= now() - interval '30 days')::int AS draft_count_30d

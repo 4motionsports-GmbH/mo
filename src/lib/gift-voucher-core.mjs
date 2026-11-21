@@ -129,6 +129,10 @@ export const GIFT_VOUCHER_ATTENTION_LABELS = Object.freeze({
   deactivate_failed: "Sperren in Shopify fehlgeschlagen",
   print_cancel_too_late: "Druckauftrag ließ sich nicht mehr stornieren",
   unknown_product_line: "Bestellzeile mit Gutschein-Entwurf auf unbekanntem Produkt",
+  // The acknowledged revoke flags (gift-voucher-issue-core.mjs GIFT_VOUCHER_REVOKE_ACK_ATTENTION):
+  // kept on the row, but no „Achtung“ any more.
+  refund_after_use_ok: "Erstattet, eingelöst — geklärt",
+  cancelled_after_use_ok: "Storniert, eingelöst — geklärt",
 });
 
 /** @param {unknown} v @returns {v is GiftVoucherStatusKey} */
@@ -737,21 +741,6 @@ export function refundedQuantities(payload) {
       out.set(lineItemId, (out.get(lineItemId) ?? 0) + qty);
     }
   }
-  return out;
-}
-
-/**
- * The unit indexes of a voucher line to revoke, highest first: every unit
- * when the order is cancelled, else as many as were refunded.
- * @param {{ lineItemId?: string, quantity: number, refundedQty?: number, cancelled?: boolean }} input
- * @returns {number[]}
- */
-export function unitsToRevoke({ quantity, refundedQty = 0, cancelled = false }) {
-  const q = Number.isSafeInteger(quantity) && quantity > 0 ? quantity : 0;
-  const refunded = Number.isSafeInteger(refundedQty) && refundedQty > 0 ? refundedQty : 0;
-  const n = cancelled ? q : Math.min(refunded, q);
-  const out = [];
-  for (let i = q - 1; i >= q - n; i--) out.push(i);
   return out;
 }
 

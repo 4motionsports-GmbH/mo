@@ -13,7 +13,10 @@
 //   deactivate {reason}  „Sperren“ — the card is disabled in Shopify (final)
 //   sync_balance     „Abgleichen“ — the balance from Shopify
 //   note {note}      the internal note (≤ 1000 characters; empty clears)
-//   clear_attention  „Als geklärt markieren“ (drops the attention flag)
+//   clear_attention  „Als geklärt markieren“ (clearGiftVoucherAttention: a note
+//                    is dropped; a revoke flag is first checked against Shopify —
+//                    an untouched card is deactivated, a spent one keeps its
+//                    acknowledged flag; 409 while Mo still checks the card)
 //   print_release    „Freigeben“ (review → queued)
 //   print_submit     „Jetzt drucken“ (print.one, behind GIFT_VOUCHER_PRINT_SENDS_APPROVED)
 //   print_cancel     „Stornieren“ of the print job
@@ -34,9 +37,9 @@ import {
   getGiftVoucherCode,
   getGiftVoucherPrintJobForVoucher,
   setGiftVoucherAdminNote,
-  setGiftVoucherAttention,
 } from "@/lib/gift-voucher-store";
 import {
+  clearGiftVoucherAttention,
   deactivateGiftVoucher,
   issueHeldGiftVoucher,
   rejectGiftVoucher,
@@ -138,9 +141,7 @@ export async function POST(req: Request) {
           : { ok: false, code: "internal_error", message: "Die Notiz konnte nicht gespeichert werden." };
         break;
       case "clear_attention":
-        result = (await setGiftVoucherAttention(id, null))
-          ? { ok: true }
-          : { ok: false, code: "internal_error", message: "Der Hinweis konnte nicht entfernt werden." };
+        result = await clearGiftVoucherAttention(id);
         break;
       case "print_release":
         result = await releaseGiftVoucherPrintJob(jobId as number);

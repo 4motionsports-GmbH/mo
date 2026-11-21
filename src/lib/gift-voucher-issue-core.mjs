@@ -1,7 +1,7 @@
 // Geschenkgutscheine — the pure decisions of the issuing pipeline
 // (docs/GIFT_VOUCHERS.md). The I/O half is lib/gift-voucher-issue.ts; the
 // vocabulary and the single-unit rules (decideGiftVoucherIssue,
-// unitsToRevoke, pairPrintLines …) are gift-voucher-core.mjs. Tested by
+// pairPrintLines, refundedQuantities …) are gift-voucher-core.mjs. Tested by
 // gift-voucher-issue-core.test.mjs.
 //
 // What lives here:
@@ -14,8 +14,11 @@
 //   · the revocation flag: a revoked unit carries attention
 //     `cancelled_after_use` / `refund_after_use` until the Shopify step
 //     resolves it (unused card → deactivated, flag cleared; used card → flag
-//     stays, now true). The flag is the durable intent: whoever comes next
+//     stays, now true — for a refund an untouched sibling of the same line
+//     takes it over first). The flag is the durable intent: whoever comes next
 //     (the webhook's after(), the issuing step, the cron sweep) finishes it.
+//     An operator's „Als geklärt markieren“ on a spent card stores its
+//     acknowledged form (`*_after_use_ok`): revoked for good, no „Achtung“.
 //   · retry / deferral timing, what a failed giftCardCreate means, adopting a
 //     card found by its code, the Shopify note, fulfilment planning.
 
@@ -27,7 +30,6 @@ import {
   pairPrintLines,
   planGiftVoucherRetry,
   refundedQuantities,
-  unitsToRevoke,
 } from "./gift-voucher-core.mjs";
 
 // ── small helpers ────────────────────────────────────────────────────────────
@@ -77,7 +79,20 @@ export const GIFT_VOUCHER_REVOKE_REASON_TEXT = Object.freeze({
 });
 
 /**
- * The revoke reason behind an attention key, or null for any other key.
+ * The acknowledged form of a revoke flag: an operator cleared („Als geklärt
+ * markieren“) the flag of a card Shopify showed (partly) spent. The key stays
+ * on the row so the unit counts as revoked for good — a later order update
+ * never flags it again — while it is neither „Achtung“ nor a revocation
+ * (the mail may go out, the card stays active).
+ */
+export const GIFT_VOUCHER_REVOKE_ACK_ATTENTION = Object.freeze({
+  cancelled: "cancelled_after_use_ok",
+  refunded: "refund_after_use_ok",
+});
+
+/**
+ * The revoke reason behind an attention key, or null for any other key
+ * (an acknowledged key is no revocation any more).
  * @param {unknown} attention
  * @returns {GiftVoucherRevokeReason | null}
  */
@@ -85,6 +100,14 @@ export function revokeReasonOf(attention) {
   if (attention === GIFT_VOUCHER_REVOKE_ATTENTION.cancelled) return "cancelled";
   if (attention === GIFT_VOUCHER_REVOKE_ATTENTION.refunded) return "refunded";
   return null;
+}
+
+/**
+ * Is this the acknowledged form of a revoke flag (GIFT_VOUCHER_REVOKE_ACK_ATTENTION)?
+ * @param {unknown} attention
+ */
+export function isAcknowledgedRevocation(attention) {
+  return attention === GIFT_VOUCHER_REVOKE_ACK_ATTENTION.cancelled || attention === GIFT_VOUCHER_REVOKE_ACK_ATTENTION.refunded;
 }
 
 /**
@@ -132,6 +155,61 @@ export function pickRevocationsToResolve(vouchers, limit = Infinity) {
 export function isRevocationLookupConclusive({ updatedAt, now = Date.now() }) {
   const t = timeOf(updatedAt);
   return t !== null && now - t >= 2 * 60_000;
+}
+
+/**
+ * A refund revoked a unit whose card turned out (partly) spent: which other
+ * units of the same order line could take the refund instead? Issued units
+ * with a card, no attention and the same value — highest unit first. Mo
+ * checks a candidate's live card (untouched?) before it moves the flag.
+ * @template {{ id: number, status: string, attention: string | null, shopifyGiftCardId: string | null,
+ *   shopifyLineItemId: string | null, unitIndex: number, amountCents: number }} V
+ * @param {V} unit
+ * @param {readonly V[]} units the order's units
+ * @returns {V[]}
+ */
+export function revocationSiblingCandidates(unit, units) {
+  if (!unit.shopifyLineItemId) return [];
+  return units
+    .filter(
+      (u) =>
+        u.id !== unit.id &&
+        u.shopifyLineItemId === unit.shopifyLineItemId &&
+        u.status === "issued" &&
+        u.attention == null &&
+        Boolean(u.shopifyGiftCardId) &&
+        u.amountCents === unit.amountCents
+    )
+    .sort((a, b) => b.unitIndex - a.unitIndex || b.id - a.id);
+}
+
+/**
+ * What „Als geklärt markieren“ does with a voucher's attention flag:
+ *   none        — there is none;
+ *   keep        — an acknowledged revoke flag: it is „geklärt“ already and
+ *                 stays (it keeps the unit revoked for later order updates);
+ *   clear       — any other note (print, a failed deactivation …), or a
+ *                 revoke flag on a unit that ended (cancelled, rejected,
+ *                 deactivated — nothing is left to revoke);
+ *   revoking    — a revoke flag on a unit that never became a known card
+ *                 (pending, held, failed, issuing): Mo still looks the card
+ *                 up — refused;
+ *   resolve     — a revoke flag on an issued unit not checked against
+ *                 Shopify yet: check now (untouched → deactivated, spent →
+ *                 acknowledged);
+ *   acknowledge — a revoke flag on an issued unit already found (partly)
+ *                 spent (stored balance below the value): store the
+ *                 acknowledged key.
+ * @param {{ status: string, attention: string | null, balanceCents: number | null, amountCents: number }} v
+ * @returns {"none" | "keep" | "clear" | "revoking" | "resolve" | "acknowledge"}
+ */
+export function planClearGiftVoucherAttention(v) {
+  if (!v.attention) return "none";
+  if (isAcknowledgedRevocation(v.attention)) return "keep";
+  if (!revokeReasonOf(v.attention)) return "clear";
+  if (v.status === "cancelled" || v.status === "rejected" || v.status === "deactivated") return "clear";
+  if (v.status !== "issued") return "revoking";
+  return v.balanceCents != null && v.balanceCents < v.amountCents ? "acknowledge" : "resolve";
 }
 
 // ── orders/paid: the quick look ──────────────────────────────────────────────
@@ -347,32 +425,51 @@ export function planGiftVoucherOrderRecord(input) {
 
 // ── orders/cancelled, orders/updated: what to revoke ─────────────────────────
 
+/** Financial statuses that mean every unit's money went back (an amount-only refund lists no lines). */
+const FULLY_REVOKED_FINANCIAL_STATUSES = new Set(["refunded", "voided"]);
+
 /**
  * The parts of an order payload an order change needs: the order id, whether
- * it is cancelled (topic orders/cancelled or cancelled_at set), the refunded
- * quantity per line item (over every refund so far) and the ordered quantity
- * per line item.
+ * it is cancelled (topic orders/cancelled or cancelled_at set), the ordered
+ * quantity per line item, and the REVOKED quantity per line item — one rule
+ * for every line: the larger of the units refunded so far (refund_line_items
+ * over every refund) and the units the line no longer holds (quantity −
+ * current_quantity: removed by an order edit, or refunded). An order whose
+ * financial_status is `refunded` or `voided` revokes every unit of every line
+ * — the money is back, whatever the refund lines say (a refund entered as an
+ * amount lists none). Lines without a revoked unit are absent from `revoked`.
  * @param {unknown} payload
  * @param {string} topic
- * @returns {{ orderId: string | null, cancelled: boolean, refunded: Map<string, number>, lineQuantities: Map<string, number> }}
+ * @returns {{ orderId: string | null, cancelled: boolean, revoked: Map<string, number>, lineQuantities: Map<string, number> }}
  */
 export function giftVoucherOrderChangeFacts(payload, topic) {
   const p = asObject(payload);
   /** @type {Map<string, number>} */
   const lineQuantities = new Map();
-  if (!p) return { orderId: null, cancelled: false, refunded: new Map(), lineQuantities };
+  /** @type {Map<string, number>} */
+  const revoked = new Map();
+  if (!p) return { orderId: null, cancelled: false, revoked, lineQuantities };
+  const refunded = refundedQuantities(payload);
+  const fullyRevoked = FULLY_REVOKED_FINANCIAL_STATUSES.has(String(p.financial_status ?? "").trim().toLowerCase());
   for (const raw of Array.isArray(p.line_items) ? p.line_items : []) {
     const li = asObject(raw);
     if (!li) continue;
     const id = numericId(li.admin_graphql_api_id) ?? numericId(li.id);
     const q = li.quantity;
-    if (id && typeof q === "number" && Number.isSafeInteger(q) && q > 0) lineQuantities.set(id, q);
+    if (!id || typeof q !== "number" || !Number.isSafeInteger(q) || q <= 0) continue;
+    lineQuantities.set(id, q);
+    const current = li.current_quantity;
+    const removed = typeof current === "number" && Number.isSafeInteger(current) && current >= 0 ? Math.max(0, q - current) : 0;
+    const n = fullyRevoked ? q : Math.min(q, Math.max(refunded.get(id) ?? 0, removed));
+    if (n > 0) revoked.set(id, n);
   }
+  // A refund line of a line the payload does not list still counts.
+  for (const [id, n] of refunded) if (!lineQuantities.has(id)) revoked.set(id, n);
   const cancelledAt = typeof p.cancelled_at === "string" && p.cancelled_at.trim() !== "";
   return {
     orderId: numericId(p.admin_graphql_api_id) ?? numericId(p.id),
     cancelled: String(topic ?? "").trim().toLowerCase() === "orders/cancelled" || cancelledAt,
-    refunded: refundedQuantities(payload),
+    revoked,
     lineQuantities,
   };
 }
@@ -395,30 +492,57 @@ export function giftVoucherOrderChangeFacts(payload, topic) {
 
 const UNSUBMITTED_JOB = new Set(["review", "queued"]);
 const FINAL_JOB = new Set(["sent", "failed", "cancelled", "done"]);
+const LIVE_UNIT_STATUSES = new Set(["pending", "held", "failed", "issuing", "issued"]);
+/** Which live units of a line a revocation takes first: no card yet, then being issued, then issued. */
+const REVOKE_ORDER = /** @type {Record<string, number>} */ ({ pending: 0, held: 0, failed: 0, issuing: 1, issued: 2 });
 
 /**
- * What a cancellation or a refund revokes (spec §9 „Order change“). Every
- * unit of a cancelled order, else the refunded units of each voucher line
- * (unitsToRevoke: highest unit first). Per revoked unit, by status:
+ * Is a voucher unit still „live“ for an order change — one the order may
+ * still pay for? Not when it ended (cancelled, rejected, deactivated) or
+ * carries a revoke flag, its acknowledged form or a failed deactivation:
+ * those count as revoked already.
+ * @param {{ status: string, attention: string | null }} v
+ */
+export function isLiveGiftVoucherUnit(v) {
+  return (
+    LIVE_UNIT_STATUSES.has(v.status) &&
+    !revokeReasonOf(v.attention) &&
+    !isAcknowledgedRevocation(v.attention) &&
+    v.attention !== "deactivate_failed"
+  );
+}
+
+/**
+ * What a cancellation or a refund revokes (spec §9 „Order change“) — ONE
+ * rule per voucher line: the order still pays for paidQty = quantity −
+ * revoked units of the line (facts.revoked: refunds, removals, a full refund;
+ * 0 when cancelled), so `live − paidQty` of its live units are revoked
+ * (isLiveGiftVoucherUnit) — units without a card first (pending / held /
+ * failed), then issuing, then issued; the highest unit first within each
+ * group. Units never created (a unit removed before payment) and units
+ * revoked earlier therefore count as gone, and a repeated webhook revokes
+ * nothing. Which unit of a refunded line is revoked is Mo's choice (Shopify's
+ * refund lines carry only a quantity) — should it be a (partly) spent card,
+ * the Shopify step moves the refund to an untouched sibling.
+ * Per revoked unit, by status:
  *   pending / held / failed, no code yet → `cancel` (no card exists);
  *   pending / held / failed WITH a code (an earlier create may have made a
  *     card) → `recheck`: back to pending with the revoke flag — the issuing
  *     step looks the card up by its code and deactivates or cancels;
  *   issuing → `flagIssuing` (the issuing step resolves it, even mid-create);
  *   issued → `flagIssued` (the Shopify step: unused → deactivate, used →
- *     the flag stays for an operator);
- *   cancelled / rejected / deactivated → nothing.
- * A unit already carrying this exact flag is not flagged again.
+ *     the flag stays for an operator).
+ * `revoked` counts the units revoked by THIS change.
  * Print jobs: the job of every revoked unit that never became a card is
- * cancelled (it was never submitted); a refunded print add-on line cancels
- * that many of its jobs (the revoked units' jobs first, then the highest
- * units). A job is cancelled at once (`cancelJobsNow`, database only) only
- * when its voucher never became a card — the print pipeline takes nothing
- * else; any other job goes through the print provider (`cancelJobsLater`),
- * which knows whether it is with the printer already.
+ * cancelled (it was never submitted); a revoked print add-on line cancels
+ * that many of its jobs (the jobs of units revoked now or before first, then
+ * the highest units). A job is cancelled at once (`cancelJobsNow`, database
+ * only) only when its voucher never became a card — the print pipeline takes
+ * nothing else; any other job goes through the print provider
+ * (`cancelJobsLater`), which knows whether it is with the printer already.
  *
  * @param {{
- *   facts: { cancelled: boolean, refunded: Map<string, number>, lineQuantities: Map<string, number> },
+ *   facts: { cancelled: boolean, revoked: Map<string, number>, lineQuantities: Map<string, number> },
  *   vouchers: readonly ChangeVoucher[],
  *   printJobs: readonly ChangePrintJob[],
  * }} input
@@ -437,15 +561,19 @@ export function planGiftVoucherOrderChange({ facts, vouchers, printJobs }) {
     byLine.set(v.shopifyLineItemId, list);
   }
 
-  /** @type {Set<number>} */
+  /** @type {Set<number>} units this change revokes */
   const revokedIds = new Set();
   for (const [lineItemId, list] of byLine) {
     const known = facts.lineQuantities.get(lineItemId);
     const quantity = known ?? Math.max(...list.map((v) => v.unitIndex)) + 1;
-    const indexes = new Set(
-      unitsToRevoke({ quantity, refundedQty: facts.refunded.get(lineItemId) ?? 0, cancelled: facts.cancelled })
+    const paidQty = facts.cancelled ? 0 : Math.max(0, quantity - (facts.revoked.get(lineItemId) ?? 0));
+    const live = list.filter(isLiveGiftVoucherUnit);
+    const n = Math.max(0, live.length - paidQty);
+    if (n === 0) continue;
+    const ordered = [...live].sort(
+      (a, b) => (REVOKE_ORDER[a.status] ?? 0) - (REVOKE_ORDER[b.status] ?? 0) || b.unitIndex - a.unitIndex || b.id - a.id
     );
-    for (const v of list) if (indexes.has(v.unitIndex)) revokedIds.add(v.id);
+    for (const v of ordered.slice(0, n)) revokedIds.add(v.id);
   }
 
   /** @type {GiftVoucherOrderChangePlan} */
@@ -464,20 +592,20 @@ export function planGiftVoucherOrderChange({ facts, vouchers, printJobs }) {
   const unissued = new Set();
   for (const v of vouchers) {
     if (!revokedIds.has(v.id)) continue;
+    plan.revoked++;
     if (v.status === "pending" || v.status === "held" || v.status === "failed") {
-      plan.revoked++;
       unissued.add(v.id);
       if (v.hasCode) plan.recheck.push({ id: v.id, from: v.status });
       else plan.cancel.push(v.id);
     } else if (v.status === "issuing") {
-      plan.revoked++;
       unissued.add(v.id);
-      if (v.attention !== attention) plan.flagIssuing.push(v.id);
-    } else if (v.status === "issued") {
-      plan.revoked++;
-      if (v.attention !== attention) plan.flagIssued.push(v.id);
+      plan.flagIssuing.push(v.id);
+    } else {
+      plan.flagIssued.push(v.id);
     }
   }
+  /** @type {Set<number>} units revoked now or before — their cards are the first to go */
+  const gone = new Set(vouchers.filter((v) => revokedIds.has(v.id) || !isLiveGiftVoucherUnit(v)).map((v) => v.id));
 
   // Vouchers that are (or were) a card: their jobs may be in the print
   // pipeline's hands.
@@ -504,11 +632,11 @@ export function planGiftVoucherOrderChange({ facts, vouchers, printJobs }) {
     jobsByLine.set(j.paidLineItemId, list);
   }
   for (const [lineItemId, list] of jobsByLine) {
-    const n = facts.cancelled ? list.length : Math.min(facts.refunded.get(lineItemId) ?? 0, list.length);
+    const n = facts.cancelled ? list.length : Math.min(facts.revoked.get(lineItemId) ?? 0, list.length);
     if (n <= 0) continue;
     const ordered = [...list].sort((a, b) => {
-      const ra = revokedIds.has(a.voucherId) ? 0 : 1;
-      const rb = revokedIds.has(b.voucherId) ? 0 : 1;
+      const ra = gone.has(a.voucherId) ? 0 : 1;
+      const rb = gone.has(b.voucherId) ? 0 : 1;
       if (ra !== rb) return ra - rb;
       return (unitOf.get(b.voucherId) ?? 0) - (unitOf.get(a.voucherId) ?? 0) || b.id - a.id;
     });
