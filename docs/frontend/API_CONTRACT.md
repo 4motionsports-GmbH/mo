@@ -1469,8 +1469,8 @@ two minutes). No amounts or prices — those are the voucher product's variants 
 ```
 
 `features.ai` = `ANTHROPIC_API_KEY` and „KI-Textvorschläge“; `photo` = the Blob store and „Eigene Fotos“;
-`print` = the Premium-Karte can be fulfilled (in-house, or print.one configured and released —
-GIFT_VOUCHERS.md §5.2). Errors: `429`, `500`.
+`print` = the Premium-Karte can be fulfilled (in-house, or print.one configured, released and with an https
+`PUBLIC_BASE_URL` — GIFT_VOUCHERS.md §5.2). Errors: `429`, `500`.
 
 ### `GET /api/gift-vouchers/fonts/{file}`
 

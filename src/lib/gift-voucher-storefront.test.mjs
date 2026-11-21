@@ -36,6 +36,7 @@ import {
   validateGiftVoucherDraftInput,
 } from "./gift-voucher-core.mjs";
 import { GIFT_VOUCHER_DESIGNS } from "./gift-voucher-designs.mjs";
+import { decideGiftVoucherPrintSubmission } from "./printone-core.mjs";
 
 // ── availability ─────────────────────────────────────────────────────────────
 
@@ -50,16 +51,42 @@ const READY = {
   printProvider: /** @type {const} */ ("printone"),
   printOneConfigured: true,
   printSendsApproved: true,
+  printBaseUrl: "https://mo.example.test",
 };
 
-test("isGiftVoucherPrintOffered: in-house, or print.one configured AND released by the gate", () => {
-  assert.equal(isGiftVoucherPrintOffered({ printProvider: "manual", printOneConfigured: false, printSendsApproved: false }), true);
-  assert.equal(isGiftVoucherPrintOffered({ printProvider: "printone", printOneConfigured: true, printSendsApproved: true }), true);
-  assert.equal(isGiftVoucherPrintOffered({ printProvider: "printone", printOneConfigured: true, printSendsApproved: false }), false);
-  assert.equal(isGiftVoucherPrintOffered({ printProvider: "printone", printOneConfigured: false, printSendsApproved: true }), false);
+test("isGiftVoucherPrintOffered: in-house, or print.one configured, released by the gate and with an https base URL", () => {
+  const BASE = "https://mo.example.test";
+  const offered = (o) => isGiftVoucherPrintOffered({ printProvider: "printone", printOneConfigured: true, printSendsApproved: true, ...o });
+  assert.equal(isGiftVoucherPrintOffered({ printProvider: "manual", printOneConfigured: false, printSendsApproved: false, printBaseUrl: null }), true);
+  assert.equal(offered({ printBaseUrl: BASE }), true);
+  assert.equal(offered({ printSendsApproved: false, printBaseUrl: BASE }), false);
+  assert.equal(offered({ printOneConfigured: false, printBaseUrl: BASE }), false);
+  // print.one loads the print files from PUBLIC_BASE_URL: without an https one the sweep submits nothing.
+  assert.equal(offered({ printBaseUrl: null }), false);
+  // A caller that does not pass the base URL does not check it.
+  assert.equal(offered({}), true);
+  assert.equal(offered({ printSendsApproved: false }), false);
+  assert.equal(isGiftVoucherPrintOffered(/** @type {any} */ ({ printProvider: "post", printOneConfigured: true, printSendsApproved: true })), false);
   assert.equal(isGiftVoucherPrintOffered(/** @type {any} */ (null)), false);
   // The page's feature follows the same rule.
   assert.equal(giftVoucherStorefrontState({ ...READY, printSendsApproved: false }).features.print, false);
+});
+
+test("storefront: print.one's card is offered exactly when the print sweep would submit it", () => {
+  const job = { provider: "printone", status: "queued" };
+  const voucher = { status: "issued" };
+  const address = { name: "Lena Muster", line1: "Musterstraße 1", line2: null, postalCode: "12345", city: "Musterstadt", country: "DE" };
+  for (const gateApproved of [true, false]) {
+    for (const printOneConfigured of [true, false]) {
+      for (const baseUrl of ["https://mo.example.test", null]) {
+        const sweep = decideGiftVoucherPrintSubmission({
+          job, voucher, gateApproved, printOneConfigured, configuredProvider: "printone", baseUrl, address,
+        });
+        const page = giftVoucherStorefrontState({ ...READY, printSendsApproved: gateApproved, printOneConfigured, printBaseUrl: baseUrl });
+        assert.equal(page.features.print, sweep.action === "submit", JSON.stringify({ gateApproved, printOneConfigured, baseUrl, sweep }));
+      }
+    }
+  }
 });
 
 test("storefront state: everything set up → available with every feature", () => {
@@ -105,12 +132,18 @@ test("storefront state: AI needs key and setting, photo needs Blob and setting",
   assert.deepEqual(giftVoucherStorefrontState({ ...READY, aiConfigured: false }).features, { ai: false, photo: true, print: true });
 });
 
-test("storefront state: the card is offered in-house, or by print.one only when configured AND released", () => {
+test("storefront state: the card is offered in-house, or by print.one only when configured, released and reachable", () => {
   const print = (o) => giftVoucherStorefrontState({ ...READY, ...o }).features.print;
   assert.equal(print({ printProvider: "manual", printOneConfigured: false, printSendsApproved: false }), true);
+  assert.equal(print({ printProvider: "manual", printBaseUrl: null }), true, "in-house printing needs no public URL");
   assert.equal(print({ printProvider: "printone", printOneConfigured: true, printSendsApproved: true }), true);
   assert.equal(print({ printProvider: "printone", printOneConfigured: true, printSendsApproved: false }), false);
   assert.equal(print({ printProvider: "printone", printOneConfigured: false, printSendsApproved: true }), false);
+  assert.equal(print({ printBaseUrl: null }), false, "no https PUBLIC_BASE_URL");
+  // The state never skips the base-URL check: a missing value counts as none.
+  assert.equal(print({ printBaseUrl: undefined }), false);
+  // Without the card the other features stay.
+  assert.deepEqual(giftVoucherStorefrontState({ ...READY, printBaseUrl: null }).features, { ai: true, photo: true, print: false });
 });
 
 // ── config ───────────────────────────────────────────────────────────────────

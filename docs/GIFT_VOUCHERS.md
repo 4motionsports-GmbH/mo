@@ -324,8 +324,10 @@ five orders per run; an order whose fulfilment fails for good is skipped for six
   („Jetzt drucken“ is disabled with the reason); a job blocked by its own data carries the reason as its error
   and is looked at again hourly. Separate from `PHYSICAL_MAIL_SENDS_APPROVED` (Pingen letters).
 - **The page offers the card only when it can be fulfilled:** `GIFT_VOUCHER_PRINT_PROVIDER=manual`, or print.one
-  configured and the gate approved — never while the shop does not sell. The fallback above does not count: with
-  the default `printone`, no print.one keys or a closed gate, the page sells no card.
+  when the sweep would really submit the card — its own gate above: approved, configured and an https
+  `PUBLIC_BASE_URL` (`isGiftVoucherPrintOffered` over `giftVoucherPrintGlobalBlock`) — never while the shop does
+  not sell. The fallback above does not count: with the default `printone`, no print.one keys, a closed gate or no
+  https `PUBLIC_BASE_URL`, the page sells no card.
 
 ### 5.3 Submission — one card, never two
 
@@ -548,7 +550,8 @@ become unreadable), `BLOB_READ_WRITE_TOKEN` (photos, print files), `RESEND_API_K
 addition `PRINTONE_API_KEY`, `PRINTONE_TEMPLATE_ID`, `PRINTONE_WEBHOOK_SECRET`, `PRINTONE_FRONT_SIDE` as
 measured, and `GIFT_VOUCHER_PRINT_SENDS_APPROVED=true` once the lawyer approved print.one as a processor
 (the DPA, dossier § 23 F-48); for the card printed in-house instead `GIFT_VOUCHER_PRINT_PROVIDER=manual` —
-without one of the two the page sells no card (§5.2). `PUBLIC_BASE_URL` must be the public https address.
+without one of the two the page sells no card (§5.2). `PUBLIC_BASE_URL` must be the public https address
+(with print.one the page sells no card without it).
 Everything else has a working default.
 
 ## 10. Data model — migration `0083_gift_vouchers.sql`
