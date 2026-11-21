@@ -1115,10 +1115,12 @@ function decorPhotoPlaceholder(c) {
 /**
  * Legibility shades over a photo: the lower part (from 36 % of the height,
  * already half dark where the eyebrow sits) and a top band for the
- * wordmark — white lettering stays readable on a bright photo (snow, sky,
- * a white wall: eyebrow ≥ 4.5 : 1). `lift` (mm) moves the whole lower shade
- * up with the lettering: a two-line „für“ raises the bottom-anchored block
- * by one name line, and the eyebrow keeps its place in the gradient.
+ * wordmark, 75 % black at the edge — white lettering stays readable on a
+ * bright photo (snow, sky, a white wall: eyebrow ≥ 4.5 : 1, wordmark
+ * ≥ 3 : 1; at 62 % the wordmark fell to about 2.8 : 1). `lift` (mm) moves
+ * the whole lower shade up with the lettering: a two-line „für“ raises the
+ * bottom-anchored block by one name line, and the eyebrow keeps its place
+ * in the gradient.
  * @param {Panel} c @param {number} [lift]
  */
 function photoShade(c, lift = 0) {
@@ -1128,7 +1130,7 @@ function photoShade(c, lift = 0) {
       `<stop offset="0" stop-color="#000" stop-opacity="0"/><stop offset="0.28" stop-color="#000" stop-opacity="0.52"/>` +
       `<stop offset="1" stop-color="#000" stop-opacity="0.82"/></linearGradient>` +
       `<linearGradient id="${c.id("shade-t")}" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="0" y2="${n2(c.p(c.H * 0.3))}">` +
-      `<stop offset="0" stop-color="#000" stop-opacity="0.62"/><stop offset="1" stop-color="#000" stop-opacity="0"/></linearGradient>`
+      `<stop offset="0" stop-color="#000" stop-opacity="0.75"/><stop offset="1" stop-color="#000" stop-opacity="0"/></linearGradient>`
   );
   c.add("decor", `<rect x="0" y="${n2(c.p(from))}" width="${n2(c.widthPx)}" height="${n2(c.heightPx - c.p(from))}" fill="url(#${c.id("shade-b")})"/>`, c.box(-c.B, from, c.W + c.B, c.H + c.B));
   c.add("decor", `<rect x="0" y="0" width="${n2(c.widthPx)}" height="${n2(c.p(c.H * 0.3))}" fill="url(#${c.id("shade-t")})"/>`, c.box(-c.B, -c.B, c.W + c.B, c.H * 0.3));

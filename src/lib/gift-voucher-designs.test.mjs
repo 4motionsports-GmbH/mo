@@ -540,6 +540,29 @@ test("photo front: the white eyebrow keeps 4.5 : 1 over a bright photo, also abo
   }
 });
 
+test("photo front: the white wordmark keeps 3 : 1 over a bright photo (top legibility band)", () => {
+  for (const layout of /** @type {const} */ (["landscape", "square"])) {
+    const l = layoutOf("photo", layout, "front");
+    const m = /<linearGradient id="[^"]*shade-t" [^>]*y1="([\d.]+)" x2="0" y2="([\d.]+)">(.*?)<\/linearGradient>/.exec(l.svg);
+    assert.ok(m, `${layout}: the top band`);
+    const [y1, y2] = [Number(m[1]), Number(m[2])];
+    const stops = [...m[3].matchAll(/offset="([\d.]+)"[^>]*stop-opacity="([\d.]+)"/g)].map((s) => [Number(s[1]), Number(s[2])]);
+    assert.equal(stops.length, 2);
+    /** @param {number} y px */
+    const opacityAt = (y) => {
+      const t = Math.min(1, Math.max(0, (y - y1) / (y2 - y1)));
+      return stops[0][1] + (stops[1][1] - stops[0][1]) * t;
+    };
+    // The wordmark is the topmost lettering; the band fades downwards, so its
+    // lowest point is the lightest spot behind it.
+    const wordmark = l.elements.filter((e) => e.role === "text" && e.bbox).sort((a, b) => a.bbox.y1 - b.bbox.y1)[0];
+    assert.ok(wordmark?.bbox && wordmark.bbox.y2 < y2, `${layout}: the wordmark sits in the band`);
+    const grey = Math.round(0xf2 * (1 - opacityAt(wordmark.bbox.y2))); // an almost white photo (#f2f2f2)
+    const behind = `#${grey.toString(16).padStart(2, "0").repeat(3)}`;
+    assert.ok(contrast("#ffffff", behind) >= 3, `${layout}: white on ${behind} = ${contrast("#ffffff", behind).toFixed(2)} : 1`);
+  }
+});
+
 test("small print (number, labels, footer, the back's site line) has ≥ 4.5 : 1 on paper and card", () => {
   /** @param {{ svg: string } | undefined} e */
   const fillOf = (e) => /** @type {string} */ (/ fill="(#[0-9a-f]{6})"/.exec(e?.svg ?? "")?.[1]);
