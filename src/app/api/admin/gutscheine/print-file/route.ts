@@ -2,7 +2,7 @@
 //   — „Druckdateien herunterladen“
 //
 // A print spread of the voucher's Premium-Karte for printing by hand (the
-// manual print queue, or a print.one job that failed): JPEG 3378 × 1724 px,
+// manual provider's jobs under „Druck offen“, or a print.one job that failed): JPEG 3378 × 1724 px,
 // 300 dpi, 14 × 14 cm folded card incl. 3 mm bleed (lib/gift-voucher-print.ts
 // giftVoucherPrintFiles → the renderer). `outside` = back | front, `inside` =
 // message | code. Only for an issued voucher with a print job that is not

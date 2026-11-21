@@ -10,7 +10,7 @@
 //     voucher issued (not deactivated) without an open revocation (a revoke
 //     flag: the card may be deactivated in a moment, or a refund on a spent
 //     card waits for the operator), address valid. A blocked job stays
-//     queued and its `error` tells the admin queue why;
+//     queued and its `error` tells the admin („Druck offen“) why;
 //   · pollGiftVoucherPrintJobs + applyPrintOneOrderUpdate (the webhook) — follow
 //     print.one's status MONOTONICALLY (canAdvancePrintJobStatus: a late, old or
 //     repeated update changes nothing) and IDEMPOTENTLY;
@@ -163,7 +163,7 @@ function globalGateInput() {
   };
 }
 
-/** GIFT_VOUCHER_PRINT_PROVIDER, falling back to the manual print queue while print.one is not configured. */
+/** GIFT_VOUCHER_PRINT_PROVIDER, falling back to manual (printed in-house, admin „Druck offen“) while print.one is not configured. */
 export function giftVoucherPrintProvider(): GiftVoucherPrintProvider {
   return configuredGiftVoucherPrintProvider() === "printone" && isPrintOneConfigured() ? "printone" : "manual";
 }

@@ -13,7 +13,7 @@
 //   GIFT_VOUCHER_PRINT_SENDS_APPROVED  — LEGAL GATE: recipient addresses go to
 //                                        the print partner (print.one, a new
 //                                        processor — DPA first). Off: print
-//                                        jobs wait in the admin queue.
+//                                        jobs wait in the admin („Druck offen“).
 //
 // Numbers and texts fall back to their documented default when absent or
 // invalid. The retention windows live in retention-options.mjs, the
@@ -206,7 +206,7 @@ export function giftVoucherIssuerLine(env = process.env) {
 /**
  * GIFT_VOUCHER_PRINT_SENDS_APPROVED (default false) — LEGAL GATE: hand
  * recipient addresses to the print partner. print.one is a new processor and
- * needs its own DPA; until this is on, print jobs stay in the admin queue.
+ * needs its own DPA; until this is on, print jobs wait in the admin („Druck offen“).
  * Only 1/true/yes/on enable it (fail-closed).
  * @param {Env} [env]
  */
@@ -216,7 +216,7 @@ export function isGiftVoucherPrintSendsApproved(env = process.env) {
 
 /**
  * GIFT_VOUCHER_PRINT_PROVIDER: "printone" (default — print.one prints and
- * posts the card) or "manual" (printed in-house from the admin print queue).
+ * posts the card) or "manual" (printed in-house from the admin's „Druck offen“ list).
  * The effective provider also needs print.one configured
  * (lib/gift-voucher-print.ts giftVoucherPrintProvider).
  * @param {Env} [env]
