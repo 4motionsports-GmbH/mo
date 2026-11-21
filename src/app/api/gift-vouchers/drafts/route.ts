@@ -17,7 +17,10 @@
 // from the list, the photo design only with a photo id while photos are on,
 // texts made printable (emoji etc. removed → `textRemoved`) and within their
 // limits, the Premium-Karte only while it can be fulfilled and with a valid
-// address in an allowed country. Messages in the body's language.
+// address in an allowed country. Messages in the body's language. Like the
+// preview, the photo must still be in the Blob store (hasGiftVoucherPhotoBytes)
+// — else 400 with field `photoId` („bitte lade es noch einmal hoch“): a draft
+// with a deleted photo would give a voucher that can never be delivered.
 //
 // guardRequest (origin + x-ms-chat-key), buckets `gift-voucher` (session) and
 // `gift-voucher-ip`. 503 `upstream_unavailable` without a database, 409 while
@@ -28,7 +31,8 @@ import { checkRateLimit, checkRateLimitKeyed, clientIp, rateLimitResponse } from
 import { errorResponse, reportError } from "@/lib/observability";
 import { resolveLocale } from "@/lib/locale";
 import { isDbConfigured } from "@/lib/db";
-import { validateGiftVoucherDraftInput } from "@/lib/gift-voucher-core.mjs";
+import { giftVoucherPhotoPathname, hasGiftVoucherPhotoBytes, validateGiftVoucherDraftInput } from "@/lib/gift-voucher-core.mjs";
+import { getGiftVoucherBlob } from "@/lib/gift-voucher-blob";
 import { giftVoucherPrintCountries } from "@/lib/gift-voucher-flags.mjs";
 import { giftVoucherApiText, withGiftVoucherLocale } from "@/lib/gift-voucher-storefront.mjs";
 import {
@@ -78,6 +82,14 @@ export async function POST(req: Request) {
     });
     if (!input.ok) return giftVoucherErrorResponse("bad_request", input.message, 400, cors, input.field);
     const v = input.value;
+
+    if (v.designKey === "photo") {
+      const pathname = giftVoucherPhotoPathname(v.photoId);
+      const photo = pathname ? await getGiftVoucherBlob(pathname) : null;
+      if (!hasGiftVoucherPhotoBytes(photo?.bytes)) {
+        return giftVoucherErrorResponse("bad_request", giftVoucherApiText("photo_missing", v.locale), 400, cors, "photoId");
+      }
+    }
 
     const draft = await createGiftVoucherDraft({
       designKey: v.designKey,
