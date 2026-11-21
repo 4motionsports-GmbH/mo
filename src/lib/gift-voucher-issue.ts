@@ -44,11 +44,15 @@
 // (planGiftVoucherOrderChange). A unit that never became a card is
 // cancelled at once; any other unit gets the attention flag
 // `cancelled_after_use` / `refund_after_use` as the DURABLE intent before the
-// webhook is acknowledged. The Shopify step then resolves it — untouched card
-// → deactivated (flag cleared, card print cancelled); (partly) spent card →
-// for a refund an untouched sibling of the same line takes the refund over
-// (one conditional move, a single winner) and is deactivated instead, else
-// never deactivated automatically: the flag stays for an operator, whose
+// webhook is acknowledged — each write compare-and-set on the row as the plan
+// read it (a parallel delivery, or an earlier one's Shopify step, may have
+// moved the line on meanwhile: then the change is planned again on fresh
+// rows, and Shopify redelivers while it keeps changing). The Shopify step
+// then resolves the flag — untouched card → deactivated (flag cleared, card
+// print cancelled); (partly) spent card → for a refund an untouched sibling
+// of the same line takes the refund over (one conditional move, a single
+// winner) and is deactivated instead, else never deactivated
+// automatically: the flag stays for an operator, whose
 // „Als geklärt markieren“ stores its acknowledged form (no „Achtung“, never
 // flagged again); a transient Shopify failure keeps the flag for the next
 // try. A stored balance below the value marks a flag as checked, so for a
@@ -84,6 +88,7 @@ import { reportError } from "./observability";
 import {
   claimDueGiftVouchers,
   claimGiftVoucher,
+  flagGiftVoucherRevocation,
   getCachedGiftVoucherSettings,
   getGiftVoucher,
   getGiftVoucherCode,
@@ -176,6 +181,7 @@ import {
   planGiftVoucherFulfilment,
   planGiftVoucherIssueRetry,
   planGiftVoucherOrderChange,
+  planGiftVoucherOrderChangeWrites,
   planGiftVoucherOrderRecord,
   revocationSiblingCandidates,
   revokeReasonOf,
@@ -982,6 +988,10 @@ export interface GiftVoucherOrderChangeFollowUp {
 }
 
 type GiftVoucherOrderChangeFacts = Pick<ReturnType<typeof giftVoucherOrderChangeFacts>, "cancelled" | "revoked" | "lineQuantities">;
+type GiftVoucherOrderChangePlan = ReturnType<typeof planGiftVoucherOrderChange>;
+
+/** Plans per delivery: a write that finds its row changed plans the change again on fresh rows; after the last, Shopify redelivers. */
+const ORDER_CHANGE_ROUNDS = 3;
 
 /**
  * orders/cancelled, orders/updated (refunds, removals, a full refund): revoke
@@ -990,9 +1000,17 @@ type GiftVoucherOrderChangeFacts = Pick<ReturnType<typeof giftVoucherOrderChange
  * database-only (the webhook answers within 5 s):
  * units that never became a card are cancelled, every other revoked unit
  * gets the revocation flag — the durable intent — and `followUp` names the
- * order for processGiftVoucherOrderChange (after()). Fast for the many
- * orders without vouchers (one read). `ok: false` → Shopify redelivers.
- * Never throws.
+ * order for processGiftVoucherOrderChange (after()).
+ * Every write is compare-and-set on the row exactly as the plan read it
+ * (rowVersion): the plan's choice depends on the whole line, which a
+ * parallel delivery and the Shopify step of an earlier one rewrite meanwhile
+ * (a refund moved to an untouched sibling, a card deactivated) — a stale
+ * write would revoke a second unit for one refund, or flag a card that is
+ * gone. A write that finds its row changed ends that plan, and the change is
+ * planned again on fresh rows (what was revoked meanwhile counts as gone, so
+ * the rule converges), at most ORDER_CHANGE_ROUNDS plans — then `ok: false`
+ * and Shopify redelivers. Fast for the many orders without vouchers (one
+ * read). Never throws.
  */
 export async function handleGiftVoucherOrderChange(
   payload: unknown,
@@ -1002,59 +1020,73 @@ export async function handleGiftVoucherOrderChange(
     const facts = giftVoucherOrderChangeFacts(payload, topic);
     if (!facts.orderId) return { ok: true, action: "gift_vouchers:no-order" };
     if (!facts.cancelled && facts.revoked.size === 0) return { ok: true, action: "gift_vouchers:unchanged" };
-    const vouchers = await listGiftVouchersForOrder(facts.orderId);
+    let vouchers = await listGiftVouchersForOrder(facts.orderId);
     if (vouchers.length === 0) return { ok: true, action: "gift_vouchers:none" };
 
-    const plan = planGiftVoucherOrderChange({ facts, vouchers, printJobs: await printJobsOf(vouchers) });
-    if (plan.revoked === 0 && plan.cancelJobsNow.length === 0 && plan.cancelJobsLater.length === 0) {
-      return { ok: true, action: "gift_vouchers:unchanged" };
-    }
-
-    let failures = 0;
-    /** The row moved on since the read (a worker took it): flag it instead. */
-    const flagMoved = async (id: number) => {
-      const fresh = await getGiftVoucher(id);
-      if (!fresh) return false;
-      if (fresh.status === "issuing" || fresh.status === "issued" || fresh.status === "pending") {
-        return setGiftVoucherAttention(id, plan.attention);
+    /** The units this delivery revoked, over every plan. */
+    const revoked: number[] = [];
+    for (let round = 1; ; round++) {
+      const plan = planGiftVoucherOrderChange({
+        facts,
+        vouchers,
+        printJobs: await printJobsOf(vouchers),
+        revokedEarlier: revoked,
+      });
+      const nothingLeft = plan.revoked === 0 && plan.cancelJobsNow.length === 0 && plan.cancelJobsLater.length === 0;
+      if (nothingLeft && revoked.length === 0) return { ok: true, action: "gift_vouchers:unchanged" };
+      if (await applyOrderChangePlan(plan, vouchers, revoked)) {
+        return {
+          ok: true,
+          action: `gift_vouchers:revoked:${revoked.length}`,
+          followUp: {
+            orderId: facts.orderId,
+            facts: { cancelled: facts.cancelled, revoked: facts.revoked, lineQuantities: facts.lineQuantities },
+            revokedIds: [...revoked],
+            printJobIds: plan.cancelJobsLater,
+          },
+        };
       }
-      return fresh.status === "cancelled" || fresh.status === "rejected" || fresh.status === "deactivated";
-    };
-    const mailPending = new Set(vouchers.filter((v) => v.mailStatus === "pending").map((v) => v.id));
-    for (const id of plan.cancel) {
-      if (await setGiftVoucherStatus(id, "cancelled", { from: ["pending", "held", "failed"] })) {
-        if (mailPending.has(id)) await setGiftVoucherMailState(id, { status: "skipped", countAttempt: false });
-      } else if (!(await flagMoved(id))) {
-        failures++;
-      }
+      if (round >= ORDER_CHANGE_ROUNDS) return { ok: false, action: "gift_vouchers:revoke-conflict" };
+      vouchers = await listGiftVouchersForOrder(facts.orderId);
+      // The units were there a moment ago: none now means the read failed.
+      if (vouchers.length === 0) return { ok: false, action: "gift_vouchers:revoke-failed" };
     }
-    for (const r of plan.recheck) {
-      // Back to pending with the flag: the issuing step looks the card up.
-      if (!(await setGiftVoucherStatus(r.id, "pending", { attention: plan.attention, from: [r.from] })) && !(await flagMoved(r.id))) failures++;
-    }
-    for (const id of [...plan.flagIssuing, ...plan.flagIssued]) {
-      if (!(await setGiftVoucherAttention(id, plan.attention))) failures++;
-    }
-    const jobError = GIFT_VOUCHER_REVOKE_REASON_TEXT[plan.reason];
-    for (const jobId of plan.cancelJobsNow) {
-      // False when the job finished meanwhile — nothing left to cancel.
-      await updateGiftVoucherPrintJobStatus(jobId, "cancelled", { error: jobError });
-    }
-    if (failures > 0) return { ok: false, action: "gift_vouchers:revoke-failed" };
-    return {
-      ok: true,
-      action: `gift_vouchers:revoked:${plan.revoked}`,
-      followUp: {
-        orderId: facts.orderId,
-        facts: { cancelled: facts.cancelled, revoked: facts.revoked, lineQuantities: facts.lineQuantities },
-        revokedIds: [...plan.cancel, ...plan.recheck.map((r) => r.id), ...plan.flagIssuing, ...plan.flagIssued],
-        printJobIds: plan.cancelJobsLater,
-      },
-    };
   } catch (err) {
     report(err, "orderChange");
     return { ok: false, action: "gift_vouchers:error" };
   }
+}
+
+/**
+ * Write one plan of an order change (planGiftVoucherOrderChangeWrites: every
+ * unit compare-and-set on the row as `vouchers` read it). True when every
+ * write landed — then the plan's unsubmitted card prints are cancelled;
+ * false at the first row that changed since the read, or a write that failed
+ * (plan again). The units written are appended to `revoked`.
+ */
+async function applyOrderChangePlan(plan: GiftVoucherOrderChangePlan, vouchers: readonly GiftVoucher[], revoked: number[]): Promise<boolean> {
+  const writes = planGiftVoucherOrderChangeWrites(plan, vouchers);
+  if (!writes) return false;
+  for (const w of writes) {
+    let landed: boolean;
+    if (w.op === "cancel") {
+      landed = await setGiftVoucherStatus(w.id, "cancelled", { from: ["pending", "held", "failed"], ifVersion: w.version });
+    } else if (w.op === "recheck") {
+      // Back to pending with the flag: the issuing step looks the card up.
+      landed = await setGiftVoucherStatus(w.id, "pending", { attention: plan.attention, from: [w.from], ifVersion: w.version });
+    } else {
+      landed = await flagGiftVoucherRevocation(w.id, plan.attention, w.version);
+    }
+    if (!landed) return false;
+    revoked.push(w.id);
+    if (w.op === "cancel" && w.mailPending) await setGiftVoucherMailState(w.id, { status: "skipped", countAttempt: false });
+  }
+  const jobError = GIFT_VOUCHER_REVOKE_REASON_TEXT[plan.reason];
+  for (const jobId of plan.cancelJobsNow) {
+    // False when the job finished meanwhile — nothing left to cancel.
+    await updateGiftVoucherPrintJobStatus(jobId, "cancelled", { error: jobError });
+  }
+  return true;
 }
 
 /** The print jobs of an order's units (one per unit with a card ordered). */

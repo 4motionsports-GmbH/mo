@@ -175,6 +175,13 @@ export interface GiftVoucher {
   personalDataPurgedAt: string | null;
   createdAt: string;
   updatedAt: string;
+  /**
+   * The row's updated_at exactly as stored (microseconds, as text — updatedAt
+   * is rounded to milliseconds): the version a write planned on this read
+   * compares against (flagGiftVoucherRevocation, setGiftVoucherStatus
+   * `ifVersion`). Every write of a voucher's state moves it.
+   */
+  rowVersion: string | null;
 }
 
 /** A list row: the voucher plus the status of its print job (if any). */
@@ -427,6 +434,7 @@ function mapVoucher(row: Row): GiftVoucher {
     personalDataPurgedAt: iso(r.personal_data_purged_at),
     createdAt,
     updatedAt: iso(r.updated_at) ?? createdAt,
+    rowVersion: text(r.updated_at),
   };
 }
 
@@ -1001,7 +1009,9 @@ export async function markGiftVoucherFailed(id: number, error: string, sql: Sql 
  * with the attempts reset; 'held' / 'rejected' keep or set the hold reason
  * (else it is cleared); 'deactivated' stamps the time and the reason.
  * `attention` is only touched when given (null clears it). `from` restricts
- * the change to the listed current statuses (race-safe). Ends the lease.
+ * the change to the listed current statuses (race-safe); `ifVersion` (a
+ * read's rowVersion) to a row nobody wrote since that read — a change
+ * planned on that read. Ends the lease.
  */
 export async function setGiftVoucherStatus(
   id: number,
@@ -1011,12 +1021,14 @@ export async function setGiftVoucherStatus(
     attention?: string | null;
     deactivationReason?: string | null;
     from?: readonly GiftVoucherStatus[];
+    ifVersion?: string | null;
   } = {},
   sql: Sql | null = getSql()
 ): Promise<boolean> {
   if (!sql || !isGiftVoucherStatus(status)) return false;
   const setAttention = opts.attention !== undefined;
   const from = opts.from && opts.from.length > 0 ? [...opts.from] : null;
+  const ifVersion = typeof opts.ifVersion === "string" && opts.ifVersion !== "" ? opts.ifVersion : null;
   try {
     const rows = (await sql`
       UPDATE gift_vouchers
@@ -1033,6 +1045,7 @@ export async function setGiftVoucherStatus(
              locked_until = NULL,
              updated_at = now()
        WHERE id = ${id} AND (${from}::text[] IS NULL OR status = ANY(${from}::text[]))
+         AND (${ifVersion}::timestamptz IS NULL OR updated_at = ${ifVersion}::timestamptz)
       RETURNING id
     `) as Row[];
     return rows.length > 0;
@@ -1151,6 +1164,37 @@ export async function setGiftVoucherAttention(id: number, key: string | null, sq
     return rows.length > 0;
   } catch (err) {
     report(err, "setAttention");
+    return false;
+  }
+}
+
+/**
+ * An order change's revocation flag (refund_after_use / cancelled_after_use)
+ * on the unit its plan chose — only while the row is exactly as the plan read
+ * it (`seenVersion` = that read's rowVersion). The plan's choice depends on
+ * the whole line, which the Shopify step rewrites meanwhile (a refund moved to
+ * an untouched sibling, a card deactivated): a stale write would revoke a
+ * second unit for one refund, or flag a card that is gone. The attention
+ * alone is no such check — after a moved refund it is NULL again. True when
+ * written; false when the row changed since (or the database failed): plan
+ * again on fresh rows.
+ */
+export async function flagGiftVoucherRevocation(
+  id: number,
+  flag: string,
+  seenVersion: string | null,
+  sql: Sql | null = getSql()
+): Promise<boolean> {
+  if (!sql || !seenVersion || !flag) return false;
+  try {
+    const rows = (await sql`
+      UPDATE gift_vouchers SET attention = ${cut(flag, 100)}, updated_at = now()
+       WHERE id = ${id} AND updated_at = ${seenVersion}::timestamptz
+      RETURNING id
+    `) as Row[];
+    return rows.length > 0;
+  } catch (err) {
+    report(err, "flagRevocation");
     return false;
   }
 }

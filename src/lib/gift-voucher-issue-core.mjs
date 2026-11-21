@@ -521,6 +521,8 @@ const GIVEN_UP_JOB = new Set(["cancelled", "failed"]);
 const LIVE_UNIT_STATUSES = new Set(["pending", "held", "failed", "issuing", "issued"]);
 /** Which live units of a line a revocation takes first: no card yet, then being issued, then issued. */
 const REVOKE_ORDER = /** @type {Record<string, number>} */ ({ pending: 0, held: 0, failed: 0, issuing: 1, issued: 2 });
+/** Statuses of a unit that never became a Shopify card (its print job was never submitted). */
+const NEVER_CARDED = new Set(["pending", "held", "failed", "issuing", "cancelled", "rejected"]);
 
 /**
  * Is a voucher unit still „live“ for an order change — one the order may
@@ -575,15 +577,20 @@ export function isLiveGiftVoucherUnit(v) {
  * print provider (`cancelJobsLater`), which knows whether it is with the
  * printer already. Run it again once the revocations are resolved (a refund
  * that moved to an untouched sibling took that sibling's card along).
+ * `revokedEarlier`: units this order change revoked in an earlier round (a
+ * write found its row changed and the change was planned again on fresh
+ * rows) — they count as gone like any revoked unit, and the cards of those
+ * that never became a card go as if they were revoked now.
  *
  * @param {{
  *   facts: { cancelled: boolean, revoked: Map<string, number>, lineQuantities: Map<string, number> },
  *   vouchers: readonly ChangeVoucher[],
  *   printJobs: readonly ChangePrintJob[],
+ *   revokedEarlier?: Iterable<number> | null,
  * }} input
  * @returns {GiftVoucherOrderChangePlan}
  */
-export function planGiftVoucherOrderChange({ facts, vouchers, printJobs }) {
+export function planGiftVoucherOrderChange({ facts, vouchers, printJobs, revokedEarlier = null }) {
   const reason = facts.cancelled ? "cancelled" : "refunded";
   const attention = GIFT_VOUCHER_REVOKE_ATTENTION[reason];
 
@@ -642,6 +649,10 @@ export function planGiftVoucherOrderChange({ facts, vouchers, printJobs }) {
       plan.flagIssued.push(v.id);
     }
   }
+  // Revoked by this order change in an earlier round: a unit that never
+  // became a card has its job cancelled as if it were revoked now.
+  const earlier = new Set(revokedEarlier ?? []);
+  for (const v of vouchers) if (earlier.has(v.id) && !revokedIds.has(v.id) && NEVER_CARDED.has(v.status)) unissued.add(v.id);
   /** @type {Set<number>} units revoked now or before — their cards are the first to go */
   const gone = new Set(vouchers.filter((v) => revokedIds.has(v.id) || !isLiveGiftVoucherUnit(v)).map((v) => v.id));
 
@@ -692,6 +703,58 @@ export function planGiftVoucherOrderChange({ facts, vouchers, printJobs }) {
   plan.cancelJobsNow = [...now];
   plan.cancelJobsLater = [...later];
   return plan;
+}
+
+/**
+ * The writes of one order-change plan, in the order they are made — every
+ * one compare-and-set on the row exactly as the plan read it (`rowVersion`:
+ * the read's updated_at; every write of a unit's state moves it). The plan
+ * chose its units from the whole line, which a parallel delivery and an
+ * earlier delivery's Shopify step rewrite meanwhile (a refund moved to an
+ * untouched sibling, a card deactivated, a unit issued): a write on a row
+ * that changed since the read would revoke a second unit for one refund, or
+ * flag a card that is gone. Such a write must not land; the change is then
+ * planned again on fresh rows (handleGiftVoucherOrderChange). The attention
+ * alone is no such check — after a moved refund it is NULL again (ABA).
+ *   cancel  — pending / held / failed without a code → cancelled
+ *             (`mailPending`: its unsent mail is skipped after the write);
+ *   recheck — pending / held / failed with a code → pending with the flag;
+ *   flag    — issuing / issued → the flag.
+ * null when a planned unit was read without a version: nothing may be
+ * written on that plan.
+ * @param {GiftVoucherOrderChangePlan} plan
+ * @param {readonly { id: number, rowVersion?: string | null, mailStatus?: string | null }[]} vouchers the rows the plan read
+ * @returns {Array<
+ *   | { op: "cancel", id: number, version: string, mailPending: boolean }
+ *   | { op: "recheck", id: number, from: "pending" | "held" | "failed", version: string }
+ *   | { op: "flag", id: number, version: string }
+ * > | null}
+ */
+export function planGiftVoucherOrderChangeWrites(plan, vouchers) {
+  const read = new Map(vouchers.map((v) => [v.id, v]));
+  /** @param {number} id */
+  const versionOf = (id) => {
+    const version = read.get(id)?.rowVersion;
+    return typeof version === "string" && version !== "" ? version : null;
+  };
+  /** @type {NonNullable<ReturnType<typeof planGiftVoucherOrderChangeWrites>>} */
+  const writes = [];
+  for (const id of plan.cancel) {
+    const version = versionOf(id);
+    if (!version) return null;
+    writes.push({ op: "cancel", id, version, mailPending: read.get(id)?.mailStatus === "pending" });
+  }
+  for (const r of plan.recheck) {
+    const version = versionOf(r.id);
+    if (!version) return null;
+    writes.push({ op: "recheck", id: r.id, from: r.from, version });
+  }
+  for (const id of [...plan.flagIssuing, ...plan.flagIssued]) {
+    const version = versionOf(id);
+    if (!version) return null;
+    writes.push({ op: "flag", id, version });
+  }
+  return writes;
 }
 
 // ── issuing: timing and outcomes ─────────────────────────────────────────────

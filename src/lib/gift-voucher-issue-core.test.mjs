@@ -21,6 +21,7 @@ import {
   planGiftVoucherFulfilment,
   planGiftVoucherIssueRetry,
   planGiftVoucherOrderChange,
+  planGiftVoucherOrderChangeWrites,
   planGiftVoucherOrderRecord,
   revocationSiblingCandidates,
   revokeReasonOf,
@@ -461,6 +462,11 @@ function cv(v) {
   return { status: "issued", hasCode: true, shopifyLineItemId: "9001", unitIndex: 0, attention: null, amountCents: 5000, balanceCents: null, ...v };
 }
 
+/** An issued unit with its Shopify card (what every issued unit has in the database). */
+function cvc(v) {
+  return cv({ shopifyGiftCardId: `gid://shopify/GiftCard/${v.id}`, ...v });
+}
+
 /** Facts of a refund: revoked units per line, ordered quantities. */
 function refundFacts(revoked, quantities) {
   return { cancelled: false, revoked: new Map(Object.entries(revoked)), lineQuantities: new Map(Object.entries(quantities)) };
@@ -619,6 +625,76 @@ test("planGiftVoucherOrderChange: planned again after a refund moved to an untou
     printJobs: jobs,
   });
   assert.deepEqual([pending.revoked, pending.cancelJobsLater], [0, [2]]);
+});
+
+test("planGiftVoucherOrderChange: planned again on fresh rows after a stale write was refused — the rule converges", () => {
+  // X1 — one refund delivered twice. Delivery A moved it from the spent unit 1 to the untouched unit 0
+  // (deactivated); delivery B, whose flag write on unit 1 was refused (the row changed), plans again: nothing more.
+  const oneOfTwo = refundFacts({ 9001: 1 }, { 9001: 2 });
+  const afterA = [cvc({ id: 1, unitIndex: 0, status: "deactivated" }), cvc({ id: 2, unitIndex: 1, balanceCents: 3000 })];
+  const b = planGiftVoucherOrderChange({ facts: oneOfTwo, vouchers: afterA, printJobs: [] });
+  assert.deepEqual([b.revoked, b.flagIssued], [0, []]);
+  // X4 — 3 units; refund 1 moved from the spent unit 2 to unit 1 (deactivated); refund 2 plans again on the
+  // fresh rows: the untouched unit 0 — not unit 1 (gone already), not the known-spent unit 2.
+  const twoOfThree = refundFacts({ 9001: 2 }, { 9001: 3 });
+  const fresh = [cvc({ id: 1, unitIndex: 0, balanceCents: 5000 }), cvc({ id: 2, unitIndex: 1, status: "deactivated" }), cvc({ id: 3, unitIndex: 2, balanceCents: 3000 })];
+  assert.deepEqual(planGiftVoucherOrderChange({ facts: twoOfThree, vouchers: fresh, printJobs: [] }).flagIssued, [1]);
+  // The stale plan (read while unit 2 still carried refund 1) chose unit 1 — the unit that took refund 1 meanwhile.
+  const stale = [cvc({ id: 1, unitIndex: 0 }), cvc({ id: 2, unitIndex: 1 }), cvc({ id: 3, unitIndex: 2, attention: "refund_after_use" })];
+  assert.deepEqual(planGiftVoucherOrderChange({ facts: twoOfThree, vouchers: stale, printJobs: [] }).flagIssued, [2]);
+});
+
+test("planGiftVoucherOrderChange: units revoked in an earlier round count as gone, their cards still go", () => {
+  // Round 1 cancelled the pending unit 2 (no card yet), then a later write found its row changed; round 2
+  // plans on fresh rows. Only the voucher was refunded — the add-on line's rule cancels no card.
+  const facts = refundFacts({ 9001: 1 }, { 9001: 2, 9002: 2 });
+  const vouchers = [cvc({ id: 1, unitIndex: 0 }), cv({ id: 2, unitIndex: 1, status: "cancelled", hasCode: false })];
+  const jobs = [
+    { id: 11, voucherId: 1, status: "queued", paidLineItemId: "9002" },
+    { id: 12, voucherId: 2, status: "queued", paidLineItemId: "9002" },
+  ];
+  const round2 = planGiftVoucherOrderChange({ facts, vouchers, printJobs: jobs, revokedEarlier: [2] });
+  assert.equal(round2.revoked, 0, "not revoked twice");
+  assert.deepEqual([round2.cancelJobsNow, round2.cancelJobsLater], [[12], []], "the card of the cancelled unit goes, as in round 1");
+  // Without the earlier round the cancelled unit is just gone: its card is left to the print sweep.
+  assert.deepEqual(planGiftVoucherOrderChange({ facts, vouchers, printJobs: jobs }).cancelJobsNow, []);
+  // A unit revoked earlier that became a card meanwhile is no "never a card" unit.
+  const issuedMeanwhile = [cvc({ id: 1, unitIndex: 0 }), cvc({ id: 2, unitIndex: 1, attention: "refund_after_use" })];
+  assert.deepEqual(planGiftVoucherOrderChange({ facts, vouchers: issuedMeanwhile, printJobs: jobs, revokedEarlier: [2] }).cancelJobsNow, []);
+});
+
+test("planGiftVoucherOrderChangeWrites: every write compare-and-set on the row as the plan read it", () => {
+  const vouchers = [
+    cv({ id: 1, status: "pending", hasCode: false, unitIndex: 0 }),
+    cv({ id: 2, status: "held", hasCode: true, unitIndex: 1 }),
+    cv({ id: 3, status: "issuing", unitIndex: 2 }),
+    cvc({ id: 4, status: "issued", unitIndex: 3 }),
+    cv({ id: 5, status: "failed", hasCode: false, unitIndex: 4 }),
+  ];
+  const facts = { cancelled: true, revoked: new Map(), lineQuantities: new Map([["9001", 5]]) };
+  const plan = planGiftVoucherOrderChange({ facts, vouchers, printJobs: [] });
+  const read = vouchers.map((v) => ({
+    ...v,
+    rowVersion: `2026-11-21T08:00:00.00000${v.id}+00:00`,
+    mailStatus: v.id === 1 ? "pending" : "skipped",
+  }));
+  assert.deepEqual(planGiftVoucherOrderChangeWrites(plan, read), [
+    { op: "cancel", id: 1, version: "2026-11-21T08:00:00.000001+00:00", mailPending: true },
+    { op: "cancel", id: 5, version: "2026-11-21T08:00:00.000005+00:00", mailPending: false },
+    { op: "recheck", id: 2, from: "held", version: "2026-11-21T08:00:00.000002+00:00" },
+    { op: "flag", id: 3, version: "2026-11-21T08:00:00.000003+00:00" },
+    { op: "flag", id: 4, version: "2026-11-21T08:00:00.000004+00:00" },
+  ]);
+  // A planned unit read without its version: nothing may be written on that plan.
+  for (const missing of [null, undefined, ""]) {
+    const without = read.map((v) => (v.id === 4 ? { ...v, rowVersion: missing } : v));
+    assert.equal(planGiftVoucherOrderChangeWrites(plan, without), null, String(missing));
+  }
+  // A unit the plan does not touch needs no version; an empty plan writes nothing.
+  const refund = planGiftVoucherOrderChange({ facts: refundFacts({ 9001: 1 }, { 9001: 2 }), vouchers: [cvc({ id: 7, unitIndex: 0 }), cvc({ id: 8, unitIndex: 1 })], printJobs: [] });
+  assert.deepEqual(planGiftVoucherOrderChangeWrites(refund, [{ id: 7 }, { id: 8, rowVersion: "v8" }]), [{ op: "flag", id: 8, version: "v8" }]);
+  const none = planGiftVoucherOrderChange({ facts: refundFacts({}, { 9001: 1 }), vouchers: [cvc({ id: 9 })], printJobs: [] });
+  assert.deepEqual(planGiftVoucherOrderChangeWrites(none, []), []);
 });
 
 test("planGiftVoucherOrderChange: a repeated webhook revokes nothing more", () => {
