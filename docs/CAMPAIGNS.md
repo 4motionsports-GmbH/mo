@@ -126,7 +126,7 @@ The buttons say Starten / Fortsetzen / Wieder aufnehmen / Pausieren / Beenden / 
 every move to `aktiv` (Starten, Fortsetzen, Wieder aufnehmen) and Beenden are confirmed. Moving to
 `aktiv` stamps `started_at` once and materialises the audience at once (§2.3); Beenden stamps
 `ended_at` and leaves every row as it is (audit trail). The nightly audience job ends every `aktiv` campaign whose `ends_at` has passed
-(`endExpiredCampaigns`).
+(`endExpiredCampaigns`) — an end set too early is changed with „Verlängern“ (§2.6).
 
 **Phase** (`campaignPhase`) is what the UI shows: `geplant` (aktiv, start ahead), `laeuft`,
 `abgelaufen` (aktiv, end passed, until the nightly job ends it), or the status itself. Mails go out
@@ -324,6 +324,49 @@ A draft reads the purchases from the local order ledger `customer_orders` (`0062
 snapshot the review card needs. The shipped body is retained next to its `body_hash` (`0038`), so
 the "Gesendet" view can open exactly what the recipient received; rows purge on the retention
 window (§6).
+
+### 2.6 Ende ändern und Verlängern
+
+An end set too early by mistake is fixed in the admin, for every kind but the Einzelansprache — a
+Rundmail's „Versand spätestens bis“ also after its release (24.11.2026: a Black Week Rundmail stopped
+at 11:50 with 2,065 recipients still waiting and was resumed by hand in the database). One dialog,
+`ExtendEndDialog` (`admin/kampagnen/`), from four places:
+
+- **Kampagnen card** — a campaign its end stopped with work left (a Rundmail whose recipients still
+  wait, or any other campaign still `aktiv` past its end) says so in red and offers „Versand
+  verlängern…“ / „Verlängern…“ as its main button; otherwise ⋯ → „Ende ändern…“ (a campaign the
+  nightly job ended by its date: „Verlängern…“ — „Wieder aufnehmen“ would expire again at once and
+  gives way to it). „Aktuell“ keeps a Rundmail the nightly job ended while recipients still wait.
+- **Rundmail workspace** — the header shows „Versand spätestens bis … · Ändern“; when the end stopped
+  the send, a warning „Versand gestoppt — „Versand spätestens bis“ ist erreicht“ with the number still
+  waiting and „Versand verlängern…“; the „Versand“ card reads „Gestoppt — … nicht gesendet“ instead of
+  „Läuft“.
+- **Review desk** (Aktion, Laufend) — „Verlängern…“ next to the red „Abgelaufen“ badge; ⋯ → „Ende
+  ändern…“.
+- **Editor** — the locked „Versand spätestens bis“ of a released Rundmail has „Ändern…“; a campaign its
+  end ended gets a note that a new „Ende“ there does not restart it — „Verlängern…“ does both.
+
+The dialog: the new end (Berlin time; quick choices „Heute 23:59“ while still 15 minutes ahead,
+„Morgen 23:59“, „In 7 Tagen“; or „Ohne Ende“) and what will happen — a Rundmail: how many still wait,
+that they get it from now on, how long the rest takes at its pace, a warning when the new end comes
+too early; nobody gets it twice. The rules (`campaign-end.mjs`, tested):
+
+| State | What a new end does |
+| --- | --- |
+| `entwurf`, `aktiv` (also past its end), `pausiert` | Only the date changes (`change`); one past its end runs again at once. |
+| `beendet` by its date — a Rundmail whose send is not finished; any other kind whose `ends_at` ≤ `ended_at` | Runs again (`resume`): `status = 'aktiv'`, `ended_at = NULL`. A personal campaign takes its audience up like „Wieder aufnehmen“. |
+| `beendet` by hand before its end, `archiviert`, a Rundmail whose send is finished or cancelled, the Einzelansprache | Refused with the reason. |
+
+The new end is none or at least 15 minutes ahead (`validateCampaignEnd`), after a planned start, at
+most a year ahead. `POST /api/admin/campaigns/extend { id, endsAt }` (`extendCampaignEnd`) checks the
+same rules and writes with a guarded UPDATE (the status it read; a Rundmail's unfinished send) — a
+nightly job or a finishing runner in between is a 409, never a wrong change. A Rundmail that had
+stopped sends its next batch at once (like „Fortsetzen“; only with `CAMPAIGN_SENDS_APPROVED`) — only to
+recipients still waiting (§9.4). Access log `campaign.extend` (`from`, `to`, `mode`, `open`).
+
+Before the release, „Prüfen & senden“ warns when „Versand spätestens bis“ comes before the send can
+finish at the chosen pace (from now or the planned start) — next to the button and in the
+confirmation.
 
 ## 3. Legal gating model (Germany: GDPR + §7 UWG)
 

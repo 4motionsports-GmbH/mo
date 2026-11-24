@@ -562,6 +562,18 @@ released by hand in the desk's view „Briefe“ (below; module:
   (Starten / Fortsetzen / Wieder aufnehmen, Pausieren, Beenden, Archivieren —
   `campaigns/status`; starting, resuming and ending are confirmed). Nothing is
   ever sent automatically. The Einzelansprache is always active and has no menu.
+- **Ende ändern / Verlängern** (rules: [`CAMPAIGNS.md`](./CAMPAIGNS.md) §2.6):
+  a campaign its end stopped with work left (a Rundmail whose recipients still
+  wait, any other campaign still `aktiv` past its end) says so in red on its
+  card and offers „Versand verlängern…“ / „Verlängern…“ as the main button;
+  otherwise ⋯ → „Ende ändern…“ (a campaign ended by its date: „Verlängern…“ in
+  place of „Wieder aufnehmen“). One dialog (`ExtendEndDialog`): the new end with
+  quick choices or „Ohne Ende“, and what happens (a Rundmail: who still waits and
+  how long the rest takes). The same dialog sits in the Rundmail workspace
+  (header „Versand spätestens bis … · Ändern“, the warning „Versand gestoppt“),
+  the review desk („Verlängern…“ next to „Abgelaufen“, ⋯ → „Ende ändern…“) and
+  the editor (the locked „Versand spätestens bis“ → „Ändern…“). „Aktuell“ keeps
+  a Rundmail the nightly job ended while recipients still wait.
 
 #### Editor — [`kampagnen/CampaignEditor.tsx`](../src/app/admin/kampagnen/CampaignEditor.tsx)
 
@@ -3055,6 +3067,7 @@ them. Actions that read or act on one person's data write the admin access log
 | Kampagnen | `GET campaigns`, `POST campaigns { name, kind, …, templateId?, fromRundmailId? }` | all campaigns with stats / „Neue Kampagne“ (starts as Entwurf; `validateCampaignInput`); a new Rundmail starts from a template (`templateId`), from another Rundmail's content (`fromRundmailId` — subject, preview line, language, document, pace; never its test mail) or a starter |
 | | `POST campaigns/update { id, …fields }` | edit; an active campaign with a changed audience is re-matched at once |
 | | `POST campaigns/status { id, status }` | Starten / Pausieren / Fortsetzen / Beenden / Archivieren (`canTransition`; starting materialises the audience) |
+| | `POST campaigns/extend { id, endsAt }` | „Ende ändern“ / „Verlängern“ (`extendCampaignEnd`, rules `campaign-end.mjs`): a new end (ISO or `null` = none) for every kind but the Einzelansprache — a released Rundmail's „Versand spätestens bis“ too; a campaign its date ended runs again; a Rundmail that had stopped sends its next batch at once. 409 `not_possible` (the reason) / `conflict` (changed meanwhile); access log `campaign.extend`. [`CAMPAIGNS.md`](./CAMPAIGNS.md) §2.6 |
 | | `POST campaigns/audience-preview { audience, letterMode? }` | the editor's live count with consent (total, „davon N mit Double-Opt-in“, with Mo, DE / EN as window aggregates, 8 sample names, plain-German description — campaign names for „nicht in: …“ / „hat „…“ erhalten“; with „Nur diese Adressen“ the status of every listed address: in, unknown, no consent, blocked, left out by other filters; `allowSingleOptIn` = `CAMPAIGN_ALLOW_SINGLE_OPT_IN`) plus `withoutConsent { total, letterReach }` — the same spec without the consent (the only match that skips it; nothing is materialised) and how many of those a letter could reach (postal address, no objection); with `letterMode` (`ohne_einwilligung` \| `alle`, 0074) also `letters { total, withAddress }` — the letter recipients under the letter rules and how many have a purchase address (the editor's „Per Brief: …“ line) |
 | | `POST campaigns/assist { action: audience \| brief, … }` | AI help in the editor: „Filter setzen“ from a sentence, „Briefing vorschlagen“ (proposals only) |
 | | `POST campaigns/sample { action: pick \| generate \| send_test, … }` | „Prüfen & testen“: `pick { audience }` → three varied recipients; `generate { campaignId?, config, customerId, language }` → a sample mail (subject, body, html; consent + block list checked, nothing stored); `send_test { campaignId, to, sample }` → Testkontakt + `approveAndSendCampaign` (409 `stale_sample` when the saved settings differ from the sample's) |
