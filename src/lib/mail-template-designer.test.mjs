@@ -1288,7 +1288,7 @@ test("designerFailureMessage: RetryError reads its lastError; aborts, limits, re
   assert.equal(designerFailureMessage(api(529)), DESIGNER_MESSAGES.busy);
   assert.equal(designerFailureMessage(api(413)), DESIGNER_MESSAGES.tooMuch);
   assert.equal(designerFailureMessage(api(401)), DESIGNER_MESSAGES.key);
-  assert.equal(designerFailureMessage(api(500)), DESIGNER_MESSAGES.generic);
+  assert.equal(designerFailureMessage(api(500, "Internal server error")), `${DESIGNER_MESSAGES.generic} Anthropic meldet: „Internal server error“ (HTTP 500)`);
   assert.equal(designerFailureMessage(Object.assign(new Error("x"), { name: "AbortError" })), DESIGNER_MESSAGES.timeout);
   assert.equal(designerFailureMessage(new Error("wrapped", { cause: Object.assign(new Error("t"), { name: "TimeoutError" }) })), DESIGNER_MESSAGES.timeout);
   assert.equal(designerFailureMessage({ finishReason: "length" }), DESIGNER_MESSAGES.tooLong);
@@ -1296,6 +1296,63 @@ test("designerFailureMessage: RetryError reads its lastError; aborts, limits, re
   assert.equal(designerFailureMessage(new UnsupportedFunctionalityError({ functionality: "media type: text/html" })), DESIGNER_MESSAGES.unsupported);
   assert.equal(designerFailureMessage(null), DESIGNER_MESSAGES.generic);
   assert.equal(designerFailureMessage(new Error("?")), DESIGNER_MESSAGES.generic);
+});
+
+test("designerFailureMessage: an account without credit or over its spend limit, and Anthropic's own reason for a refused request", () => {
+  /** An API error as @ai-sdk/anthropic throws it: parsed body, raw body, response headers. */
+  const refused = (statusCode, type, message, requestId = "req_011CVxyz") => {
+    const body = { type: "error", error: { type, message }, request_id: requestId };
+    return new APICallError({
+      message,
+      url: "https://api.anthropic.com/v1/messages",
+      requestBodyValues: {},
+      statusCode,
+      responseHeaders: { "request-id": requestId },
+      responseBody: JSON.stringify(body),
+      data: { type: "error", error: { type, message } },
+      isRetryable: false,
+    });
+  };
+  const credit = refused(400, "invalid_request_error", "Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.");
+  assert.equal(
+    designerFailureMessage(credit),
+    `${DESIGNER_MESSAGES.credit} Anthropic meldet: „Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.“ (HTTP 400, Anfrage-ID req_011CVxyz)`
+  );
+  // a credit problem never starts a second run on another model
+  assert.equal(isDesignerModelUnavailable(credit), false);
+  const limit = refused(400, "invalid_request_error", "You have reached your specified API usage limits. You will regain access on 2026-12-01 at 00:00 UTC.");
+  assert.match(designerFailureMessage(limit), /^Das Ausgabenlimit des Anthropic-Kontos ist erreicht .* „You have reached your specified API usage limits\. You will regain access on 2026-12-01 at 00:00 UTC\.“/);
+  assert.equal(isDesignerModelUnavailable(limit), false);
+  const workspace = refused(400, "invalid_request_error", "You have reached your specified workspace API usage limits. You will regain access on 2026-12-01 at 00:00 UTC.");
+  assert.match(designerFailureMessage(workspace), /^Das Ausgabenlimit des Anthropic-Kontos ist erreicht/);
+  // any other refused request: Anthropic's words, the status and the request id — retrying does not help
+  const bad = refused(400, "invalid_request_error", "messages.0.content.2: text content blocks must be non-empty");
+  assert.equal(
+    designerFailureMessage(bad),
+    `${DESIGNER_MESSAGES.refusedRequest} Anthropic meldet: „messages.0.content.2: text content blocks must be non-empty“ (HTTP 400, Anfrage-ID req_011CVxyz)`
+  );
+  // also behind a RetryError, and the request id from the body when the header is missing
+  const noHeader = new APICallError({
+    message: "Bad request",
+    url: "u",
+    requestBodyValues: {},
+    statusCode: 400,
+    responseBody: JSON.stringify({ type: "error", error: { type: "invalid_request_error", message: "tools.2.custom.input_schema: JSON schema is invalid" }, request_id: "req_body1" }),
+    isRetryable: false,
+  });
+  assert.equal(
+    designerFailureMessage(new RetryError({ message: "r", reason: "errorNotRetryable", errors: [noHeader] })),
+    `${DESIGNER_MESSAGES.refusedRequest} Anthropic meldet: „tools.2.custom.input_schema: JSON schema is invalid“ (HTTP 400, Anfrage-ID req_body1)`
+  );
+  // an error that is not an API answer keeps the plain message; a long reason is one line of at most 300 characters
+  assert.equal(designerFailureMessage(new TypeError("x is undefined")), DESIGNER_MESSAGES.generic);
+  const long = designerFailureMessage(refused(400, "invalid_request_error", `line one\nline two ${"z".repeat(500)}`, "bad id with spaces"));
+  assert.match(long, /„line one line two z+“ \(HTTP 400\)$/);
+  assert.ok(long.length < DESIGNER_MESSAGES.refusedRequest.length + 340);
+  // the known kinds keep their own messages
+  assert.equal(designerFailureMessage(refused(529, "overloaded_error", "Overloaded")), DESIGNER_MESSAGES.busy);
+  assert.equal(designerFailureMessage(refused(401, "authentication_error", "invalid x-api-key")), DESIGNER_MESSAGES.key);
+  assert.equal(designerFailureMessage(refused(400, "invalid_request_error", "prompt is too long: 1200000 tokens > 1000000 maximum")), DESIGNER_MESSAGES.tooMuch);
 });
 
 test("accepted in the last round, dropped blocks are named once for the operator", async () => {

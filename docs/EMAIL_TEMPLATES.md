@@ -497,6 +497,16 @@ dropped, never refused); the house style comes only from Einstellungen. Rules an
   Opus 5.5 (`fallbackFrom` the chosen model). Without time for it (under 60 s left) or when Opus 5.5
   is the choice, the failure names the model and Einstellungen → KI-Gestalter; after „Abbrechen“
   nothing runs again.
+- **Failures** — a request Anthropic refuses fails within a second and uses no tokens (run line
+  „0:01 min · ≈ 0,00 €“); the panel says why (`designerFailureMessage`). No credit left on the
+  Anthropic account („Das Guthaben des Anthropic-Kontos ist aufgebraucht …“) and a reached spend limit
+  („Das Ausgabenlimit des Anthropic-Kontos ist erreicht …“) have their own messages — both stop every
+  AI feature of Mo, the shop's chat included. Any other refused request (HTTP 4xx) reads „Anthropic hat
+  die Anfrage abgelehnt — erneut versuchen hilft hier nicht.“, a server error the usual „… bitte erneut
+  versuchen.“ — each followed by Anthropic's own words, the HTTP status and the request id („Anthropic
+  meldet: „…“ (HTTP 400, Anfrage-ID req_…)“, at most 300 characters). Overload, too much material, a
+  rejected key and an unavailable model keep their own messages. The error also goes to the logs
+  (`reportError`, route `lib/mail-template-assist`, phase `run`).
 
 **Nothing the model writes is trusted.** Every submission is normalised and checked
 (`checkDesignSubmission`): product refs must exist in the catalog; pictures may come only from the

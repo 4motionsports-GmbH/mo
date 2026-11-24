@@ -3893,8 +3893,47 @@ export const DESIGNER_MESSAGES = Object.freeze({
   refused: "Die KI hat diese Anfrage aus Sicherheitsgründen abgelehnt — bitte anders formulieren.",
   unsupported: "Ein Anhang hat ein Format, das die KI nicht lesen kann — bitte als Bild (PNG/JPG) oder PDF anhängen.",
   key: "Der KI-Schlüssel wurde abgelehnt (ANTHROPIC_API_KEY prüfen).",
+  credit:
+    "Das Guthaben des Anthropic-Kontos ist aufgebraucht — bitte in der Anthropic Console unter „Billing“ Guthaben kaufen oder die automatische Aufladung einschalten. Das betrifft alle KI-Funktionen von Mo, auch den Chat im Shop.",
+  spendLimit:
+    "Das Ausgabenlimit des Anthropic-Kontos ist erreicht — bitte in der Anthropic Console unter „Limits“ anheben. Das betrifft alle KI-Funktionen von Mo, auch den Chat im Shop.",
+  refusedRequest: "Anthropic hat die Anfrage abgelehnt — erneut versuchen hilft hier nicht.",
   generic: "Die KI konnte die Mail gerade nicht gestalten — bitte erneut versuchen.",
 });
+
+/** Anthropic's answer when the account's prepaid credit is used up (HTTP 400 invalid_request_error). */
+const CREDIT_RE = /\bcredit balance\b/i;
+/** Anthropic's answer when the account's or workspace's spend limit is reached (HTTP 400; „… You will regain access on …“). */
+const SPEND_LIMIT_RE = /\b(?:usage|spend(?:ing)?) limits?\b[\s\S]{0,120}?\bregain access\b|\breached your (?:specified )?(?:workspace )?(?:API )?(?:usage|spend(?:ing)?) limits?\b/i;
+
+/**
+ * Anthropic's own words for an API error, for the operator: „Anthropic meldet:
+ * „…““ with the HTTP status and the request id (what Anthropic's support asks
+ * for) — "" when the error is not an API answer. Its message is the API's
+ * (never the request's content), one line, at most 300 characters.
+ * @param {any} e
+ */
+function anthropicReason(e) {
+  const status = Number(e?.statusCode ?? e?.status);
+  const body = apiErrorBody(e);
+  if (!body.type && !Number.isFinite(status)) return "";
+  const text = oneLine(body.message || (typeof e?.message === "string" ? e.message : ""), 300);
+  if (!text) return "";
+  let id = "";
+  const headers = e?.responseHeaders;
+  if (headers && typeof headers === "object") id = String(headers["request-id"] ?? headers["Request-Id"] ?? "");
+  if (!id && typeof e?.responseBody === "string" && e.responseBody.length <= 20_000) {
+    try {
+      const parsed = JSON.parse(e.responseBody);
+      if (typeof parsed?.request_id === "string") id = parsed.request_id;
+    } catch {
+      /* not JSON */
+    }
+  }
+  if (!/^[\w-]{1,100}$/.test(id)) id = "";
+  const facts = [Number.isFinite(status) ? `HTTP ${status}` : "", id ? `Anfrage-ID ${id}` : ""].filter(Boolean).join(", ");
+  return `Anthropic meldet: „${text}“${facts ? ` (${facts})` : ""}`;
+}
 
 /** An abort / timeout, also when wrapped as a cause. @param {unknown} err */
 function isAbortLike(err, depth = 0) {
@@ -4154,10 +4193,17 @@ export function designerFailureMessage(err, opts = {}) {
   if (e.finishReason === "content-filter") return DESIGNER_MESSAGES.refused;
   if (isDesignerModelUnavailable(err)) return designerModelUnavailableMessage(opts?.model);
   const status = Number(e.statusCode ?? e.status);
-  const text = `${typeof e.message === "string" ? e.message : ""} ${typeof e.responseBody === "string" ? e.responseBody : ""}`;
+  const text = `${typeof e.message === "string" ? e.message : ""} ${typeof e.responseBody === "string" ? e.responseBody : ""} ${apiErrorBody(e).message}`;
+  const reason = anthropicReason(e);
+  // The account, not this request: every AI feature of Mo fails the same way (HTTP 400, no tokens used).
+  if (CREDIT_RE.test(text)) return reason ? `${DESIGNER_MESSAGES.credit} ${reason}` : DESIGNER_MESSAGES.credit;
+  if (SPEND_LIMIT_RE.test(text)) return reason ? `${DESIGNER_MESSAGES.spendLimit} ${reason}` : DESIGNER_MESSAGES.spendLimit;
   if (status === 429 || status === 529 || status === 503 || /overloaded/i.test(text)) return DESIGNER_MESSAGES.busy;
   if (status === 413 || /prompt is too long|too many total|request.{0,20}too large|exceeds.{0,40}(limit|maximum)/i.test(text)) return DESIGNER_MESSAGES.tooMuch;
   if (status === 401 || status === 403) return DESIGNER_MESSAGES.key;
+  // Any other answer of the API: its own reason, so the panel says what went wrong. A refused
+  // request (4xx) fails the same way again; a server error (5xx, retried already) may pass later.
+  if (reason) return status >= 400 && status < 500 ? `${DESIGNER_MESSAGES.refusedRequest} ${reason}` : `${DESIGNER_MESSAGES.generic} ${reason}`;
   return DESIGNER_MESSAGES.generic;
 }
 
