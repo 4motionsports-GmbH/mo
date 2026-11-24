@@ -19,7 +19,9 @@ import {
   storeTemplateImage,
 } from "@/lib/mail-template-image";
 
-export const maxDuration = 60;
+// Shrinking an animated GIF that is too wide or too large (every frame encoded again) is planned
+// to take at most 150 s (mail-template-gif.mjs GIF_UPLOAD_BUDGET_SECONDS); the rest is upload and Blob.
+export const maxDuration = 300;
 
 async function readBodyCapped(req: Request, max: number): Promise<Buffer | null> {
   if (!req.body) return Buffer.alloc(0);

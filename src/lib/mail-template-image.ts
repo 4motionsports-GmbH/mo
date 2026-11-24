@@ -7,8 +7,13 @@
 // metadata tag (no camera EXIF or GPS leaves the server) and stored as JPEG —
 // or PNG when it has transparency. WebP / AVIF / HEIF become JPEG or PNG
 // (classic Outlook cannot show WebP). Animated GIFs (Black-Week banners) are
-// kept byte for byte when they fit (≤ 1200 px wide, ≤ 2 MB) — re-encoding
-// would lose frames or quality; otherwise the operator gets a German message.
+// kept byte for byte when they fit (≤ 1200 px wide, ≤ 2 MB); one that does not
+// is shrunk — every frame resized and encoded again, timing and loop kept, at
+// most 1200 px wide and narrower until it is ≤ 2 MB (mail-template-gif.mjs,
+// tested) — and refused only when not even 600 px fits the time budget.
+// Only the first frame is read up front: sharp's pixel limit counts an
+// animated image as all frames stacked, so a 1440-px GIF with 20 frames was
+// refused as „nicht lesbar“ (owner report 24.11.2026).
 //
 // Stored privately in the Blob store under email-heroes/template-<stamp>…
 // and delivered by the public route /api/email-hero-image/<file> (the hero
@@ -21,12 +26,22 @@ import { put } from "@vercel/blob";
 import { getBaseUrl } from "./base-url";
 import { reportError } from "./observability";
 import { TEMPLATE_IMAGE_KIND, heroBlobFileFromPathname, heroBlobKey, heroImagePublicUrl } from "./email-hero-blob.mjs";
+import {
+  GIF_ENCODE_OPTIONS,
+  GIF_MAX_WIDTH,
+  GIF_UPLOAD_BUDGET_SECONDS,
+  gifShrunkWarning,
+  planAnimatedGif,
+  shrinkAnimatedGif,
+  sizeLabel,
+} from "./mail-template-gif.mjs";
 
 export const TEMPLATE_IMAGE_CONTENT_TYPES = ["image/jpeg", "image/png", "image/webp", "image/gif"] as const;
 export const TEMPLATE_IMAGE_MAX_BYTES = 4_000_000;
-const MAX_WIDTH = 1200;
+const MAX_WIDTH = GIF_MAX_WIDTH;
 const MIN_WIDTH = 200;
-const GIF_MAX_BYTES = 2_000_000;
+/** Pixels of ONE picture (or one frame of an animated GIF) sharp may decode. */
+const FRAME_PIXEL_LIMIT = 40_000_000;
 const BLOB_PUT_TIMEOUT_MS = 25_000;
 
 export type TemplateImageResult =
@@ -41,14 +56,20 @@ export function isTemplateImageUploadConfigured(): boolean {
   return Boolean(process.env.BLOB_READ_WRITE_TOKEN);
 }
 
-/** Process and store one uploaded picture. Never throws. */
-export async function storeTemplateImage(bytes: Buffer): Promise<TemplateImageResult> {
+/**
+ * Process and store one uploaded picture. `gifBudgetSeconds`: how long
+ * shrinking an animated GIF may take (default: the upload's 150 s; the
+ * KI-Gestalter passes what its deadline leaves). Never throws.
+ */
+export async function storeTemplateImage(bytes: Buffer, opts: { gifBudgetSeconds?: number } = {}): Promise<TemplateImageResult> {
   if (!isTemplateImageUploadConfigured()) {
     return fail(503, "not_configured", "Bild-Upload nicht eingerichtet (BLOB_READ_WRITE_TOKEN fehlt).");
   }
   let meta: sharp.Metadata;
   try {
-    meta = await sharp(bytes, { animated: true, limitInputPixels: 40_000_000 }).metadata();
+    // The first frame only (`pages` still counts them all): the limit holds per frame — read
+    // `animated`, sharp counts all frames stacked and a long GIF looked unreadable.
+    meta = await sharp(bytes, { limitInputPixels: FRAME_PIXEL_LIMIT }).metadata();
   } catch {
     return fail(400, "unreadable", "Das Bild ist nicht lesbar — bitte JPG, PNG, GIF oder WebP hochladen.");
   }
@@ -62,23 +83,52 @@ export async function storeTemplateImage(bytes: Buffer): Promise<TemplateImageRe
   let contentType: string;
   let width = meta.width ?? 0;
   let height = meta.pageHeight ?? meta.height ?? 0;
+  const frames = meta.pages ?? 1;
 
-  if (format === "gif" && (meta.pages ?? 1) > 1) {
-    if (width > MAX_WIDTH || bytes.length > GIF_MAX_BYTES) {
-      return fail(
-        400,
-        "gif_too_large",
-        `Animierte GIFs dürfen höchstens ${MAX_WIDTH} px breit und 2 MB groß sein (dieses: ${width} px, ${Math.round(bytes.length / 1024)} KB).`
-      );
+  if (format === "gif" && frames > 1) {
+    const gif = { width, height, frames };
+    const budgetSeconds = opts.gifBudgetSeconds ?? GIF_UPLOAD_BUDGET_SECONDS;
+    const plan = planAnimatedGif({ ...gif, bytes: bytes.length, budgetSeconds });
+    if (plan.action === "refuse") return fail(400, plan.code, plan.message);
+    if (plan.action === "keep") {
+      out = bytes;
+    } else {
+      // Every frame decoded (the limit is exactly the stack: frames × one frame), resized, encoded again.
+      const stackPixels = width * height * frames + 1;
+      let shrunk: Awaited<ReturnType<typeof shrinkAnimatedGif>>;
+      try {
+        shrunk = await shrinkAnimatedGif({
+          gif,
+          firstWidth: plan.width,
+          budgetSeconds,
+          encode: (w: number) =>
+            sharp(bytes, { animated: true, limitInputPixels: stackPixels })
+              .resize({ width: w, withoutEnlargement: true })
+              .gif({ ...GIF_ENCODE_OPTIONS })
+              .toBuffer(),
+        });
+      } catch (err) {
+        reportError(err, { route: "lib/mail-template-image", phase: "gif" });
+        return fail(400, "unreadable", "Das GIF konnte nicht verarbeitet werden — bitte neu exportieren.");
+      }
+      if (!shrunk.ok) return fail(400, shrunk.code, shrunk.message);
+      out = Buffer.from(shrunk.data);
+      try {
+        const encoded = await sharp(out).metadata();
+        width = encoded.width ?? shrunk.width;
+        height = encoded.pageHeight ?? encoded.height ?? height;
+      } catch {
+        width = shrunk.width;
+      }
+      warnings.push(gifShrunkWarning({ fromWidth: gif.width, toWidth: width, fromBytes: bytes.length, toBytes: out.length, frames }));
     }
-    out = bytes;
     ext = "gif";
     contentType = "image/gif";
     warnings.push("Animiertes GIF: Outlook für Windows zeigt nur das erste Bild — das sollte allein verständlich sein.");
   } else {
     try {
       // EXIF orientation first, then at most MAX_WIDTH wide (never enlarged).
-      const img = sharp(bytes, { limitInputPixels: 40_000_000 })
+      const img = sharp(bytes, { limitInputPixels: FRAME_PIXEL_LIMIT })
         .rotate()
         .resize({ width: MAX_WIDTH, withoutEnlargement: true });
       const hasAlpha = meta.hasAlpha === true && format !== "jpeg";
@@ -101,7 +151,7 @@ export async function storeTemplateImage(bytes: Buffer): Promise<TemplateImageRe
   }
   if (width < MIN_WIDTH) warnings.push(`Das Bild ist nur ${width} px breit — in der Mail wirkt es eventuell unscharf.`);
   if (width < 600 && width >= MIN_WIDTH) warnings.push("Für ein vollbreites Bild mindestens 1200 px Breite verwenden (scharf auf dem Handy).");
-  if (out.length > 600_000) warnings.push(`Das Bild ist ${Math.round(out.length / 1024)} KB groß — große Bilder laden langsam.`);
+  if (out.length > 600_000) warnings.push(`Das Bild ist ${sizeLabel(out.length)} groß — große Bilder laden langsam.`);
 
   const abort = new AbortController();
   const timer = setTimeout(() => abort.abort(), BLOB_PUT_TIMEOUT_MS);

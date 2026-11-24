@@ -91,6 +91,8 @@ const COLLECTIONS_FAILED_TTL_MS = 60 * 1000;
 const COLLECTIONS_TIMEOUT_MS = 8_000;
 /** One picture upload may take this long (storeTemplateImage's own Blob timeout is 25 s). */
 const IMAGE_STORE_MAX_MS = 25_000;
+/** Of a picture's store budget, this much stays for the Blob upload when an animated GIF has to shrink first. */
+const GIF_STORE_RESERVE_S = 6;
 /** Uploads may run until this long after the model's deadline (the route's maxDuration is 15 s later). */
 const IMAGE_STORE_AFTER_DEADLINE_MS = 8_000;
 
@@ -384,7 +386,10 @@ export async function storeDesignerImages(
     used.map(async (n) => {
       const bytes = originals.get(n);
       if (!bytes) return { n, result: null };
-      const result = await withTimeout(storeTemplateImage(bytes), budget, null);
+      // An animated GIF that would have to shrink gets what the budget leaves after the upload; a longer
+      // one is refused at once with its reason (the operator uploads it in the block — 150 s there).
+      const gifBudgetSeconds = Math.max(0, budget / 1000 - GIF_STORE_RESERVE_S);
+      const result = await withTimeout(storeTemplateImage(bytes, { gifBudgetSeconds }), budget, null);
       return { n, result };
     })
   );

@@ -655,7 +655,17 @@ logo in „Farben & Schrift“ — and the attachment pictures the KI-Gestalter 
 raw bytes ≤ 4 MB, JPEG/PNG/WebP/GIF). The picture is EXIF-oriented, scaled to at most 1,200 px
 wide, stripped of metadata and stored as JPEG (PNG with transparency); WebP becomes JPEG/PNG
 (classic Outlook cannot show WebP). Animated GIFs are kept byte for byte when they fit (≤ 1,200 px,
-≤ 2 MB). Stored in the Blob store under `email-heroes/template-…` and served by
+≤ 2 MB); one that does not is shrunk instead of refused ([`mail-template-gif.mjs`](../src/lib/mail-template-gif.mjs),
+tested): every frame resized and encoded again — frames, timing and loop stay — at most 1,200 px wide
+and, while the result is over 2 MB, narrower (size ∝ width^1.6, then the GIF's own measured exponent;
+at most three encodes), never below 600 px unless the GIF already is; the toast names it („Animiertes
+GIF für die Mail verkleinert: 1440 → 1200 px breit, 1,9 MB → 1,8 MB (alle 40 Einzelbilder
+bleiben).“). Encoding is planned to take at most 150 s (≈ 15 s for 40 frames of 1,440 px; the route
+has 300 s); a GIF that would take longer even at 600 px, or stays over 2 MB, is refused with its
+reason. Only the first frame is read up front — sharp's pixel limit (40 MP) counts an animated image
+as all frames stacked, which made a 1,440-px GIF with 20+ frames „nicht lesbar“ until 24.11.2026. The
+KI-Gestalter's attachment GIFs get what its deadline leaves (a longer one: upload it in the block).
+Stored in the Blob store under `email-heroes/template-…` and served by
 `/api/email-hero-image/<file>`; template pictures are never deleted (sent mails reference them)
 and never erased with a person ([`email-hero-blob.mjs`](../src/lib/email-hero-blob.mjs)
 `isTemplateImageFile`). Needs `BLOB_READ_WRITE_TOKEN`; without it the field takes a URL only.
