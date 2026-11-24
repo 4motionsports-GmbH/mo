@@ -96,6 +96,7 @@ function cardProps(c: CampaignWithStats, all: CampaignWithStats[]): CampaignCard
     priority: c.priority,
     startsAt: c.startsAt,
     endsAt: c.endsAt,
+    endedAt: c.endedAt,
     dailyTarget: c.dailyTarget,
     autoPreparePerDay: c.autoPreparePerDay,
     reentryDays: c.reentryDays,
@@ -393,6 +394,7 @@ export async function KampagneTab({
         audienceText: audienceText(campaign, campaigns),
         startsAt: campaign.startsAt,
         endsAt: campaign.endsAt,
+        endedAt: campaign.endedAt,
         audienceRefreshedAt: campaign.audienceRefreshedAt,
         letterMode: campaign.letterMode,
       }}

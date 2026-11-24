@@ -9,13 +9,15 @@
 
 import * as React from "react";
 import { useRouter } from "next/navigation";
-import { ChevronDown, FlaskConical, Keyboard, LayoutGrid, Pencil, RefreshCw, RotateCcw, Sparkles, X } from "lucide-react";
+import { CalendarClock, ChevronDown, FlaskConical, Keyboard, LayoutGrid, Pencil, RefreshCw, RotateCcw, Sparkles, X } from "lucide-react";
 import { ADMIN_DATE, ADMIN_DATE_TIME_SHORT, formatAdmin } from "@/lib/admin-datetime.mjs";
 import { CAMPAIGN_KIND_LABELS, CAMPAIGN_PHASE_LABELS } from "@/lib/campaign-def.mjs";
 import { adminTabHref } from "@/lib/admin-tabs.mjs";
 import { num, relativeTime } from "@/lib/admin-format.mjs";
 import { Button, InfoTip, Menu, ProgressBar, SegmentedControl, StatusBadge } from "../ui";
 import { PreparePopover } from "./PreparePopover";
+import { ExtendEndDialog, endChangeOf, extendActionLabel, type ExtendEndTarget } from "../kampagnen/ExtendEndDialog";
+import { useNow } from "../lib/use-now";
 import type { CampaignCostsProps, CampaignCountsProps, CampaignDeskCampaign, CampaignSwitchItem, DeskView } from "./types";
 import type { PrepareJob, PrepareSettings } from "./useCampaignActions";
 
@@ -94,6 +96,22 @@ export function CampaignHeader({
 }) {
   const router = useRouter();
   const running = prepareJob !== null && prepareJob.phase !== "done";
+  // „Ende ändern“ / „Verlängern“ (ExtendEndDialog, lib/campaign-end.mjs) — every kind but the Einzelansprache.
+  const now = useNow(30_000);
+  const [extendOpen, setExtendOpen] = React.useState(false);
+  const extendTarget: ExtendEndTarget = {
+    id: campaign.id,
+    name: campaign.name,
+    kind: campaign.kind,
+    status: campaign.status,
+    startsAt: campaign.startsAt,
+    endsAt: campaign.endsAt,
+    endedAt: campaign.endedAt,
+  };
+  const endChange = now != null ? endChangeOf(extendTarget, now) : null;
+  const extendLabel = now != null ? extendActionLabel(extendTarget, now) : "Ende ändern…";
+  // Past its end while still „aktiv“: nothing goes out until it is extended.
+  const stoppedByEnd = endChange != null && endChange.ok && endChange.expired && campaign.status === "aktiv";
   // A refresh stamped ahead of the browser clock (skew) reads as "gerade eben".
   const refreshedAt = campaign.audienceRefreshedAt ?? counts.lastSyncedAt;
   const syncRelative = refreshedAt ? relativeTime(refreshedAt) : null;
@@ -139,6 +157,11 @@ export function CampaignHeader({
           ]}
         />
         <StatusBadge tone={PHASE_TONE[campaign.phase] ?? "neutral"}>{phaseLabel}</StatusBadge>
+        {stoppedByEnd && (
+          <Button size="xs" variant="outline" onClick={() => setExtendOpen(true)}>
+            <CalendarClock /> {extendLabel}
+          </Button>
+        )}
         <InfoTip>
           {CAMPAIGN_KIND_LABELS[campaign.kind]}. {campaign.audienceText}.
           {campaign.startsAt && <> Start {formatAdmin(campaign.startsAt, ADMIN_DATE)}.</>}
@@ -344,6 +367,9 @@ export function CampaignHeader({
             icon: <Pencil />,
             onSelect: () => router.push(adminTabHref("kampagne", { edit: String(campaign.id) })),
           },
+          ...(endChange?.ok && campaign.status !== "entwurf"
+            ? [{ key: "extend", label: extendLabel, icon: <CalendarClock />, onSelect: () => setExtendOpen(true) }]
+            : []),
           {
             key: "test",
             label: "Testkontakte…",
@@ -370,6 +396,7 @@ export function CampaignHeader({
         ]}
       />
       </div>
+      <ExtendEndDialog target={extendTarget} open={extendOpen} onOpenChange={setExtendOpen} onDone={() => router.refresh()} />
     </div>
   );
 }

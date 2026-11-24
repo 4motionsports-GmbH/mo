@@ -27,6 +27,7 @@ import { matchAudience, AUDIENCE_MAX_MEMBERS, type AudienceSpec } from "./audien
 import { refreshCampaignLetters, type LetterRefreshResult } from "./campaign-letters-store";
 import { normalizeAudienceSpec } from "./audience-spec.mjs";
 import { canTransition, slugifyCampaignName, campaignPhase } from "./campaign-def.mjs";
+import { campaignEndChange, validateCampaignEnd } from "./campaign-end.mjs";
 import { effectiveEmailLanguage } from "./campaign-language.mjs";
 import { parseDiscountScope, type DiscountScope } from "./discount-scope.mjs";
 import { normalizeCampaignHeroImage } from "./campaign-hero.mjs";
@@ -512,6 +513,108 @@ export async function setCampaignStatus(
   const refresh = to === "aktiv" ? await refreshCampaignAudience(id, sql) : null;
   const campaign = (await getCampaign(id, sql)) ?? { ...current, status: to };
   return { ok: true, campaign, refresh };
+}
+
+export type ExtendCampaignEndResult =
+  | {
+      ok: true;
+      campaign: Campaign;
+      /** `resume`: it was „beendet“ by its date and runs again; `change`: only the date changed. */
+      mode: "change" | "resume";
+      /** Its end had passed — it had stopped because of it and goes on now. */
+      expired: boolean;
+      previousEndsAt: string | null;
+      /** A Rundmail's recipients still waiting (pending + in flight), else null. */
+      open: number | null;
+      refresh: AudienceRefreshResult | null;
+    }
+  | { ok: false; reason: "not_found" | "refused" | "conflict" | "db"; message?: string };
+
+/**
+ * „Ende ändern“ / „Verlängern“: a new end for a campaign (a Rundmail's
+ * „Versand spätestens bis“, also after its release) and — when its date is
+ * what ended it — the campaign running again. The rules are the tested
+ * campaignEndChange / validateCampaignEnd (campaign-end.mjs); the UPDATE
+ * re-checks the state it read (status, a Rundmail's unfinished send), so a
+ * nightly job or a finishing runner in between makes it a conflict instead of
+ * a wrong change. Who already got a mail never gets it again: the Rundmail
+ * runner only sends to recipients still waiting. A personal campaign that
+ * runs again takes its audience up like „Wieder aufnehmen“. Never throws.
+ */
+export async function extendCampaignEnd(
+  id: number,
+  endsAt: unknown,
+  sql: Sql | null = getSql()
+): Promise<ExtendCampaignEndResult> {
+  if (!sql) return { ok: false, reason: "db" };
+  const current = await getCampaign(id, sql);
+  if (!current) return { ok: false, reason: "not_found" };
+  let finished = false;
+  let open: number | null = null;
+  if (current.kind === "rundmail") {
+    try {
+      const rows = (await sql`
+        SELECT m.finished_at IS NOT NULL AS finished,
+               (SELECT count(*) FROM campaign_contacts cc
+                 WHERE cc.campaign_id = ${id} AND cc.status IN ('pending', 'sending') AND cc.is_test = false)::int AS open
+          FROM campaign_mailings m
+         WHERE m.campaign_id = ${id}
+      `) as Array<{ finished: boolean; open: number }>;
+      finished = rows[0]?.finished === true;
+      open = Number(rows[0]?.open ?? 0);
+    } catch (err) {
+      reportError(err, { route: "lib/campaigns-store", phase: "extendCampaignEnd.read" });
+      return { ok: false, reason: "db" };
+    }
+  }
+  const now = Date.now();
+  const change = campaignEndChange(
+    { kind: current.kind, status: current.status, startsAt: current.startsAt, endsAt: current.endsAt, endedAt: current.endedAt, finished },
+    { now }
+  );
+  if (!change.ok) return { ok: false, reason: "refused", message: change.message };
+  const check = validateCampaignEnd(endsAt, { now, startsAt: current.startsAt });
+  if (!check.ok) return { ok: false, reason: "refused", message: check.message };
+  const next = check.endsAt;
+  try {
+    let rows: unknown[];
+    if (change.mode === "resume" && current.kind === "rundmail") {
+      rows = (await sql`
+        UPDATE campaigns SET ends_at = ${next}::timestamptz, status = 'aktiv', ended_at = NULL, updated_at = now()
+         WHERE id = ${id} AND kind = 'rundmail' AND status = 'beendet'
+           AND EXISTS (SELECT 1 FROM campaign_mailings m WHERE m.campaign_id = ${id} AND m.finished_at IS NULL)
+        RETURNING id
+      `) as unknown[];
+    } else if (change.mode === "resume") {
+      rows = (await sql`
+        UPDATE campaigns SET ends_at = ${next}::timestamptz, status = 'aktiv', ended_at = NULL, updated_at = now()
+         WHERE id = ${id} AND kind <> 'rundmail' AND kind <> 'einzel' AND status = 'beendet'
+        RETURNING id
+      `) as unknown[];
+    } else if (current.kind === "rundmail") {
+      rows = (await sql`
+        UPDATE campaigns SET ends_at = ${next}::timestamptz, updated_at = now()
+         WHERE id = ${id} AND kind = 'rundmail' AND status = ${current.status}
+           AND NOT EXISTS (SELECT 1 FROM campaign_mailings m WHERE m.campaign_id = ${id} AND m.finished_at IS NOT NULL)
+        RETURNING id
+      `) as unknown[];
+    } else {
+      rows = (await sql`
+        UPDATE campaigns SET ends_at = ${next}::timestamptz, updated_at = now()
+         WHERE id = ${id} AND kind <> 'einzel' AND status = ${current.status}
+        RETURNING id
+      `) as unknown[];
+    }
+    if (rows.length === 0) {
+      return { ok: false, reason: "conflict", message: "Die Kampagne hat sich inzwischen geändert — bitte die Seite neu laden und erneut versuchen." };
+    }
+  } catch (err) {
+    reportError(err, { route: "lib/campaigns-store", phase: "extendCampaignEnd" });
+    return { ok: false, reason: "db" };
+  }
+  const refresh = change.mode === "resume" && current.kind !== "rundmail" ? await refreshCampaignAudience(id, sql) : null;
+  const campaign = (await getCampaign(id, sql)) ?? { ...current, endsAt: next };
+  return { ok: true, campaign, mode: change.mode, expired: change.expired, previousEndsAt: current.endsAt, open, refresh };
 }
 
 /** End every active campaign whose end date has passed (nightly). */

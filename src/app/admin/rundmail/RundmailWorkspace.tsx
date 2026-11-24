@@ -99,6 +99,8 @@ import { useDesignerSession } from "../vorlagen/use-designer-session";
 import { useDocHistory } from "../vorlagen/use-doc-history";
 import { EditorDraftNotice, EditorDraftStatus, useEditorDraft } from "../vorlagen/use-editor-draft";
 import { RundmailAnalytics } from "./RundmailAnalytics";
+import { ExtendEndDialog, endChangeOf, type ExtendEndTarget } from "../kampagnen/ExtendEndDialog";
+import { mailingEndOutlook } from "@/lib/campaign-end.mjs";
 
 type RateKey = keyof typeof MAILING_RATES;
 
@@ -288,6 +290,9 @@ export function RundmailWorkspace({
   const [mailing, setMailing] = React.useState<RundmailMailing>(initialMailing);
   const [stats, setStats] = React.useState<RundmailStats>(initialStats);
   const [status, setStatus] = React.useState(campaign.status);
+  // „Versand spätestens bis“ — changed through „Ende ändern“ / „Versand verlängern“ (ExtendEndDialog) without a reload.
+  const [endsAt, setEndsAt] = React.useState(campaign.endsAt);
+  const [extendOpen, setExtendOpen] = React.useState(false);
   const [subject, setSubject] = React.useState(initialMailing.subject);
   const [preheader, setPreheader] = React.useState(initialMailing.preheader ?? "");
   const [language, setLanguage] = React.useState<"de" | "en">(initialMailing.language);
@@ -375,6 +380,19 @@ export function RundmailWorkspace({
     now: now ?? undefined,
   });
   const planned = schedule.kind === "geplant";
+  // „Ende ändern“ / „Versand verlängern“ (lib/campaign-end.mjs): who still waits, and did the end stop the send?
+  const waiting = stats.pending + stats.sending;
+  const extendTarget: ExtendEndTarget = {
+    id: campaign.id,
+    name: campaign.name,
+    kind: "rundmail",
+    status,
+    startsAt: campaign.startsAt,
+    endsAt,
+    rundmail: { open: waiting, finished: Boolean(mailing.finishedAt), perMinute: MAILING_RATES[mailing.rate] },
+  };
+  const endChange = frozen && now != null ? endChangeOf(extendTarget, now) : null;
+  const stoppedByEnd = endChange != null && endChange.ok && endChange.expired && waiting > 0;
   // „Planung zurücknehmen“ until the first batch (the store refuses afterwards).
   const canUnschedule = status === "aktiv" && mailingCanUnschedule(schedule, stats.sent) && !mailing.materializedAt;
   // „Planen“: the typed Berlin time → an instant, checked like the server does.
@@ -389,6 +407,12 @@ export function RundmailWorkspace({
           : validateMailingStart(plannedAt, { endsAt: campaign.endsAt });
   const plannedBad = plannedCheck != null && (!plannedCheck.ok || !plannedCheck.planned);
   const reachNow = evaluation?.audience ? (allowSingleOptIn ? evaluation.audience.total : evaluation.audience.confirmed) : null;
+  // Before the release: does the send fit before „Versand spätestens bis“ at this pace (from now or the planned start)?
+  const releaseOutlook =
+    !frozen && endsAt && reachNow != null && reachNow > 0 && now != null
+      ? mailingEndOutlook({ open: reachNow, perMinute: MAILING_RATES[mailing.rate], endsAt, startsAt: when === "later" ? plannedAt : null, now })
+      : null;
+  const endTooEarly = releaseOutlook != null && !releaseOutlook.fits;
   const defaultTab = !frozen ? "inhalt" : "versand";
   const [tab, setTab] = React.useState(
     initialView && (RUNDMAIL_VIEWS as readonly string[]).includes(initialView) ? initialView : defaultTab
@@ -405,13 +429,14 @@ export function RundmailWorkspace({
 
   // ── data refresh + driving the send while the page is open ──
   const refresh = React.useCallback(async () => {
-    const json = await adminFetch<{ mailing: RundmailMailing; stats: RundmailStats; campaign: { status: typeof status } }>(
+    const json = await adminFetch<{ mailing: RundmailMailing; stats: RundmailStats; campaign: { status: typeof status; endsAt: string | null } }>(
       "/api/admin/rundmail",
       { body: { campaignId: campaign.id, action: "state" } }
     );
     setMailing(json.mailing);
     setStats(json.stats);
     setStatus(json.campaign.status);
+    setEndsAt(json.campaign.endsAt ?? null);
   }, [campaign.id]);
 
   const stepping = React.useRef(false);
@@ -554,6 +579,11 @@ export function RundmailWorkspace({
             Tempo: {MAILING_RATE_LABELS[mailing.rate]} (real etwa {num(realMailingRate(perMinute))} pro Minute)
             {duration ? ` — Dauer ${duration}` : "."}
           </span>
+          {endTooEarly && endsAt && (
+            <span className={`${line} font-medium text-destructive`}>
+              „Versand spätestens bis“ ist {plannedLabel(endsAt)} — bis dahin schafft der Versand nicht alle; der Rest geht nicht mehr raus.
+            </span>
+          )}
           {at && <span className={line}>{REFRESH_PROMISE}</span>}
           <span className={line}>
             Der Inhalt ist danach fest.{at ? " Bis zum Start lässt sich die Planung zurücknehmen;" : ""} Pausieren und Abbrechen bleiben
@@ -738,6 +768,16 @@ export function RundmailWorkspace({
               {planned && now != null && <span className="font-normal text-muted-foreground">· {relativeTime(campaign.startsAt, now)}</span>}
             </p>
           )}
+          {endsAt && endChange?.ok && (
+            <p className={`mt-1 flex flex-wrap items-center gap-x-1.5 text-xs ${stoppedByEnd ? "font-medium text-destructive" : "text-muted-foreground"}`}>
+              <CalendarClock className="size-3.5 shrink-0" aria-hidden />
+              Versand spätestens bis {plannedLabel(endsAt)}
+              {stoppedByEnd && " — erreicht"}
+              <Button variant="ghost" size="xs" className="h-auto px-1 py-0" onClick={() => setExtendOpen(true)}>
+                Ändern
+              </Button>
+            </p>
+          )}
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {status === "entwurf" && (
@@ -774,6 +814,20 @@ export function RundmailWorkspace({
       </div>
 
       {!sender.ok && <Callout tone="destructive">{sender.message}</Callout>}
+      {stoppedByEnd && endsAt && (
+        <Callout
+          tone="warning"
+          title="Versand gestoppt — „Versand spätestens bis“ ist erreicht"
+          action={
+            <Button size="sm" onClick={() => setExtendOpen(true)}>
+              <CalendarClock /> Versand verlängern…
+            </Button>
+          }
+        >
+          Seit {plannedLabel(endsAt)} geht nichts mehr raus — {num(waiting)} Empfänger:innen haben die Mail noch nicht bekommen. Mit einem
+          späteren Ende geht der Versand an sie weiter; wer sie schon hat, bekommt sie nicht noch einmal.
+        </Callout>
+      )}
       {mailing.lastError && (status === "pausiert" || sendingNow) && (
         <Callout tone={status === "pausiert" ? "destructive" : "warning"} title={status === "pausiert" ? "Versand pausiert" : "Hinweis vom Versand"}>
           {mailing.lastError}
@@ -1069,6 +1123,12 @@ export function RundmailWorkspace({
                             : "Der Start muss in der Zukunft liegen."}
                       </p>
                     )}
+                    {endTooEarly && endsAt && releaseOutlook && (
+                      <Callout tone="warning" compact title="„Versand spätestens bis“ kommt zu früh">
+                        Bei diesem Tempo dauert der Versand {releaseOutlook.label} — bis {plannedLabel(endsAt)} schafft er nicht alle, der
+                        Rest geht nicht mehr raus. Ein schnelleres Tempo wählen oder unter „Zielgruppe & Absender“ ein späteres Ende setzen.
+                      </Callout>
+                    )}
                     <Button
                       onClick={() => void release()}
                       loading={releasing}
@@ -1096,7 +1156,9 @@ export function RundmailWorkspace({
                     <p className="text-sm font-semibold">
                       {mailing.finishedAt
                         ? `Fertig — ${num(stats.sent)} Mails versendet`
-                        : planned && campaign.startsAt
+                        : stoppedByEnd
+                          ? `Gestoppt — „Versand spätestens bis“ erreicht, ${num(waiting)} nicht gesendet`
+                          : planned && campaign.startsAt
                           ? `Geplant für ${plannedLabel(campaign.startsAt)}${now != null ? ` · ${relativeTime(campaign.startsAt, now)}` : ""}`
                           : status === "pausiert"
                             ? "Pausiert"
@@ -1111,7 +1173,7 @@ export function RundmailWorkspace({
                     </span>
                   </div>
                   {planned && <p className="-mt-1.5 text-xs text-muted-foreground">{REFRESH_PROMISE} Die Zielgruppe wird dann frisch ermittelt.</p>}
-                  <ProgressBar value={progress.percent} label="Fortschritt" tone={status === "pausiert" ? "warning" : mailing.finishedAt ? "success" : "accent"} />
+                  <ProgressBar value={progress.percent} label="Fortschritt" tone={status === "pausiert" || stoppedByEnd ? "warning" : mailing.finishedAt ? "success" : "accent"} />
                   <dl className="grid grid-cols-2 gap-2 sm:grid-cols-5">
                     <Stat label="Empfänger" value={num(stats.total)} hint="Beim Start frisch ermittelt: Kund:innen mit Einwilligung, die zur Zielgruppe passen." />
                     <Stat label="Gesendet" value={num(stats.sent)} />
@@ -1181,6 +1243,17 @@ export function RundmailWorkspace({
         </TabsContent>
       </Tabs>
 
+      <ExtendEndDialog
+        target={extendTarget}
+        open={extendOpen}
+        onOpenChange={setExtendOpen}
+        onDone={(result) => {
+          setEndsAt(result.campaign.endsAt);
+          setStatus(result.campaign.status as typeof status);
+          void refresh();
+          router.refresh();
+        }}
+      />
       {confirmDialog}
     </div>
   );

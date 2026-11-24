@@ -14,7 +14,7 @@
 // docs/CAMPAIGNS.md §2.2 and §9.1.
 
 import * as React from "react";
-import { Sparkles, Users } from "lucide-react";
+import { CalendarClock, Sparkles, Users } from "lucide-react";
 import { fromBerlinInputValue, toBerlinInputValue } from "@/lib/admin-datetime.mjs";
 import { eurFromCents, num } from "@/lib/admin-format.mjs";
 import { HERO_MODE_LABELS } from "@/lib/campaign-def.mjs";
@@ -38,6 +38,8 @@ import {
 import { adminFetch, errorMessage } from "../lib/admin-fetch";
 import { CampaignCheckSection, type SampleConfig } from "./CampaignCheckSection";
 import { CampaignHeroField, sameHero } from "./CampaignHeroField";
+import { ExtendEndDialog, endChangeOf, type ExtendEndTarget } from "./ExtendEndDialog";
+import { useNow } from "../lib/use-now";
 import type { AudienceSpecProps, CampaignCardProps, CampaignEditorOptions, CampaignHeroImageProps, SenderOption } from "./types";
 
 type Kind = "laufend" | "aktion" | "rundmail";
@@ -256,6 +258,7 @@ export function CampaignEditor({
   presetAudience = null,
   onClose,
   onSaved,
+  onExtended,
 }: {
   open: boolean;
   campaign: CampaignCardProps | null;
@@ -266,6 +269,8 @@ export function CampaignEditor({
   onClose: () => void;
   /** `kind` is set for a NEW Rundmail — the overview opens its workspace. */
   onSaved: (id: number, kind?: "rundmail") => void;
+  /** „Ende ändern“ / „Verlängern“ changed the campaign (the overview re-reads it). */
+  onExtended?: () => void;
 }) {
   const [form, setForm] = React.useState<FormState>(() => initialState(campaign, presetAudience));
   const [saving, setSaving] = React.useState(false);
@@ -285,6 +290,25 @@ export function CampaignEditor({
   // A released Rundmail keeps audience, sender and schedule (frozen with its
   // content) — only the name can still change (the server enforces it too).
   const rundmailLocked = isRundmail && campaign != null && campaign.status !== "entwurf";
+  // „Ende ändern“ / „Verlängern“ (ExtendEndDialog): a released Rundmail's end, and a campaign its end ended.
+  const now = useNow(30_000);
+  const [extendOpen, setExtendOpen] = React.useState(false);
+  const extendTarget: ExtendEndTarget | null = campaign
+    ? {
+        id: campaign.id,
+        name: campaign.name,
+        kind: campaign.kind,
+        status: campaign.status,
+        startsAt: campaign.startsAt,
+        endsAt: campaign.endsAt,
+        endedAt: campaign.endedAt,
+        rundmail:
+          campaign.kind === "rundmail"
+            ? { open: campaign.stats.pending, finished: campaign.status === "beendet" && campaign.stats.pending === 0, perMinute: null }
+            : null,
+      }
+    : null;
+  const endChange = extendTarget && now != null ? endChangeOf(extendTarget, now) : null;
 
   React.useEffect(() => {
     if (open) {
@@ -569,7 +593,14 @@ export function CampaignEditor({
             <div className="grid gap-3 sm:grid-cols-2">
               <Field
                 label="Versand spätestens bis"
-                info="Was bis dahin nicht gesendet ist, geht nicht mehr raus (z. B. das Ende der Black Week). Leer = offen. Den Start wählst du beim Senden."
+                info="Was bis dahin nicht gesendet ist, geht nicht mehr raus (z. B. das Ende der Black Week). Leer = offen. Den Start wählst du beim Senden. Nach der Freigabe über „Ändern…“ — auch, wenn das Ende schon erreicht ist."
+                labelEnd={
+                  rundmailLocked && endChange?.ok ? (
+                    <Button type="button" size="xs" variant="ghost" className="h-auto px-1 py-0" onClick={() => setExtendOpen(true)}>
+                      Ändern…
+                    </Button>
+                  ) : undefined
+                }
               >
                 <Input type="datetime-local" value={form.endsAt} onChange={(e) => patch({ endsAt: e.target.value })} disabled={rundmailLocked} />
               </Field>
@@ -604,7 +635,7 @@ export function CampaignEditor({
           )}
           {rundmailLocked && (
             <Callout tone="info" compact>
-              Die Rundmail ist freigegeben — Zielgruppe, Absender und Zeitraum sind fest. Nur der Name lässt sich noch ändern.
+              Die Rundmail ist freigegeben — Zielgruppe und Absender sind fest. Der Name lässt sich noch ändern, „Versand spätestens bis“ über „Ändern…“.
             </Callout>
           )}
           {!isEinzel && !isRundmail && (
@@ -619,6 +650,19 @@ export function CampaignEditor({
                 <Input type="number" min={0} max={100} value={form.priority} onChange={(e) => patch({ priority: e.target.value })} />
               </Field>
             </div>
+          )}
+          {!isEinzel && !isRundmail && endChange?.ok && endChange.mode === "resume" && (
+            <Callout
+              tone="warning"
+              compact
+              action={
+                <Button type="button" size="xs" onClick={() => setExtendOpen(true)}>
+                  <CalendarClock /> Verlängern…
+                </Button>
+              }
+            >
+              Die Kampagne ist mit ihrem Ende abgelaufen. Ein neues „Ende“ hier lässt sie nicht wieder laufen — „Verlängern…“ macht beides.
+            </Callout>
           )}
         </section>
 
@@ -1134,6 +1178,15 @@ export function CampaignEditor({
           />
         )}
       </div>
+      <ExtendEndDialog
+        target={extendTarget}
+        open={extendOpen}
+        onOpenChange={setExtendOpen}
+        onDone={(result) => {
+          patch({ endsAt: toLocalInput(result.campaign.endsAt) });
+          onExtended?.();
+        }}
+      />
     </Sheet>
   );
 }

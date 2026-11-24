@@ -39,6 +39,7 @@ import {
 import { adminFetch, errorMessage } from "../lib/admin-fetch";
 import { useNow } from "../lib/use-now";
 import { CampaignEditor } from "./CampaignEditor";
+import { ExtendEndDialog, endChangeOf, extendActionLabel, type ExtendEndTarget } from "./ExtendEndDialog";
 import type { CampaignCardProps, CampaignsOverviewProps } from "./types";
 
 type Scope = "aktuell" | "alle" | "archiv";
@@ -55,6 +56,23 @@ const PHASE_TONE: Record<string, "success" | "warning" | "neutral" | "destructiv
 
 const NEXT_STATUSES = ["aktiv", "pausiert", "beendet", "archiviert"] as const;
 
+/** A card's campaign as the „Ende ändern“ / „Verlängern“ dialog needs it (a Rundmail: still waiting = its pending recipients). */
+function extendTargetOf(c: CampaignCardProps): ExtendEndTarget {
+  return {
+    id: c.id,
+    name: c.name,
+    kind: c.kind,
+    status: c.status,
+    startsAt: c.startsAt,
+    endsAt: c.endsAt,
+    endedAt: c.endedAt,
+    rundmail:
+      c.kind === "rundmail"
+        ? { open: c.stats.pending, finished: c.status === "beendet" && c.stats.pending === 0, perMinute: null }
+        : null,
+  };
+}
+
 function setEditParam(value: string | null) {
   const url = new URL(window.location.href);
   if (value) url.searchParams.set("edit", value);
@@ -68,9 +86,15 @@ export function CampaignsOverview({ campaigns, options, initialEdit, presetAudie
   const [scope, setScope] = React.useState<Scope>("aktuell");
   const [editing, setEditing] = React.useState<number | "new" | null>(initialEdit);
   const [busy, setBusy] = React.useState<number | null>(null);
+  const [extending, setExtending] = React.useState<CampaignCardProps | null>(null);
 
+  // „Aktuell“ keeps a Rundmail its end stopped while recipients still wait (the nightly job set it to „beendet“).
   const visible = campaigns.filter((c) =>
-    scope === "archiv" ? c.status === "archiviert" : scope === "aktuell" ? c.status !== "archiviert" && c.status !== "beendet" : true
+    scope === "archiv"
+      ? c.status === "archiviert"
+      : scope === "aktuell"
+        ? c.status !== "archiviert" && (c.status !== "beendet" || (c.kind === "rundmail" && c.stats.pending > 0))
+        : true
   );
 
   const openEditor = (id: number | "new" | null) => {
@@ -172,6 +196,7 @@ export function CampaignsOverview({ campaigns, options, initialEdit, presetAudie
               busy={busy === c.id}
               onEdit={() => openEditor(c.id)}
               onStatus={(to) => void changeStatus(c, to)}
+              onExtend={() => setExtending(c)}
             />
           ))}
         </div>
@@ -184,6 +209,7 @@ export function CampaignsOverview({ campaigns, options, initialEdit, presetAudie
         options={options}
         presetAudience={editing === "new" ? presetAudience ?? null : null}
         onClose={() => openEditor(null)}
+        onExtended={() => router.refresh()}
         onSaved={(id, kind) => {
           openEditor(null);
           if (kind === "rundmail") {
@@ -200,6 +226,12 @@ export function CampaignsOverview({ campaigns, options, initialEdit, presetAudie
           void id;
         }}
       />
+      <ExtendEndDialog
+        target={extending ? extendTargetOf(extending) : null}
+        open={extending != null}
+        onOpenChange={(v) => !v && setExtending(null)}
+        onDone={() => router.refresh()}
+      />
       {confirmDialog}
     </div>
   );
@@ -211,14 +243,24 @@ function CampaignCard({
   busy,
   onEdit,
   onStatus,
+  onExtend,
 }: {
   campaign: CampaignCardProps;
   sendsApproved: boolean;
   busy: boolean;
   onEdit: () => void;
   onStatus: (to: (typeof NEXT_STATUSES)[number]) => void;
+  /** „Ende ändern“ / „Verlängern“ (ExtendEndDialog). */
+  onExtend: () => void;
 }) {
   const now = useNow(30_000);
+  // „Ende ändern“ / „Verlängern“ (lib/campaign-end.mjs). Stopped by its end with work left: a Rundmail whose
+  // recipients still wait, or any other campaign still „aktiv“ past its end — the card says so and offers „Verlängern…“.
+  const extendTarget = extendTargetOf(c);
+  const endChange = now != null ? endChangeOf(extendTarget, now) : null;
+  const stoppedByEnd =
+    endChange != null && endChange.ok && endChange.expired && (c.kind === "rundmail" ? c.stats.pending > 0 : c.status === "aktiv");
+  const extendLabel = now != null ? extendActionLabel(extendTarget, now) : "Ende ändern…";
   // A released Rundmail: planned (with the time until its start), starting,
   // or a start that did not happen (lib/mailing-schedule.mjs, as in its workspace).
   const schedule =
@@ -240,8 +282,10 @@ function CampaignCard({
       : (CAMPAIGN_PHASE_LABELS[c.phase as keyof typeof CAMPAIGN_PHASE_LABELS] ?? c.phase);
   const phaseTone = schedule?.kind === "ueberfaellig" ? "destructive" : (PHASE_TONE[c.phase] ?? "neutral");
   const transitions = NEXT_STATUSES.filter((to) => canTransition(c.status, to, c.kind));
-  const primary = transitions.find((t) => t === "aktiv");
-  const secondary = transitions.filter((t) => t !== primary);
+  // „Wieder aufnehmen“ of a campaign its end stopped would expire again at once — „Verlängern…“ takes its place.
+  const endedByDate = c.status === "beendet" && endChange != null && endChange.ok && endChange.mode === "resume";
+  const primary = endedByDate ? undefined : transitions.find((t) => t === "aktiv");
+  const secondary = transitions.filter((t) => t !== primary && !(endedByDate && t === "aktiv"));
   const clickRate = c.stats.sent > 0 ? c.stats.clicks / c.stats.sent : null;
   const href = adminTabHref("kampagne", { campaign: c.slug });
 
@@ -270,6 +314,9 @@ function CampaignCard({
               size="sm"
               items={[
                 { key: "edit", label: "Bearbeiten", icon: <Pencil />, onSelect: onEdit },
+                ...(endChange?.ok && !stoppedByEnd && c.status !== "entwurf"
+                  ? [{ key: "extend", label: extendLabel, icon: <CalendarClock />, onSelect: onExtend, disabled: busy }]
+                  : []),
                 ...secondary.map((to, i) => ({
                   key: to,
                   label: transitionLabel(c.status, to),
@@ -311,6 +358,14 @@ function CampaignCard({
           )
         )}
 
+        {stoppedByEnd && c.endsAt && (
+          <p className="text-xs font-medium text-destructive">
+            {c.kind === "rundmail"
+              ? `Versand gestoppt — „Versand spätestens bis“ ${formatAdmin(c.endsAt, ADMIN_WEEKDAY_DATE_TIME)} Uhr erreicht, ${num(c.stats.pending)} nicht gesendet.`
+              : `Abgelaufen am ${formatAdmin(c.endsAt, ADMIN_WEEKDAY_DATE_TIME)} Uhr — es gehen keine Mails mehr raus.`}
+          </p>
+        )}
+
         <dl className="grid grid-cols-4 gap-2 rounded-md bg-surface-2 px-3 py-2 text-center">
           {(c.kind === "rundmail"
             ? [
@@ -341,7 +396,12 @@ function CampaignCard({
                 : "Rundmail öffnen"
               : `Prüftisch öffnen${c.stats.drafted > 0 ? ` (${num(c.stats.drafted)})` : ""}`}
           </Link>
-          {primary && (
+          {stoppedByEnd && (
+            <Button size="sm" onClick={onExtend} disabled={busy}>
+              <CalendarClock /> {extendLabel}
+            </Button>
+          )}
+          {primary && !stoppedByEnd && (
             <Button size="sm" onClick={() => onStatus(primary)} loading={busy}>
               {transitionLabel(c.status, primary)}
             </Button>

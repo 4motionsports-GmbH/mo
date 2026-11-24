@@ -242,6 +242,8 @@ export interface CampaignDeskCampaign {
   audienceText: string;
   startsAt: string | null;
   endsAt: string | null;
+  /** When it ended — tells an end date from „Beenden“ by hand (campaign-end.mjs). */
+  endedAt: string | null;
   audienceRefreshedAt: string | null;
   /** Letters as a channel (0074). */
   letterMode: "aus" | "ohne_einwilligung" | "alle";

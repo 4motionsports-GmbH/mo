@@ -75,6 +75,8 @@ export interface CampaignCardProps {
   priority: number;
   startsAt: string | null;
   endsAt: string | null;
+  /** When it ended („beendet“) — tells an end date from „Beenden“ by hand (campaign-end.mjs). */
+  endedAt: string | null;
   dailyTarget: number | null;
   autoPreparePerDay: number;
   reentryDays: number | null;
