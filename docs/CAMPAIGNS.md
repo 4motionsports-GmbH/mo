@@ -1360,7 +1360,10 @@ route refuses too), warnings and infos are shown:
   `audience_pending`); no test mail of the current version; HTML over 100 KB
   (Gmail clips at 102 KB and hides the unsubscribe link); a picture over `http://`; a
   `javascript:`/`data:` link — the last three and leftover placeholders are `renderedMailErrors`,
-  run again on the render at the send start (§9.2).
+  run again on the render at the send start (§9.2); a **name in a first-name fallback**
+  (`first_name_fallback`: „Ohne bekannten Vornamen steht „Hallo Lucas,“ (Anrede) — „Lucas“ ist ein
+  Vorname …“ — a word a customer or the shop's own people are called;
+  [`EMAIL_TEMPLATES.md`](./EMAIL_TEMPLATES.md) §2 „Without a first name“, 25.11.2026).
 - **Warnings**: subject over 60 characters (phones), mostly capitals, several „!“; typical spam
   words in subject, preview line or the operator's text (not the legal footer); no preview line;
   over 80 KB; many pictures with little text (counted on the operator's content — the legal
@@ -1372,8 +1375,10 @@ route refuses too), warnings and infos are shown:
   longer in the catalog, and products blocks without a single available product (left out with
   their title) — `docProductAvailability`.
 - **Infos**: reach and duration at the real speed of the chosen pace („Dauer etwa 1 Std. 20 Min.
-  (Tempo 300 pro Minute, real etwa 240)“), the personal greeting, the sender, the unsubscribe link
-  and header.
+  (Tempo 300 pro Minute, real etwa 240)“), the personal greeting with the lines someone without a
+  known first name reads („Persönliche Anrede — wer keinen bekannten Vornamen hat, liest: Betreff:
+  „Hey, die Black Week ist da“ · Anrede: „Hallo,““ — `namelessReading`), the sender, the
+  unsubscribe link and header.
 
 ### 9.4 Sending
 
@@ -1394,7 +1399,10 @@ route refuses too), warnings and infos are shown:
    double opt-in unless `CAMPAIGN_ALLOW_SINGLE_OPT_IN`, the cap `MARKETING_MIN_SEND_INTERVAL_DAYS` —
    plus a sendable address and „not yet sent in this Rundmail“. Reasons (`excluded_reason`):
    `keine_einwilligung`, `kein_doi`, `gesperrt` (suppressed); `zu_haeufig`, `ungueltige_adresse`,
-   `doppelt` (skipped).
+   `doppelt` (skipped). Each mail is personalised from the frozen content
+   (`personalizeFrozen`) with the first-name fallbacks made name-safe once per release
+   (`nameSafeMerges`: a name in a fallback is taken out and reported — a release from before the
+   check of 25.11.2026 never greets strangers by a name).
 4. **One Resend batch call** (`sendEmailBatch` in [`email.ts`](../src/lib/email.ts), ≤ 100
    single-recipient mails, permissive validation — one bad address does not fail the batch) with
    the idempotency key `mo-rundmail-<campaign>-<batch>`.

@@ -187,6 +187,30 @@ other `{{…}}` is a validation error. The first name is cleaned by `normalizeFi
 only, title-cased when typed in one case). In a personal mail the greeting comes from Mo's text;
 the template's `greeting` block is for Rundmails.
 
+**Without a first name** — everyone whose name is not known (above all the newsletter-only
+subscribers: an e-mail address, nothing else) reads the fallbacks: the greeting's „Ohne
+Vornamen“ and each `{{vorname|Ersatz}}`. A fallback is never a name (25.11.2026: a Black Friday
+Rundmail had „Lucas“ in it, so every newsletter-only recipient was greeted as Lucas —
+[`first-name-fallback.mjs`](../src/lib/first-name-fallback.mjs), tested): a capitalised word of a
+fallback that a customer is called (`knownFirstNames`, the first word of `customers.first_name`) or
+that is a first name of the shop's own people in the imprint (`MAIL_COMPANY_LINES` — Sabine, Lucas;
+[`first-names.ts`](../src/lib/first-names.ts)) is a name; greeting words („Hallo“, „Liebe“,
+„Sportsfreund“, „Team“ …) never are.
+- The Rundmail's release checks refuse such a fallback and show what a nameless recipient reads
+  ([`CAMPAIGNS.md`](./CAMPAIGNS.md) §9.3); the KI-Gestalter is told so and gets it back as a problem
+  (§6).
+- A Rundmail released before the check never sends the name: the runner takes it out of the frozen
+  fallbacks („Hallo Lucas,“ → „Hallo,“; a fallback that is only a name → the greeting without
+  `{{vorname}}`, or „Hallo,“ / „Hi,“) and reports it (`fallback_names`).
+- A Vorlage that designs the personal mails of a Kampagne gets the same: `resolveTemplateDesign`
+  takes the names out of its fallbacks (`neutralizeDoc`) and reports it (`fallback_names`).
+- An empty first name (no name known, no fallback) takes its punctuation along, so the mail reads
+  as if it had been written without one (`tidyEmptyNames` in
+  [`mail-template-doc.mjs`](../src/lib/mail-template-doc.mjs), tested) — in every render and send
+  path (`applyMergeFields`, `personalizeFrozen`): „Hallo {{vorname}}, …“ → „Hallo, …“ (never
+  „Hallo , …“); „Nur für dich, {{vorname}}!“ → „Nur für dich!“; a name that opened the sentence
+  hands it to the next word: „{{vorname}}, die Black Week ist da“ → „Die Black Week ist da“.
+
 **Validation per use** (`validateMailTemplateDoc(doc, use)`, German messages naming the block,
 nested blocks included): `bulk` refuses Mo blocks, `personal` requires `mo_content`. Errors — a text
 or heading without text, a picture without `src`, a button without label or link, a product block
