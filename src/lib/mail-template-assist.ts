@@ -49,6 +49,7 @@ import { recordAiUsage } from "./ai-usage-store";
 import { getDesignerSettings } from "./admin-settings-store";
 import { reportError } from "./observability";
 import { getBaseUrl } from "./base-url";
+import { firstNamesAmong } from "./first-names";
 import { docProductRefs, normalizeMailTemplateDoc, stripMoBlocks } from "./mail-template-doc.mjs";
 import { designerMaxOutputTokens, designerPictureState, designerRunRules, mergeDesignerSettings } from "./mail-template-designer-settings.mjs";
 import {
@@ -207,6 +208,8 @@ export async function assistMailTemplate(
       attachments: attachments.map((a) => ({ index: a.index, kind: a.kind, name: a.name, text: a.text ?? null, subject: a.subject ?? null })),
       resolveRefs: (refs: string[]) => resolveRefsAgainstCatalog(catalog, refs),
       isKnownShopUrl: isKnownShopPage,
+      // a name in a first-name fallback („Hallo Lucas,“) is sent back to the model
+      firstNamesAmong,
       isCatalogImage,
       shopFilePrefixes,
       ownOrigin: ownOrigin(),

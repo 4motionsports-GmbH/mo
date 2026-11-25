@@ -2701,3 +2701,37 @@ test("finishDesignerPictures: a phone picture that could not be made is cleared 
   });
   assert.equal(labelled.doc.blocks.filter((b) => b.type === "image" && b.src === "https://mo.example.com/eu-ai-icon-email.png").length, 2, "under the image and under the section");
 });
+
+// ── first-name fallbacks (25.11.2026: „Lucas“ for every newsletter-only recipient) ──
+
+test("a name in a first-name fallback goes back to the model; neutral fallbacks pass; without the lookup nothing is checked", async () => {
+  const firstNamesAmong = async (words) => words.filter((w) => ["lucas", "sabine"].includes(w));
+  const lucas = await problemsOf(
+    [{ type: "greeting", text: "Hallo {{vorname}},", fallback: "Hallo Lucas," }, { type: "text", text: "{{vorname|Lucas}}, das ist dein Deal." }, okButton],
+    { firstNamesAmong },
+    { subject: "{{vorname|Sabine}}, nur heute", preheader: "Black Week bei motion sports" }
+  );
+  const msgs = lucas.filter((m) => /ist ein Vorname/.test(m));
+  assert.equal(msgs.length, 3, msgs.join("\n"));
+  assert.ok(msgs.some((m) => m.startsWith("Betreff: Ohne Vornamen steht „Sabine“ — „Sabine“ ist ein Vorname.")));
+  assert.ok(msgs.some((m) => m.startsWith("Anrede: Ohne Vornamen steht „Hallo Lucas,“ — „Lucas“ ist ein Vorname.")));
+  assert.ok(msgs.every((m) => /neutral formulieren/.test(m)));
+  // neutral fallbacks pass
+  const neutral = await problemsOf(
+    [{ type: "greeting", text: "Hallo {{vorname}},", fallback: "Hallo," }, { type: "text", text: "{{vorname|Hey}}, das ist dein Deal." }, okButton],
+    { firstNamesAmong }
+  );
+  assert.equal(neutral.filter((m) => /ist ein Vorname/.test(m)).length, 0);
+  // a failing lookup never blocks the design
+  const broken = await problemsOf([{ type: "greeting", text: "Hallo {{vorname}},", fallback: "Hallo Lucas," }, okButton], {
+    firstNamesAmong: async () => {
+      throw new Error("db down");
+    },
+  });
+  assert.equal(broken.filter((m) => /ist ein Vorname/.test(m)).length, 0);
+});
+
+test("the designer prompt says the fallback is never a name", () => {
+  const prompt = designerSystemPrompt({ use: "bulk", moChatUrl: "https://motionsports.de/?mo=open" });
+  assert.match(prompt, /Der Ersatz ist NIE ein Name — auch nicht der aus einem Screenshot oder Anhang/);
+});

@@ -105,6 +105,7 @@ import {
   pictureUnavailableAnswer,
 } from "./mail-designer-pictures.mjs";
 import { lintOutlookHtml } from "./email-outlook.mjs";
+import { fallbackNameProblems, fallbackNameWords, firstNameFallbacks } from "./first-name-fallback.mjs";
 import { sanitizeCustomHtml } from "./mail-template-html.mjs";
 import { searchCatalogCards } from "./configurator-core.mjs";
 import { renderMailTemplateHtml } from "./mail-template-render.mjs";
@@ -594,7 +595,7 @@ Weitere Werte: menu.separator ${MENU_SEPARATORS.join(" ")} · text.bullet ${TEXT
 Die festen Bausteine countdown, coupon und products sehen ohne eigene Farbfelder automatisch aus wie die Mail: Grund, Akzent-, Text- und Überschriftenfarbe, Schriften und Button-Look kommen aus style (die Countdown-Kacheln einen Ton heller bzw. dunkler als ihr Grund, die Ziffern in der Akzentfarbe, wenn sie darauf lesbar ist; der Gutschein ohne Füllung mit gestricheltem Rahmen in der Akzentfarbe und 8 px Ecken; die Produkte ohne Karte) — auch auf einer dunklen Karte. Ihre Felder (countdown: tileColor, digitColor, labelColor, background, padTop/padBottom · coupon: cardColor, borderStyle, radius, textColor, codeColor, codeFont, cta, accent, background, padTop/padBottom · products: cardColor, textColor) setzt du, wo das Designsystem der Mail mehr verlangt.
 
 # Mos Fähigkeiten — nutze sie von dir aus (im Rahmen der Arbeitsregeln des Teams)
-1. Personalisierung: {{vorname}} oder {{vorname|Ersatz}} (z. B. „{{vorname|Hallo}}“) in Überschriften, Texten, Buttons; für die Anrede der greeting-Baustein (Text mit Vornamen + Ersatz ohne Vornamen). Andere Platzhalter gibt es nicht. In html, Alternativtexten und Links werden Platzhalter NICHT ersetzt.
+1. Personalisierung: {{vorname}} oder {{vorname|Ersatz}} (z. B. „{{vorname|Hallo}}“) in Überschriften, Texten, Buttons; für die Anrede der greeting-Baustein (Text mit Vornamen + Ersatz ohne Vornamen). Der Ersatz ist NIE ein Name — auch nicht der aus einem Screenshot oder Anhang (dort steht der Name der Person, die jene Mail bekommen hat): Ohne bekannten Vornamen lesen ihn alle, deren Name fehlt (z. B. reine Newsletter-Anmeldungen) — neutral wie „Hallo,“, „Hey“ oder leer. Andere Platzhalter gibt es nicht. In html, Alternativtexten und Links werden Platzhalter NICHT ersetzt.
 2. Live-Produkte: Produkte zeigst du NUR mit den Bausteinen product (ein Produkt im Look der Mail; in Spalten nebeneinander = Produkt-Kacheln) und products (Liste oder Raster, nur oben). Bild, Name, aktueller Preis (auch Sale- und „ab“-Preis) und Link kommen beim Versand live aus dem Katalog; ausverkaufte Produkte lässt Mo automatisch weg. Schreibe deshalb NIE Preise, Rabatte oder Lagerbestände in Texte. Produkte findest du mit search_products; übernimm die ref exakt so, wie sie geliefert wird (mit ®). Wähle lieferbare Produkte (inStock: true).
 3. Gutschein: coupon nur mit einem Code, den die Person nennt (in ihrer Nachricht oder in einem Text-Anhang) oder der schon in der Mail steht. Will sie einen Rabatt, nennt aber keinen Code: coupon mit leerem code und in notes nach dem Code fragen. Der Link „Code einlösen“ hinterlegt den Code automatisch im Warenkorb. In Vorlagen für Mos persönliche Mails kommt der persönliche Code über mo_offer — dort kein fester Code.
 4. Countdown: wenn eine Frist oder das Ende einer Aktion genannt ist — until als ISO-Zeitpunkt mit Zeitzone (z. B. 2026-11-30T23:59:00+01:00). Erfinde nie Fristen. Seine Texte: heading = Überschrift über dem Bild; label = die Zeile IM Bild über den Zahlen (höchstens 32 Zeichen, erscheint in GROSSBUCHSTABEN, nur Buchstaben, Ziffern und . , ! ? - : % & / ' « » „ “ — leer = „Dein Angebot gilt noch“; showLabel: false = nur die Zahlen); caption = die Zeile darunter, {datum} steht für das genaue Ende (leer = „Gültig bis {datum}“; showCaption: false = keine Zeile). Wünscht die Person einen anderen Countdown-Text („ändere den Countdown-Text auf ‚Nur noch kurz‘“), meint sie meist label. Nie eine Restzeit („noch 3 Tage“) in heading oder caption schreiben — die Mail wird später geöffnet, die Restzeit zeigt das Live-Bild.
@@ -2813,6 +2814,7 @@ function subjectWarnings(subject) {
  *   attachments?: Array<{ index: number, kind: string, name?: string, text?: string | null, subject?: string | null }>,
  *   resolveRefs: (refs: string[]) => Promise<string[] | { known: string[], soldOut?: string[], names?: Record<string, string> }> | string[] | { known: string[], soldOut?: string[], names?: Record<string, string> },
  *   isKnownShopUrl?: (url: string) => Promise<boolean> | boolean,
+ *   firstNamesAmong?: (words: string[]) => Promise<string[]>,
  *   isCatalogImage?: (url: string) => boolean,
  *   shopFilePrefixes?: ReadonlyArray<string>,
  *   ownOrigin?: string | null,
@@ -2829,6 +2831,8 @@ function subjectWarnings(subject) {
  *   attachments: the text of text attachments (HTML / EML cleaned, TXT) as the
  *   model read it — the second source of named values (attachmentReferences);
  *   isKnownShopUrl: does a /collections/<handle> or /pages/<handle> page exist?;
+ *   firstNamesAmong: which words are first names (a customer's or the imprint's —
+ *   first-names.ts) — a name in a first-name fallback is a problem;
  *   shopFilePrefixes: shopFilePrefixes(catalog) — where an attachment's
  *   pictures may come from; moChatUrl: designerMoChatUrl();
  *   pictures: the pictures generate_image started in THIS run (studio
@@ -3168,6 +3172,26 @@ export async function checkDesignSubmission(input, ctx) {
     for (const f of unknownMergeFields(subject)) major(`Betreff: Unbekannter Platzhalter ${f} — erlaubt ist {{vorname}} bzw. {{vorname|Ersatz}}.`, null);
   }
   if (preheader && /\{\{/.test(preheader)) major("Vorschauzeile: Platzhalter wie {{vorname}} werden dort nicht ersetzt — ohne Platzhalter formulieren.", null);
+  // A name in a first-name fallback reaches everyone whose name is not known (25.11.2026: „Lucas“).
+  if (ctx.firstNamesAmong) {
+    const fallbacks = firstNameFallbacks(subject, doc);
+    const words = fallbackNameWords(fallbacks);
+    /** @type {string[]} */
+    let names = [];
+    if (words.length) {
+      try {
+        names = await ctx.firstNamesAmong(words);
+      } catch {
+        names = [];
+      }
+    }
+    for (const p of fallbackNameProblems(fallbacks, names)) {
+      major(
+        `${p.where}: Ohne Vornamen steht „${p.fallback}“ — „${p.names.join("“, „")}“ ist ein Vorname. Alle, deren Vorname nicht bekannt ist, würden so angesprochen: neutral formulieren (Anrede z. B. „Hallo,“, sonst {{vorname|Hallo}} oder {{vorname}} ohne Ersatz).`,
+        `Ohne Vornamen stünde „${p.fallback}“ — „${p.names.join("“, „")}“ ist ein Vorname.`
+      );
+    }
+  }
   if (use === "personal") {
     for (const { block: b } of walkMailBlocks(doc)) {
       if (b.type === "greeting") minor(`${where(b)}: Mos Text beginnt schon mit der Anrede — den greeting-Baustein entfernen.`, null);

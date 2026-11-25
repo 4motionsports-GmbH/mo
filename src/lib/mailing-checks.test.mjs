@@ -173,3 +173,31 @@ test("an audience that hangs on a Rundmail not sent yet may be empty (a reminder
   // with recipients the dependency says nothing
   assert.equal(keys(mailingChecks(base({ audiencePending: "Black Friday" })).warnings).includes("audience_pending"), false);
 });
+
+test("first names: a name in a fallback blocks the release; the info says what nameless recipients read (25.11.2026)", () => {
+  const lucas = mailingChecks(
+    base({
+      firstNames: {
+        readings: ["Anrede: „Hallo Lucas,“", "Überschrift: „Lucas“"],
+        problems: [
+          { where: "Anrede", fallback: "Hallo Lucas,", names: ["Lucas"] },
+          { where: "Überschrift", fallback: "Lucas", names: ["Lucas"] },
+        ],
+      },
+    })
+  );
+  assert.equal(lucas.ok, false);
+  const errors = lucas.errors.filter((e) => e.key === "first_name_fallback");
+  assert.equal(errors.length, 2);
+  assert.match(errors[0].message, /^Ohne bekannten Vornamen steht „Hallo Lucas,“ \(Anrede\) — „Lucas“ ist ein Vorname: Alle, deren Vorname nicht bekannt ist \(z\. B\. reine Newsletter-Anmeldungen\), würden so angesprochen\. Neutral formulieren, z\. B\. „Hallo,“\.$/);
+  assert.equal(lucas.infos.find((i) => i.key === "first_name").message, "Persönliche Anrede — wer keinen bekannten Vornamen hat, liest: Anrede: „Hallo Lucas,“ · Überschrift: „Lucas“");
+  // a neutral fallback passes and is shown
+  const neutral = mailingChecks(base({ firstNames: { readings: ["Anrede: „Hallo,“"], problems: [] } }));
+  assert.equal(neutral.ok, true);
+  assert.equal(neutral.infos.find((i) => i.key === "first_name").message, "Persönliche Anrede — wer keinen bekannten Vornamen hat, liest: Anrede: „Hallo,“");
+  // without the readings: the old line
+  assert.equal(mailingChecks(base()).infos.find((i) => i.key === "first_name").message, "Persönliche Anrede: Wo kein Vorname bekannt ist, steht der Ersatztext.");
+  // at most three such errors
+  const many = mailingChecks(base({ firstNames: { readings: [], problems: Array.from({ length: 5 }, (_, i) => ({ where: "Text", fallback: `Lucas ${i}`, names: ["Lucas"] })) } }));
+  assert.equal(many.errors.filter((e) => e.key === "first_name_fallback").length, 3);
+});

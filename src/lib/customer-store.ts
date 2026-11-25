@@ -306,6 +306,30 @@ export async function linkCustomerOnEmailCapture(
 }
 
 /**
+ * Which of these words (lower case) is a first name — what at least one
+ * customer is called (the first word of `first_name`, case-insensitive). The
+ * release checks and the Rundmail runner keep names out of the first-name
+ * fallbacks with it (first-name-fallback.mjs; 25.11.2026: „Lucas“ for every
+ * newsletter-only recipient). At most 50 words. Fail-soft: [] on any error.
+ */
+export async function knownFirstNames(words: ReadonlyArray<string>, sql: Sql | null = getSql()): Promise<string[]> {
+  const list = [...new Set(words.map((w) => String(w).trim().toLowerCase()).filter((w) => w.length >= 2))].slice(0, 50);
+  if (!sql || list.length === 0) return [];
+  try {
+    const rows = (await sql`
+      SELECT DISTINCT split_part(lower(btrim(first_name)), ' ', 1) AS name
+        FROM customers
+       WHERE first_name IS NOT NULL
+         AND split_part(lower(btrim(first_name)), ' ', 1) = ANY(${list}::text[])
+    `) as Array<{ name: string }>;
+    return rows.map((r) => String(r.name));
+  } catch (err) {
+    reportError(err, { route: "lib/customer-store", phase: "knownFirstNames" });
+    return [];
+  }
+}
+
+/**
  * Find-or-create a prospect („Interessent“) for someone who wrote to us — a
  * contact-form request or an unknown sender the operator takes on. Keyed by
  * e-mail; an existing customer is returned unchanged (a name only fills empty

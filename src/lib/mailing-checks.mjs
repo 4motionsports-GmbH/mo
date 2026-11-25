@@ -114,9 +114,15 @@ export function renderedMailErrors(input) {
  *   bytes?: number,
  *   products?: { soldOut: string[], unknown: string[], emptyBlocks: number },
  *   audiencePending?: string | null,
+ *   firstNames?: { readings: string[], problems: Array<{ where: string, fallback: string, reads?: string, names: string[] }> } | null,
  * }} input  `audiencePending`: the name of a Rundmail the audience depends on
  *   („Hat Rundmail <X> erhalten“) that has not finished sending — an empty
  *   audience is then expected (it is matched at this Rundmail's start).
+ *   `firstNames`: what someone without a known first name reads
+ *   (first-name-fallback.mjs namelessReadings) and the fallbacks with a name
+ *   in them (fallbackNameProblems — a name a customer or the shop's own people
+ *   carry; 25.11.2026: „Lucas“ for every newsletter-only recipient) — each an
+ *   error that blocks the release.
  * @returns {{ errors: MailingCheck[], warnings: MailingCheck[], infos: MailingCheck[], ok: boolean }}
  */
 export function mailingChecks(input) {
@@ -277,8 +283,23 @@ export function mailingChecks(input) {
           : "Geht nach heutigem Stand an niemanden — die Zielgruppe wird beim Versandstart frisch ermittelt.",
     });
   }
+  // A name in a fallback reaches everyone whose first name is not known (newsletter-only subscribers above all).
+  for (const p of (input.firstNames?.problems ?? []).slice(0, 3)) {
+    errors.push({
+      key: "first_name_fallback",
+      level: "error",
+      message: `Ohne bekannten Vornamen steht „${p.reads ?? p.fallback}“ (${p.where}) — „${p.names.join("“, „")}“ ist ein Vorname: Alle, deren Vorname nicht bekannt ist (z. B. reine Newsletter-Anmeldungen), würden so angesprochen. Neutral formulieren, z. B. „Hallo,“.`,
+    });
+  }
   if (input.usesFirstName) {
-    infos.push({ key: "first_name", level: "info", message: "Persönliche Anrede: Wo kein Vorname bekannt ist, steht der Ersatztext." });
+    const readings = input.firstNames?.readings ?? [];
+    infos.push({
+      key: "first_name",
+      level: "info",
+      message: readings.length
+        ? `Persönliche Anrede — wer keinen bekannten Vornamen hat, liest: ${readings.slice(0, 4).join(" · ")}${readings.length > 4 ? " …" : ""}`
+        : "Persönliche Anrede: Wo kein Vorname bekannt ist, steht der Ersatztext.",
+    });
   }
   if (input.sender.ok) infos.push({ key: "from", level: "info", message: `Absender: ${input.sender.from}` });
   infos.push({ key: "unsubscribe", level: "info", message: "Abmelde-Link und Ein-Klick-Abmeldung (List-Unsubscribe) sind in jeder Mail." });

@@ -65,6 +65,8 @@ import {
 import { emptyProductBlocks, mailProductImageUrl, productHighlightSlot, productListText } from "./mail-template-slots.mjs";
 import { MAILING_HTML_HARD_LIMIT } from "./mailing-checks.mjs";
 import { countdownDeadlineText, countdownText } from "./offer-countdown.mjs";
+import { fallbackNameWords, firstNameFallbacks, neutralizeDoc } from "./first-name-fallback.mjs";
+import { firstNamesAmong } from "./first-names";
 import type { Product } from "./types";
 
 /**
@@ -346,14 +348,30 @@ function moContext(opts: BrandedEmailOptions): NonNullable<MailRenderContext["mo
 /**
  * A template document as a design: its theme tokens + a shell that renders
  * the blocks around the composer's pieces. `products` are the preloaded
- * display products of its fixed product blocks.
+ * display products of its fixed product blocks; `names` the first names that
+ * stand in its fallbacks (resolveTemplateDesign) — taken out, so someone
+ * without a known first name is never greeted with somebody else's
+ * (first-name-fallback.mjs, 25.11.2026).
  */
 export function templateDesignFromDoc(
   key: string,
   rawDoc: unknown,
-  products: Map<string, Product>
+  products: Map<string, Product>,
+  names: ReadonlyArray<string> = []
 ): ResolvedEmailDesign {
   const doc = normalizeMailTemplateDoc(rawDoc);
+  const nameSafe = {
+    de: neutralizeDoc(doc, names, { language: "de" }),
+    en: neutralizeDoc(doc, names, { language: "en" }),
+  };
+  if (nameSafe.de.changed.length > 0) {
+    reportError(
+      new Error(
+        `template design ${key}: a name in a first-name fallback was taken out (${nameSafe.de.changed.map((c) => `${c.where}: „${c.from}“ → „${c.to}“`).join("; ")})`
+      ),
+      { route: "lib/mail-template-design", phase: "fallback_names" }
+    );
+  }
   return {
     key,
     hasHero: docHasHero(doc),
@@ -364,7 +382,7 @@ export function templateDesignFromDoc(
         const rd = activeEmailRenderData();
         const language = opts.locale === "en" ? "en" : "de";
         const firstName = rd.recipientFirstName ?? null;
-        const html = renderMailTemplateHtml(doc, {
+        const html = renderMailTemplateHtml(nameSafe[language].doc, {
           outlook: templateOutlookExtras(),
           subject: opts.subject,
           preheader: opts.preheader ?? null,
@@ -411,8 +429,12 @@ export async function resolveTemplateDesign(key: string, kind: string): Promise<
   try {
     const template = await getCachedMailTemplate(id);
     if (!template || !docSupportsPersonal(template.doc)) return null;
-    const products = await preloadDocProducts(template.doc);
-    return templateDesignFromDoc(templateDesignKey(id), template.doc, products);
+    const [products, names] = await Promise.all([
+      preloadDocProducts(template.doc),
+      // the first names among its fallbacks' words (none: no lookup)
+      firstNamesAmong(fallbackNameWords(firstNameFallbacks("", normalizeMailTemplateDoc(template.doc)))),
+    ]);
+    return templateDesignFromDoc(templateDesignKey(id), template.doc, products, names);
   } catch (err) {
     reportError(err, { route: "lib/mail-template-design", phase: "resolveTemplateDesign" });
     return null;

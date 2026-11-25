@@ -58,6 +58,15 @@ import {
 import { mailingChecks, renderedMailErrors, type MailingCheck } from "./mailing-checks.mjs";
 import { decideMailingRefresh, mailingRefreshDue, validateMailingStart } from "./mailing-schedule.mjs";
 import { renderMailingFrozen, renderMailingPreview, renderMailingTest } from "./mailing-render";
+import { firstNamesAmong } from "./first-names";
+import {
+  fallbackNameProblems,
+  fallbackNameWords,
+  fallbacksOfMerges,
+  firstNameFallbacks,
+  namelessReadings,
+  neutralizeMerges,
+} from "./first-name-fallback.mjs";
 import {
   acquireMailingLease,
   claimMailingBatch,
@@ -157,6 +166,43 @@ async function pendingAudienceSource(campaign: Campaign): Promise<string | null>
 }
 
 /** Every check on the CURRENT content (the release runs this again). */
+// ── first-name fallbacks ─────────────────────────────────────────────────────
+//
+// What someone without a known first name reads must never be a name
+// (first-name-fallback.mjs; 25.11.2026: a Black Friday Rundmail greeted every
+// newsletter-only recipient as „Lucas“). A word of a fallback is a name when
+// a customer is called that way or it is a first name of the shop's own
+// people in the imprint (first-names.ts). The release check refuses such a
+// fallback; the runner takes the name out of a mail released before the
+// check existed.
+
+/** The name-safe merges of one release, kept per instance (one lookup per release, not per batch). */
+const safeMergesByRelease = new Map<string, Mailing["merges"]>();
+
+/**
+ * The merges a batch personalises with: the released ones, with any name
+ * taken out of their fallbacks („Hallo Lucas,“ → „Hallo,“) — reported once
+ * per release and instance. The same result for every batch of a release (the
+ * idempotent retry builds the same payload).
+ */
+async function nameSafeMerges(campaignId: number, mailing: Mailing): Promise<Mailing["merges"]> {
+  const key = `${campaignId}:${mailing.frozenAt ?? ""}:${mailing.frozenHash ?? ""}`;
+  const cached = safeMergesByRelease.get(key);
+  if (cached) return cached;
+  const names = await firstNamesAmong(fallbackNameWords(fallbacksOfMerges(mailing.merges)));
+  const { merges, changed } = neutralizeMerges(mailing.merges, names, { language: mailing.language });
+  if (changed.length > 0) {
+    reportError(new Error(`rundmail: a name in a first-name fallback was taken out (${changed.map((c) => `${c.where}: „${c.from}“ → „${c.to}“`).join("; ")})`), {
+      route: "lib/mailing-send",
+      phase: "fallback_names",
+      campaignId,
+    });
+  }
+  if (safeMergesByRelease.size > 50) safeMergesByRelease.clear();
+  safeMergesByRelease.set(key, merges);
+  return merges;
+}
+
 export async function evaluateMailing(campaign: Campaign, mailing: Mailing): Promise<MailingEvaluation> {
   const doc = normalizeMailTemplateDoc(mailing.doc);
   const [audience, preview, products, audiencePending] = await Promise.all([
@@ -169,6 +215,9 @@ export async function evaluateMailing(campaign: Campaign, mailing: Mailing): Pro
     pendingAudienceSource(campaign),
   ]);
   const sender = resolveCampaignSender(campaign.sender);
+  // What someone without a known first name reads — and whether a name stands in it.
+  const fallbacks = firstNameFallbacks(mailing.subject, doc);
+  const fallbackNames = await firstNamesAmong(fallbackNameWords(fallbacks));
   const result = mailingChecks({
     subject: mailing.subject,
     preheader: mailing.preheader,
@@ -186,6 +235,7 @@ export async function evaluateMailing(campaign: Campaign, mailing: Mailing): Pro
     unknownSubjectFields: unknownMergeFields(mailing.subject),
     products,
     audiencePending,
+    firstNames: { readings: namelessReadings(fallbacks), problems: fallbackNameProblems(fallbacks, fallbackNames) },
   });
   return { ...result, audience };
 }
@@ -498,6 +548,8 @@ async function sendBatch(
   const allowSingle = isSingleOptInAllowed();
   const minDays = marketingMinSendIntervalDays();
   const tokenOf = new Map(batch.contactIds.map((id, i) => [id, batch.tokens[i]]));
+  // Never a name in what someone without a known first name reads (a release from before the check).
+  const merges = await nameSafeMerges(campaignId, mailing);
   const notSent: BatchSettlement["notSent"] = [];
   const eligible: Array<{ contactId: number; email: string; subject: string; token: string; payload: BatchEmailInput }> = [];
   const seen = new Set<string>();
@@ -546,12 +598,12 @@ async function sendBatch(
       erasureUrl: buildErasureUrl(r.email, language),
       trackUrl: (n: number) => withLocaleParam(`${base}/api/r/${token}?l=${n}`, language),
       firstName: r.firstName,
-      merges: mailing.merges.body,
-      greetings: mailing.merges.greetings,
+      merges: merges.body,
+      greetings: merges.greetings,
     };
     const html = personalizeFrozen(bodies.html, values, "html");
     const text = personalizeFrozen(bodies.text, values, "text");
-    const subject = personalizeFrozen(mailing.frozenSubject, { ...values, merges: mailing.merges.subject }, "text");
+    const subject = personalizeFrozen(mailing.frozenSubject, { ...values, merges: merges.subject }, "text");
     if (!token || leftoverPlaceholders(`${html}${text}${subject}`).length > 0) {
       reportError(new Error("rundmail: placeholder left after personalisation"), {
         route: "lib/mailing-send",
