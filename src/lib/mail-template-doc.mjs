@@ -1522,13 +1522,58 @@ export function normalizeFirstName(raw) {
  */
 export function applyMergeFields(text, values, token) {
   let i = 0;
-  return String(text ?? "").replace(MERGE_FIELD_RE, (all, name, fallback) => {
+  let empty = false;
+  const out = String(text ?? "").replace(MERGE_FIELD_RE, (all, name, fallback) => {
     if (!MERGE_FIELDS.includes(String(name).toLowerCase())) return all;
     const fb = (fallback ?? "").trim();
     if (token) return token(i++, fb);
-    const first = normalizeFirstName(values.firstName ?? null);
-    return first ?? fb;
+    const value = normalizeFirstName(values.firstName ?? null) ?? fb;
+    if (value) return value;
+    empty = true;
+    return EMPTY_NAME;
   });
+  // A name that came out empty takes its punctuation along (tidyEmptyNames).
+  return empty ? tidyEmptyNames(out) : out;
+}
+
+/**
+ * Marks a name that came out empty (no first name known, no fallback) for
+ * tidyEmptyNames — applyMergeFields and personalizeFrozen (mailing-core.mjs).
+ */
+export const EMPTY_NAME = "\u0000";
+
+/** Inline closing tags an empty name may stand in („<strong>{{vorname}}</strong>, …“). */
+const CLOSING_TAGS = "((?:</(?:strong|b|em|i|u|span|a)>)*)";
+
+/** The name opened a sentence (text start, a tag, a new line, after „. “): its punctuation goes, the next word starts the sentence. */
+const EMPTY_NAME_AT_START_RE = new RegExp(
+  `(^|[>\\n]|[.!?…]["“”»«)]?[ \\t])([ \\t]*)\\u0000${CLOSING_TAGS}(?:[ \\t]*[,;:.!?…]|[ \\t]+[–—-])?[ \\t]*(\\p{Ll})?`,
+  "gu"
+);
+/** „…, {{vorname}}!“: the comma before it goes along (only before punctuation — „Hallo Anna, {{…}}“ keeps its comma). */
+const EMPTY_NAME_AFTER_COMMA_RE = new RegExp(`,[ \\t]*\\u0000${CLOSING_TAGS}(?=[,;:.!?…])`, "gu");
+/** „Hallo {{vorname}},“: the space before it goes along when no word follows. */
+const EMPTY_NAME_AFTER_SPACE_RE = new RegExp(`[ \\t]\\u0000${CLOSING_TAGS}(?![\\p{L}\\p{N}])`, "gu");
+
+/**
+ * The text around the names that came out empty (EMPTY_NAME), tidied — the
+ * mail reads as if it had been written without a name (25.11.2026):
+ *   „Hallo {{vorname}},“                 → „Hallo,“
+ *   „Nur für dich, {{vorname}}!“         → „Nur für dich!“
+ *   „{{vorname}}, die Black Week ist da“ → „Die Black Week ist da“
+ * Works on plain text (subject, text part, a block's text) and on rendered
+ * HTML (a tag before the name opens a sentence).
+ * @param {string} text
+ * @returns {string}
+ */
+export function tidyEmptyNames(text) {
+  const s = String(text ?? "");
+  if (!s.includes(EMPTY_NAME)) return s;
+  return s
+    .replace(EMPTY_NAME_AT_START_RE, (_all, start, space, tags, letter) => `${start}${space}${tags}${letter ? letter.toUpperCase() : ""}`)
+    .replace(EMPTY_NAME_AFTER_COMMA_RE, "$1")
+    .replace(EMPTY_NAME_AFTER_SPACE_RE, "$1")
+    .replaceAll(EMPTY_NAME, "");
 }
 
 /** Unknown merge fields of a text ({{vornme}} …) — a validation error. */

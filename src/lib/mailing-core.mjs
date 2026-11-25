@@ -14,7 +14,7 @@
 //   {{mo:fn:N}}      first-name merge field N ({{vorname|Ersatz}})
 //   {{mo:greet:N}}   greeting N: its text with the name, or its fallback
 
-import { applyMergeFields, normalizeFirstName, walkMailBlocks } from "./mail-template-doc.mjs";
+import { applyMergeFields, EMPTY_NAME, normalizeFirstName, tidyEmptyNames, walkMailBlocks } from "./mail-template-doc.mjs";
 
 /** Batch size bounds — Resend's batch endpoint takes at most 100 messages. */
 export const MAILING_BATCH_MAX = 100;
@@ -322,7 +322,17 @@ export function personalizeFrozen(template, values, mode) {
   const first = normalizeFirstName(values.firstName);
   const asUrl = (u) => (html ? escapeAttr(u) : u);
   const asText = (t) => (html ? escapeHtml(t) : t);
-  return String(template).replace(/\{\{mo:(unsub|erase|link|fn|greet)(?::(\d{1,4}))?\}\}/g, (all, kind, num) => {
+  // A name that comes out empty („{{vorname}}“ without „|…“, no name known)
+  // takes its punctuation along (tidyEmptyNames): „Hallo {{vorname}}, …“ →
+  // „Hallo, …“, „{{vorname}}, die Black Week ist da“ → „Die Black Week ist da“.
+  let empty = false;
+  /** @param {string} value */
+  const nameOrMark = (value) => {
+    if (value) return asText(value);
+    empty = true;
+    return EMPTY_NAME;
+  };
+  const out = String(template).replace(/\{\{mo:(unsub|erase|link|fn|greet)(?::(\d{1,4}))?\}\}/g, (all, kind, num) => {
     const n = num === undefined ? -1 : Number(num);
     switch (kind) {
       case "unsub":
@@ -333,18 +343,17 @@ export function personalizeFrozen(template, values, mode) {
         return n >= 0 ? asUrl(values.trackUrl(n)) : all;
       case "fn": {
         const m = values.merges[n];
-        if (!m) return "";
-        return asText(first ?? m.fallback);
+        return nameOrMark(m ? (first ?? m.fallback) : "");
       }
       case "greet": {
         const g = values.greetings[n];
-        if (!g) return "";
-        return asText(first ? applyMergeFields(g.text, { firstName: first }) : g.fallback);
+        return nameOrMark(g ? (first ? applyMergeFields(g.text, { firstName: first }) : g.fallback) : "");
       }
       default:
         return all;
     }
   });
+  return empty ? tidyEmptyNames(out) : out;
 }
 
 /** Placeholders left after personalisation — a send must never ship one. */

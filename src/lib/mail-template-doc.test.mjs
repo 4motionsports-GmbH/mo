@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   DEFAULT_MAIL_STYLE,
+  EMPTY_NAME,
   MAIL_BLOCK_CATALOG,
   MAIL_BLOCK_TYPES,
   MAIL_TEMPLATE_FILE_FORMAT,
@@ -22,6 +23,7 @@ import {
   templateDesignKey,
   stripMoBlocks,
   templateExportFile,
+  tidyEmptyNames,
   unknownMergeFields,
   validateMailTemplateDoc,
 } from "./mail-template-doc.mjs";
@@ -121,9 +123,42 @@ test("normalizeFirstName: printable names only, all-lower/all-upper title-cased"
   }
 });
 
+test("tidyEmptyNames: a name that came out empty takes its punctuation along (25.11.2026)", () => {
+  const M = EMPTY_NAME;
+  assert.equal(tidyEmptyNames(`Hallo ${M},`), "Hallo,");
+  assert.equal(tidyEmptyNames(`Hey ${M}! Schön, dass du da bist`), "Hey! Schön, dass du da bist");
+  // the name opened the sentence: the next word opens it now
+  assert.equal(tidyEmptyNames(`${M}, die Black Week ist da`), "Die Black Week ist da");
+  assert.equal(tidyEmptyNames(`${M}, the Black Week is here`), "The Black Week is here");
+  assert.equal(tidyEmptyNames(`${M} – hier sind deine Deals`), "Hier sind deine Deals");
+  assert.equal(tidyEmptyNames(`${M} 20 % auf alles`), "20 % auf alles");
+  assert.equal(tidyEmptyNames(`Die Deals sind da. ${M}, greif zu!`), "Die Deals sind da. Greif zu!");
+  assert.equal(tidyEmptyNames(`Zeile\n${M}, los geht's`), "Zeile\nLos geht's");
+  assert.equal(tidyEmptyNames(`<h1 style="margin: 0">${M}, die Black Week ist da</h1>`), '<h1 style="margin: 0">Die Black Week ist da</h1>');
+  assert.equal(tidyEmptyNames(`<p><strong>${M}</strong>, jetzt zuschlagen</p>`), "<p><strong></strong>Jetzt zuschlagen</p>");
+  // a comma before the name goes when punctuation follows; a greeting keeps its own
+  assert.equal(tidyEmptyNames(`Nur für dich, ${M}!`), "Nur für dich!");
+  assert.equal(tidyEmptyNames(`Hallo, ${M}, schön dass du da bist`), "Hallo, schön dass du da bist");
+  assert.equal(tidyEmptyNames(`Hallo Anna, ${M}`), "Hallo Anna,");
+  // in the middle: one space stays
+  assert.equal(tidyEmptyNames(`Für ${M} und dich`), "Für und dich");
+  assert.equal(tidyEmptyNames(`Hallo ${M}</p>`), "Hallo</p>");
+  assert.equal(tidyEmptyNames(`<p>${M}</p>`), "<p></p>");
+  assert.equal(tidyEmptyNames("Hallo Anna, schön"), "Hallo Anna, schön");
+  // through applyMergeFields
+  assert.equal(applyMergeFields("{{vorname}}, die Black Week ist da", { firstName: null }), "Die Black Week ist da");
+  assert.equal(applyMergeFields("{{vorname}}, die Black Week ist da", { firstName: "lea" }), "Lea, die Black Week ist da");
+  assert.equal(applyMergeFields("Nur für dich, {{vorname}}!", { firstName: null }), "Nur für dich!");
+  assert.equal(applyMergeFields("{{vorname|}}", { firstName: null }), "");
+});
+
 test("applyMergeFields: {{vorname}} and {{vorname|Ersatz}}, unknown fields stay", () => {
   assert.equal(applyMergeFields("Hallo {{vorname}},", { firstName: "anna" }), "Hallo Anna,");
-  assert.equal(applyMergeFields("Hallo {{ Vorname }},", { firstName: null }), "Hallo ,");
+  // no name, no fallback: the space before goes too (25.11.2026 — never „Hallo ,“)
+  assert.equal(applyMergeFields("Hallo {{ Vorname }},", { firstName: null }), "Hallo,");
+  assert.equal(applyMergeFields("Danke {{vorname}} für alles", { firstName: null }), "Danke für alles");
+  assert.equal(applyMergeFields("Hallo {{vorname}}", { firstName: null }), "Hallo");
+  assert.equal(applyMergeFields("Hallo {{vorname}},", { firstName: "anna" }), "Hallo Anna,");
   assert.equal(applyMergeFields("{{vorname|Hey}}, deine Deals", { firstName: null }), "Hey, deine Deals");
   assert.equal(applyMergeFields("{{vorname|Hey}}, deine Deals", { firstName: "Tom" }), "Tom, deine Deals");
   assert.equal(applyMergeFields("{{nachname}}", { firstName: "Tom" }), "{{nachname}}");
@@ -134,6 +169,8 @@ test("applyMergeFields: {{vorname}} and {{vorname|Ersatz}}, unknown fields stay"
     return `{{mo:fn:${i}}}`;
   });
   assert.equal(frozen, "{{mo:fn:0}} und {{mo:fn:1}}");
+  // the space before a token stays in freeze mode (personalizeFrozen decides per recipient)
+  assert.equal(applyMergeFields("Hallo {{vorname}},", {}, () => "{{mo:fn:0}}"), "Hallo {{mo:fn:0}},");
   assert.deepEqual(seen, ["", "du"]);
 });
 

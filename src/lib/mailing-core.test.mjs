@@ -214,6 +214,30 @@ test("mailingUsesFirstName: the subject, a greeting or {{vorname}} anywhere — 
   assert.equal(mailingUsesFirstName(null, null), false);
 });
 
+test("personalizeFrozen: an empty name takes the space before it along — never „Hallo ,“ (25.11.2026)", () => {
+  const values = {
+    unsubscribeUrl: "u",
+    erasureUrl: null,
+    trackUrl: (n) => `t${n}`,
+    firstName: null,
+    merges: [{ fallback: "" }, { fallback: "Hey" }],
+    greetings: [{ text: "Hallo {{vorname}},", fallback: "" }],
+  };
+  assert.equal(personalizeFrozen("<p>Hallo {{mo:fn:0}}, schön</p>", values, "html"), "<p>Hallo, schön</p>");
+  assert.equal(personalizeFrozen("Danke {{mo:fn:0}} für alles", values, "text"), "Danke für alles");
+  assert.equal(personalizeFrozen("Hallo {{mo:fn:0}}</p>", values, "html"), "Hallo</p>");
+  assert.equal(personalizeFrozen("Hallo {{mo:fn:1}}, schön", values, "text"), "Hallo Hey, schön");
+  assert.equal(personalizeFrozen("<p>{{mo:greet:0}}</p> <p>x</p>", values, "html"), "<p></p> <p>x</p>");
+  // the name opened the subject or a heading: the next word opens it now
+  assert.equal(personalizeFrozen("{{mo:fn:0}}, die Black Week ist da", values, "text"), "Die Black Week ist da");
+  assert.equal(personalizeFrozen("<h1>{{mo:fn:0}}, die Black Week ist da</h1>", values, "html"), "<h1>Die Black Week ist da</h1>");
+  assert.equal(personalizeFrozen("<p>Nur für dich, {{mo:fn:0}}!</p>", values, "html"), "<p>Nur für dich!</p>");
+  // a known name keeps its space; links keep theirs
+  assert.equal(personalizeFrozen("Hallo {{mo:fn:0}}, schön", { ...values, firstName: "lea" }, "text"), "Hallo Lea, schön");
+  assert.equal(personalizeFrozen("{{mo:fn:0}}, die Black Week ist da", { ...values, firstName: "lea" }, "text"), "Lea, die Black Week ist da");
+  assert.equal(personalizeFrozen("Hier: {{mo:link:2}}", values, "text"), "Hier: t2");
+});
+
 test("personalizeFrozen: per-recipient values, escaped in HTML, raw in text", () => {
   const values = {
     unsubscribeUrl: "https://mo.example.com/api/unsubscribe?token=a&locale=en",
@@ -230,7 +254,8 @@ test("personalizeFrozen: per-recipient values, escaped in HTML, raw in text", ()
   );
   assert.equal(
     html,
-    '<a href="https://mo.example.com/api/unsubscribe?token=a&amp;locale=en">x</a><a href="https://mo.example.com/api/erase-data?token=b">y</a><a href="https://mo.example.com/api/r/TOKEN?l=3">z</a> Anna Anna Hallo Anna, '
+    // the unknown {{mo:fn:9}} comes out empty and takes its space along
+    '<a href="https://mo.example.com/api/unsubscribe?token=a&amp;locale=en">x</a><a href="https://mo.example.com/api/erase-data?token=b">y</a><a href="https://mo.example.com/api/r/TOKEN?l=3">z</a> Anna Anna Hallo Anna,'
   );
   const noName = personalizeFrozen("{{mo:fn:0}}|{{mo:fn:1}}|{{mo:greet:0}}|{{mo:unsub}}", { ...values, firstName: "TEST" }, "text");
   assert.equal(noName, "|Hey|Hallo,|https://mo.example.com/api/unsubscribe?token=a&locale=en");
