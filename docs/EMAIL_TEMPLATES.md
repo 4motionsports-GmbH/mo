@@ -676,7 +676,8 @@ always arrives. Contract: [`ADMIN_DASHBOARD.md`](./ADMIN_DASHBOARD.md) §11.
 pictures („Bild für Handy (optional)“ of Bild, Titelbild and the section background) and the own
 logo in „Farben & Schrift“ — and the attachment pictures the KI-Gestalter uses:
 [`mail-template-image.ts`](../src/lib/mail-template-image.ts) (`POST /api/admin/vorlagen/image`,
-raw bytes ≤ 4 MB, JPEG/PNG/WebP/GIF). The picture is EXIF-oriented, scaled to at most 1,200 px
+raw bytes ≤ 4 MB, JPEG/PNG/WebP/GIF; a picture of 4–25 MB goes straight from the browser to the Blob
+store and is processed the same way — „Large pictures“ below). The picture is EXIF-oriented, scaled to at most 1,200 px
 wide, stripped of metadata and stored as JPEG (PNG with transparency); WebP becomes JPEG/PNG
 (classic Outlook cannot show WebP). Animated GIFs are kept byte for byte when they fit (≤ 1,200 px,
 ≤ 2 MB); one that does not is shrunk instead of refused ([`mail-template-gif.mjs`](../src/lib/mail-template-gif.mjs),
@@ -695,11 +696,24 @@ GIFs). The toast names it („Animiertes GIF für die Mail stärker komprimiert:
 Einzelbilder bleiben).“, with frames left out „— 70 → 36 Einzelbilder, gleiche Dauer; bitte die
 Animation in der Vorschau prüfen.“). Encoding is planned to take at most 150 s (≈ 15 s for 40 frames
 of 1,440 px, ≈ 4 s per step for 44 frames of 384 px; the route has 300 s); a GIF that would take
-longer even at 600 px, or stays over 2 MB after every step, is refused with what was tried. A GIF over
-4 MB cannot be uploaded at all (Vercel caps a request at 4.5 MB; the editor says so before uploading):
-`npm run gif:shrink -- <datei.gif>` ([`scripts/shrink-gif.mjs`](../scripts/shrink-gif.mjs)) runs the
-same steps on your own machine and writes `<name>-mail.gif` (≤ 2 MB) next to it to upload — an
-11.3-MB phone GIF with 70 frames became 1.5 MB with all frames in 7 s. Only the first frame is read up front — sharp's pixel limit (40 MP) counts an animated image
+longer even at 600 px, or stays over 2 MB after every step, is refused with what was tried.
+
+**Large pictures (4–25 MB, since 26.11.2026).** Vercel caps a request at 4.5 MB, so a larger picture
+never reaches `POST /api/admin/vorlagen/image` (owner report: the client's 11.5-MB GIF). The editor
+sends it straight from the browser to the Blob store (`@vercel/blob/client` `upload()`, private): `POST
+/api/admin/vorlagen/image/upload-token` issues a token for exactly one temporary pathname
+(`template-upload-tmp/<random>.<ext>`), picture types only, at most 25 MB, 15 minutes, no completion
+callback; then `POST /api/admin/vorlagen/image/from-upload { pathname }` reads that file, processes it
+like any upload (`storeTemplateImage` — an animated GIF shrunk to 2 MB) and deletes it whatever
+happened. Only temporary pathnames are ever read or deleted (`isLargeUploadPathname`); temporary files
+an hour old (a closed window) are swept with the next token. Rules:
+[`large-upload.mjs`](../src/lib/large-upload.mjs) (tested); I/O:
+[`template-image-large-upload.ts`](../src/lib/template-image-large-upload.ts). Up to 4 MB nothing
+changes. Over 25 MB the editor refuses („Höchstens 25 MB — das GIF bitte kürzer, schmaler oder mit
+weniger Einzelbildern exportieren.“); `npm run gif:shrink -- <datei.gif>`
+([`scripts/shrink-gif.mjs`](../scripts/shrink-gif.mjs)) runs the same GIF steps on one's own machine
+and writes `<name>-mail.gif` (≤ 2 MB) — an 11.3-MB phone GIF with 70 frames became 1.5 MB with all
+frames in 7 s. Only the first frame is read up front — sharp's pixel limit (40 MP) counts an animated image
 as all frames stacked, which made a 1,440-px GIF with 20+ frames „nicht lesbar“ until 24.11.2026. The
 KI-Gestalter's attachment GIFs get what its deadline leaves (a longer one: upload it in the block).
 Stored in the Blob store under `email-heroes/template-…` and served by
