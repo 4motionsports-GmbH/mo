@@ -9,8 +9,10 @@
 // (classic Outlook cannot show WebP). Animated GIFs (Black-Week banners) are
 // kept byte for byte when they fit (≤ 1200 px wide, ≤ 2 MB); one that does not
 // is shrunk — every frame resized and encoded again, timing and loop kept, at
-// most 1200 px wide and narrower until it is ≤ 2 MB (mail-template-gif.mjs,
-// tested) — and refused only when not even 600 px fits the time budget.
+// most 1200 px wide and narrower until it is ≤ 2 MB, at its narrowest
+// compressed harder and, for a video-like GIF, with fewer frames (same
+// duration) — mail-template-gif.mjs decides, mail-template-gif-encode.mjs
+// encodes, both tested — and refused only when nothing fits in time.
 // Only the first frame is read up front: sharp's pixel limit counts an
 // animated image as all frames stacked, so a 1440-px GIF with 20 frames was
 // refused as „nicht lesbar“ (owner report 24.11.2026).
@@ -35,6 +37,7 @@ import {
   shrinkAnimatedGif,
   sizeLabel,
 } from "./mail-template-gif.mjs";
+import { encodeAnimatedGifVariant } from "./mail-template-gif-encode.mjs";
 
 export const TEMPLATE_IMAGE_CONTENT_TYPES = ["image/jpeg", "image/png", "image/webp", "image/gif"] as const;
 export const TEMPLATE_IMAGE_MAX_BYTES = 4_000_000;
@@ -86,7 +89,8 @@ export async function storeTemplateImage(bytes: Buffer, opts: { gifBudgetSeconds
   const frames = meta.pages ?? 1;
 
   if (format === "gif" && frames > 1) {
-    const gif = { width, height, frames };
+    const delays = Array.isArray(meta.delay) && meta.delay.length === frames ? meta.delay : undefined;
+    const gif = { width, height, frames, delays };
     const budgetSeconds = opts.gifBudgetSeconds ?? GIF_UPLOAD_BUDGET_SECONDS;
     const plan = planAnimatedGif({ ...gif, bytes: bytes.length, budgetSeconds });
     if (plan.action === "refuse") return fail(400, plan.code, plan.message);
@@ -101,11 +105,8 @@ export async function storeTemplateImage(bytes: Buffer, opts: { gifBudgetSeconds
           gif,
           firstWidth: plan.width,
           budgetSeconds,
-          encode: (w: number) =>
-            sharp(bytes, { animated: true, limitInputPixels: stackPixels })
-              .resize({ width: w, withoutEnlargement: true })
-              .gif({ ...GIF_ENCODE_OPTIONS })
-              .toBuffer(),
+          encode: (variant) =>
+            encodeAnimatedGifVariant(bytes, variant, { frames, delays, loop: meta.loop ?? 0, limitInputPixels: stackPixels }),
         });
       } catch (err) {
         reportError(err, { route: "lib/mail-template-image", phase: "gif" });
@@ -120,7 +121,17 @@ export async function storeTemplateImage(bytes: Buffer, opts: { gifBudgetSeconds
       } catch {
         width = shrunk.width;
       }
-      warnings.push(gifShrunkWarning({ fromWidth: gif.width, toWidth: width, fromBytes: bytes.length, toBytes: out.length, frames }));
+      warnings.push(
+        gifShrunkWarning({
+          fromWidth: gif.width,
+          toWidth: width,
+          fromBytes: bytes.length,
+          toBytes: out.length,
+          frames,
+          keptFrames: shrunk.keptFrames,
+          compressed: shrunk.interFrameMaxError > GIF_ENCODE_OPTIONS.interFrameMaxError,
+        })
+      );
     }
     ext = "gif";
     contentType = "image/gif";

@@ -193,7 +193,14 @@ export function useImageUpload(onUrl: (url: string) => void) {
         e.target.value = "";
         if (!file) return;
         if (file.size > 4_000_000) {
-          toast({ variant: "error", title: "Bild zu groß", description: "Höchstens 4 MB — bitte verkleinern." });
+          toast({
+            variant: "error",
+            title: "Bild zu groß",
+            description:
+              file.type === "image/gif"
+                ? "Höchstens 4 MB — das GIF bitte kürzer, schmaler oder mit weniger Einzelbildern exportieren. Bis 4 MB bringt Mo ein GIF selbst auf 2 MB."
+                : "Höchstens 4 MB — bitte verkleinern.",
+          });
           return;
         }
         setBusy(true);

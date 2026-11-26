@@ -1,13 +1,19 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  GIF_COMPACT_STEPS,
   GIF_ENCODE_OPTIONS,
   GIF_MAX_ATTEMPTS,
   GIF_MAX_BYTES,
+  GIF_MAX_WIDTH_ATTEMPTS,
+  GIF_RAW_MAX_BYTES,
   GIF_UPLOAD_BUDGET_SECONDS,
   gifEncodeSeconds,
+  gifKeptFrames,
+  gifRawBytes,
   gifShrunkWarning,
   gifWidthForSeconds,
+  nextCompactStep,
   nextGifWidth,
   planAnimatedGif,
   shrinkAnimatedGif,
@@ -16,6 +22,8 @@ import {
 
 /** The owner's GIF of 24.11.2026: 1,440 × 1,440, a text ring turning around a photo. */
 const RING = { width: 1440, height: 1440, frames: 40 };
+/** The client's phone GIF of 26.11.2026: 384 × 682, a video (70 frames of 60 ms) — 3.1 MB at its own width. */
+const PHONE = { width: 384, height: 682, frames: 70, delays: Array.from({ length: 70 }, () => 60) };
 
 test("sizeLabel: KB below a megabyte, MB with a German decimal comma", () => {
   assert.equal(sizeLabel(640_000), "640 KB");
@@ -101,11 +109,26 @@ test("nextGifWidth: narrower by what the size has to lose, at least 10 px, never
   assert.equal(nextGifWidth({ gif: RING, triedWidth: 1200, outBytes: 0, secondsLeft: 120 }), null);
 });
 
-/** A fake encoder: the size follows the area of the width (`bytesAt1200` at 1,200 px). */
+/** A fake encoder: the size follows the area of the width (`bytesAt1200` at 1,200 px); the compact steps are ignored. */
 function fakeEncoder(bytesAt1200, log) {
-  return async (width) => {
+  return async ({ width }) => {
     log.push(width);
     return new Uint8Array(Math.round(bytesAt1200 * (width / 1200) ** 2));
+  };
+}
+
+/**
+ * A fake encoder modelled on the measurements of 26.11.2026: tolerance 16 =
+ * 0.55 × the size, 32 = 0.3 ×, fewer frames = their share (+ 20 % for the
+ * larger frame-to-frame changes). `bytesAtOwnWidth` at the GIF's width.
+ */
+function compactEncoder(gif, bytesAtOwnWidth, log) {
+  return async (v) => {
+    log.push(v);
+    const tolerance = v.interFrameMaxError >= 32 ? 0.3 : v.interFrameMaxError >= 16 ? 0.55 : 1;
+    const kept = v.frameStep > 1 ? gifKeptFrames(gif.delays, v.frameStep).keep.length / gif.frames : 1;
+    const frames = v.frameStep > 1 ? Math.min(1, kept * 1.2) : 1;
+    return new Uint8Array(Math.round(bytesAtOwnWidth * (v.width / gif.width) ** 2 * tolerance * frames));
   };
 }
 
@@ -135,25 +158,30 @@ test("shrinkAnimatedGif: an estimate that misses gets a third, narrower attempt"
     log.push(width);
     return new Uint8Array(Math.round(4_000_000 * (width / 1200) ** 1.2));
   };
-  const res = await shrinkAnimatedGif({ gif: RING, firstWidth: 1200, encode: slow });
-  assert.equal(log.length, GIF_MAX_ATTEMPTS);
+  const res = await shrinkAnimatedGif({ gif: RING, firstWidth: 1200, encode: ({ width }) => slow(width) });
+  assert.equal(log.length, GIF_MAX_WIDTH_ATTEMPTS);
   assert.ok(log[0] > log[1] && log[1] > log[2]);
   assert.equal(res.ok, true);
   assert.ok(res.data.length <= GIF_MAX_BYTES);
 });
 
-test("shrinkAnimatedGif: still too large at the floor, out of attempts or out of time → a German message", async () => {
+test("shrinkAnimatedGif: still too large after every step, out of attempts or out of time → a German message", async () => {
+  // nothing helps: narrower down to 600 px, then every compact step at 600 px
   const log = [];
   const huge = await shrinkAnimatedGif({ gif: RING, firstWidth: 1200, encode: fakeEncoder(40_000_000, log) });
   assert.equal(huge.ok, false);
   assert.equal(huge.code, "gif_too_large");
-  assert.equal(log.at(-1), 600);
-  assert.match(huge.message, /^Das animierte GIF ist auch auf 600 px verkleinert noch 10,0 MB groß \(höchstens 2 MB\) — bitte mit weniger Einzelbildern oder kleiner exportieren\.$/);
+  // 1,200 px, straight to the 600-px floor (the estimate says so), then every compact step there
+  assert.deepEqual(log, [1200, 600, ...Array(GIF_COMPACT_STEPS.length).fill(600)]);
+  assert.equal(
+    huge.message,
+    "Das animierte GIF ist auch auf 600 px verkleinert, stärker komprimiert und mit nur jedem dritten Einzelbild noch 10,0 MB groß (höchstens 2 MB) — bitte kürzer, schmaler oder mit weniger Einzelbildern exportieren."
+  );
 
   // the budget is used up after the first encode → no second one
   let t = 0;
   const log2 = [];
-  const encode = async (width) => {
+  const encode = async ({ width }) => {
     log2.push(width);
     t += 200_000;
     return new Uint8Array(3_000_000);
@@ -161,7 +189,98 @@ test("shrinkAnimatedGif: still too large at the floor, out of attempts or out of
   const late = await shrinkAnimatedGif({ gif: RING, firstWidth: 1200, budgetSeconds: 150, encode, now: () => t });
   assert.equal(late.ok, false);
   assert.deepEqual(log2, [1200]);
-  assert.match(late.message, /auf 1200 px verkleinert noch 3,0 MB/);
+  assert.equal(
+    late.message,
+    "Das animierte GIF ist auch auf 1200 px verkleinert noch 3,0 MB groß (höchstens 2 MB) — bitte kürzer, schmaler oder mit weniger Einzelbildern exportieren."
+  );
+});
+
+test("shrinkAnimatedGif: a GIF that cannot get narrower is compressed harder, gentlest step first (owner report 26.11.2026)", async () => {
+  // 3.1 MB at its own 384 px: the tolerance 16 is enough
+  const log = [];
+  const res = await shrinkAnimatedGif({ gif: PHONE, firstWidth: 384, encode: compactEncoder(PHONE, 3_100_000, log) });
+  assert.equal(res.ok, true);
+  assert.deepEqual(
+    log.map((v) => [v.width, v.interFrameMaxError, v.frameStep]),
+    [
+      [384, 8, 1],
+      [384, 16, 1],
+    ]
+  );
+  assert.equal(res.width, 384);
+  assert.equal(res.interFrameMaxError, 16);
+  assert.equal(res.keptFrames, 70);
+  assert.equal(res.attempts, 2);
+
+  // a heavy one goes on to every second frame — the same duration
+  const log2 = [];
+  const heavy = await shrinkAnimatedGif({ gif: PHONE, firstWidth: 384, encode: compactEncoder(PHONE, 10_000_000, log2) });
+  assert.equal(heavy.ok, true);
+  assert.deepEqual(
+    log2.map((v) => [v.interFrameMaxError, v.frameStep]),
+    [
+      [8, 1],
+      [16, 1],
+      [32, 1],
+      [32, 2],
+    ]
+  );
+  assert.equal(heavy.frameStep, 2);
+  assert.equal(heavy.keptFrames, 36);
+  assert.ok(heavy.data.length <= GIF_MAX_BYTES);
+
+  // a wide GIF is made narrower first and compressed only at its narrowest
+  const log3 = [];
+  const wide = await shrinkAnimatedGif({ gif: RING, firstWidth: 1200, encode: compactEncoder(RING, 25_000_000, log3) });
+  assert.equal(wide.ok, true);
+  assert.equal(log3[0].width, 1200);
+  assert.ok(log3.filter((v) => v.interFrameMaxError > 8).every((v) => v.width === log3.at(-1).width));
+  assert.ok(wide.interFrameMaxError > 8);
+});
+
+test("gifKeptFrames: every n-th frame, pauses and slides stay, the last stays, the duration stays", () => {
+  const sum = (a) => a.reduce((x, y) => x + y, 0);
+  assert.deepEqual(gifKeptFrames([50, 50, 50, 50, 50, 50, 50], 2), { keep: [0, 2, 4, 6], delays: [100, 100, 100, 50] });
+  assert.deepEqual(gifKeptFrames([50, 50, 50, 50, 50, 50, 50], 3), { keep: [0, 3, 6], delays: [150, 150, 50] });
+  // a pause of 500 ms (index 3) is never left out
+  const withPause = [50, 50, 50, 500, 50, 50, 50];
+  const kept = gifKeptFrames(withPause, 2);
+  assert.deepEqual(kept, { keep: [0, 2, 3, 4, 6], delays: [100, 50, 500, 100, 50] });
+  assert.equal(sum(kept.delays), sum(withPause));
+  // a slideshow keeps every slide
+  assert.deepEqual(gifKeptFrames([1000, 1500, 1000, 2000], 2).keep, [0, 1, 2, 3]);
+  // 0 / 10 ms play as 100 ms in the browsers
+  assert.deepEqual(gifKeptFrames([0, 0, 0, 0], 2), { keep: [0, 2, 3], delays: [200, 100, 100] });
+  // step 1: all frames, unchanged
+  assert.deepEqual(gifKeptFrames([40, 40, 40], 1), { keep: [0, 1, 2], delays: [40, 40, 40] });
+});
+
+test("nextCompactStep: the gentlest step next; frames only out of a video-like GIF, within memory and time", () => {
+  const at = (gif, after, seconds = 150, width = gif.width) => nextCompactStep(gif, width, after, seconds);
+  assert.deepEqual(at(PHONE, -1), { index: 0, width: 384, interFrameMaxError: 16, frameStep: 1 });
+  assert.deepEqual(at(PHONE, 0), { index: 1, width: 384, interFrameMaxError: 32, frameStep: 1 });
+  assert.deepEqual(at(PHONE, 1), { index: 2, width: 384, interFrameMaxError: 32, frameStep: 2 });
+  assert.deepEqual(at(PHONE, 2), { index: 3, width: 384, interFrameMaxError: 32, frameStep: 3 });
+  assert.equal(at(PHONE, 3), null);
+  // a slideshow (every frame a slide of 1 s) never loses a frame
+  const slides = { width: 600, height: 400, frames: 8, delays: Array.from({ length: 8 }, () => 1000) };
+  assert.equal(at(slides, 1), null);
+  // too few frames: at least 4 stay
+  const short = { width: 600, height: 400, frames: 5, delays: [60, 60, 60, 60, 60] };
+  assert.equal(at(short, 1), null);
+  // every frame at once would not fit the memory → no frames left out
+  const huge = { width: 1200, height: 1200, frames: 200, delays: Array.from({ length: 200 }, () => 40) };
+  assert.ok(gifRawBytes(huge, 1200) > GIF_RAW_MAX_BYTES);
+  assert.equal(at(huge, 1, 10_000), null);
+  // no time left → null
+  assert.equal(at(PHONE, -1, 0), null);
+});
+
+test("gifEncodeSeconds: leaving frames out encodes fewer (every frame is still decoded)", () => {
+  const all = gifEncodeSeconds(PHONE, 384);
+  const half = gifEncodeSeconds(PHONE, 384, 2);
+  assert.ok(half < all && half > all / 2);
+  assert.equal(gifEncodeSeconds(PHONE, 384, 1), all);
 });
 
 test("shrinkAnimatedGif: an encoder error propagates (the caller reports it)", async () => {
@@ -186,6 +305,28 @@ test("gifShrunkWarning and the encoder options", () => {
     gifShrunkWarning({ fromWidth: 1000, toWidth: 1000, fromBytes: 3_200_000, toBytes: 1_900_000, frames: 60 }),
     "Animiertes GIF für die Mail neu gespeichert: 3,2 MB → 1,9 MB (alle 60 Einzelbilder bleiben)."
   );
+  assert.equal(
+    gifShrunkWarning({ fromWidth: 384, toWidth: 384, fromBytes: 3_900_000, toBytes: 1_500_000, frames: 70, keptFrames: 70, compressed: true }),
+    "Animiertes GIF für die Mail stärker komprimiert: 3,9 MB → 1,5 MB (alle 70 Einzelbilder bleiben)."
+  );
+  assert.equal(
+    gifShrunkWarning({ fromWidth: 384, toWidth: 384, fromBytes: 3_900_000, toBytes: 1_900_000, frames: 70, keptFrames: 36, compressed: true }),
+    "Animiertes GIF für die Mail stärker komprimiert: 3,9 MB → 1,9 MB — 70 → 36 Einzelbilder, gleiche Dauer; bitte die Animation in der Vorschau prüfen."
+  );
+  assert.equal(
+    gifShrunkWarning({ fromWidth: 1440, toWidth: 600, fromBytes: 3_900_000, toBytes: 1_800_000, frames: 40, compressed: true }),
+    "Animiertes GIF für die Mail verkleinert und stärker komprimiert: 1440 → 600 px breit, 3,9 MB → 1,8 MB (alle 40 Einzelbilder bleiben)."
+  );
+  assert.deepEqual(
+    GIF_COMPACT_STEPS.map((c) => [c.interFrameMaxError, c.frameStep]),
+    [
+      [16, 1],
+      [32, 1],
+      [32, 2],
+      [32, 3],
+    ]
+  );
+  assert.equal(GIF_MAX_ATTEMPTS, GIF_MAX_WIDTH_ATTEMPTS + GIF_COMPACT_STEPS.length);
   assert.deepEqual({ ...GIF_ENCODE_OPTIONS }, { effort: 1, interFrameMaxError: 8 });
   assert.ok(Object.isFrozen(GIF_ENCODE_OPTIONS));
 });
