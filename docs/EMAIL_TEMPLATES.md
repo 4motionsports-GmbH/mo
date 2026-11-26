@@ -682,11 +682,24 @@ wide, stripped of metadata and stored as JPEG (PNG with transparency); WebP beco
 ≤ 2 MB); one that does not is shrunk instead of refused ([`mail-template-gif.mjs`](../src/lib/mail-template-gif.mjs),
 tested): every frame resized and encoded again — frames, timing and loop stay — at most 1,200 px wide
 and, while the result is over 2 MB, narrower (size ∝ width^1.6, then the GIF's own measured exponent;
-at most three encodes), never below 600 px unless the GIF already is; the toast names it („Animiertes
+at most three widths), never below 600 px unless the GIF already is; the toast names it („Animiertes
 GIF für die Mail verkleinert: 1440 → 1200 px breit, 1,9 MB → 1,8 MB (alle 40 Einzelbilder
-bleiben).“). Encoding is planned to take at most 150 s (≈ 15 s for 40 frames of 1,440 px; the route
-has 300 s); a GIF that would take longer even at 600 px, or stays over 2 MB, is refused with its
-reason. Only the first frame is read up front — sharp's pixel limit (40 MP) counts an animated image
+bleiben).“). Still over 2 MB at its narrowest (26.11.2026: a 384-px phone GIF came out at 3.1 MB and
+was refused), it is compressed harder, gentlest step first (`GIF_COMPACT_STEPS`): a frame-to-frame
+tolerance of 16, then 32 (a pixel that changed less is kept from the frame before — −40 to −85 % on
+video GIFs at a barely visible cost), then only every second, then every third frame of a video-like
+GIF: each kept frame shows as long as the frames it stands for (same duration), pauses and slides
+(≥ 150 ms) always stay, at least four frames stay (`gifKeptFrames`;
+[`mail-template-gif-encode.mjs`](../src/lib/mail-template-gif-encode.mjs) encodes, tested on real
+GIFs). The toast names it („Animiertes GIF für die Mail stärker komprimiert: 3,5 MB → 968 KB (alle 44
+Einzelbilder bleiben).“, with frames left out „— 70 → 36 Einzelbilder, gleiche Dauer; bitte die
+Animation in der Vorschau prüfen.“). Encoding is planned to take at most 150 s (≈ 15 s for 40 frames
+of 1,440 px, ≈ 4 s per step for 44 frames of 384 px; the route has 300 s); a GIF that would take
+longer even at 600 px, or stays over 2 MB after every step, is refused with what was tried. A GIF over
+4 MB cannot be uploaded at all (Vercel caps a request at 4.5 MB; the editor says so before uploading):
+`npm run gif:shrink -- <datei.gif>` ([`scripts/shrink-gif.mjs`](../scripts/shrink-gif.mjs)) runs the
+same steps on your own machine and writes `<name>-mail.gif` (≤ 2 MB) next to it to upload — an
+11.3-MB phone GIF with 70 frames became 1.5 MB with all frames in 7 s. Only the first frame is read up front — sharp's pixel limit (40 MP) counts an animated image
 as all frames stacked, which made a 1,440-px GIF with 20+ frames „nicht lesbar“ until 24.11.2026. The
 KI-Gestalter's attachment GIFs get what its deadline leaves (a longer one: upload it in the block).
 Stored in the Blob store under `email-heroes/template-…` and served by
