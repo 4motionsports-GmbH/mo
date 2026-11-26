@@ -17,7 +17,7 @@ import {
 import { applyMergeFields, normalizeMailTemplateDoc } from "./mail-template-doc.mjs";
 import { MAIL_COMPANY_LINES } from "./mail-template-render.mjs";
 
-/** The Black Friday Rundmail of 25.11.2026: a greeting and a heading whose fallbacks carry „Lucas“. */
+/** A mail whose greeting and heading carry a name („Lucas“) in their fallbacks — what the guard is for. */
 const LUCAS_DOC = normalizeMailTemplateDoc({
   version: 2,
   blocks: [

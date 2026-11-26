@@ -3172,7 +3172,7 @@ export async function checkDesignSubmission(input, ctx) {
     for (const f of unknownMergeFields(subject)) major(`Betreff: Unbekannter Platzhalter ${f} — erlaubt ist {{vorname}} bzw. {{vorname|Ersatz}}.`, null);
   }
   if (preheader && /\{\{/.test(preheader)) major("Vorschauzeile: Platzhalter wie {{vorname}} werden dort nicht ersetzt — ohne Platzhalter formulieren.", null);
-  // A name in a first-name fallback reaches everyone whose name is not known (25.11.2026: „Lucas“).
+  // A name in a first-name fallback reaches everyone whose name is not known (first-name-fallback.mjs).
   if (ctx.firstNamesAmong) {
     const fallbacks = firstNameFallbacks(subject, doc);
     const words = fallbackNameWords(fallbacks);

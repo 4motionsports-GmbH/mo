@@ -121,8 +121,8 @@ export function renderedMailErrors(input) {
  *   `firstNames`: what someone without a known first name reads
  *   (first-name-fallback.mjs namelessReadings) and the fallbacks with a name
  *   in them (fallbackNameProblems — a name a customer or the shop's own people
- *   carry; 25.11.2026: „Lucas“ for every newsletter-only recipient) — each an
- *   error that blocks the release.
+ *   carry; it would greet every newsletter-only recipient) — each an error
+ *   that blocks the release.
  * @returns {{ errors: MailingCheck[], warnings: MailingCheck[], infos: MailingCheck[], ok: boolean }}
  */
 export function mailingChecks(input) {

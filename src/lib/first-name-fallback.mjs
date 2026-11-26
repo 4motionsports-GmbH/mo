@@ -5,9 +5,10 @@
 // fallback („Ohne Vornamen“); {{vorname|Ersatz}} in any text, heading, button
 // or the subject carries a fallback of its own. Everyone whose first name is
 // not known reads the fallback — above all the newsletter-only subscribers
-// (an e-mail address, nothing else). 25.11.2026: a Black Friday Rundmail
-// went out with a person's name in its fallback, so every newsletter-only
-// recipient was greeted as „Lucas“. Hence:
+// (an e-mail address, nothing else). A person's name in a fallback would
+// greet every one of them with it (reported 25.11.2026 as „Lucas“ — on
+// 26.11. found to be a mix-up of e-mails, it had not happened; the guard
+// stays). Hence:
 //
 //   * firstNameFallbacks(subject, doc) — every fallback a mail would use,
 //     where it stands (the release checks show them and test them);

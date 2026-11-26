@@ -2702,7 +2702,7 @@ test("finishDesignerPictures: a phone picture that could not be made is cleared 
   assert.equal(labelled.doc.blocks.filter((b) => b.type === "image" && b.src === "https://mo.example.com/eu-ai-icon-email.png").length, 2, "under the image and under the section");
 });
 
-// ── first-name fallbacks (25.11.2026: „Lucas“ for every newsletter-only recipient) ──
+// ── first-name fallbacks: never a name in what someone without a known first name reads ──
 
 test("a name in a first-name fallback goes back to the model; neutral fallbacks pass; without the lookup nothing is checked", async () => {
   const firstNamesAmong = async (words) => words.filter((w) => ["lucas", "sabine"].includes(w));

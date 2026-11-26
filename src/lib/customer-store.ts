@@ -309,7 +309,7 @@ export async function linkCustomerOnEmailCapture(
  * Which of these words (lower case) is a first name — what at least one
  * customer is called (the first word of `first_name`, case-insensitive). The
  * release checks and the Rundmail runner keep names out of the first-name
- * fallbacks with it (first-name-fallback.mjs; 25.11.2026: „Lucas“ for every
+ * fallbacks with it (first-name-fallback.mjs — such a name would greet every
  * newsletter-only recipient). At most 50 words. Fail-soft: [] on any error.
  */
 export async function knownFirstNames(words: ReadonlyArray<string>, sql: Sql | null = getSql()): Promise<string[]> {

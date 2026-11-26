@@ -189,9 +189,9 @@ the template's `greeting` block is for Rundmails.
 
 **Without a first name** — everyone whose name is not known (above all the newsletter-only
 subscribers: an e-mail address, nothing else) reads the fallbacks: the greeting's „Ohne
-Vornamen“ and each `{{vorname|Ersatz}}`. A fallback is never a name (25.11.2026: a Black Friday
-Rundmail had „Lucas“ in it, so every newsletter-only recipient was greeted as Lucas —
-[`first-name-fallback.mjs`](../src/lib/first-name-fallback.mjs), tested): a capitalised word of a
+Vornamen“ and each `{{vorname|Ersatz}}`. A fallback is never a name — it would greet every one of
+them with it (a guard since 25.11.2026; the „Lucas“ report that prompted it turned out to be a mix-up
+of e-mails) — [`first-name-fallback.mjs`](../src/lib/first-name-fallback.mjs), tested: a capitalised word of a
 fallback that a customer is called (`knownFirstNames`, the first word of `customers.first_name`) or
 that is a first name of the shop's own people in the imprint (`MAIL_COMPANY_LINES` — Sabine, Lucas;
 [`first-names.ts`](../src/lib/first-names.ts)) is a name; greeting words („Hallo“, „Liebe“,

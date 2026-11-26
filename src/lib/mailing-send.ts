@@ -169,8 +169,8 @@ async function pendingAudienceSource(campaign: Campaign): Promise<string | null>
 // ── first-name fallbacks ─────────────────────────────────────────────────────
 //
 // What someone without a known first name reads must never be a name
-// (first-name-fallback.mjs; 25.11.2026: a Black Friday Rundmail greeted every
-// newsletter-only recipient as „Lucas“). A word of a fallback is a name when
+// (first-name-fallback.mjs — a guard since 25.11.2026; the „Lucas“ report
+// that prompted it turned out to be a mix-up). A word of a fallback is a name when
 // a customer is called that way or it is a first name of the shop's own
 // people in the imprint (first-names.ts). The release check refuses such a
 // fallback; the runner takes the name out of a mail released before the
