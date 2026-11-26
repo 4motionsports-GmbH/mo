@@ -10,6 +10,7 @@ import { mailFontLabel } from "@/lib/mail-template-doc.mjs";
 import { Button, Field, Input, SegmentedControl, Select, Textarea, toast } from "../ui";
 import { cn } from "../ui/cn";
 import { adminFetch, errorMessage } from "../lib/admin-fetch";
+import { largeUploadPathname, largeUploadRoute } from "@/lib/large-upload.mjs";
 import { MAIL_FONT_GROUPS } from "@/lib/block-editor-core.mjs";
 
 /**
@@ -177,7 +178,31 @@ export function NumberField({
   );
 }
 
-/** Upload a picture (raw body) → its public URL. */
+type UploadedPicture = { url: string; warnings?: string[] };
+
+/**
+ * A picture over 4 MB (Vercel caps a request at 4.5 MB): straight from the
+ * browser to the Blob store with a token for exactly this one file, then
+ * processed by Mo like any upload — lib/large-upload.mjs.
+ */
+async function uploadLargePicture(file: File): Promise<UploadedPicture> {
+  const pathname = largeUploadPathname(crypto.randomUUID(), file.type);
+  if (!pathname) throw new Error("Dieses Bildformat geht nicht — bitte JPG, PNG, GIF oder WebP hochladen.");
+  const { upload } = await import("@vercel/blob/client");
+  let stored: { pathname: string };
+  try {
+    stored = await upload(pathname, file, {
+      access: "private",
+      handleUploadUrl: "/api/admin/vorlagen/image/upload-token",
+      contentType: file.type,
+    });
+  } catch (err) {
+    throw new Error(`Die Datei konnte nicht hochgeladen werden — bitte erneut versuchen. (${errorMessage(err)})`);
+  }
+  return adminFetch<UploadedPicture>("/api/admin/vorlagen/image/from-upload", { body: { pathname: stored.pathname } });
+}
+
+/** Upload a picture (raw body; over 4 MB straight to the Blob store) → its public URL. */
 export function useImageUpload(onUrl: (url: string) => void) {
   const inputRef = React.useRef<HTMLInputElement>(null);
   const [busy, setBusy] = React.useState(false);
@@ -192,20 +217,17 @@ export function useImageUpload(onUrl: (url: string) => void) {
         const file = e.target.files?.[0];
         e.target.value = "";
         if (!file) return;
-        if (file.size > 4_000_000) {
-          toast({
-            variant: "error",
-            title: "Bild zu groß",
-            description:
-              file.type === "image/gif"
-                ? "Höchstens 4 MB — das GIF bitte kürzer, schmaler oder mit weniger Einzelbildern exportieren. Bis 4 MB bringt Mo ein GIF selbst auf 2 MB."
-                : "Höchstens 4 MB — bitte verkleinern.",
-          });
+        const way = largeUploadRoute(file.size, file.type);
+        if (way.route === "refuse") {
+          toast({ variant: "error", title: "Bild zu groß", description: way.message });
           return;
         }
         setBusy(true);
         try {
-          const json = await adminFetch<{ url: string; warnings?: string[] }>("/api/admin/vorlagen/image", { rawBody: file });
+          const json =
+            way.route === "large"
+              ? await uploadLargePicture(file)
+              : await adminFetch<UploadedPicture>("/api/admin/vorlagen/image", { rawBody: file });
           onUrl(json.url);
           toast({
             variant: json.warnings?.length ? "warning" : "success",
